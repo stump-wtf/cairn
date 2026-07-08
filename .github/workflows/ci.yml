@@ -49,6 +49,9 @@ jobs:
       # store creates the bucket itself (objectstore.NewMinIO).
       - name: Start MinIO
         run: |
+          # Runners may be reused, so drop any container left by a prior job
+          # before claiming the name/port.
+          docker rm -f minio 2>/dev/null || true
           docker run -d --name minio \
             -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \
@@ -78,3 +81,7 @@ jobs:
 
       - name: test (race)
         run: go test -race ./...
+
+      - name: Stop MinIO
+        if: always()
+        run: docker rm -f minio 2>/dev/null || true
