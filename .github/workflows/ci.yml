@@ -27,20 +27,6 @@ jobs:
           --health-timeout 3s
           --health-retries 15
 
-      minio:
-        image: bitnami/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-          MINIO_DEFAULT_BUCKETS: cairn
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "mc ready local || curl -f http://localhost:9000/minio/health/live"
-          --health-interval 3s
-          --health-timeout 5s
-          --health-retries 20
-
     env:
       # Presence of these turns on the store integration tests.
       CAIRN_TEST_DATABASE_URL: postgres://cairn:cairn@localhost:5432/cairn?sslmode=disable
@@ -67,6 +53,23 @@ jobs:
 
       - name: build
         run: go build ./...
+
+      # The official minio image needs a "server /data" command, which GitHub
+      # service containers can't supply — so start it as a step instead. The
+      # store auto-creates the bucket on first connect, so no mc bootstrap.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:9000/minio/health/ready >/dev/null 2>&1; then
+              echo "minio ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "minio did not become ready"; docker logs minio; exit 1
 
       - name: test (race)
         run: go test -race ./...
