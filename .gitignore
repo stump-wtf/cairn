@@ -10,6 +10,13 @@ dist/
 build/
 *.log
 
+# Go
+/cairnd
+/bin/
+*.test
+*.out
+coverage.txt
+
 # Env / secrets
 .env
 .env.*
