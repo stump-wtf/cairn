@@ -13,8 +13,11 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://cairn.sh',
-  baseUrl: '/',
+  // GitHub Pages project site: https://joestump.github.io/cairn/
+  // (For a custom domain like cairn.sh, set url to the domain and baseUrl to '/'.)
+  url: 'https://joestump.github.io',
+  baseUrl: '/cairn/',
+  trailingSlash: false,
 
   organizationName: 'joestump',
   projectName: 'cairn',
