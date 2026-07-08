@@ -43,31 +43,6 @@ jobs:
           go-version: "1.25"
           cache: true
 
-      # MinIO can't run as a GitHub service container (its entrypoint needs the
-      # `server` argument, which services can't supply), and the bitnami image's
-      # `latest` tag was retired. Start the official image as a step instead; the
-      # store creates the bucket itself (objectstore.NewMinIO).
-      - name: Start MinIO
-        run: |
-          # Runners may be reused, so drop any container left by a prior job
-          # before claiming the name/port.
-          docker rm -f minio 2>/dev/null || true
-          docker run -d --name minio \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:latest server /data
-          echo "waiting for MinIO..."
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:9000/minio/health/live >/dev/null; then
-              echo "MinIO ready"; exit 0
-            fi
-            sleep 1
-          done
-          echo "MinIO did not become ready" >&2
-          docker logs minio || true
-          exit 1
-
       - name: gofmt
         run: |
           out="$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
@@ -79,9 +54,22 @@ jobs:
       - name: build
         run: go build ./...
 
+      # The official minio image needs a "server /data" command, which GitHub
+      # service containers can't supply — so start it as a step instead. The
+      # store auto-creates the bucket on first connect, so no mc bootstrap.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:9000/minio/health/ready >/dev/null 2>&1; then
+              echo "minio ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "minio did not become ready"; docker logs minio; exit 1
+
       - name: test (race)
         run: go test -race ./...
-
-      - name: Stop MinIO
-        if: always()
-        run: docker rm -f minio 2>/dev/null || true
