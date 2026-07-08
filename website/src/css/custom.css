@@ -1,0 +1,122 @@
+/**
+ * Cairn design language — dark, terminal-minimal.
+ * IBM Plex Sans (UI) + JetBrains Mono (code/labels/IDs), near-black #0A0B0D,
+ * OTel span category accents (reason/exec/read/net/write).
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+/* ---- Category accent tokens (constant across themes) ---- */
+:root {
+  --cat-reason: #8b7cf6;
+  --cat-exec:   #46c878;
+  --cat-read:   #4f9cf9;
+  --cat-net:    #e6b450;
+  --cat-write:  #f0568f;
+
+  --ifm-font-family-base: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ifm-heading-font-weight: 600;
+  --ifm-code-font-size: 0.9em;
+  --ifm-global-radius: 10px;
+
+  /* Light mode (secondary — the brand is dark-first) */
+  --cairn-bg: #ffffff;
+  --cairn-elevated: #f6f6f8;
+  --cairn-surface-2: #eeeef2;
+  --cairn-border: #e3e3e8;
+  --cairn-text: #16181d;
+  --cairn-muted: #5c626c;
+
+  --ifm-color-primary: #6b4ce6;
+  --ifm-color-primary-dark: #5a37e3;
+  --ifm-color-primary-darker: #5330db;
+  --ifm-color-primary-darkest: #4527b4;
+  --ifm-color-primary-light: #7f65ea;
+  --ifm-color-primary-lighter: #8a72ec;
+  --ifm-color-primary-lightest: #a795f1;
+
+  --docusaurus-highlighted-code-line-bg: rgba(139, 124, 246, 0.12);
+}
+
+/* ---- Dark mode (the intended look) ---- */
+[data-theme='dark'] {
+  --cairn-bg: #0a0b0d;
+  --cairn-elevated: #131418;
+  --cairn-surface-2: #191b21;
+  --cairn-border: #262a31;
+  --cairn-text: #e7e8ea;
+  --cairn-muted: #9ba1a8;
+
+  --ifm-color-primary: #9a8cf7;
+  --ifm-color-primary-dark: #7f6df4;
+  --ifm-color-primary-darker: #7160f3;
+  --ifm-color-primary-darkest: #4f39ef;
+  --ifm-color-primary-light: #b5abf9;
+  --ifm-color-primary-lighter: #c3bbfa;
+  --ifm-color-primary-lightest: #ded9fc;
+
+  --ifm-background-color: #0a0b0d;
+  --ifm-background-surface-color: #131418;
+  --ifm-navbar-background-color: rgba(10, 11, 13, 0.72);
+  --ifm-footer-background-color: #08090b;
+  --ifm-color-content: var(--cairn-text);
+  --ifm-color-content-secondary: var(--cairn-muted);
+  --ifm-heading-color: #f4f5f6;
+  --ifm-toc-border-color: var(--cairn-border);
+  --ifm-hr-border-color: var(--cairn-border);
+  --ifm-card-background-color: var(--cairn-elevated);
+  --ifm-code-background: #1a1c22;
+  --docusaurus-highlighted-code-line-bg: rgba(154, 140, 247, 0.16);
+}
+
+html { -webkit-font-smoothing: antialiased; }
+
+/* Translucent, blurred navbar to match the app-shell chrome */
+.navbar {
+  border-bottom: 1px solid var(--cairn-border);
+  backdrop-filter: saturate(140%) blur(12px);
+  -webkit-backdrop-filter: saturate(140%) blur(12px);
+}
+.navbar__title { font-weight: 600; letter-spacing: -0.01em; }
+.navbar__link, .menu__link { font-size: 0.94rem; }
+
+/* GitHub icon in the navbar */
+.navbar__item--github span { display: none; }
+.navbar__item--github::before {
+  content: '';
+  width: 20px;
+  height: 20px;
+  display: inline-block;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 .5C5.7.5.5 5.7.5 12a11.5 11.5 0 0 0 7.9 10.9c.6.1.8-.2.8-.5v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7 0-.7 0-.7 1.2 0 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5A11.5 11.5 0 0 0 23.5 12C23.5 5.7 18.3.5 12 .5Z'/></svg>") center/contain no-repeat;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 .5C5.7.5.5 5.7.5 12a11.5 11.5 0 0 0 7.9 10.9c.6.1.8-.2.8-.5v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7 0-.7 0-.7 1.2 0 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5A11.5 11.5 0 0 0 23.5 12C23.5 5.7 18.3.5 12 .5Z'/></svg>") center/contain no-repeat;
+}
+
+.button { font-weight: 600; letter-spacing: -0.01em; }
+
+:not(pre) > code { border-color: var(--cairn-border); background: var(--ifm-code-background); }
+
+[data-theme='dark'] .card,
+[data-theme='dark'] .theme-doc-markdown table { border: 1px solid var(--cairn-border); }
+table { display: table; width: 100%; }
+.theme-doc-markdown table th { font-family: var(--ifm-font-family-monospace); font-size: 0.82em; letter-spacing: 0.02em; }
+
+/* Category chip helper (usable in docs via inline HTML) */
+.chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+}
+.chip-reason { color: var(--cat-reason); border-color: color-mix(in srgb, var(--cat-reason) 40%, transparent); background: color-mix(in srgb, var(--cat-reason) 12%, transparent); }
+.chip-exec   { color: var(--cat-exec);   border-color: color-mix(in srgb, var(--cat-exec) 40%, transparent);   background: color-mix(in srgb, var(--cat-exec) 12%, transparent); }
+.chip-read   { color: var(--cat-read);   border-color: color-mix(in srgb, var(--cat-read) 40%, transparent);   background: color-mix(in srgb, var(--cat-read) 12%, transparent); }
+.chip-net    { color: var(--cat-net);    border-color: color-mix(in srgb, var(--cat-net) 40%, transparent);    background: color-mix(in srgb, var(--cat-net) 12%, transparent); }
+.chip-write  { color: var(--cat-write);  border-color: color-mix(in srgb, var(--cat-write) 40%, transparent);  background: color-mix(in srgb, var(--cat-write) 12%, transparent); }
+
+::selection { background: color-mix(in srgb, var(--ifm-color-primary) 40%, transparent); }

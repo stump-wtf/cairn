@@ -1,0 +1,107 @@
+.features {
+  padding: 5rem 0 5.5rem;
+  background: var(--cairn-bg);
+}
+
+.head {
+  text-align: center;
+  max-width: 680px;
+  margin: 0 auto 3rem;
+}
+.kicker {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  color: var(--ifm-color-primary-light);
+  margin-bottom: 0.8rem;
+}
+.headline {
+  font-size: clamp(1.8rem, 3.4vw, 2.5rem);
+  letter-spacing: -0.025em;
+  margin-bottom: 0.9rem;
+}
+.sub {
+  color: var(--cairn-muted);
+  font-size: 1.05rem;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.tile {
+  --accent: var(--ifm-color-primary);
+  position: relative;
+  padding: 1.5rem 1.5rem 1.6rem;
+  background: var(--cairn-elevated);
+  border: 1px solid var(--cairn-border);
+  border-radius: 14px;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  overflow: hidden;
+}
+.tile::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent 78%);
+  opacity: 0.9;
+}
+.tile:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--cairn-border));
+  box-shadow: 0 18px 40px -26px color-mix(in srgb, var(--accent) 60%, black);
+}
+
+.tileTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.code {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 7px;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 12px 1px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.tileTitle {
+  font-size: 1.22rem;
+  letter-spacing: -0.015em;
+  margin-bottom: 0.5rem;
+}
+.tileBody {
+  color: var(--cairn-muted);
+  font-size: 0.97rem;
+  line-height: 1.6;
+  margin: 0;
+}
+.tileBody strong { color: var(--cairn-text); font-weight: 600; }
+
+/* Category accents */
+.cat_reason { --accent: var(--cat-reason); }
+.cat_exec   { --accent: var(--cat-exec); }
+.cat_read   { --accent: var(--cat-read); }
+.cat_net    { --accent: var(--cat-net); }
+.cat_write  { --accent: var(--cat-write); }
+.cat_mono   { --accent: #aab2bd; }

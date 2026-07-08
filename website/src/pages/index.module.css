@@ -1,0 +1,149 @@
+/* Cairn homepage — hero */
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding: 6rem 1rem 4.5rem;
+  background: var(--cairn-bg);
+  border-bottom: 1px solid var(--cairn-border);
+}
+
+.heroGlow {
+  position: absolute;
+  top: -40%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1100px;
+  height: 720px;
+  pointer-events: none;
+  background:
+    radial-gradient(closest-side, color-mix(in srgb, var(--cat-reason) 26%, transparent), transparent 70%),
+    radial-gradient(closest-side, color-mix(in srgb, var(--cat-write) 14%, transparent), transparent 70%);
+  background-position: 42% 30%, 64% 44%;
+  background-repeat: no-repeat;
+  filter: blur(8px);
+  opacity: 0.9;
+}
+
+.heroInner {
+  position: relative;
+  z-index: 1;
+  max-width: 880px;
+  text-align: center;
+}
+
+.eyebrow {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: var(--cairn-muted);
+  margin-bottom: 1.1rem;
+}
+
+.title {
+  font-size: clamp(2.6rem, 6.4vw, 4.6rem);
+  line-height: 1.03;
+  letter-spacing: -0.035em;
+  font-weight: 700;
+  margin-bottom: 1.3rem;
+}
+
+.grad {
+  background: linear-gradient(96deg, var(--cat-reason) 8%, #b49bff 40%, var(--cat-write) 96%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.subtitle {
+  max-width: 640px;
+  margin: 0 auto 2rem;
+  font-size: 1.16rem;
+  line-height: 1.6;
+  color: var(--cairn-muted);
+}
+.subtitle strong { color: var(--cairn-text); font-weight: 600; }
+
+.ctas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  justify-content: center;
+  margin-bottom: 3rem;
+}
+
+.ghost {
+  background: transparent;
+  color: var(--cairn-text);
+  border: 1px solid var(--cairn-border);
+}
+.ghost:hover {
+  background: var(--cairn-elevated);
+  color: var(--cairn-text);
+  border-color: var(--ifm-color-primary);
+}
+
+/* Terminal card */
+.terminal {
+  max-width: 640px;
+  margin: 0 auto;
+  text-align: left;
+  background: var(--cairn-elevated);
+  border: 1px solid var(--cairn-border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.7);
+}
+
+.termBar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--cairn-border);
+  background: color-mix(in srgb, var(--cairn-surface-2) 70%, transparent);
+}
+.termBar span {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--cairn-border);
+}
+.termBar span:nth-child(1) { background: #f0568f; }
+.termBar span:nth-child(2) { background: #e6b450; }
+.termBar span:nth-child(3) { background: #46c878; }
+.termBar em {
+  margin-left: auto;
+  font-style: normal;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.74rem;
+  color: var(--cairn-muted);
+}
+
+.termBody {
+  margin: 0;
+  padding: 18px 18px 14px;
+  background: transparent;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.9rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.prompt { color: var(--cat-reason); font-weight: 700; }
+.ok { color: var(--cat-exec); font-weight: 700; }
+.link { color: var(--ifm-color-primary-light); text-decoration: underline; text-underline-offset: 3px; }
+.dim { color: var(--cairn-muted); }
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 18px 16px;
+}
+
+@media (max-width: 600px) {
+  .hero { padding: 4rem 1rem 3rem; }
+  .ctas .button { width: 100%; }
+}
