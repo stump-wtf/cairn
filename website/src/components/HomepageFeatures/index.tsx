@@ -79,6 +79,39 @@ const FEATURES: Feature[] = [
       </>
     ),
   },
+  {
+    code: '▤',
+    cat: 'reason',
+    title: 'One app shell',
+    body: (
+      <>
+        The same chrome for every type — logo, type badge, <strong>one URL control</strong>, and a
+        collapsible metadata &amp; comments panel.
+      </>
+    ),
+  },
+  {
+    code: '◈',
+    cat: 'read',
+    title: 'Provenance',
+    body: (
+      <>
+        Every artifact records <strong>who</strong> made it — human or model — through which
+        channel, and when it was captured.
+      </>
+    ),
+  },
+  {
+    code: '⧗',
+    cat: 'net',
+    title: 'Ephemeral & private',
+    body: (
+      <>
+        Ephemeral by default: a visible TTL and link-based access —{' '}
+        <em>🔒 you + anyone with link</em>.
+      </>
+    ),
+  },
 ];
 
 function Tile({code, cat, title, body}: Feature): ReactNode {
