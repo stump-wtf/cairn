@@ -22,6 +22,7 @@ import (
 
 	"github.com/joestump/cairn/internal/config"
 	"github.com/joestump/cairn/internal/db"
+	"github.com/joestump/cairn/internal/httpapi"
 	"github.com/joestump/cairn/internal/objectstore"
 	"github.com/joestump/cairn/internal/store"
 )
@@ -68,10 +69,19 @@ func run(logger *slog.Logger) error {
 	// The core service the transport adapters (REST/MCP/CLI) project. The
 	// share-type registry (previewability, anchor affordances) defaults to the
 	// process-wide sharetype.Default().
-	_ = store.New(pool, obj, store.Options{
+	svc := store.New(pool, obj, store.Options{
 		MaxUploadBytes:  cfg.MaxUploadBytes,
 		PreviewMaxBytes: cfg.PreviewMaxBytes,
 	})
+
+	// The /v1 REST/JSON adapter over the core service (ADR-0012).
+	api := httpapi.New(svc, nil, nil, httpapi.Config{
+		BaseURL:        cfg.BaseURL,
+		MaxUploadBytes: cfg.MaxUploadBytes,
+		DefaultTTL:     cfg.DefaultTTL,
+		RatePerSecond:  cfg.RatePerSecond,
+		RateBurst:      cfg.RateBurst,
+	}, logger)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -81,6 +91,7 @@ func run(logger *slog.Logger) error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	r.Mount("/", api.Handler())
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
