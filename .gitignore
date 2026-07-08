@@ -1,0 +1,19 @@
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Deps / build
+node_modules/
+dist/
+build/
+*.log
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# SDD worktrees
+.claude/worktrees/
