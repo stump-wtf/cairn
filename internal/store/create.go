@@ -36,6 +36,12 @@ func (in CreateArtifactInput) validate() error {
 	switch {
 	case in.ShareType == "":
 		return errs.Validationf("create: missing share type")
+	case in.ShareType == artifact.TypeBundle:
+		// A bundle is a members-only type built via CreateBundle (NULL body +
+		// bundle_members). Accepting it on the single-body path would mint a
+		// malformed bundle (a body blob, no members), so reject a client-supplied
+		// bundle type here. SPEC-0002 REQ "Bundles with N Members".
+		return errs.Validationf("create: bundle artifacts must be created via the bundle (multipart) path")
 	case in.Provenance.Channel == "":
 		return errs.Validationf("create: provenance channel is required")
 	case in.Provenance.ActorID == "":

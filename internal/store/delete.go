@@ -11,9 +11,19 @@ import (
 )
 
 // DeleteArtifact deletes an artifact, restricted to the owning principal, and
-// garbage-collects any body blob whose content-hash reference count across all
-// live artifacts and bundle members reaches zero. A blob still referenced by
-// another live artifact is retained.
+// garbage-collects the *metadata* row of any body blob whose content-hash
+// reference count across all live artifacts and bundle members reaches zero. A
+// blob still referenced by another live artifact is retained. The FK from
+// artifacts/bundle_members to blobs(sha256) makes this refcount race-safe at the
+// metadata layer.
+//
+// The storage object is deliberately NOT removed here. A byte-identical
+// concurrent upload may have dedup'd against the existing object (skipping
+// re-upload, ADR-0008) and be about to commit its own reference; deleting the
+// object inline would strand that new reference. Orphaned objects are swept by
+// the delayed reference-counted reaper and the object-storage lifecycle backstop
+// (#32), whose TTL exceeds the maximum artifact TTL so a live body is never
+// reaped.
 //
 // Expiry is honored as hard deletion elsewhere by the reaper (SPEC-0009); this
 // is the interactive owner-initiated delete. Annotation rows (SPEC-0006) are
@@ -23,8 +33,9 @@ import (
 // A non-owner or unknown id returns a uniform not-found so a delete probe leaks
 // no more than a read would (ADR-0005/ADR-0007).
 //
-// Governing: ADR-0008 (reference-counted GC), SPEC-0002 REQ "Artifact Lifecycle
-// — Delete and Expiry".
+// Governing: ADR-0008 (reference-counted GC; delayed reaper tolerates dedup
+// races), SPEC-0002 REQ "Artifact Lifecycle — Delete and Expiry", SPEC-0009 REQ
+// "Object-Storage Lifecycle Backstop" (#32).
 func (s *Store) DeleteArtifact(ctx context.Context, publicID, ownerID string) error {
 	if publicID == "" || ownerID == "" {
 		return errs.Validationf("delete: id and owner are required")
@@ -82,8 +93,10 @@ func (s *Store) DeleteArtifact(ctx context.Context, publicID, ownerID string) er
 		return fmt.Errorf("delete: remove artifact %s: %w", publicID, err)
 	}
 
-	// For each referenced blob, GC it iff nothing live references it any more.
-	var orphanKeys []string
+	// For each referenced blob, drop its metadata row iff nothing live references
+	// it any more. Only the row is removed; the storage object is left for the
+	// delayed reaper / lifecycle backstop (#32) so a concurrent dedup'd upload that
+	// skipped re-upload is never stranded (see the method doc).
 	for sha := range candidateSHAs {
 		var referenced bool
 		if err := tx.QueryRow(ctx,
@@ -96,28 +109,13 @@ func (s *Store) DeleteArtifact(ctx context.Context, publicID, ownerID string) er
 		if referenced {
 			continue // still referenced by another live artifact/member
 		}
-		var storageKey string
-		if err := tx.QueryRow(ctx,
-			`DELETE FROM blobs WHERE sha256 = $1 RETURNING storage_key`, sha,
-		).Scan(&storageKey); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				continue // already gone
-			}
+		if _, err := tx.Exec(ctx, `DELETE FROM blobs WHERE sha256 = $1`, sha); err != nil {
 			return fmt.Errorf("delete: drop blob %s: %w", sha, err)
 		}
-		orphanKeys = append(orphanKeys, storageKey)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("delete: commit: %w", err)
-	}
-
-	// Remove the now-unreferenced objects after the metadata commit. Postgres is
-	// the authority; a failure here only leaves GC-collectable debris, never a
-	// dangling reference. Detach from the request context so a nearly-cancelled
-	// request still cleans up.
-	for _, key := range orphanKeys {
-		_ = s.obj.Remove(context.WithoutCancel(ctx), key)
 	}
 	return nil
 }

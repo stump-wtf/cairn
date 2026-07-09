@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -203,7 +204,12 @@ func (s *Store) OpenMember(ctx context.Context, publicID, name string) (io.ReadC
 		a.ID, name,
 	).Scan(&info.SHA256, &info.Size, &info.MediaType, &storageKey)
 	if err != nil {
-		return nil, BodyInfo{}, fmt.Errorf("member %s/%s: %w", publicID, name, errs.ErrNotFound)
+		// Only a genuine miss is not-found; a transient DB fault must surface as
+		// an internal error, not a spurious 404 (mirror GetByPublicID).
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, BodyInfo{}, fmt.Errorf("member %s/%s: %w", publicID, name, errs.ErrNotFound)
+		}
+		return nil, BodyInfo{}, fmt.Errorf("open member %s/%s: %w", publicID, name, err)
 	}
 
 	rc, err := s.obj.Get(ctx, storageKey)

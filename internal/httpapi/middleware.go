@@ -56,13 +56,17 @@ func clientIP(r *http.Request) string {
 }
 
 // rateLimiter is a per-key token bucket. rate is tokens per second, burst the
-// bucket capacity. now is injectable for deterministic tests.
+// bucket capacity. now is injectable for deterministic tests. Idle buckets are
+// swept periodically so a stream of distinct client IPs cannot grow the map
+// without bound (a slow memory-DoS); idleTTL of 0 disables the sweep.
 type rateLimiter struct {
-	mu      sync.Mutex
-	buckets map[string]*tokenBucket
-	rate    float64
-	burst   float64
-	now     func() time.Time
+	mu        sync.Mutex
+	buckets   map[string]*tokenBucket
+	rate      float64
+	burst     float64
+	idleTTL   time.Duration
+	lastSweep time.Time
+	now       func() time.Time
 }
 
 type tokenBucket struct {
@@ -74,11 +78,20 @@ func newRateLimiter(ratePerSec float64, burst int) *rateLimiter {
 	if ratePerSec <= 0 || burst <= 0 {
 		return nil // disabled
 	}
+	// A bucket idle at least idleTTL has fully refilled to burst, so evicting and
+	// later recreating it is indistinguishable from keeping it — no fairness loss.
+	// Floor the TTL so tiny rates don't produce an unboundedly long sweep interval.
+	idleTTL := time.Duration(float64(burst) / ratePerSec * float64(time.Second))
+	if idleTTL < 10*time.Minute {
+		idleTTL = 10 * time.Minute
+	}
 	return &rateLimiter{
-		buckets: make(map[string]*tokenBucket),
-		rate:    ratePerSec,
-		burst:   float64(burst),
-		now:     time.Now,
+		buckets:   make(map[string]*tokenBucket),
+		rate:      ratePerSec,
+		burst:     float64(burst),
+		idleTTL:   idleTTL,
+		lastSweep: time.Now(),
+		now:       time.Now,
 	}
 }
 
@@ -89,6 +102,7 @@ func (rl *rateLimiter) allow(key string) (bool, time.Duration) {
 	defer rl.mu.Unlock()
 
 	now := rl.now()
+	rl.sweepLocked(now)
 	b, ok := rl.buckets[key]
 	if !ok {
 		b = &tokenBucket{tokens: rl.burst, last: now}
@@ -106,4 +120,19 @@ func (rl *rateLimiter) allow(key string) (bool, time.Duration) {
 	}
 	needed := (1 - b.tokens) / rl.rate
 	return false, time.Duration(needed * float64(time.Second))
+}
+
+// sweepLocked drops buckets untouched for at least idleTTL, at most once per
+// idleTTL so the O(n) scan is amortized. The caller must hold rl.mu. An idleTTL
+// of 0 disables sweeping entirely.
+func (rl *rateLimiter) sweepLocked(now time.Time) {
+	if rl.idleTTL <= 0 || now.Sub(rl.lastSweep) < rl.idleTTL {
+		return
+	}
+	for k, b := range rl.buckets {
+		if now.Sub(b.last) >= rl.idleTTL {
+			delete(rl.buckets, k)
+		}
+	}
+	rl.lastSweep = now
 }

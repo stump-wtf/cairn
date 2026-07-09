@@ -48,6 +48,38 @@ func TestRateLimiterTokenBucket(t *testing.T) {
 	}
 }
 
+func TestRateLimiterEvictsIdleBuckets(t *testing.T) {
+	base := time.Unix(1000, 0)
+	cur := base
+	rl := &rateLimiter{
+		buckets:   map[string]*tokenBucket{},
+		rate:      1,
+		burst:     2,
+		idleTTL:   time.Minute,
+		lastSweep: base,
+		now:       func() time.Time { return cur },
+	}
+
+	rl.allow("a")
+	rl.allow("b")
+	if len(rl.buckets) != 2 {
+		t.Fatalf("expected 2 buckets, got %d", len(rl.buckets))
+	}
+
+	// Past the idle TTL, a request for a fresh key sweeps the now-idle a and b.
+	cur = base.Add(2 * time.Minute)
+	rl.allow("c")
+	if _, ok := rl.buckets["a"]; ok {
+		t.Fatal("idle bucket a should have been evicted")
+	}
+	if _, ok := rl.buckets["b"]; ok {
+		t.Fatal("idle bucket b should have been evicted")
+	}
+	if _, ok := rl.buckets["c"]; !ok {
+		t.Fatal("the active bucket c must remain")
+	}
+}
+
 func TestURLScheme(t *testing.T) {
 	s := New(nil, nil, nil, Config{BaseURL: "https://cairn.sh/"}, slog.Default())
 	tests := []struct {
