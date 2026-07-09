@@ -40,6 +40,15 @@ type Config struct {
 	// DefaultTTL is the default artifact expiry when a surface does not set
 	// one explicitly (ADR-0007 short default TTL).
 	DefaultTTL time.Duration
+
+	// BaseURL is the public origin used to build short URLs (ADR-0005),
+	// e.g. https://cairn.sh.
+	BaseURL string
+
+	// Rate limiting for public/ingress endpoints (SPEC-0002 REQ "Rate
+	// Limiting"): tokens per second and bucket burst, per client IP.
+	RatePerSecond float64
+	RateBurst     int
 }
 
 // Load resolves configuration from the environment, applying defaults and
@@ -53,6 +62,7 @@ func Load() (*Config, error) {
 		S3SecretKey: env("CAIRN_S3_SECRET_KEY", "minioadmin"),
 		S3Bucket:    env("CAIRN_S3_BUCKET", "cairn"),
 		S3Region:    env("CAIRN_S3_REGION", "us-east-1"),
+		BaseURL:     env("CAIRN_BASE_URL", "https://cairn.sh"),
 	}
 
 	var err error
@@ -68,7 +78,27 @@ func Load() (*Config, error) {
 	if c.DefaultTTL, err = envDuration("CAIRN_DEFAULT_TTL", 7*24*time.Hour); err != nil {
 		return nil, err
 	}
+	if c.RatePerSecond, err = envFloat("CAIRN_RATE_PER_SECOND", 20); err != nil {
+		return nil, err
+	}
+	var burst int64
+	if burst, err = envInt64("CAIRN_RATE_BURST", 40); err != nil {
+		return nil, err
+	}
+	c.RateBurst = int(burst)
 	return c, nil
+}
+
+func envFloat(key string, def float64) (float64, error) {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def, nil
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, fmt.Errorf("config %s: %w", key, err)
+	}
+	return f, nil
 }
 
 func env(key, def string) string {

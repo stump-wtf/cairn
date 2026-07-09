@@ -36,6 +36,12 @@ func (in CreateArtifactInput) validate() error {
 	switch {
 	case in.ShareType == "":
 		return errs.Validationf("create: missing share type")
+	case in.ShareType == artifact.TypeBundle:
+		// A bundle is a members-only type built via CreateBundle (NULL body +
+		// bundle_members). Accepting it on the single-body path would mint a
+		// malformed bundle (a body blob, no members), so reject a client-supplied
+		// bundle type here. SPEC-0002 REQ "Bundles with N Members".
+		return errs.Validationf("create: bundle artifacts must be created via the bundle (multipart) path")
 	case in.Provenance.Channel == "":
 		return errs.Validationf("create: provenance channel is required")
 	case in.Provenance.ActorID == "":
@@ -137,7 +143,8 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 		return nil, fmt.Errorf("create: upsert blob %s: %w", staged.sha256, err)
 	}
 
-	if err := s.insertArtifact(ctx, tx, art); err != nil {
+	bodySHA := &art.BodySHA256
+	if err := s.insertArtifact(ctx, tx, art, bodySHA); err != nil {
 		return nil, err
 	}
 
@@ -149,8 +156,10 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 }
 
 // insertArtifact mints a public id and inserts the artifact, regenerating the id
-// and retrying via a savepoint on the rare public_id unique conflict.
-func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Artifact) error {
+// and retrying via a savepoint on the rare public_id unique conflict. bodySHA is
+// the body blob reference, or nil for a bundle (whose body_sha256 column is
+// NULL and whose members are inserted separately in the same transaction).
+func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Artifact, bodySHA *string) error {
 	const insertSQL = `
 		INSERT INTO artifacts
 			(public_id, share_type, title, body_sha256, size_bytes, media_type,
@@ -175,7 +184,7 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 			return fmt.Errorf("create: savepoint: %w", err)
 		}
 		err = sp.QueryRow(ctx, insertSQL,
-			art.PublicID, art.ShareType, art.Title, art.BodySHA256, art.Size,
+			art.PublicID, art.ShareType, art.Title, bodySHA, art.Size,
 			art.MediaType, art.Previewable, art.Provenance.ActorID,
 			art.Provenance.OnBehalfOf, art.Provenance.Channel,
 			art.Provenance.CapturedAt, art.Access.OwnerID, art.Access.Visibility,
