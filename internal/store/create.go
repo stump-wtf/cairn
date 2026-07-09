@@ -27,7 +27,6 @@ type CreateArtifactInput struct {
 	// ExpectedSHA256, if non-empty, is verified against the computed hash on
 	// finalize; a mismatch rejects the upload with no persisted state.
 	ExpectedSHA256 string
-	Previewable    bool
 	Provenance     artifact.Provenance
 	Access         artifact.AccessPolicy
 	ExpiresAt      time.Time
@@ -99,13 +98,23 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 		}
 	}
 
+	// Decide previewability at ingest from the share type + sniffed/declared
+	// media type and the preview size bound, via the registry (no switch on
+	// type). A non-previewable body becomes the generic file type (FILE/GZ).
+	// The decision is stored so every surface agrees without re-sniffing.
+	//
+	// Governing: ADR-0002 (share-type registry), SPEC-0002 REQ "Previewability
+	// Detection at Ingest".
+	effectiveType, previewable := s.registry.DecidePreview(
+		in.ShareType, staged.mediaType, staged.size, s.previewMax)
+
 	art := &artifact.Artifact{
-		ShareType:   in.ShareType,
+		ShareType:   effectiveType,
 		Title:       in.Title,
 		BodySHA256:  staged.sha256,
 		Size:        staged.size,
 		MediaType:   staged.mediaType,
-		Previewable: in.Previewable,
+		Previewable: previewable,
 		Provenance:  in.Provenance,
 		Access:      in.Access,
 		ExpiresAt:   in.ExpiresAt,

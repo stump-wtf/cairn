@@ -65,8 +65,13 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	// The core service the transport adapters (REST/MCP/CLI) project.
-	_ = store.New(pool, obj, store.Options{MaxUploadBytes: cfg.MaxUploadBytes})
+	// The core service the transport adapters (REST/MCP/CLI) project. The
+	// share-type registry (previewability, anchor affordances) defaults to the
+	// process-wide sharetype.Default().
+	_ = store.New(pool, obj, store.Options{
+		MaxUploadBytes:  cfg.MaxUploadBytes,
+		PreviewMaxBytes: cfg.PreviewMaxBytes,
+	})
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
