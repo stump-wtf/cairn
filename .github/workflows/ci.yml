@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cairn
+          POSTGRES_PASSWORD: cairn
+          POSTGRES_DB: cairn
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cairn"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+
+    env:
+      # Presence of these turns on the store integration tests.
+      CAIRN_TEST_DATABASE_URL: postgres://cairn:cairn@localhost:5432/cairn?sslmode=disable
+      CAIRN_TEST_S3_ENDPOINT: localhost:9000
+      CAIRN_TEST_S3_ACCESS_KEY: minioadmin
+      CAIRN_TEST_S3_SECRET_KEY: minioadmin
+      CAIRN_TEST_S3_BUCKET: cairn
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: gofmt
+        run: |
+          out="$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+          if [ -n "$out" ]; then echo "gofmt needed on:"; echo "$out"; exit 1; fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: build
+        run: go build ./...
+
+      # The official minio image needs a "server /data" command, which GitHub
+      # service containers can't supply — so start it as a step instead. The
+      # store auto-creates the bucket on first connect, so no mc bootstrap.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:9000/minio/health/ready >/dev/null 2>&1; then
+              echo "minio ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "minio did not become ready"; docker logs minio; exit 1
+
+      - name: test (race)
+        run: go test -race ./...
