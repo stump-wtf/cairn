@@ -77,12 +77,18 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	if err != nil {
 		return nil, fmt.Errorf("create: stream body: %w", err)
 	}
-	// Until the metadata commits, the staging object is only debris; remove it.
-	committed := false
+	// The staging object is transient on EVERY path: the new-blob path promotes
+	// it by Copy(staging→final) and the dedup-hit path never promotes it at all,
+	// so once it has served its purpose it is pure debris regardless of whether
+	// the metadata commit succeeds. Remove it unconditionally on the way out.
+	// A committed-gated cleanup leaked one orphan staging/<rand> object per
+	// successful upload (staging keys aren't in `blobs`, so the SPEC-0009 reaper
+	// can never reclaim them). WithoutCancel so cleanup still runs when the
+	// request context is cancelled after commit.
+	//
+	// Governing: SPEC-0002 REQ "Content Addressing and Blobs".
 	defer func() {
-		if !committed {
-			_ = s.obj.Remove(context.Background(), staged.stagingKey)
-		}
+		_ = s.obj.Remove(context.WithoutCancel(ctx), staged.stagingKey)
 	}()
 
 	// 2. Verify a client-declared checksum, if one was provided.
@@ -151,7 +157,6 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("create: commit: %w", err)
 	}
-	committed = true
 	return art, nil
 }
 

@@ -82,15 +82,21 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 		return nil, err
 	}
 
-	// Stream every member to a staging object first. Track staging keys so we
-	// can discard them unless the metadata commits.
+	// Stream every member to a staging object first. Each member's staging object
+	// is transient on EVERY path: the new-blob path promotes it by
+	// Copy(staging→final) and the dedup-hit path never promotes it at all, so
+	// once it has served its purpose it is pure debris regardless of whether the
+	// metadata commit succeeds. Remove each unconditionally on the way out. A
+	// committed-gated cleanup leaked one orphan staging/<rand> object per member
+	// per successful bundle (staging keys aren't in `blobs`, so the SPEC-0009
+	// reaper can never reclaim them). WithoutCancel so cleanup still runs when the
+	// request context is cancelled after commit.
+	//
+	// Governing: SPEC-0002 REQ "Content Addressing and Blobs".
 	staged := make([]stagedMember, 0, len(in.Members))
-	committed := false
 	defer func() {
-		if !committed {
-			for _, m := range staged {
-				_ = s.obj.Remove(context.WithoutCancel(ctx), m.blob.stagingKey)
-			}
+		for _, m := range staged {
+			_ = s.obj.Remove(context.WithoutCancel(ctx), m.blob.stagingKey)
 		}
 	}()
 
@@ -161,7 +167,6 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("bundle: commit: %w", err)
 	}
-	committed = true
 	return art, nil
 }
 
