@@ -92,6 +92,12 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/artifacts/{id}", s.handleGet)
 		r.Get("/artifacts/{id}/body", s.handleGetBody)
 		r.Get("/artifacts/{id}/members/*", s.handleGetMember)
+
+		// Share types contribute their own service surfaces (e.g. trajectory's
+		// /v1/runs* ingest routes) through the registry's RouteMounter
+		// capability; a new type's routes arrive by registration alone, with no
+		// edit to this router (ADR-0002).
+		s.reg.MountRoutes(r)
 	})
 	return r
 }
@@ -133,7 +139,7 @@ func (s *Server) toArtifactResponse(a *artifact.Artifact) artifactResponse {
 		MediaType:   a.MediaType,
 		Previewable: a.Previewable,
 		Checksum:    a.BodySHA256,
-		Badge:       s.reg.Resolve(a.ShareType).Badge(),
+		Badge:       s.reg.BadgeFor(a),
 		Provenance: provenanceView{
 			Actor:      a.Provenance.ActorID,
 			OnBehalfOf: a.Provenance.OnBehalfOf,
@@ -146,26 +152,24 @@ func (s *Server) toArtifactResponse(a *artifact.Artifact) artifactResponse {
 	}
 }
 
-// webURL builds the human short URL. Trajectories get the /run/ sub-path; all
-// other types live at the bare cairn.sh/<id> (ADR-0005 URL scheme).
+// webURL builds the human short URL. A type's legible sub-path (trajectory's
+// /run/) is registry data via the URLPrefixer capability — never a switch on
+// the type key here (ADR-0002; ADR-0005 URL scheme).
 func (s *Server) webURL(a *artifact.Artifact) string {
-	switch a.ShareType {
-	case sharetype.KeyTrajectory:
-		return s.cfg.BaseURL + "/run/" + a.PublicID
-	default:
-		return s.cfg.BaseURL + "/" + a.PublicID
-	}
+	return s.cfg.BaseURL + prefixedPath(s.reg.URLPrefixFor(a.ShareType).Web, a.PublicID)
 }
 
-// mcpHandle builds the agent handle. Webhooks and trajectories carry their
-// legible sub-prefixes; the same id token is reused verbatim (ADR-0005).
+// mcpHandle builds the agent handle. Webhook's hook/ and trajectory's run/
+// sub-prefixes come from the same registry capability; the same id token is
+// reused verbatim (ADR-0005).
 func (s *Server) mcpHandle(a *artifact.Artifact) string {
-	switch a.ShareType {
-	case sharetype.KeyWebhook:
-		return "mcp://cairn/hook/" + a.PublicID
-	case sharetype.KeyTrajectory:
-		return "mcp://cairn/run/" + a.PublicID
-	default:
-		return "mcp://cairn/" + a.PublicID
+	return "mcp://cairn" + prefixedPath(s.reg.URLPrefixFor(a.ShareType).MCP, a.PublicID)
+}
+
+// prefixedPath joins an optional single-segment prefix and an id into a path.
+func prefixedPath(prefix, id string) string {
+	if prefix != "" {
+		return "/" + prefix + "/" + id
 	}
+	return "/" + id
 }

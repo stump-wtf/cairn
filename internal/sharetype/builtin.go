@@ -1,6 +1,8 @@
 package sharetype
 
 import (
+	"mime"
+	"path"
 	"strings"
 
 	"github.com/joestump/cairn/internal/artifact"
@@ -20,7 +22,11 @@ const (
 )
 
 // simpleType is the common ShareType value: an identity, a badge, a
-// previewability predicate over media type, and a set of legal anchors.
+// previewability predicate over media type, and a set of legal anchors —
+// including the whole-artifact `artifact` anchor, which is registry data like
+// any other (webhook deliberately declares it reaction-only). Capabilities
+// beyond the base contract are added by embedding simpleType in a wrapper that
+// implements the optional interface (see prefixedType, codeShareType).
 type simpleType struct {
 	key     artifact.ShareType
 	badge   string
@@ -36,6 +42,70 @@ func (t simpleType) PreviewableMedia(mediaType string) bool {
 	return t.preview != nil && t.preview(mediaType)
 }
 
+// prefixedType composes simpleType with the URLPrefixer capability for types
+// whose short URL / MCP handle carry a legible sub-prefix (ADR-0005).
+type prefixedType struct {
+	simpleType
+	prefix URLPrefix
+}
+
+func (t prefixedType) URLPrefix() URLPrefix { return t.prefix }
+
+// codeShareType composes simpleType with the ArtifactBadger capability: a code
+// artifact's badge is its language (`GO`, `PY`, …) when recognizable, falling
+// back to the static CODE badge (ADR-0002 badge list: "`PY`/lang").
+type codeShareType struct {
+	simpleType
+}
+
+func (t codeShareType) BadgeFor(a *artifact.Artifact) string {
+	return langBadge(a.MediaType, a.Title)
+}
+
+// langBadge derives a short language badge from the artifact's media type,
+// falling back to its title's file extension. Returns "" when unrecognized so
+// the caller falls back to the type's static badge.
+func langBadge(mediaType, title string) string {
+	if mt, _, err := mime.ParseMediaType(mediaType); err == nil {
+		sub := mt[strings.Index(mt, "/")+1:]
+		sub = strings.TrimPrefix(sub, "x-")
+		if b, ok := langBadges[sub]; ok {
+			return b
+		}
+	}
+	if ext := strings.TrimPrefix(strings.ToLower(path.Ext(title)), "."); ext != "" {
+		if b, ok := langBadges[ext]; ok {
+			return b
+		}
+	}
+	return ""
+}
+
+// langBadges maps media-type subtypes (sans "x-" prefix) and file extensions to
+// their badge codes.
+var langBadges = map[string]string{
+	"go": "GO", "golang": "GO",
+	"python": "PY", "py": "PY",
+	"javascript": "JS", "js": "JS", "mjs": "JS",
+	"typescript": "TS", "ts": "TS",
+	"ruby": "RB", "rb": "RB",
+	"rust": "RS", "rs": "RS",
+	"java": "JAVA",
+	"c":    "C", "h": "C",
+	"c++": "CPP", "cpp": "CPP", "cc": "CPP", "hpp": "CPP",
+	"csharp": "CS", "cs": "CS",
+	"sh": "SH", "shellscript": "SH", "bash": "SH", "zsh": "SH",
+	"sql":  "SQL",
+	"yaml": "YAML", "yml": "YAML",
+	"json":   "JSON",
+	"toml":   "TOML",
+	"html":   "HTML",
+	"css":    "CSS",
+	"php":    "PHP",
+	"kotlin": "KT", "kt": "KT",
+	"swift": "SWIFT",
+}
+
 func isText(mediaType string) bool {
 	return strings.HasPrefix(strings.ToLower(mediaType), "text/")
 }
@@ -48,54 +118,110 @@ func isImage(mediaType string) bool {
 // type (bundle tabs, webhook stream, trajectory waterfall).
 func anyMedia(string) bool { return true }
 
-// The generic file handler is the total-resolution floor: never previewable,
-// only the (implicit) whole-artifact anchor. GZ is the same shape for gzip.
+// Built-in types. Badges follow ADR-0002 (`MD`, lang/`CODE`, `IMG`, `FILE`/`GZ`,
+// `HK`, `TRJ`); anchor capability sets follow the SPEC-0006 annotations design
+// matrix verbatim:
+//
+//	markdown    reactions: artifact, md_block, md_bullet     comments: artifact, text_selection
+//	code        reactions: artifact, code_line, code_range   comments: artifact, code_line, text_selection
+//	image       reactions: artifact, image_region            comments: artifact, image_region
+//	file/gz     reactions: artifact                          comments: artifact
+//	webhook     reactions: artifact, webhook_request         comments: — (none)
+//	trajectory  reactions: artifact, trajectory_turn,        comments: artifact, trajectory_span,
+//	                       trajectory_toolcall                         text_selection
+//
+// (bundle is not in the matrix; it mirrors file plus comment-only text
+// selection across its composed members until SPEC-0003 pins it down.)
+//
+// Governing: ADR-0002, ADR-0006, SPEC-0006 REQ "Registry-Gated Anchor
+// Capabilities", REQ "Webhook Reaction-Only Asymmetry".
 var (
-	fileType = simpleType{key: artifact.TypeFile, badge: "FILE"}
-	gzType   = simpleType{key: artifact.TypeGZ, badge: "GZ"}
+	// The generic file handler is the total-resolution floor: never previewable,
+	// whole-artifact annotations only. GZ is the same shape for gzip.
+	fileType = simpleType{
+		key:     artifact.TypeFile,
+		badge:   "FILE",
+		anchors: []AnchorSpec{both(AnchorArtifact)},
+	}
+	gzType = simpleType{
+		key:     artifact.TypeGZ,
+		badge:   "GZ",
+		anchors: []AnchorSpec{both(AnchorArtifact)},
+	}
 
 	markdownType = simpleType{
 		key:     KeyMarkdown,
 		badge:   "MD",
 		preview: isText,
-		anchors: []AnchorSpec{both(AnchorMarkdownBlock), both(AnchorMarkdownBullet), both(AnchorSelection)},
+		anchors: []AnchorSpec{
+			both(AnchorArtifact),
+			reactionOnly(AnchorMarkdownBlock),
+			reactionOnly(AnchorMarkdownBullet),
+			commentOnly(AnchorTextSelection),
+		},
 	}
-	codeType = simpleType{
+	codeType = codeShareType{simpleType{
 		key:     KeyCode,
 		badge:   "CODE",
 		preview: isText,
-		anchors: []AnchorSpec{both(AnchorCodeLine), both(AnchorSelection)},
-	}
+		anchors: []AnchorSpec{
+			both(AnchorArtifact),
+			both(AnchorCodeLine),
+			reactionOnly(AnchorCodeRange),
+			commentOnly(AnchorTextSelection),
+		},
+	}}
 	imageType = simpleType{
 		key:     KeyImage,
 		badge:   "IMG",
 		preview: isImage,
-		anchors: []AnchorSpec{both(AnchorImageRegion)},
+		anchors: []AnchorSpec{
+			both(AnchorArtifact),
+			both(AnchorImageRegion),
+		},
 	}
 	bundleType = simpleType{
 		key:     artifact.TypeBundle,
 		badge:   "BUNDLE",
 		preview: anyMedia,
-		anchors: []AnchorSpec{both(AnchorSelection)},
-	}
-	// Webhook requests are reactable but not comment-threaded — encoded as a
-	// property of the type (SPEC-0002 REQ "Per-Type Anchor Affordances").
-	webhookType = simpleType{
-		key:     KeyWebhook,
-		badge:   "HOOK",
-		preview: anyMedia,
-		anchors: []AnchorSpec{reactionOnly(AnchorWebhookRequest)},
-	}
-	trajectoryType = simpleType{
-		key:     KeyTrajectory,
-		badge:   "RUN",
-		preview: anyMedia,
 		anchors: []AnchorSpec{
-			both(AnchorTrajectorySpan),
-			both(AnchorTrajectoryTurn),
-			both(AnchorTrajectoryToolCall),
-			both(AnchorSelection),
+			both(AnchorArtifact),
+			commentOnly(AnchorTextSelection),
 		},
+	}
+	// Webhook artifacts accept comments on NO anchor — not even whole-artifact —
+	// while staying reactable; the asymmetry is registry data, not special-cased
+	// code (SPEC-0006 REQ "Webhook Reaction-Only Asymmetry"). The MCP handle
+	// carries the legible hook/ prefix; the web URL stays bare (ADR-0005).
+	webhookType = prefixedType{
+		simpleType{
+			key:     KeyWebhook,
+			badge:   "HK",
+			preview: anyMedia,
+			anchors: []AnchorSpec{
+				reactionOnly(AnchorArtifact),
+				reactionOnly(AnchorWebhookRequest),
+			},
+		},
+		URLPrefix{MCP: "hook"},
+	}
+	// Trajectory: reactions pin moments (turns, tool calls); comment threads
+	// attach to spans and text selections (SPEC-0006 matrix). Both the web URL
+	// and the MCP handle carry the run/ prefix (ADR-0005).
+	trajectoryType = prefixedType{
+		simpleType{
+			key:     KeyTrajectory,
+			badge:   "TRJ",
+			preview: anyMedia,
+			anchors: []AnchorSpec{
+				both(AnchorArtifact),
+				reactionOnly(AnchorTrajectoryTurn),
+				reactionOnly(AnchorTrajectoryToolCall),
+				commentOnly(AnchorTrajectorySpan),
+				commentOnly(AnchorTextSelection),
+			},
+		},
+		URLPrefix{Web: "run", MCP: "run"},
 	}
 )
 
