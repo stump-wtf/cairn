@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 )
 
@@ -123,6 +124,21 @@ func (m *Memory) Len() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.objects)
+}
+
+// KeysWithPrefix returns the stored keys that begin with prefix (test helper).
+// It lets ingest tests assert that no orphan staging/<rand> object survives a
+// successful create — the leak SPEC-0002 content-addressing forbids.
+func (m *Memory) KeysWithPrefix(prefix string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []string
+	for k := range m.objects {
+		if strings.HasPrefix(k, prefix) {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // ErrNotExist is returned when reading or copying a missing object.
