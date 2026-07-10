@@ -1,16 +1,28 @@
 package sharetype
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"html/template"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/errs"
 )
 
-// Governing: ADR-0002 (Extensible Share-Type Model), SPEC-0002 REQ "Share-Type
-// Registry and Total Resolution", REQ "Per-Type Anchor Affordances", REQ
-// "Previewability Detection at Ingest".
+// Governing: ADR-0002 (Extensible Share-Type Model; optional capability
+// interfaces), SPEC-0002 REQ "Share-Type Registry and Total Resolution", REQ
+// "Per-Type Anchor Affordances", REQ "Previewability Detection at Ingest",
+// SPEC-0006 REQ "Registry-Gated Anchor Capabilities", REQ "Webhook
+// Reaction-Only Asymmetry".
 
 func TestResolveTotalToGenericFile(t *testing.T) {
 	r := Default()
@@ -57,7 +69,7 @@ func TestAddingTypeIsAdditive(t *testing.T) {
 		key:     "sbom",
 		badge:   "SBOM",
 		preview: isText,
-		anchors: []AnchorSpec{both(AnchorSelection)},
+		anchors: []AnchorSpec{both(AnchorArtifact), commentOnly(AnchorTextSelection)},
 	}
 	r.Register(custom)
 	if got := r.Resolve("sbom"); got.Badge() != "SBOM" {
@@ -110,6 +122,78 @@ func TestDecidePreviewZeroBoundDisablesSizeCheck(t *testing.T) {
 	}
 }
 
+// TestCapabilityMatrix exercises the full reconciled SPEC-0006 anchor
+// capability matrix for every built-in type — reactions and comments — and
+// asserts the declared anchor sets match the annotations design matrix exactly,
+// so registry data cannot drift from the spec.
+func TestCapabilityMatrix(t *testing.T) {
+	r := Default()
+	type rc struct{ reactions, comments bool }
+	matrix := map[artifact.ShareType]map[Anchor]rc{
+		KeyMarkdown: {
+			AnchorArtifact:       {true, true},
+			AnchorMarkdownBlock:  {true, false},
+			AnchorMarkdownBullet: {true, false},
+			AnchorTextSelection:  {false, true},
+		},
+		KeyCode: {
+			AnchorArtifact:      {true, true},
+			AnchorCodeLine:      {true, true},
+			AnchorCodeRange:     {true, false},
+			AnchorTextSelection: {false, true},
+		},
+		KeyImage: {
+			AnchorArtifact:    {true, true},
+			AnchorImageRegion: {true, true},
+		},
+		artifact.TypeFile: {
+			AnchorArtifact: {true, true},
+		},
+		artifact.TypeGZ: {
+			AnchorArtifact: {true, true},
+		},
+		// Webhook: reactable on artifact + webhook_request, comments on NOTHING
+		// (SPEC-0006 REQ "Webhook Reaction-Only Asymmetry").
+		KeyWebhook: {
+			AnchorArtifact:       {true, false},
+			AnchorWebhookRequest: {true, false},
+		},
+		KeyTrajectory: {
+			AnchorArtifact:           {true, true},
+			AnchorTrajectoryTurn:     {true, false},
+			AnchorTrajectoryToolCall: {true, false},
+			AnchorTrajectorySpan:     {false, true},
+			AnchorTextSelection:      {false, true},
+		},
+	}
+	for key, anchors := range matrix {
+		for anchor, want := range anchors {
+			if got := r.AllowsAnchor(key, anchor, KindReaction); got != want.reactions {
+				t.Errorf("AllowsAnchor(%q,%q,reaction) = %v, want %v", key, anchor, got, want.reactions)
+			}
+			if got := r.AllowsAnchor(key, anchor, KindComment); got != want.comments {
+				t.Errorf("AllowsAnchor(%q,%q,comment) = %v, want %v", key, anchor, got, want.comments)
+			}
+		}
+		// The declared spec set must match the matrix exactly — no extra anchors.
+		declared := r.Resolve(key).Anchors()
+		for _, spec := range declared {
+			want, ok := anchors[spec.Anchor]
+			if !ok {
+				t.Errorf("type %q declares anchor %q not in the SPEC-0006 matrix", key, spec.Anchor)
+				continue
+			}
+			if spec.Reactions != want.reactions || spec.Comments != want.comments {
+				t.Errorf("type %q anchor %q = {reactions:%v comments:%v}, want {%v %v}",
+					key, spec.Anchor, spec.Reactions, spec.Comments, want.reactions, want.comments)
+			}
+		}
+		if len(declared) != len(anchors) {
+			t.Errorf("type %q declares %d anchors, matrix has %d", key, len(declared), len(anchors))
+		}
+	}
+}
+
 func TestAnchorAffordances(t *testing.T) {
 	r := Default()
 	tests := []struct {
@@ -119,21 +203,36 @@ func TestAnchorAffordances(t *testing.T) {
 		kind   AnnotationKind
 		want   bool
 	}{
-		// Whole-artifact is always legal for every type and kind.
-		{"whole artifact reaction on file", artifact.TypeFile, AnchorWholeArtifact, KindReaction, true},
-		{"whole artifact comment on file", artifact.TypeFile, AnchorWholeArtifact, KindComment, true},
-		{"whole artifact on unknown type", "mystery", AnchorWholeArtifact, KindComment, true},
-		// Markdown block permits both.
-		{"markdown block comment", KeyMarkdown, AnchorMarkdownBlock, KindComment, true},
+		// Whole-artifact on most types permits both kinds — as declared data.
+		{"whole artifact reaction on file", artifact.TypeFile, AnchorArtifact, KindReaction, true},
+		{"whole artifact comment on file", artifact.TypeFile, AnchorArtifact, KindComment, true},
+		// An unknown type resolves to the file fallback, which keeps it
+		// annotatable at the whole-artifact level (ADR-0002 degradation floor).
+		{"whole artifact on unknown type", "mystery", AnchorArtifact, KindComment, true},
+		// Markdown blocks/bullets are reaction pins; comments ride selections.
 		{"markdown block reaction", KeyMarkdown, AnchorMarkdownBlock, KindReaction, true},
-		// Webhook request is reaction-only: reactable but NOT comment-threaded.
+		{"markdown block comment rejected", KeyMarkdown, AnchorMarkdownBlock, KindComment, false},
+		{"markdown selection comment", KeyMarkdown, AnchorTextSelection, KindComment, true},
+		{"markdown selection reaction rejected", KeyMarkdown, AnchorTextSelection, KindReaction, false},
+		// Webhook rejects ALL comments — even whole-artifact — but stays reactable.
 		{"webhook request reaction", KeyWebhook, AnchorWebhookRequest, KindReaction, true},
 		{"webhook request comment rejected", KeyWebhook, AnchorWebhookRequest, KindComment, false},
+		{"webhook whole-artifact comment rejected", KeyWebhook, AnchorArtifact, KindComment, false},
+		{"webhook whole-artifact reaction", KeyWebhook, AnchorArtifact, KindReaction, true},
+		// Trajectory: reactions on turn/toolcall only; comments on span/selection only.
+		{"trajectory turn reaction", KeyTrajectory, AnchorTrajectoryTurn, KindReaction, true},
+		{"trajectory turn comment rejected", KeyTrajectory, AnchorTrajectoryTurn, KindComment, false},
+		{"trajectory span comment", KeyTrajectory, AnchorTrajectorySpan, KindComment, true},
+		{"trajectory span reaction rejected", KeyTrajectory, AnchorTrajectorySpan, KindReaction, false},
+		// Code: line permits both, range is reaction-only.
+		{"code line comment", KeyCode, AnchorCodeLine, KindComment, true},
+		{"code range reaction", KeyCode, AnchorCodeRange, KindReaction, true},
+		{"code range comment rejected", KeyCode, AnchorCodeRange, KindComment, false},
 		// An anchor a type does not declare is rejected.
 		{"code line on markdown rejected", KeyMarkdown, AnchorCodeLine, KindComment, false},
 		{"image region on code rejected", KeyCode, AnchorImageRegion, KindReaction, false},
 		// Generic file permits only whole-artifact, so any specific anchor fails.
-		{"selection on file rejected", artifact.TypeFile, AnchorSelection, KindComment, false},
+		{"selection on file rejected", artifact.TypeFile, AnchorTextSelection, KindComment, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -145,21 +244,287 @@ func TestAnchorAffordances(t *testing.T) {
 }
 
 func TestValidateAnchorReturnsValidationError(t *testing.T) {
-	// A comment thread on a webhook request must be rejected with a validation
-	// code (SPEC-0002 "Illegal anchor rejected").
-	err := Default().ValidateAnchor(KeyWebhook, AnchorWebhookRequest, KindComment)
-	if err == nil {
-		t.Fatal("expected a validation error for a comment on a webhook request")
-	}
-	if errs.CodeOf(err) != errs.CodeValidation {
-		t.Fatalf("code = %q, want validation_failed", errs.CodeOf(err))
-	}
-	if !errors.Is(err, errs.ErrValidation) {
-		t.Fatal("error should wrap errs.ErrValidation")
+	// A comment anywhere on a webhook artifact must be rejected with a
+	// validation code (SPEC-0006 "Comment on a webhook request refused").
+	for _, anchor := range []Anchor{AnchorWebhookRequest, AnchorArtifact} {
+		err := Default().ValidateAnchor(KeyWebhook, anchor, KindComment)
+		if err == nil {
+			t.Fatalf("expected a validation error for a comment on webhook %q anchor", anchor)
+		}
+		if errs.CodeOf(err) != errs.CodeValidation {
+			t.Fatalf("code = %q, want validation_failed", errs.CodeOf(err))
+		}
+		if !errors.Is(err, errs.ErrValidation) {
+			t.Fatal("error should wrap errs.ErrValidation")
+		}
 	}
 	// A legal anchor returns nil.
-	if err := Default().ValidateAnchor(KeyWebhook, AnchorWholeArtifact, KindComment); err != nil {
-		t.Fatalf("whole-artifact comment should be legal, got %v", err)
+	if err := Default().ValidateAnchor(KeyWebhook, AnchorArtifact, KindReaction); err != nil {
+		t.Fatalf("whole-artifact reaction on webhook should be legal, got %v", err)
+	}
+	if err := Default().ValidateAnchor(KeyMarkdown, AnchorArtifact, KindComment); err != nil {
+		t.Fatalf("whole-artifact comment on markdown should be legal, got %v", err)
+	}
+}
+
+func TestAnchorTypeStringsMatchSpec(t *testing.T) {
+	// The Anchor constants are the persisted anchor_type discriminators; they
+	// must match the SPEC-0006 annotations design matrix verbatim.
+	want := map[Anchor]string{
+		AnchorArtifact:           "artifact",
+		AnchorMarkdownBlock:      "md_block",
+		AnchorMarkdownBullet:     "md_bullet",
+		AnchorTextSelection:      "text_selection",
+		AnchorCodeLine:           "code_line",
+		AnchorCodeRange:          "code_range",
+		AnchorImageRegion:        "image_region",
+		AnchorWebhookRequest:     "webhook_request",
+		AnchorTrajectorySpan:     "trajectory_span",
+		AnchorTrajectoryTurn:     "trajectory_turn",
+		AnchorTrajectoryToolCall: "trajectory_toolcall",
+	}
+	for anchor, s := range want {
+		if string(anchor) != s {
+			t.Errorf("anchor constant = %q, want %q", anchor, s)
+		}
+	}
+}
+
+func TestBadges(t *testing.T) {
+	// Badge codes follow ADR-0002: MD, CODE/lang, IMG, FILE/GZ, HK, TRJ.
+	want := map[artifact.ShareType]string{
+		artifact.TypeFile:   "FILE",
+		artifact.TypeGZ:     "GZ",
+		artifact.TypeBundle: "BUNDLE",
+		KeyMarkdown:         "MD",
+		KeyCode:             "CODE",
+		KeyImage:            "IMG",
+		KeyWebhook:          "HK",
+		KeyTrajectory:       "TRJ",
+	}
+	for key, badge := range want {
+		if b := Default().Resolve(key).Badge(); b != badge {
+			t.Errorf("type %q badge = %q, want %q", key, b, badge)
+		}
+	}
+}
+
+func TestBadgeForLangBadges(t *testing.T) {
+	r := Default()
+	tests := []struct {
+		name  string
+		a     *artifact.Artifact
+		badge string
+	}{
+		{"go by media type", &artifact.Artifact{ShareType: KeyCode, MediaType: "text/x-go"}, "GO"},
+		{"python by media type", &artifact.Artifact{ShareType: KeyCode, MediaType: "text/x-python"}, "PY"},
+		{"python with charset param", &artifact.Artifact{ShareType: KeyCode, MediaType: "text/x-python; charset=utf-8"}, "PY"},
+		{"ts by title extension", &artifact.Artifact{ShareType: KeyCode, MediaType: "text/plain", Title: "deploy.ts"}, "TS"},
+		{"unrecognized lang falls back", &artifact.Artifact{ShareType: KeyCode, MediaType: "text/plain", Title: "notes.xyz"}, "CODE"},
+		{"non-code type uses static badge", &artifact.Artifact{ShareType: KeyTrajectory, MediaType: "application/json"}, "TRJ"},
+		{"unknown type falls back to FILE", &artifact.Artifact{ShareType: "mystery", MediaType: "text/plain"}, "FILE"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := r.BadgeFor(tc.a); got != tc.badge {
+				t.Fatalf("BadgeFor = %q, want %q", got, tc.badge)
+			}
+		})
+	}
+}
+
+func TestURLPrefixFor(t *testing.T) {
+	r := Default()
+	tests := []struct {
+		key  artifact.ShareType
+		want URLPrefix
+	}{
+		{KeyTrajectory, URLPrefix{Web: "run", MCP: "run"}},
+		{KeyWebhook, URLPrefix{Web: "", MCP: "hook"}},
+		{KeyMarkdown, URLPrefix{}},
+		{artifact.TypeFile, URLPrefix{}},
+		{"unknown-type", URLPrefix{}},
+	}
+	for _, tc := range tests {
+		if got := r.URLPrefixFor(tc.key); got != tc.want {
+			t.Errorf("URLPrefixFor(%q) = %+v, want %+v", tc.key, got, tc.want)
+		}
+	}
+}
+
+// capType is a test share type composing every optional capability, proving a
+// new type registers identity + anchors + previewability + viewer + panel +
+// locator schemas + URL prefix + routes with zero edits to store/httpapi core
+// (the acceptance bar of the SDK story).
+type capType struct {
+	simpleType
+}
+
+func (t capType) URLPrefix() URLPrefix { return URLPrefix{Web: "cap", MCP: "cap"} }
+
+func (t capType) BadgeFor(a *artifact.Artifact) string { return "CAP!" }
+
+func (t capType) RenderBody(ctx context.Context, a *artifact.Artifact, body io.Reader) (template.HTML, error) {
+	b, err := io.ReadAll(body)
+	if err != nil {
+		return "", err
+	}
+	return template.HTML("<pre>" + template.HTMLEscapeString(string(b)) + "</pre>"), nil
+}
+
+func (t capType) MetadataPanel(a *artifact.Artifact) []PanelField {
+	return []PanelField{{Label: "Size", Value: fmt.Sprintf("%d bytes", a.Size)}}
+}
+
+func (t capType) LocatorSchema(anchor Anchor) LocatorFunc {
+	if anchor != AnchorCodeLine {
+		return nil
+	}
+	return func(ref json.RawMessage) error {
+		var loc struct {
+			Line *int `json:"line"`
+		}
+		if err := json.Unmarshal(ref, &loc); err != nil || loc.Line == nil || *loc.Line < 1 {
+			return errs.Validationf("code_line locator requires a positive line")
+		}
+		return nil
+	}
+}
+
+func (t capType) MountRoutes(r chi.Router) {
+	r.Get("/caps/ping", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("pong"))
+	})
+}
+
+func newCapRegistry(t *testing.T) *Registry {
+	t.Helper()
+	r := NewRegistry(fileType)
+	r.Register(fileType)
+	r.Register(capType{simpleType{
+		key:     "cap",
+		badge:   "CAP",
+		preview: anyMedia,
+		anchors: []AnchorSpec{both(AnchorArtifact), both(AnchorCodeLine), commentOnly(AnchorTextSelection)},
+	}})
+	return r
+}
+
+func TestCapabilityBodyViewer(t *testing.T) {
+	r := newCapRegistry(t)
+	v, ok := r.BodyViewerFor("cap")
+	if !ok {
+		t.Fatal("cap type should expose a BodyViewer")
+	}
+	frag, err := v.RenderBody(context.Background(), &artifact.Artifact{ShareType: "cap"}, strings.NewReader("<b>hi</b>"))
+	if err != nil {
+		t.Fatalf("RenderBody: %v", err)
+	}
+	if want := template.HTML("<pre>&lt;b&gt;hi&lt;/b&gt;</pre>"); frag != want {
+		t.Fatalf("RenderBody = %q, want %q", frag, want)
+	}
+	// A type without the capability reports (nil, false) so the shell falls
+	// back to the generic file card.
+	if _, ok := r.BodyViewerFor(artifact.TypeFile); ok {
+		t.Fatal("file type should not expose a BodyViewer")
+	}
+	if _, ok := r.BodyViewerFor("never-registered"); ok {
+		t.Fatal("unknown type should resolve to the viewerless file fallback")
+	}
+}
+
+func TestCapabilityMetadataPanel(t *testing.T) {
+	r := newCapRegistry(t)
+	fields := r.MetadataPanelFor(&artifact.Artifact{ShareType: "cap", Size: 42})
+	if len(fields) != 1 || fields[0].Label != "Size" || fields[0].Value != "42 bytes" {
+		t.Fatalf("MetadataPanelFor = %+v, want [{Size 42 bytes}]", fields)
+	}
+	if got := r.MetadataPanelFor(&artifact.Artifact{ShareType: artifact.TypeFile}); got != nil {
+		t.Fatalf("file type panel = %+v, want nil (no capability)", got)
+	}
+}
+
+func TestCapabilityLocatorSchema(t *testing.T) {
+	r := newCapRegistry(t)
+	// The whole-artifact anchor_ref must be the empty object (SPEC-0006
+	// "Whole-artifact anchor") — enforced by the registry for every type.
+	for _, ok := range []string{"", "{}", " { } "} {
+		if err := r.ValidateLocator("cap", AnchorArtifact, json.RawMessage(ok)); err != nil {
+			t.Errorf("ValidateLocator(artifact, %q) = %v, want nil", ok, err)
+		}
+	}
+	for _, bad := range []string{`{"x":1}`, `[1]`, `"s"`} {
+		err := r.ValidateLocator("cap", AnchorArtifact, json.RawMessage(bad))
+		if err == nil {
+			t.Errorf("ValidateLocator(artifact, %q) = nil, want validation error", bad)
+		} else if errs.CodeOf(err) != errs.CodeValidation {
+			t.Errorf("ValidateLocator(artifact, %q) code = %q, want validation_failed", bad, errs.CodeOf(err))
+		}
+	}
+	// A type-declared schema validates its anchor_ref.
+	if err := r.ValidateLocator("cap", AnchorCodeLine, json.RawMessage(`{"line":3}`)); err != nil {
+		t.Fatalf("valid code_line locator rejected: %v", err)
+	}
+	if err := r.ValidateLocator("cap", AnchorCodeLine, json.RawMessage(`{"line":0}`)); err == nil {
+		t.Fatal("line 0 locator should be rejected by the type's schema")
+	}
+	if err := r.ValidateLocator("cap", AnchorCodeLine, json.RawMessage(`{"nope":true}`)); err == nil {
+		t.Fatal("shapeless locator should be rejected by the type's schema")
+	}
+	// An anchor with no declared schema accepts any payload (tightened later
+	// as each viewer story lands its locator shapes).
+	if err := r.ValidateLocator("cap", AnchorTextSelection, json.RawMessage(`{"whatever":1}`)); err != nil {
+		t.Fatalf("schemaless anchor should accept any payload, got %v", err)
+	}
+	// A type without the LocatorSchemer capability accepts any non-artifact ref.
+	if err := r.ValidateLocator(artifact.TypeFile, AnchorCodeLine, json.RawMessage(`{"line":-9}`)); err != nil {
+		t.Fatalf("capability-less type should not validate locators, got %v", err)
+	}
+}
+
+func TestCapabilityRouteMounting(t *testing.T) {
+	r := newCapRegistry(t)
+	router := chi.NewRouter()
+	router.Route("/v1", func(v1 chi.Router) {
+		r.MountRoutes(v1)
+	})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/v1/caps/ping")
+	if err != nil {
+		t.Fatalf("GET /v1/caps/ping: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "pong" {
+		t.Fatalf("body = %q, want pong", body)
+	}
+}
+
+func TestCapabilityBadgeAndPrefixViaRegistry(t *testing.T) {
+	r := newCapRegistry(t)
+	if got := r.URLPrefixFor("cap"); got != (URLPrefix{Web: "cap", MCP: "cap"}) {
+		t.Fatalf("URLPrefixFor(cap) = %+v", got)
+	}
+	if got := r.BadgeFor(&artifact.Artifact{ShareType: "cap"}); got != "CAP!" {
+		t.Fatalf("BadgeFor(cap) = %q, want dynamic CAP!", got)
+	}
+}
+
+func TestTypesIsSortedAndComplete(t *testing.T) {
+	types := Default().Types()
+	if len(types) != 8 {
+		t.Fatalf("Types() returned %d types, want 8 built-ins", len(types))
+	}
+	for i := 1; i < len(types); i++ {
+		if types[i-1].Key() >= types[i].Key() {
+			t.Fatalf("Types() not sorted: %q before %q", types[i-1].Key(), types[i].Key())
+		}
 	}
 }
 

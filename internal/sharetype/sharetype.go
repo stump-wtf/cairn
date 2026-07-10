@@ -28,21 +28,30 @@ import (
 	"github.com/joestump/cairn/internal/errs"
 )
 
-// ShareType is the single interface every kind satisfies. A type sees only its
-// own identity, badge, previewability predicate, and legal anchors; it never
-// touches the Artifact aggregate or the storage layer, so adding a type is
-// purely additive (ADR-0002).
+// ShareType is the single base interface every kind satisfies. A type sees only
+// its own identity, badge, previewability predicate, and legal anchors; it
+// never touches the Artifact aggregate or the storage layer, so adding a type
+// is purely additive (ADR-0002). The base contract is deliberately narrow and
+// frozen: everything else a type may contribute — URL prefixes, a body viewer,
+// metadata-panel fields, locator schemas, service routes, artifact-dependent
+// badges — is an OPTIONAL capability interface discovered by type assertion at
+// the registry seam (see capability.go), never a new method here.
 type ShareType interface {
 	// Key is the registry key stored in artifacts.share_type.
 	Key() artifact.ShareType
-	// Badge is the short human/agent-facing label (e.g. "MD", "IMG", "HOOK").
+	// Badge is the short human/agent-facing label (e.g. "MD", "IMG", "HK",
+	// "TRJ"). A type whose badge depends on the concrete artifact (code's lang
+	// badge) additionally implements ArtifactBadger; this is the static default.
 	Badge() string
 	// PreviewableMedia reports whether a rich viewer exists for this type paired
 	// with the given (sniffed/declared) media type. The registry additionally
 	// applies the size bound before recording previewable=true.
 	PreviewableMedia(mediaType string) bool
-	// Anchors declares the annotation anchors legal for this type. Whole-artifact
-	// is always legal and is added by the registry, so a type need not list it.
+	// Anchors declares the annotation anchors legal for this type, including the
+	// whole-artifact `artifact` anchor and which kinds each permits. The full
+	// capability matrix is registry data (SPEC-0006 REQ "Registry-Gated Anchor
+	// Capabilities"); nothing — not even whole-artifact — is implied centrally,
+	// which is how webhook rejects all comments while staying reactable.
 	Anchors() []AnchorSpec
 }
 
@@ -122,13 +131,13 @@ func (r *Registry) DecidePreview(declared artifact.ShareType, mediaType string, 
 }
 
 // AllowsAnchor reports whether an annotation of the given kind may target the
-// given anchor on an artifact of the given type. Whole-artifact always permits
-// both reactions and comments. This is the single source of truth the annotation
-// layer (SPEC-0006) validates against.
+// given anchor on an artifact of the given type. The entire capability matrix —
+// including whole-artifact legality — is per-type registry data with no central
+// carve-outs, so the webhook type can reject every comment anchor (SPEC-0006
+// REQ "Webhook Reaction-Only Asymmetry") while the generic-file fallback keeps
+// unknown types annotatable at the whole-artifact level. This is the single
+// source of truth the annotation layer (SPEC-0006) validates against.
 func (r *Registry) AllowsAnchor(key artifact.ShareType, anchor Anchor, kind AnnotationKind) bool {
-	if anchor == AnchorWholeArtifact {
-		return true
-	}
 	handler := r.Resolve(key)
 	for _, spec := range handler.Anchors() {
 		if spec.Anchor != anchor {
