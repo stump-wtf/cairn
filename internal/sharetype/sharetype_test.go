@@ -398,10 +398,21 @@ func (t capType) MountRoutes(r chi.Router) {
 	})
 }
 
+// bareType implements only the base ShareType contract — no optional
+// capabilities at all (unlike simpleType, which supplies the built-in locator
+// schemas) — proving every capability helper degrades totally.
+type bareType struct{ key artifact.ShareType }
+
+func (t bareType) Key() artifact.ShareType      { return t.key }
+func (t bareType) Badge() string                { return "BARE" }
+func (t bareType) PreviewableMedia(string) bool { return false }
+func (t bareType) Anchors() []AnchorSpec        { return []AnchorSpec{both(AnchorArtifact)} }
+
 func newCapRegistry(t *testing.T) *Registry {
 	t.Helper()
 	r := NewRegistry(fileType)
 	r.Register(fileType)
+	r.Register(bareType{key: "bare"})
 	r.Register(capType{simpleType{
 		key:     "cap",
 		badge:   "CAP",
@@ -478,7 +489,7 @@ func TestCapabilityLocatorSchema(t *testing.T) {
 		t.Fatalf("schemaless anchor should accept any payload, got %v", err)
 	}
 	// A type without the LocatorSchemer capability accepts any non-artifact ref.
-	if err := r.ValidateLocator(artifact.TypeFile, AnchorCodeLine, json.RawMessage(`{"line":-9}`)); err != nil {
+	if err := r.ValidateLocator("bare", AnchorCodeLine, json.RawMessage(`{"line":-9}`)); err != nil {
 		t.Fatalf("capability-less type should not validate locators, got %v", err)
 	}
 }
