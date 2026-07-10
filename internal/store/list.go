@@ -22,7 +22,7 @@ const (
 const binColumns = `
 	id, public_id, share_type, title, body_sha256, size_bytes,
 	media_type, previewable, actor_id, on_behalf_of, channel,
-	captured_at, owner_id, visibility, reaction_count + comment_count,
+	captured_at, owner_id, visibility, reaction_count, comment_count, pin_count,
 	expires_at, created_at`
 
 // BinPage is one page of the Bin plus the cursor to fetch the next page (empty
@@ -111,7 +111,8 @@ func scanArtifact(row rowScanner) (*artifact.Artifact, error) {
 		&a.ID, &a.PublicID, &a.ShareType, &a.Title, &bodySHA, &a.Size,
 		&a.MediaType, &a.Previewable, &a.Provenance.ActorID,
 		&a.Provenance.OnBehalfOf, &a.Provenance.Channel, &a.Provenance.CapturedAt,
-		&a.Access.OwnerID, &a.Access.Visibility, &a.AnnotationCount,
+		&a.Access.OwnerID, &a.Access.Visibility,
+		&a.ReactionCount, &a.CommentCount, &a.PinCount,
 		&a.ExpiresAt, &a.CreatedAt,
 	); err != nil {
 		return nil, err
