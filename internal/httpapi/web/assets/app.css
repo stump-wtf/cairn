@@ -348,6 +348,13 @@ body.landing { display: flex; align-items: center; justify-content: center; text
 .live-dot { display: none; width: 7px; height: 7px; border-radius: 999px; background: var(--green); }
 .bin-row[data-type="webhook"] .live-dot,
 .bin-row[data-type="trajectory"] .live-dot { display: inline-block; animation: livepulse 1.8s ease-in-out infinite; }
+/* The sr-only "live" label is gated on the same data-type as the visual dot so
+   screen readers only hear "live" on live endpoint types (webhook/trajectory),
+   not on static artifacts. display:none removes it from the accessibility tree,
+   mirroring the .live-dot rule and keeping content parity (WCAG 1.3.1). */
+.live-label { display: none; }
+.bin-row[data-type="webhook"] .live-label,
+.bin-row[data-type="trajectory"] .live-label { display: inline; }
 @keyframes livepulse { 0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(86,227,159,.5); } 50% { opacity: .55; box-shadow: 0 0 0 4px rgba(86,227,159,0); } }
 @media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
 .bin-empty { text-align: center; padding: 60px 20px; }
