@@ -260,6 +260,33 @@ func (s *Service) AppendSpans(ctx context.Context, publicID, actorID string, spa
 	if err != nil {
 		return nil, err
 	}
+
+	// Idempotent span ingest (SPEC-0004 "Run Ingestion — Batch and Incremental":
+	// appends are additive only). span_id is the natural idempotency key, so a
+	// retried append of an already-acknowledged batch must neither duplicate a
+	// span nor raise a spurious conflict. Three cases:
+	//   - every span already present  -> a no-op replay: commit nothing, return
+	//     the stored spans so an at-least-once client sees success;
+	//   - some present, some new      -> a partial/inconsistent replay, rejected
+	//     whole so the append stays all-or-nothing;
+	//   - none present                -> an ordinary append (the common path).
+	newCount := 0
+	for _, sp := range spans {
+		if !existingIDs[sp.SpanID] {
+			newCount++
+		}
+	}
+	if newCount == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("trajectory: commit: %w", err)
+		}
+		return s.spansByID(ctx, rr.runID, spans)
+	}
+	if newCount != len(spans) {
+		return nil, errs.Validationf(
+			"trajectory: append mixes %d new spans with already-present spans; resend the whole batch or only the new spans", newCount)
+	}
+
 	prepared, err := prepareSpans(existingDepth, existingChildCount, existingIDs, spans)
 	if err != nil {
 		return nil, err

@@ -13,6 +13,7 @@ import (
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/sharetype"
 	"github.com/joestump/cairn/internal/store"
+	"github.com/joestump/cairn/internal/trajectory"
 )
 
 // Config tunes the REST adapter.
@@ -27,12 +28,17 @@ type Config struct {
 	// RatePerSecond / RateBurst configure per-IP rate limiting; <= 0 disables.
 	RatePerSecond float64
 	RateBurst     int
+	// MaxRunRequestBytes caps a trajectory run/append request body before it is
+	// buffered, so an oversize batch is 413 rather than read into memory
+	// (SPEC-0004 endpoint security). Defaults to 64 MiB.
+	MaxRunRequestBytes int64
 }
 
 // Server is the /v1 REST adapter over the core store.
 type Server struct {
 	store   *store.Store
 	annot   *annotation.Service
+	traj    *trajectory.Service
 	reg     *sharetype.Registry
 	auth    Authenticator
 	cfg     Config
@@ -63,18 +69,28 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	if cfg.DefaultTTL <= 0 {
 		cfg.DefaultTTL = 7 * 24 * time.Hour
 	}
-	// The annotation core is a peer of the artifact store, projected by this
-	// same adapter (SPEC-0006 REQ "Cross-Surface Parity"). It shares the
-	// store's pool and registry so its writes land in the same database and
-	// gate anchors against the same capability matrix. A nil store (unit tests
-	// that exercise only URL/auth helpers) leaves it nil.
-	var annot *annotation.Service
+	if cfg.MaxRunRequestBytes <= 0 {
+		cfg.MaxRunRequestBytes = 64 << 20
+	}
+	// The annotation and trajectory cores are peers of the artifact store,
+	// projected by this same adapter (SPEC-0006 REQ "Cross-Surface Parity",
+	// SPEC-0004). Each shares the store's pool and registry so its writes land in
+	// the same database and transaction domain and gate anchors against the same
+	// capability matrix (ADR-0012 one binary, one core); the trajectory service
+	// additionally spills oversized span outputs to the store's object store. A
+	// nil store (unit tests that exercise only URL/auth helpers) leaves both nil.
+	var (
+		annot *annotation.Service
+		traj  *trajectory.Service
+	)
 	if st != nil {
 		annot = annotation.NewService(st.Pool(), reg)
+		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{Registry: reg})
 	}
 	return &Server{
 		store:   st,
 		annot:   annot,
+		traj:    traj,
 		reg:     reg,
 		auth:    auth,
 		cfg:     cfg,
@@ -117,10 +133,20 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/artifacts/{id}/comments", s.handleListComments)
 		r.With(s.requireAuth, s.enforceCSRF).Post("/artifacts/{id}/comments", s.handleComment)
 
-		// Share types contribute their own service surfaces (e.g. trajectory's
-		// /v1/runs* ingest routes) through the registry's RouteMounter
-		// capability; a new type's routes arrive by registration alone, with no
-		// edit to this router (ADR-0002).
+		// The trajectory share type contributes its own /v1/runs* ingest,
+		// lifecycle, and lazy-output surface through the ADR-0002 RouteMounter
+		// capability. Its service is a runtime dependency (a live pool + object
+		// store) the adapter co-constructs, so the adapter captures it in a
+		// RouteMounter and mounts it through the same seam an out-of-tree share
+		// type would use — the core router carries no trajectory-specific paths.
+		if s.traj != nil {
+			runMux{s: s}.MountRoutes(r)
+		}
+
+		// Externally-registered share types contribute their own service
+		// surfaces through the registry's RouteMounter capability too; a new
+		// type's routes arrive by registration alone, with no edit to this
+		// router (ADR-0002).
 		s.reg.MountRoutes(r)
 	})
 	return r
