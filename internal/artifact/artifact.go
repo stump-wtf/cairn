@@ -25,9 +25,10 @@ import (
 type ShareType string
 
 const (
-	TypeFile   ShareType = "file"   // generic file, non-previewable fallback
-	TypeGZ     ShareType = "gz"     // generic gzipped file
-	TypeBundle ShareType = "bundle" // manifest of ordered members (ADR-0008)
+	TypeFile       ShareType = "file"       // generic file, non-previewable fallback
+	TypeGZ         ShareType = "gz"         // generic gzipped file
+	TypeBundle     ShareType = "bundle"     // manifest of ordered members (ADR-0008)
+	TypeTrajectory ShareType = "trajectory" // agent run: span tree, no single body (ADR-0009)
 )
 
 // Channel is the surface an artifact was created through. It is derived
@@ -94,16 +95,24 @@ type Artifact struct {
 	CreatedAt time.Time
 }
 
+// bodyless reports whether this share type carries no single content-addressed
+// body: a bundle (its members are modeled separately) or a trajectory (its
+// content is the span tree). Every other type MUST reference a body blob.
+func (a *Artifact) bodyless() bool {
+	return a.ShareType == TypeBundle || a.ShareType == TypeTrajectory
+}
+
 // Validate enforces the creation invariants: a public id, a share type, a body
-// reference (unless a bundle), and mandatory provenance, access policy, and
-// expiry. It returns a validation-coded domain error on the first violation.
+// reference (unless the type is bodyless — a bundle or trajectory), and
+// mandatory provenance, access policy, and expiry. It returns a validation-coded
+// domain error on the first violation.
 func (a *Artifact) Validate() error {
 	switch {
 	case a.PublicID == "":
 		return errs.Validationf("artifact: missing public id")
 	case a.ShareType == "":
 		return errs.Validationf("artifact: missing share type")
-	case a.ShareType != TypeBundle && a.BodySHA256 == "":
+	case !a.bodyless() && a.BodySHA256 == "":
 		return errs.Validationf("artifact: missing body reference")
 	case a.Provenance.Channel == "":
 		return errs.Validationf("artifact: provenance channel is required")
