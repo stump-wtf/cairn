@@ -129,6 +129,59 @@ func TestIntegrationWebCommentsInPanel(t *testing.T) {
 	}
 }
 
+// TestIntegrationWebDownloadIsSniffProof asserts the web-surface download route
+// (#12, supersedes upstream #2): an artifact body is served as a safe attachment
+// — application/octet-stream + Content-Disposition: attachment + nosniff, under
+// the shell CSP (not the /v1 API policy) — with bytes that round-trip exactly, so
+// untrusted content (here an HTML/script payload) can never be sniffed into an
+// executable type or rendered inline in Cairn's origin (SPEC-0001 REQ "Security
+// Headers"). It also holds the canonical bare-scheme discipline: an unknown id
+// and a bodyless/prefixed trajectory both yield the uniform 404 (ADR-0007).
+func TestIntegrationWebDownloadIsSniffProof(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+	body := "untrusted <script>alert(1)</script> bytes"
+	id := createArtifact(t, srv.URL, "markdown", "joe", body)
+
+	resp, err := http.Get(srv.URL + "/" + id + "/download")
+	if err != nil {
+		t.Fatalf("GET /%s/download: %v", id, err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("download = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/octet-stream" {
+		t.Errorf("download Content-Type = %q, want application/octet-stream", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment") {
+		t.Errorf("download Content-Disposition = %q, want attachment", cd)
+	}
+	if xcto := resp.Header.Get("X-Content-Type-Options"); xcto != "nosniff" {
+		t.Errorf("download X-Content-Type-Options = %q, want nosniff", xcto)
+	}
+	if csp := resp.Header.Get("Content-Security-Policy"); csp != webCSP {
+		t.Errorf("download CSP = %q, want webCSP (web surface, not the /v1 policy)", csp)
+	}
+	if string(got) != body {
+		t.Errorf("download body = %q, want %q", string(got), body)
+	}
+
+	// Unknown id → uniform 404.
+	if status, _ := getHTML(t, srv.URL+"/zzzzzzzz/download"); status != http.StatusNotFound {
+		t.Errorf("download unknown id = %d, want 404", status)
+	}
+
+	// A trajectory is bodyless and canonical at /run/{id}; a bare download 404s.
+	rresp := do(t, http.MethodPost, srv.URL+"/v1/runs", "joe",
+		jsonReader(t, runRequest{Mode: "open", Title: "t", Prompt: "p",
+			Model: "claude-sonnet-4.6", StartedAt: fixedRunStart}), "application/json")
+	run := decodeRun(t, rresp)
+	if status, _ := getHTML(t, srv.URL+"/"+run.ID+"/download"); status != http.StatusNotFound {
+		t.Errorf("trajectory bare download = %d, want 404 (bodyless + prefixed)", status)
+	}
+}
+
 // TestIntegrationLandingAtRoot asserts the shell owns the web root: GET / is the
 // on-brand landing, 200, not a bare 404.
 func TestIntegrationLandingAtRoot(t *testing.T) {

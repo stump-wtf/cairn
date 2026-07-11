@@ -122,22 +122,37 @@ func TestShellBadgeAndURLVaryByType(t *testing.T) {
 	}
 }
 
-// TestShellGenericBodyFloor asserts the total-resolution floor: a type with no
-// registered BodyViewer renders the generic-file card (SPEC-0001 REQ
-// "Type-Specific Body Slot"), with a download link when the body exists.
+// TestShellGenericBodyFloor asserts the total-resolution floor (#12): a type
+// with no registered BodyViewer renders the generic-file card (SPEC-0001 REQ
+// "Type-Specific Body Slot") carrying the file glyph, size, and sha256, plus a
+// same-origin sniff-proof `/{id}/download` link when the body exists. A bodyless
+// type gets the card but no download.
 func TestShellGenericBodyFloor(t *testing.T) {
 	s := newWebServer(t)
 
 	withBody := renderShellHTML(t, s, fixtureArtifact(artifact.TypeFile, true))
-	if !strings.Contains(withBody, `class="generic-card"`) {
-		t.Error("a viewerless type should fall back to the generic card")
+	for _, frag := range []string{
+		`class="generic-card"`,     // the floor card
+		`class="file-glyph"`,       // the file glyph
+		`>1.2 kB<`,                 // the size
+		`>e3b0c44298fc<`,           // the short sha256
+		`href="/abc123/download"`,  // the same-origin, sniff-proof web download
+		`class="file-badge">FILE<`, // the registry badge on the card
+	} {
+		if !strings.Contains(withBody, frag) {
+			t.Errorf("generic-file floor missing %q", frag)
+		}
 	}
-	if !strings.Contains(withBody, `/v1/artifacts/abc123/body`) {
-		t.Error("a bodied artifact should expose a download link")
+	// The floor links the web download route, never the /v1 API body path.
+	if strings.Contains(withBody, `/v1/artifacts/`) {
+		t.Error("the file card must link the web /{id}/download route, not the /v1 API")
 	}
 
 	bodyless := renderShellHTML(t, s, fixtureArtifact(artifact.TypeTrajectory, false))
-	if strings.Contains(bodyless, `/v1/artifacts/abc123/body`) {
+	if !strings.Contains(bodyless, `class="generic-card"`) {
+		t.Error("a bodyless type still resolves to the generic-file floor")
+	}
+	if strings.Contains(bodyless, `/download"`) {
 		t.Error("a bodyless artifact must not expose a download link")
 	}
 }
