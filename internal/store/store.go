@@ -92,3 +92,10 @@ func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 // through, so a co-constructed peer service gates anchors against the same
 // capability matrix (ADR-0002).
 func (s *Store) Registry() *sharetype.Registry { return s.registry }
+
+// ObjectStore exposes the content-addressed object store so a peer core service
+// that spills its own large payloads to the same blob registry — notably the
+// trajectory service, which spills oversized span outputs (SPEC-0004) — writes
+// them through the same backend the artifact bodies use (ADR-0008 one content
+// store). The REST/MCP/CLI adapters co-construct that peer over this store.
+func (s *Store) ObjectStore() objectstore.ObjectStore { return s.obj }

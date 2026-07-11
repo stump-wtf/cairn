@@ -166,6 +166,28 @@ func (s *Service) attachProducedEdges(ctx context.Context, runID int64, flat []*
 	return nil
 }
 
+// spansByID loads a run's spans and returns those whose span_id appears in the
+// given inputs, in input order — the projection an idempotent append replay
+// returns so a retried batch reports the already-stored spans rather than a
+// conflict (SPEC-0004 "Run Ingestion — Batch and Incremental").
+func (s *Service) spansByID(ctx context.Context, runID int64, inputs []SpanInput) ([]*Span, error) {
+	flat, err := s.loadSpans(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]*Span, len(flat))
+	for _, sp := range flat {
+		byID[sp.SpanID] = sp
+	}
+	out := make([]*Span, 0, len(inputs))
+	for _, in := range inputs {
+		if sp, ok := byID[in.SpanID]; ok {
+			out = append(out, sp)
+		}
+	}
+	return out, nil
+}
+
 // OutputInfo describes a span output opened for streaming download.
 type OutputInfo struct {
 	SHA256    string
