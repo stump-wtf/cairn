@@ -43,6 +43,7 @@ func (m runMux) MountRoutes(r chi.Router) {
 	r.With(s.requireAuth, s.enforceCSRF).Post("/runs/{id}/close", s.handleCloseRun)
 	r.Get("/runs/{id}", s.handleGetRun)
 	r.Get("/runs/{id}/spans/{spanID}/output", s.handleGetSpanOutput)
+	r.Get("/runs/{id}/stream", s.handleRunStream)
 }
 
 // runRequest is the POST /v1/runs body. Mode selects the ingest shape: "batch"

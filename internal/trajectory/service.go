@@ -40,6 +40,11 @@ type Service struct {
 	maxOutputBytes  int64
 	newID           func() (string, error)
 	now             func() time.Time
+	// hub fans appended spans and the close transition out to live SSE
+	// subscribers of an open run. It is process-local: one binary owns the
+	// capture, so its in-memory fan-out and the persisted span rows are the same
+	// ordered log two transports read (SPEC-0004 "Live Span Stream Delivery").
+	hub *hub
 }
 
 // Options configures a Service. Zero values fall back to safe defaults.
@@ -69,6 +74,7 @@ func NewService(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *
 		maxOutputBytes:  opts.MaxOutputBytes,
 		newID:           opts.NewID,
 		now:             opts.Now,
+		hub:             newHub(),
 	}
 	if s.reg == nil {
 		s.reg = sharetype.Default()
@@ -170,7 +176,9 @@ func (s *Service) CreateBatchRun(ctx context.Context, in RunInput) (*Run, error)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.persistSpans(ctx, tx, runID, prepared, dispositions); err != nil {
+	// A fresh run's stream sequence starts at 0; its id is not handed out until
+	// after commit, so no live subscriber can exist yet and none is published to.
+	if err := s.persistSpans(ctx, tx, runID, 0, prepared, dispositions); err != nil {
 		return nil, err
 	}
 
@@ -213,7 +221,9 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := s.persistSpans(ctx, tx, runID, prepared, dispositions); err != nil {
+		// Seed spans start the sequence at 0 like a batch; the run id has not been
+		// returned yet, so no live subscriber exists to publish to.
+		if err := s.persistSpans(ctx, tx, runID, 0, prepared, dispositions); err != nil {
 			return nil, err
 		}
 	}
@@ -291,16 +301,26 @@ func (s *Service) AppendSpans(ctx context.Context, publicID, actorID string, spa
 	if err != nil {
 		return nil, err
 	}
-	if err := s.persistSpans(ctx, tx, rr.runID, prepared, dispositions); err != nil {
+	base, err := s.nextStreamBase(ctx, tx, rr.runID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.persistSpans(ctx, tx, rr.runID, base, prepared, dispositions); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("trajectory: commit: %w", err)
 	}
 
+	// Fan the durably-committed spans out to live viewers in ingest order,
+	// each carrying its stream_seq cursor — the same id: a reconnecting client
+	// resumes after (SPEC-0004 "Live Span Stream Delivery"). Published only
+	// after commit so a viewer never sees a span a rolled-back tx would erase.
 	appended := make([]*Span, 0, len(prepared))
 	for i, p := range prepared {
-		appended = append(appended, spanFromPrepared(p, dispositions[i]))
+		sp := spanFromPrepared(p, dispositions[i])
+		s.hub.publish(publicID, StreamEvent{Type: EventSpan, StreamSeq: base + int64(i) + 1, Span: sp})
+		appended = append(appended, sp)
 	}
 	return appended, nil
 }
@@ -342,6 +362,9 @@ func (s *Service) CloseRun(ctx context.Context, publicID, actorID string) (*Run,
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("trajectory: commit: %w", err)
 	}
+	// Signal connected viewers the run is closed so their live badge flips and
+	// their SSE stream ends cleanly (SPEC-0004 "open→live→closed").
+	s.hub.publish(publicID, StreamEvent{Type: EventStatus, Status: StatusClosed})
 	return s.GetRun(ctx, publicID)
 }
 
@@ -404,8 +427,12 @@ func (s *Service) loadSpanShape(ctx context.Context, tx pgx.Tx, runID int64) (ma
 }
 
 // persistSpans upserts each spilled output blob and inserts each span row, then
-// any produced edge, all on the caller's transaction.
-func (s *Service) persistSpans(ctx context.Context, tx pgx.Tx, runID int64, prepared []preparedSpan, dispositions []spilled) error {
+// any produced edge, all on the caller's transaction. Each span is stamped a
+// per-run stream_seq (baseStreamSeq + its index + 1) in ingest order, so the SSE
+// endpoint has a gap-free, append-monotonic resume cursor (SPEC-0004 "Live Span
+// Stream Delivery"). base is the run's current MAX(stream_seq) — 0 for a fresh
+// run, the locked current max for an append — so appends continue the sequence.
+func (s *Service) persistSpans(ctx context.Context, tx pgx.Tx, runID, baseStreamSeq int64, prepared []preparedSpan, dispositions []spilled) error {
 	for i, p := range prepared {
 		d := dispositions[i]
 		if d.refSHA != "" {
@@ -417,7 +444,7 @@ func (s *Service) persistSpans(ctx context.Context, tx pgx.Tx, runID int64, prep
 				return fmt.Errorf("trajectory: upsert output blob %s: %w", d.refSHA, err)
 			}
 		}
-		if err := s.insertSpan(ctx, tx, runID, p, d); err != nil {
+		if err := s.insertSpan(ctx, tx, runID, baseStreamSeq+int64(i)+1, p, d); err != nil {
 			return err
 		}
 		if p.in.ProducedArtifactID != "" {
@@ -429,7 +456,7 @@ func (s *Service) persistSpans(ctx context.Context, tx pgx.Tx, runID int64, prep
 	return nil
 }
 
-func (s *Service) insertSpan(ctx context.Context, tx pgx.Tx, runID int64, p preparedSpan, d spilled) error {
+func (s *Service) insertSpan(ctx context.Context, tx pgx.Tx, runID, streamSeq int64, p preparedSpan, d spilled) error {
 	args := p.in.Args
 	if len(args) == 0 {
 		args = []byte("{}")
@@ -438,16 +465,30 @@ func (s *Service) insertSpan(ctx context.Context, tx pgx.Tx, runID int64, p prep
 		INSERT INTO spans
 			(run_id, span_id, parent_span_id, depth, seq, category, name, tool,
 			 args, output_inline, output_ref_sha256, output_size, output_truncated,
-			 start_offset_ms, duration_ms)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+			 start_offset_ms, duration_ms, stream_seq)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		runID, p.in.SpanID, nullString(p.in.ParentSpanID), p.depth, p.seq,
 		string(p.in.Category), p.in.Name, nullString(p.in.Tool), args,
 		d.inline, nullString(d.refSHA), d.size, d.truncated,
-		p.in.StartOffsetMS, p.in.DurationMS,
+		p.in.StartOffsetMS, p.in.DurationMS, streamSeq,
 	); err != nil {
 		return fmt.Errorf("trajectory: insert span %q: %w", p.in.SpanID, err)
 	}
 	return nil
+}
+
+// nextStreamBase returns the run's current MAX(stream_seq) so an append
+// continues the per-run sequence. The caller holds the run row lock (FOR UPDATE),
+// so concurrent appends read distinct, increasing bases and never collide
+// (SPEC-0004 "Concurrent appends keep seq monotonic").
+func (s *Service) nextStreamBase(ctx context.Context, tx pgx.Tx, runID int64) (int64, error) {
+	var base int64
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(stream_seq), 0) FROM spans WHERE run_id = $1`, runID,
+	).Scan(&base); err != nil {
+		return 0, fmt.Errorf("trajectory: read stream base: %w", err)
+	}
+	return base, nil
 }
 
 // insertProducedEdge resolves the produced artifact's public id to its internal

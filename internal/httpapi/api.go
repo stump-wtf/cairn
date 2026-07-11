@@ -32,6 +32,10 @@ type Config struct {
 	// buffered, so an oversize batch is 413 rather than read into memory
 	// (SPEC-0004 endpoint security). Defaults to 64 MiB.
 	MaxRunRequestBytes int64
+	// StreamHeartbeat is the interval between SSE heartbeat comments on the live
+	// span stream, which keep proxies from idling the connection out and let the
+	// server notice a vanished client on the next write. Defaults to 15s.
+	StreamHeartbeat time.Duration
 }
 
 // Server is the /v1 REST adapter over the core store.
@@ -71,6 +75,9 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	}
 	if cfg.MaxRunRequestBytes <= 0 {
 		cfg.MaxRunRequestBytes = 64 << 20
+	}
+	if cfg.StreamHeartbeat <= 0 {
+		cfg.StreamHeartbeat = 15 * time.Second
 	}
 	// The annotation and trajectory cores are peers of the artifact store,
 	// projected by this same adapter (SPEC-0006 REQ "Cross-Surface Parity",
