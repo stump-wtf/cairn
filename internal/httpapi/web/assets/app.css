@@ -280,7 +280,50 @@ body.landing { display: flex; align-items: center; justify-content: center; text
   color: var(--t3); font: 500 11.5px var(--mono); padding: 6px 11px; cursor: pointer;
 }
 .logout-btn:hover { border-color: var(--border-2); color: var(--t1); }
-.bin-main { max-width: 920px; margin: 0 auto; padding: 26px 20px 60px; }
+.bin-main { max-width: 920px; margin: 0 auto; padding: 22px 20px 60px; }
+
+/* ---- Bin toolbar: nav tabs · filter · push (design 6c) ---- */
+.bin-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  flex-wrap: wrap; margin-bottom: 16px;
+}
+.bin-tabs { display: inline-flex; gap: 2px; background: var(--well-2); border: 1px solid var(--border-3); border-radius: 8px; padding: 3px; }
+.bin-tab {
+  background: transparent; border: 0; border-radius: 6px; cursor: pointer;
+  color: var(--t5); font: 500 12px var(--mono); padding: 6px 13px;
+}
+.bin-tab:hover { color: var(--t2); }
+.bin-tab[aria-selected="true"] { background: var(--well); color: var(--t1); box-shadow: inset 0 0 0 1px var(--border-2); }
+.bin-toolbar-right { display: inline-flex; align-items: center; gap: 10px; }
+.bin-filter { display: inline-flex; align-items: center; gap: 6px; background: var(--well-2); border: 1px solid var(--border-3); border-radius: 8px; padding: 0 10px; }
+.bin-filter:focus-within { border-color: var(--border); }
+.bin-filter-icon { color: var(--t6); font-size: 13px; }
+.bin-filter-input {
+  background: transparent; border: 0; outline: none; color: var(--t1);
+  font: 400 12px var(--mono); padding: 7px 0; width: 150px;
+}
+.bin-filter-input::placeholder { color: var(--t7); }
+.bin-push { position: relative; }
+.bin-push-btn {
+  list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+  background: var(--well); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--green-3); font: 600 12px var(--mono); padding: 7px 13px;
+}
+.bin-push-btn::-webkit-details-marker { display: none; }
+.bin-push-btn:hover { border-color: var(--green-3); color: var(--green-2); }
+.bin-push[open] .bin-push-btn { border-color: var(--green-3); }
+.bin-push-pop {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; width: 320px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; box-shadow: 0 12px 32px rgba(0,0,0,.5);
+}
+.bin-push-head { margin: 0 0 10px; color: var(--t3); font: 500 12px var(--sans); }
+.bin-push-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }
+.bin-push-list li { display: flex; flex-direction: column; gap: 3px; }
+.bin-push-list code { background: var(--well-2); border: 1px solid var(--border-3); border-radius: 5px; color: var(--green-2); font: 400 11.5px var(--mono); padding: 5px 8px; }
+.bin-push-note { color: var(--t6); font: 400 10.5px var(--mono); }
+
+.bin-nomatch { color: var(--t5); font: 400 12.5px var(--mono); text-align: center; padding: 40px 20px; margin: 0; }
 .bin-rows { display: flex; flex-direction: column; gap: 8px; }
 .bin-row {
   display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px;
@@ -288,12 +331,25 @@ body.landing { display: flex; align-items: center; justify-content: center; text
   border-radius: var(--radius-card); text-decoration: none; color: inherit;
 }
 .bin-row:hover { border-color: var(--border); background: #0F1116; }
-.bin-row-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bin-row[hidden] { display: none; }
+.bin-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .bin-row-title { color: var(--t1); font: 500 13.5px var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bin-row-prov { color: var(--t6); font: 400 11px var(--mono); }
+.bin-row-sub { color: var(--t5); font: 400 11px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bin-row-prov { color: var(--t6); font: 400 11px var(--mono); margin-top: 1px; }
+.bin-row-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .bin-row-counts { display: flex; gap: 12px; }
 .count-chip { color: var(--t5); font: 500 11px var(--mono); white-space: nowrap; }
 .count-chip .count-n { color: var(--t3); }
+.bin-row-life { display: inline-flex; align-items: center; gap: 6px; }
+/* TTL chip is real ExpiresAt data on every row; the live-dot is a CSS cue keyed
+   on data-type (the same data-driven pattern the type badge uses) so live
+   endpoint types read as live without any per-type switch in Go (ADR-0002). */
+.ttl-chip { color: var(--t6); font: 500 10.5px var(--mono); white-space: nowrap; }
+.live-dot { display: none; width: 7px; height: 7px; border-radius: 999px; background: var(--green); }
+.bin-row[data-type="webhook"] .live-dot,
+.bin-row[data-type="trajectory"] .live-dot { display: inline-block; animation: livepulse 1.8s ease-in-out infinite; }
+@keyframes livepulse { 0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(86,227,159,.5); } 50% { opacity: .55; box-shadow: 0 0 0 4px rgba(86,227,159,0); } }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
 .bin-empty { text-align: center; padding: 60px 20px; }
 .bin-empty-title { color: var(--t3); font: 500 15px var(--sans); margin: 0; }
 .bin-empty-note { color: var(--t6); font: 400 12px var(--mono); margin: 10px 0 0; }

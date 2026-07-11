@@ -242,6 +242,103 @@ func TestLandingRenders(t *testing.T) {
 	}
 }
 
+// renderBinHTML renders the named Bin template ("bin" or "bin-rows") against a
+// view model, exercising the template + row projection without a store.
+func renderBinHTML(t *testing.T, s *Server, name string, vm binPageView) string {
+	t.Helper()
+	var sb strings.Builder
+	if err := s.webTmpl.ExecuteTemplate(&sb, name, vm); err != nil {
+		t.Fatalf("render %s: %v", name, err)
+	}
+	return sb.String()
+}
+
+// TestBinRowRendersDesignFacts asserts a Bin row carries the full design-6c
+// composition (SPEC-0001 REQ "The Bin Listing", design turn 6c): type badge +
+// title + subtitle + provenance (`lead · channel · age`) + the three separate
+// engagement counts (💬/🔥/🎯, never summed — SPEC-0006) + the TTL chip, plus
+// the data-* attributes the client-side tab/filter lenses key on.
+func TestBinRowRendersDesignFacts(t *testing.T) {
+	s := newWebServer(t)
+	vm := binPageView{
+		Actor: "joe",
+		Rows: []binRow{{
+			ID: "abc123", Badge: "TRJ", TypeLabel: "trajectory",
+			Title: "checkout-web-audit", Subtitle: "trajectory", WebURL: "/run/abc123",
+			Lead: "claude", Channel: "via MCP", Age: "2h ago", TTL: "in 6d",
+			ReactionCount: 3, CommentCount: 2, PinCount: 1,
+			IsAgent: true, IsShared: true,
+		}},
+	}
+	html := renderBinHTML(t, s, "bin", vm)
+	for _, frag := range []string{
+		"checkout-web-audit",        // title
+		`class="bin-row-sub"`,       // subtitle slot
+		"claude · via MCP · 2h ago", // provenance line
+		"💬", "🔥", "🎯",               // the three engagement icons
+		" comments", " reactions", " pins", // sr-only text cues (not color-only)
+		"in 6d",                             // TTL chip
+		`data-agent="1"`, `data-shared="1"`, // tab-lens flags
+		`data-type="trajectory"`, // live-dot / badge data hook
+	} {
+		if !strings.Contains(html, frag) {
+			t.Errorf("bin row missing %q", frag)
+		}
+	}
+}
+
+// TestBinChromeRendersTabsFilterPush asserts the Bin toolbar exposes the three
+// nav tabs, the filter input, and the `+ push` affordance with accessible
+// labelling (design turn 6c; SPEC-0001 Accessibility).
+func TestBinChromeRendersTabsFilterPush(t *testing.T) {
+	s := newWebServer(t)
+	html := renderBinHTML(t, s, "bin", binPageView{Actor: "joe"})
+	for _, frag := range []string{
+		`role="tablist"`,
+		`data-scope="all"`, `data-scope="shared"`, `data-scope="agents"`,
+		">Bin<", ">Shared<", ">Agents<",
+		`data-bin-filter`,
+		`aria-label="Filter artifacts by title or provenance"`,
+		"push",
+		`aria-label="How to push an artifact"`,
+	} {
+		if !strings.Contains(html, frag) {
+			t.Errorf("bin chrome missing %q", frag)
+		}
+	}
+}
+
+// TestBinEmptyStateRenders proves the empty Bin shows an explicit empty state,
+// not a spurious error or blank listing (SPEC-0001 REQ "Bin Empty State").
+func TestBinEmptyStateRenders(t *testing.T) {
+	s := newWebServer(t)
+	html := renderBinHTML(t, s, "bin", binPageView{Actor: "joe"})
+	if !strings.Contains(html, "Your bin is empty.") {
+		t.Error("empty Bin should render the empty state")
+	}
+	if strings.Contains(html, `class="bin-row"`) {
+		t.Error("empty Bin should render no rows")
+	}
+}
+
+// TestBinRowsPartialCarriesLoadMore proves the HTMX "load more" partial appends
+// a keyset-cursor button so pagination is a partial swap, not a full reload
+// (SPEC-0001 REQ "Bin Pagination").
+func TestBinRowsPartialCarriesLoadMore(t *testing.T) {
+	s := newWebServer(t)
+	vm := binPageView{
+		NextCursor: "cursor-token",
+		Rows:       []binRow{{ID: "abc123", Title: "a", TypeLabel: "markdown", Badge: "MD"}},
+	}
+	html := renderBinHTML(t, s, "bin-rows", vm)
+	if !strings.Contains(html, `hx-get="/bin?cursor=cursor-token"`) {
+		t.Error("load-more should carry the keyset cursor as an HTMX get")
+	}
+	if !strings.Contains(html, `hx-swap="outerHTML"`) {
+		t.Error("load-more should swap itself out for the next page")
+	}
+}
+
 func TestHumanizeHelpers(t *testing.T) {
 	now := time.Now()
 	cases := []struct {

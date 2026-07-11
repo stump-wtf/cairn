@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/joestump/cairn/internal/annotation"
+	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/errs"
 	"github.com/joestump/cairn/internal/sharetype"
 )
@@ -27,21 +28,32 @@ type binPageView struct {
 	CSRFToken  string
 }
 
-// binRow is one Bin listing row: the type badge (with the type label as a
-// non-color text cue for WCAG), title, provenance, and the separate reaction /
-// comment counts (never summed — SPEC-0006 REQ "Count Aggregation").
+// binRow is one Bin listing row (design turn 6c). It carries the type badge
+// (with the type label as a non-color text cue for WCAG), title + a content
+// subtitle, the provenance line (`claude · via mcp · 2h`), the separate
+// reaction / comment / pin counts (never summed — SPEC-0006 REQ "Count
+// Aggregation"), and the lifetime cue (a TTL chip; live types show a live-dot
+// keyed on TypeLabel in CSS, the same data-driven pattern the type badge uses,
+// so the shell never switches on type in Go — ADR-0002). IsAgent / IsShared are
+// the client-side tab lenses (Agents = agent-authored; Shared = has a live
+// shareable link), applied over the already-rendered rows so keyset pagination
+// stays intact and the no-JS view is the full Bin (progressive enhancement).
 type binRow struct {
 	ID            string
 	Badge         string
 	TypeLabel     string
 	Title         string
+	Subtitle      string
 	WebURL        string
-	Actor         string
-	OnBehalfOf    string
+	Lead          string // agent (on-behalf-of) if present, else the human actor
 	Channel       string
 	Age           string
+	TTL           string // humanized time-to-expiry, e.g. "in 6d"
 	ReactionCount int
 	CommentCount  int
+	PinCount      int
+	IsAgent       bool // authored by an agent on the owner's behalf
+	IsShared      bool // has a live shareable link (visibility != private)
 }
 
 // handleBinPage renders the workspace Bin as HTML, reusing the base layout with a
@@ -72,13 +84,17 @@ func (s *Server) handleBinPage(w http.ResponseWriter, r *http.Request) {
 			Badge:         s.reg.BadgeFor(a),
 			TypeLabel:     string(a.ShareType),
 			Title:         firstNonEmpty(a.Title, a.PublicID),
+			Subtitle:      metaLine(a),
 			WebURL:        s.webURL(a),
-			Actor:         a.Provenance.ActorID,
-			OnBehalfOf:    a.Provenance.OnBehalfOf,
+			Lead:          firstNonEmpty(a.Provenance.OnBehalfOf, a.Provenance.ActorID),
 			Channel:       string(a.Provenance.Channel),
 			Age:           humanizeSince(a.CreatedAt),
+			TTL:           humanizeUntil(a.ExpiresAt),
 			ReactionCount: a.ReactionCount,
 			CommentCount:  a.CommentCount,
+			PinCount:      a.PinCount,
+			IsAgent:       a.Provenance.OnBehalfOf != "",
+			IsShared:      a.Access.Visibility != artifact.VisibilityPrivate,
 		})
 	}
 	// An HTMX "load more" fetch asks for just the appended rows; a full navigation
