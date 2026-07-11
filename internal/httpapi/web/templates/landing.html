@@ -1,0 +1,16 @@
+{{define "landing"}}<!doctype html>
+<html lang="en">
+<head>
+{{template "doc-head" .}}
+<title>cairn</title>
+</head>
+<body class="landing">
+<main class="landing-wrap" role="main">
+  <div class="landing-stones" aria-hidden="true"><i class="s1"></i><i class="s2"></i><i class="s3"></i></div>
+  <h1 class="landing-word">cairn</h1>
+  <p class="landing-tag">AI-native artifact sharing</p>
+  <p class="landing-status"><span class="live-dot" aria-hidden="true"></span> instance is live</p>
+  <p class="landing-foot">Open a share at <code>/{id}</code> or a run at <code>/run/{id}</code> · API at <code>/v1</code></p>
+</main>
+</body>
+</html>{{end}}
