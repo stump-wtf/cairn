@@ -176,6 +176,14 @@ func TestWebRoutesCarryScopedCSP(t *testing.T) {
 	if got := resp.Header.Get("Content-Security-Policy"); got != webCSP {
 		t.Errorf("landing CSP = %q, want webCSP", got)
 	}
+	// The shell renders untrusted user content (titles, comments); the vendored
+	// Alpine CSP build + eval-free template markup mean the policy must never
+	// carry 'unsafe-eval' or 'unsafe-inline' on this surface.
+	for _, bad := range []string{"'unsafe-eval'", "'unsafe-inline'"} {
+		if strings.Contains(webCSP, bad) {
+			t.Errorf("webCSP must not contain %s (weakens the user-content surface): %q", bad, webCSP)
+		}
+	}
 
 	// An embedded asset is served under the web CSP too.
 	resp, err = http.Get(srv.URL + "/assets/app.css")

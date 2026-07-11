@@ -49,17 +49,23 @@ var webAssetFS embed.FS
 // webCSP is the Content-Security-Policy for the HTML shell routes. It permits
 // the app's own scripts (embedded HTMX + Alpine, served from /assets), styles,
 // and fonts from the same origin, and inline `data:` images, while forbidding
-// framing and inline <script> execution. `script-src` includes `'unsafe-eval'`
-// because Alpine evaluates its directive expressions at runtime; it deliberately
-// omits `'unsafe-inline'`, so no inline event handler or <script> can execute —
-// the requirement is "forbid inline execution," which this satisfies (SPEC-0001
-// REQ "Security Headers"). This is a per-route policy: the /v1 API keeps its
-// strict `default-src 'none'` (see securityHeaders).
+// framing and inline <script> execution. `script-src` is a bare `'self'`: the
+// vendored Alpine is the `@alpinejs/csp` build, whose whole purpose is to avoid
+// runtime expression evaluation (directives resolve only to registered
+// property access / method calls — it contains no `eval`/`new Function`), and
+// HTMX's one `eval` path is gated behind `hx-*` attributes / `js:` prefixes,
+// of which the templates use none. So neither library needs `'unsafe-eval'`,
+// and omitting both it and `'unsafe-inline'` means no inline handler, inline
+// <script>, or eval() vector can execute on the surface that renders untrusted
+// user content (titles, comments) — the requirement is "forbid inline
+// execution," which this satisfies (SPEC-0001 REQ "Security Headers"). This is
+// a per-route policy: the /v1 API keeps its strict `default-src 'none'` (see
+// securityHeaders).
 const webCSP = "default-src 'none'; " +
 	"base-uri 'none'; " +
 	"img-src 'self' data:; " +
 	"style-src 'self'; " +
-	"script-src 'self' 'unsafe-eval'; " +
+	"script-src 'self'; " +
 	"font-src 'self'; " +
 	"connect-src 'self'; " +
 	"form-action 'self'; " +
