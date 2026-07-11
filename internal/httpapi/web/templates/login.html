@@ -1,0 +1,32 @@
+{{define "login"}}<!doctype html>
+<html lang="en">
+<head>
+{{template "doc-head" .}}
+<title>sign in · cairn</title>
+</head>
+<body class="landing">
+<main class="landing-wrap login-wrap" role="main">
+  <div class="landing-stones" aria-hidden="true"><i class="s1"></i><i class="s2"></i><i class="s3"></i></div>
+  <h1 class="landing-word">cairn</h1>
+  <p class="landing-tag">sign in to your workspace</p>
+
+  {{if .LoginEnabled}}
+  {{if .Failed}}<p class="login-error" role="alert">Sign-in failed. Check your details and try again.</p>{{end}}
+  <form class="login-form" method="post" action="/login">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <input type="hidden" name="next" value="{{.Next}}">
+    <label class="login-label" for="actor">Actor</label>
+    <input class="login-input" id="actor" name="actor" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+    <label class="login-label" for="password">Password</label>
+    <input class="login-input" id="password" name="password" type="password" autocomplete="current-password" required>
+    <button class="login-btn" type="submit">Sign in</button>
+  </form>
+  <p class="login-note">Dev login (SPEC-0001) · OAuth replaces this later.</p>
+  {{else}}
+  <p class="login-error" role="alert">Interactive login is not configured on this instance.</p>
+  <p class="landing-foot">Use the <code>/v1</code> API with a bearer token, or set <code>CAIRN_DEV_LOGIN_PASSWORD</code>.</p>
+  {{end}}
+  <p class="landing-foot"><a href="/">back to cairn</a></p>
+</main>
+</body>
+</html>{{end}}

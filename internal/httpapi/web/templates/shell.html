@@ -83,14 +83,21 @@
 
     <section class="panel-section" aria-labelledby="comments-h">
       <h2 class="panel-h" id="comments-h">Comments <span class="count">{{.CommentCount}}</span></h2>
-      <div class="comments" aria-live="polite">
-        {{range .Comments}}
-        <div class="comment{{if .IsReply}} reply{{end}}{{if .Deleted}} deleted{{end}}">
-          <div class="comment-head"><span class="comment-actor">{{.Actor}}{{if .OnBehalfOf}} · {{.OnBehalfOf}}{{end}}</span> <span class="comment-when">{{.When}}</span></div>
-          {{if .Deleted}}<p class="comment-body tombstone">comment deleted</p>{{else}}<p class="comment-body">{{.Body}}</p>{{end}}
+      <div class="comments">
+        <div id="comment-list" class="comment-list" aria-live="polite">
+          {{range .Comments}}{{template "comment-item" .}}{{else}}<p class="comments-empty">No comments yet.</p>{{end}}
         </div>
+        {{if .Authenticated}}
+        <form class="comment-composer" hx-post="/{{.ID}}/comments" hx-target="#comment-list" hx-swap="beforeend">
+          <label class="sr-only" for="comment-body">Add a comment</label>
+          <textarea id="comment-body" name="body" rows="2" placeholder="Add a comment…" required></textarea>
+          <div class="composer-foot">
+            <span class="composer-actor">as {{.Actor}}</span>
+            <button type="submit" class="comment-post-btn">Post</button>
+          </div>
+        </form>
         {{else}}
-        <p class="comments-empty">No comments yet.</p>
+        <p class="comments-signedout"><a href="/login">Sign in</a> to comment.</p>
         {{end}}
       </div>
     </section>
