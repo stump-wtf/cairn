@@ -12,6 +12,7 @@ import (
 
 	"github.com/joestump/cairn/internal/annotation"
 	"github.com/joestump/cairn/internal/artifact"
+	"github.com/joestump/cairn/internal/session"
 	"github.com/joestump/cairn/internal/sharetype"
 	"github.com/joestump/cairn/internal/store"
 	"github.com/joestump/cairn/internal/trajectory"
@@ -37,6 +38,14 @@ type Config struct {
 	// span stream, which keep proxies from idling the connection out and let the
 	// server notice a vanished client on the next write. Defaults to 15s.
 	StreamHeartbeat time.Duration
+	// DevLoginPassword is the shared secret the MVP dev login (SPEC-0001,
+	// ADR-0004) accepts for any actor id. An empty value disables interactive web
+	// login entirely (the deployment opted out), so login fails closed. Real
+	// per-user auth replaces this with OAuth (#22).
+	DevLoginPassword string
+	// SessionTTL is the lifetime of a web session and its cookies. Defaults to 7
+	// days.
+	SessionTTL time.Duration
 }
 
 // Server is the /v1 REST adapter over the core store and the ADR-0011 web app
@@ -54,14 +63,19 @@ type Server struct {
 	log     *slog.Logger
 	now     func() time.Time
 	webTmpl *template.Template
+	// Web session surface (SPEC-0001, ADR-0004). sessions is the server-side
+	// store, verifier the swap-in credential seam OAuth replaces, and
+	// secureCookies gates the cookie Secure flag on the public origin's scheme.
+	sessions      session.Store
+	verifier      CredentialVerifier
+	secureCookies bool
 }
 
-// New constructs a Server. If auth is nil a BearerAuthenticator is used; if
-// logger is nil slog.Default() is used.
+// New constructs a Server. If auth is nil, a session-aware Authenticator is used
+// when a store is present (bearer tokens for API/MCP/CLI, session cookies for the
+// web, per SPEC-0001/ADR-0004), falling back to the bare BearerAuthenticator for
+// storeless unit wirings; if logger is nil slog.Default() is used.
 func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Config, logger *slog.Logger) *Server {
-	if auth == nil {
-		auth = BearerAuthenticator{}
-	}
 	if reg == nil {
 		reg = sharetype.Default()
 	}
@@ -84,6 +98,9 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	if cfg.StreamHeartbeat <= 0 {
 		cfg.StreamHeartbeat = 15 * time.Second
 	}
+	if cfg.SessionTTL <= 0 {
+		cfg.SessionTTL = 7 * 24 * time.Hour
+	}
 	// The annotation and trajectory cores are peers of the artifact store,
 	// projected by this same adapter (SPEC-0006 REQ "Cross-Surface Parity",
 	// SPEC-0004). Each shares the store's pool and registry so its writes land in
@@ -92,24 +109,43 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	// additionally spills oversized span outputs to the store's object store. A
 	// nil store (unit tests that exercise only URL/auth helpers) leaves both nil.
 	var (
-		annot *annotation.Service
-		traj  *trajectory.Service
+		annot    *annotation.Service
+		traj     *trajectory.Service
+		sessions session.Store
 	)
 	if st != nil {
 		annot = annotation.NewService(st.Pool(), reg)
 		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{Registry: reg})
+		// The web session store lives in the same Postgres as the core, so the
+		// single binary carries its schema and a scaled deployment shares one
+		// session table (ADR-0012).
+		sessions = session.NewPostgresStore(st.Pool())
+	}
+	// Auth seam (ADR-0004): a caller-supplied Authenticator wins; otherwise pick
+	// the session-aware adapter when a session store exists (so the web binary
+	// authenticates both bearer tokens and browser sessions), else the bare
+	// bearer stub for storeless unit wirings.
+	if auth == nil {
+		if sessions != nil {
+			auth = &SessionAuthenticator{sessions: sessions, bearer: BearerAuthenticator{}}
+		} else {
+			auth = BearerAuthenticator{}
+		}
 	}
 	return &Server{
-		store:   st,
-		annot:   annot,
-		traj:    traj,
-		reg:     reg,
-		auth:    auth,
-		cfg:     cfg,
-		limiter: newRateLimiter(cfg.RatePerSecond, cfg.RateBurst),
-		log:     logger,
-		now:     time.Now,
-		webTmpl: parseWebTemplates(),
+		store:         st,
+		annot:         annot,
+		traj:          traj,
+		reg:           reg,
+		auth:          auth,
+		cfg:           cfg,
+		limiter:       newRateLimiter(cfg.RatePerSecond, cfg.RateBurst),
+		log:           logger,
+		now:           time.Now,
+		webTmpl:       parseWebTemplates(),
+		sessions:      sessions,
+		verifier:      DevPasswordVerifier{Password: cfg.DevLoginPassword},
+		secureCookies: strings.HasPrefix(cfg.BaseURL, "https://"),
 	}
 }
 

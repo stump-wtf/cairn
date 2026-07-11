@@ -105,8 +105,25 @@ func (s *Server) webSecurityHeaders(next http.Handler) http.Handler {
 // routes (link-capability read, ADR-0007); `/` renders the on-brand landing.
 func (s *Server) mountWeb(r chi.Router) {
 	r.Get("/", s.handleLanding)
+
+	// Minimal web session surface (SPEC-0001, ADR-0004): login/logout/whoami and
+	// the authenticated Bin. Static paths are matched ahead of the /{id} wildcard
+	// by chi, so they never shadow (or are shadowed by) an artifact id.
+	r.Get("/login", s.handleLoginForm)
+	r.Post("/login", s.handleLogin)
+	r.Post("/logout", s.handleLogout)
+	r.With(s.requireWebSession).Get("/whoami", s.handleWhoami)
+	r.With(s.requireWebSession).Get("/bin", s.handleBinPage)
+
 	r.Get("/{id}", s.handleArtifactShell)
 	r.Get("/run/{id}", s.handleRunShell)
+	// Web annotation post (SPEC-0001, SPEC-0006): the shell's comment composer
+	// posts here. It requires a session and passes the CSRF seam — the guard that
+	// only bites ambient (cookie) principals — and returns the server-rendered
+	// comment partial for an HTMX swap. A bearer caller is exempt from CSRF as on
+	// the /v1 surface, so the same route serves scripted posts too.
+	r.With(s.requireAuth, s.enforceCSRF).Post("/{id}/comments", s.handleWebComment)
+
 	// The embedded, immutable app assets (HTMX, Alpine, the stylesheet, the
 	// shell script). Long-cache: the files are content-stable for a build.
 	assetSub, _ := fs.Sub(webAssetFS, "web/assets")
@@ -160,7 +177,29 @@ func (s *Server) renderShellFor(w http.ResponseWriter, r *http.Request, wantPref
 		return
 	}
 	vm := s.buildShellView(r.Context(), a)
+	// A logged-in viewer sees the comment composer; an anonymous link reader sees
+	// the read-only thread (posting requires a session + CSRF). Resolution is
+	// optional — an absent/invalid credential simply yields the read-only view.
+	if p, ok := s.optionalPrincipal(r); ok {
+		vm.Authenticated = true
+		vm.Actor = p.ActorID
+	}
 	s.renderWeb(w, r, "shell", vm)
+}
+
+// optionalPrincipal resolves the caller's principal when the request carries
+// valid credentials (a session cookie or a bearer token), or reports false for
+// an anonymous link read. Like optionalActor it never rejects: the shell is a
+// link-capability read, so an unauthenticated viewer still sees the artifact.
+func (s *Server) optionalPrincipal(r *http.Request) (*Principal, bool) {
+	if s.auth == nil {
+		return nil, false
+	}
+	p, err := s.auth.Authenticate(r)
+	if err != nil || p == nil {
+		return nil, false
+	}
+	return p, true
 }
 
 // shellView is the fully-resolved view model the shell template renders. Every
@@ -185,6 +224,11 @@ type shellView struct {
 	ReactionCount int
 	CommentCount  int
 	PinCount      int
+	// Authenticated reports whether the viewer holds a session (or token), which
+	// gates the comment composer; Actor is that viewer's id. An anonymous link
+	// read leaves both zero and sees the read-only thread.
+	Authenticated bool
+	Actor         string
 }
 
 type provenanceLine struct {

@@ -76,11 +76,13 @@ func run(logger *slog.Logger) error {
 
 	// The /v1 REST/JSON adapter over the core service (ADR-0012).
 	api := httpapi.New(svc, nil, nil, httpapi.Config{
-		BaseURL:        cfg.BaseURL,
-		MaxUploadBytes: cfg.MaxUploadBytes,
-		DefaultTTL:     cfg.DefaultTTL,
-		RatePerSecond:  cfg.RatePerSecond,
-		RateBurst:      cfg.RateBurst,
+		BaseURL:          cfg.BaseURL,
+		MaxUploadBytes:   cfg.MaxUploadBytes,
+		DefaultTTL:       cfg.DefaultTTL,
+		RatePerSecond:    cfg.RatePerSecond,
+		RateBurst:        cfg.RateBurst,
+		DevLoginPassword: cfg.DevLoginPassword,
+		SessionTTL:       cfg.SessionTTL,
 	}, logger)
 
 	r := chi.NewRouter()

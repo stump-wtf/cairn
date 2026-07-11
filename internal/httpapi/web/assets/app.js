@@ -9,6 +9,20 @@
 //   - the URL control: toggle the shown value between the web link and the
 //     mcp:// handle, and copy the active one to the clipboard; and
 //   - the details panel: collapse/expand, animating grid-template-columns.
+// Double-submit CSRF for session-authenticated HTMX posts (SPEC-0006 REQ "CSRF
+// Protection"): copy the readable cairn_csrf cookie into the X-CSRF-Token header
+// the server matches against it. A cross-site attacker can force the ambient
+// session cookie to ride along but cannot read this cookie to set the header, so
+// the match proves same-origin. Token (API/MCP/CLI) callers carry no cookie and
+// are exempt server-side. Reading a cookie needs no eval, so this stays within
+// the shell's 'self'-only CSP.
+document.addEventListener('htmx:configRequest', (evt) => {
+  const m = document.cookie.match(/(?:^|;\s*)cairn_csrf=([^;]+)/);
+  if (m) {
+    evt.detail.headers['X-CSRF-Token'] = decodeURIComponent(m[1]);
+  }
+});
+
 document.addEventListener('alpine:init', () => {
   window.Alpine.data('shell', () => ({
     mode: 'link',

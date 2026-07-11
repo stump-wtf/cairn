@@ -1,0 +1,51 @@
+{{define "bin"}}<!doctype html>
+<html lang="en">
+<head>
+{{template "doc-head" .}}
+<title>bin · cairn</title>
+</head>
+<body>
+<a class="skip-link" href="#bin-main">Skip to content</a>
+
+<header class="app-header" role="banner">
+  <a class="brand" href="/" aria-label="cairn home">{{template "stone-logo" .}}<span class="wordmark">cairn</span></a>
+  <span class="crumb-sep" aria-hidden="true">▸</span>
+  <span class="artifact-title">the bin</span>
+  <div class="header-spacer"></div>
+  <span class="whoami" title="signed in">{{.Actor}}</span>
+  <form class="logout-form" method="post" action="/logout">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <button type="submit" class="logout-btn">Sign out</button>
+  </form>
+</header>
+
+<main id="bin-main" class="bin-main" role="main" tabindex="-1">
+  <nav class="bin-list" aria-label="Your artifacts">
+    <div id="bin-rows" class="bin-rows">
+      {{if .Rows}}{{template "bin-rows" .}}
+      {{else}}
+      <div class="bin-empty">
+        <p class="bin-empty-title">Your bin is empty.</p>
+        <p class="bin-empty-note">Push an artifact from the CLI or an agent over MCP, and it lands here.</p>
+      </div>
+      {{end}}
+    </div>
+  </nav>
+</main>
+
+{{template "footer" .}}
+</body>
+</html>{{end}}
+
+{{define "bin-rows"}}{{range .Rows}}<a class="bin-row" href="{{.WebURL}}">
+  <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeLabel}}">{{.Badge}}</span>
+  <span class="bin-row-main">
+    <span class="bin-row-title">{{.Title}}</span>
+    <span class="bin-row-prov">{{.Actor}}{{if .OnBehalfOf}} · {{.OnBehalfOf}}{{end}} · {{.Channel}} · {{.Age}}</span>
+  </span>
+  <span class="bin-row-counts">
+    <span class="count-chip" title="comments">💬 <span class="count-n">{{.CommentCount}}</span> comments</span>
+    <span class="count-chip" title="reactions">👀 <span class="count-n">{{.ReactionCount}}</span> reactions</span>
+  </span>
+</a>
+{{end}}{{if .NextCursor}}<button type="button" class="load-more" hx-get="/bin?cursor={{.NextCursor}}" hx-target="this" hx-swap="outerHTML">Load more</button>{{end}}{{end}}

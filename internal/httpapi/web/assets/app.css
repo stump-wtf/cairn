@@ -236,3 +236,79 @@ body.landing { display: flex; align-items: center; justify-content: center; text
   .panel { border-left: 0; border-top: 1px solid var(--border); }
   .url-value { max-width: 180px; }
 }
+
+/* ---- Accessibility helper ---- */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ---- Login (SPEC-0001 web session) ---- */
+.login-wrap { max-width: 360px; width: 100%; }
+.login-form { display: flex; flex-direction: column; gap: 6px; margin: 24px 0 0; text-align: left; }
+.login-label { color: var(--t4); font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .06em; margin-top: 8px; }
+.login-input {
+  background: var(--well-2); border: 1px solid var(--border); border-radius: 7px;
+  color: var(--t1); font: 400 13px var(--mono); padding: 9px 11px;
+}
+.login-input:focus { border-color: var(--green-3); outline: none; }
+.login-btn {
+  margin-top: 16px; background: var(--green); color: #08130D; border: 0;
+  border-radius: 8px; font: 600 13px var(--mono); padding: 10px 14px; cursor: pointer;
+}
+.login-btn:hover { background: var(--green-2); }
+.login-error {
+  margin: 18px 0 0; padding: 9px 12px; border-radius: 8px; text-align: left;
+  border: 1px solid #4a2b2b; background: rgba(255,107,107,.10);
+  color: #FF9B9B; font: 500 12px var(--mono);
+}
+.login-note { margin: 16px 0 0; color: var(--t8); font: 400 10.5px var(--mono); text-align: center; }
+
+/* ---- The Bin listing ---- */
+.whoami { color: var(--t4); font: 500 11.5px var(--mono); }
+.logout-form { margin: 0; }
+.logout-btn {
+  background: transparent; border: 1px solid var(--border); border-radius: 7px;
+  color: var(--t3); font: 500 11.5px var(--mono); padding: 6px 11px; cursor: pointer;
+}
+.logout-btn:hover { border-color: var(--border-2); color: var(--t1); }
+.bin-main { max-width: 920px; margin: 0 auto; padding: 26px 20px 60px; }
+.bin-rows { display: flex; flex-direction: column; gap: 8px; }
+.bin-row {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px;
+  padding: 13px 15px; background: var(--card); border: 1px solid var(--border-3);
+  border-radius: var(--radius-card); text-decoration: none; color: inherit;
+}
+.bin-row:hover { border-color: var(--border); background: #0F1116; }
+.bin-row-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bin-row-title { color: var(--t1); font: 500 13.5px var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bin-row-prov { color: var(--t6); font: 400 11px var(--mono); }
+.bin-row-counts { display: flex; gap: 12px; }
+.count-chip { color: var(--t5); font: 500 11px var(--mono); white-space: nowrap; }
+.count-chip .count-n { color: var(--t3); }
+.bin-empty { text-align: center; padding: 60px 20px; }
+.bin-empty-title { color: var(--t3); font: 500 15px var(--sans); margin: 0; }
+.bin-empty-note { color: var(--t6); font: 400 12px var(--mono); margin: 10px 0 0; }
+.load-more {
+  margin: 6px auto 0; display: block; background: var(--well); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--t3); font: 500 12px var(--mono); padding: 9px 18px; cursor: pointer;
+}
+.load-more:hover { border-color: var(--border-2); color: var(--t1); }
+
+/* ---- Shell comment composer ---- */
+.comment-list { display: flex; flex-direction: column; gap: 10px; }
+.comment-composer { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.comment-composer textarea {
+  background: var(--well-2); border: 1px solid var(--border); border-radius: 7px;
+  color: var(--t1); font: 400 12.5px var(--sans); padding: 9px 11px; resize: vertical;
+}
+.comment-composer textarea:focus { border-color: var(--green-3); outline: none; }
+.composer-foot { display: flex; align-items: center; justify-content: space-between; }
+.composer-actor { color: var(--t6); font: 400 10.5px var(--mono); }
+.comment-post-btn {
+  background: var(--green); color: #08130D; border: 0; border-radius: 7px;
+  font: 600 12px var(--mono); padding: 7px 14px; cursor: pointer;
+}
+.comment-post-btn:hover { background: var(--green-2); }
+.comments-signedout { margin: 14px 0 0; color: var(--t6); font: 400 12px var(--mono); }
+.comments-signedout a { color: var(--green-3); }

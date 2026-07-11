@@ -10,3 +10,8 @@
 {{define "stone-logo"}}<span class="stones" aria-hidden="true"><i class="s1"></i><i class="s2"></i><i class="s3"></i></span>{{end}}
 
 {{define "footer"}}<footer class="app-foot">API at <code>/v1</code> · humans post from the CLI, agents over MCP</footer>{{end}}
+
+{{define "comment-item"}}<div class="comment{{if .IsReply}} reply{{end}}{{if .Deleted}} deleted{{end}}">
+  <div class="comment-head"><span class="comment-actor">{{.Actor}}{{if .OnBehalfOf}} · {{.OnBehalfOf}}{{end}}</span> <span class="comment-when">{{.When}}</span></div>
+  {{if .Deleted}}<p class="comment-body tombstone">comment deleted</p>{{else}}<p class="comment-body">{{.Body}}</p>{{end}}
+</div>{{end}}
