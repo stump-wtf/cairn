@@ -20,8 +20,35 @@
 </header>
 
 <main id="bin-main" class="bin-main" role="main" tabindex="-1">
+  <div class="bin-toolbar" data-bin-toolbar>
+    <div class="bin-tabs" role="tablist" aria-label="Filter artifacts">
+      <button type="button" class="bin-tab" role="tab" data-scope="all" aria-selected="true" tabindex="0">Bin</button>
+      <button type="button" class="bin-tab" role="tab" data-scope="shared" aria-selected="false" tabindex="-1">Shared</button>
+      <button type="button" class="bin-tab" role="tab" data-scope="agents" aria-selected="false" tabindex="-1">Agents</button>
+    </div>
+    <div class="bin-toolbar-right">
+      <label class="bin-filter" for="bin-filter-input">
+        <span class="bin-filter-icon" aria-hidden="true">⌕</span>
+        <input id="bin-filter-input" class="bin-filter-input" type="search" placeholder="Filter…"
+               autocomplete="off" spellcheck="false" data-bin-filter aria-label="Filter artifacts by title or provenance">
+      </label>
+      <details class="bin-push">
+        <summary class="bin-push-btn" aria-label="How to push an artifact"><span aria-hidden="true">＋</span> push</summary>
+        <div class="bin-push-pop" role="group" aria-label="Push an artifact">
+          <p class="bin-push-head">Artifacts land here when you push them:</p>
+          <ul class="bin-push-list">
+            <li><code>cat report.md | cairn</code> <span class="bin-push-note">pipe a file from the CLI</span></li>
+            <li><code>cairn add a.png b.png</code> <span class="bin-push-note">bundle multiple files</span></li>
+            <li><span class="bin-push-note">or have an agent push over MCP</span></li>
+          </ul>
+        </div>
+      </details>
+    </div>
+  </div>
+
   <nav class="bin-list" aria-label="Your artifacts">
-    <div id="bin-rows" class="bin-rows">
+    <p class="bin-nomatch" data-bin-nomatch role="status" aria-live="polite" hidden>No artifacts match this filter.</p>
+    <div id="bin-rows" class="bin-rows" data-bin-rows>
       {{if .Rows}}{{template "bin-rows" .}}
       {{else}}
       <div class="bin-empty">
@@ -37,15 +64,26 @@
 </body>
 </html>{{end}}
 
-{{define "bin-rows"}}{{range .Rows}}<a class="bin-row" href="{{.WebURL}}">
-  <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeLabel}}">{{.Badge}}</span>
+{{define "bin-rows"}}{{range .Rows}}<a class="bin-row" href="{{.WebURL}}" data-type="{{.TypeLabel}}"
+   data-agent="{{if .IsAgent}}1{{else}}0{{end}}" data-shared="{{if .IsShared}}1{{else}}0{{end}}"
+   data-search="{{.Title}} {{.Lead}} {{.Channel}} {{.TypeLabel}}">
+  <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeLabel}}">{{.Badge}}<span class="sr-only"> {{.TypeLabel}}</span></span>
   <span class="bin-row-main">
     <span class="bin-row-title">{{.Title}}</span>
-    <span class="bin-row-prov">{{.Actor}}{{if .OnBehalfOf}} · {{.OnBehalfOf}}{{end}} · {{.Channel}} · {{.Age}}</span>
+    <span class="bin-row-sub">{{.Subtitle}}</span>
+    <span class="bin-row-prov">{{.Lead}} · {{.Channel}} · {{.Age}}</span>
   </span>
-  <span class="bin-row-counts">
-    <span class="count-chip" title="comments">💬 <span class="count-n">{{.CommentCount}}</span> comments</span>
-    <span class="count-chip" title="reactions">👀 <span class="count-n">{{.ReactionCount}}</span> reactions</span>
+  <span class="bin-row-meta">
+    <span class="bin-row-counts">
+      <span class="count-chip" title="comments"><span aria-hidden="true">💬</span> <span class="count-n">{{.CommentCount}}</span><span class="sr-only"> comments</span></span>
+      <span class="count-chip" title="reactions"><span aria-hidden="true">🔥</span> <span class="count-n">{{.ReactionCount}}</span><span class="sr-only"> reactions</span></span>
+      <span class="count-chip" title="pins"><span aria-hidden="true">🎯</span> <span class="count-n">{{.PinCount}}</span><span class="sr-only"> pins</span></span>
+    </span>
+    <span class="bin-row-life">
+      <span class="live-dot" aria-hidden="true"></span>
+      <span class="live-label sr-only">live</span>
+      {{if .TTL}}<span class="ttl-chip" title="expires {{.TTL}}"><span aria-hidden="true">⧗</span> {{.TTL}}<span class="sr-only"> until expiry</span></span>{{end}}
+    </span>
   </span>
 </a>
 {{end}}{{if .NextCursor}}<button type="button" class="load-more" hx-get="/bin?cursor={{.NextCursor}}" hx-target="this" hx-swap="outerHTML">Load more</button>{{end}}{{end}}
