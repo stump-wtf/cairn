@@ -117,8 +117,14 @@ type artifactResponse struct {
 	Badge       string              `json:"badge"`
 	Provenance  provenanceView      `json:"provenance"`
 	Visibility  artifact.Visibility `json:"visibility"`
-	CreatedAt   time.Time           `json:"created_at"`
-	ExpiresAt   time.Time           `json:"expires_at"`
+	// Denormalized annotation rollups, exposed separately — never summed —
+	// so the Bin row (💬 2 · 👀 3) and headers (2 pins · 8 reactions) can
+	// render each figure (SPEC-0006 REQ "Count Aggregation").
+	ReactionCount int       `json:"reaction_count"`
+	CommentCount  int       `json:"comment_count"`
+	PinCount      int       `json:"pin_count"`
+	CreatedAt     time.Time `json:"created_at"`
+	ExpiresAt     time.Time `json:"expires_at"`
 }
 
 type provenanceView struct {
@@ -146,9 +152,12 @@ func (s *Server) toArtifactResponse(a *artifact.Artifact) artifactResponse {
 			Channel:    a.Provenance.Channel,
 			CapturedAt: a.Provenance.CapturedAt,
 		},
-		Visibility: a.Access.Visibility,
-		CreatedAt:  a.CreatedAt,
-		ExpiresAt:  a.ExpiresAt,
+		Visibility:    a.Access.Visibility,
+		ReactionCount: a.ReactionCount,
+		CommentCount:  a.CommentCount,
+		PinCount:      a.PinCount,
+		CreatedAt:     a.CreatedAt,
+		ExpiresAt:     a.ExpiresAt,
 	}
 }
 

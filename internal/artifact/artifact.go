@@ -80,11 +80,18 @@ type Artifact struct {
 	Previewable bool
 	Provenance  Provenance
 	Access      AccessPolicy
-	// AnnotationCount is the denormalized total of the (initially empty)
-	// annotation stream (reactions + comments), maintained by SPEC-0006.
-	AnnotationCount int
-	ExpiresAt       time.Time
-	CreatedAt       time.Time
+	// Denormalized annotation rollups, maintained by the annotation core
+	// service in the same transaction as every annotation write so the Bin
+	// (`💬 2 · 👀 3`) and artifact headers render with no per-row subquery.
+	// They are exposed separately, never summed (ADR-0006 "Count aggregation",
+	// SPEC-0006 REQ "Count Aggregation").
+	ReactionCount int
+	CommentCount  int
+	// PinCount counts image-region annotations — image-region reactions plus
+	// pinned comments (ADR-0006).
+	PinCount  int
+	ExpiresAt time.Time
+	CreatedAt time.Time
 }
 
 // Validate enforces the creation invariants: a public id, a share type, a body
