@@ -1,0 +1,102 @@
+{{define "shell"}}<!doctype html>
+<html lang="en">
+<head>
+{{template "doc-head" .}}
+<title>{{.Title}} · cairn</title>
+</head>
+<body x-data="shell" data-link="{{.WebURL}}" data-mcp="{{.MCPHandle}}">
+<a class="skip-link" href="#body">Skip to content</a>
+
+<header class="app-header" role="banner">
+  <a class="brand" href="/" aria-label="cairn home">{{template "stone-logo" .}}<span class="wordmark">cairn</span></a>
+  <span class="crumb-sep" aria-hidden="true">▸</span>
+  <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeLabel}}">{{.Badge}}</span>
+  <span class="artifact-title">{{.Title}}</span>
+  <span class="artifact-meta">{{.MetaLine}}</span>
+
+  <div class="header-spacer"></div>
+
+  <div class="url-control" role="group" aria-label="Artifact URL">
+    <div class="url-seg">
+      <button type="button" class="seg-btn" x-on:click="showLink()" x-bind:aria-pressed="isLink()" aria-label="Show web link">🔗 link</button>
+      <button type="button" class="seg-btn" x-on:click="showMcp()" x-bind:aria-pressed="isMcp()" aria-label="Show MCP handle">◆ mcp</button>
+    </div>
+    <code class="url-value" x-show="isLink()">{{.WebURL}}</code>
+    <code class="url-value" x-show="isMcp()">{{.MCPHandle}}</code>
+    <button type="button" class="copy-btn" x-on:click="copy()" aria-label="Copy URL to clipboard">
+      <span x-show="notCopied()">copy</span>
+      <span class="copied" x-show="copied" x-cloak>copied ✓</span>
+    </button>
+  </div>
+
+  <button type="button" class="share-btn" aria-label="Share this artifact">Share</button>
+  <button type="button" class="panel-toggle" x-on:click="togglePanel()" x-bind:aria-expanded="panelExpanded()" aria-label="Toggle details panel">▤</button>
+</header>
+
+<main class="shell-grid" x-bind:class="panelClass()">
+  <article id="body" class="body-slot" tabindex="-1">
+    {{if .HasRichBody}}
+    {{.Body}}
+    {{else}}
+    <div class="generic-card">
+      <div class="generic-badge">{{.Badge}}</div>
+      <h1 class="generic-title">{{.Title}}</h1>
+      <p class="generic-meta">{{.MetaLine}}</p>
+      {{if .HasDownload}}
+      <a class="download-btn" href="{{.DownloadURL}}" rel="nofollow">Download</a>
+      <p class="generic-note">No inline preview for this type yet — a viewer arrives in a later story. The body is downloadable and verifiable against its checksum.</p>
+      {{else}}
+      <p class="generic-note">This share type has no single downloadable body; its rich viewer arrives in a later story.</p>
+      {{end}}
+    </div>
+    {{end}}
+  </article>
+
+  <aside class="panel" aria-label="Details and comments" x-show="panelOpen">
+    <section class="panel-section" aria-labelledby="prov-h">
+      <h2 class="panel-h" id="prov-h">Provenance</h2>
+      <dl class="facts">
+        <dt>actor</dt><dd>{{.Provenance.Actor}}{{if .Provenance.OnBehalfOf}} <span class="obo">on behalf of {{.Provenance.OnBehalfOf}}</span>{{end}}</dd>
+        <dt>channel</dt><dd>{{.Provenance.Channel}}</dd>
+        <dt>captured</dt><dd>{{.Provenance.Captured}}</dd>
+        {{if .Provenance.Expires}}<dt>expires</dt><dd>{{.Provenance.Expires}}</dd>{{end}}
+      </dl>
+    </section>
+
+    {{if .PanelFields}}
+    <section class="panel-section" aria-labelledby="type-h">
+      <h2 class="panel-h" id="type-h">{{.TypeLabel}}</h2>
+      <dl class="facts">
+        {{range .PanelFields}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    {{if .Details}}
+    <section class="panel-section" aria-labelledby="detail-h">
+      <h2 class="panel-h" id="detail-h">Details</h2>
+      <dl class="facts">
+        {{range .Details}}<dt>{{.Label}}</dt><dd class="mono">{{.Value}}</dd>{{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    <section class="panel-section" aria-labelledby="comments-h">
+      <h2 class="panel-h" id="comments-h">Comments <span class="count">{{.CommentCount}}</span></h2>
+      <div class="comments" aria-live="polite">
+        {{range .Comments}}
+        <div class="comment{{if .IsReply}} reply{{end}}{{if .Deleted}} deleted{{end}}">
+          <div class="comment-head"><span class="comment-actor">{{.Actor}}{{if .OnBehalfOf}} · {{.OnBehalfOf}}{{end}}</span> <span class="comment-when">{{.When}}</span></div>
+          {{if .Deleted}}<p class="comment-body tombstone">comment deleted</p>{{else}}<p class="comment-body">{{.Body}}</p>{{end}}
+        </div>
+        {{else}}
+        <p class="comments-empty">No comments yet.</p>
+        {{end}}
+      </div>
+    </section>
+  </aside>
+</main>
+
+{{template "footer" .}}
+</body>
+</html>{{end}}

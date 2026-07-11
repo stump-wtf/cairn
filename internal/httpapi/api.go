@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"html/template"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -38,7 +39,10 @@ type Config struct {
 	StreamHeartbeat time.Duration
 }
 
-// Server is the /v1 REST adapter over the core store.
+// Server is the /v1 REST adapter over the core store and the ADR-0011 web app
+// shell. Both are thin projections of the same core (ADR-0003): the JSON API and
+// the HTML shell share the store, registry, and annotation service, so they can
+// never disagree about an artifact's facts.
 type Server struct {
 	store   *store.Store
 	annot   *annotation.Service
@@ -49,6 +53,7 @@ type Server struct {
 	limiter *rateLimiter
 	log     *slog.Logger
 	now     func() time.Time
+	webTmpl *template.Template
 }
 
 // New constructs a Server. If auth is nil a BearerAuthenticator is used; if
@@ -104,18 +109,43 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		limiter: newRateLimiter(cfg.RatePerSecond, cfg.RateBurst),
 		log:     logger,
 		now:     time.Now,
+		webTmpl: parseWebTemplates(),
 	}
 }
 
-// Handler returns the routed http.Handler for the /v1 surface.
+// Handler returns the routed http.Handler for both surfaces this adapter
+// serves: the /v1 REST/JSON API and the ADR-0011 web app shell. The two are
+// separate route groups so each carries its OWN Content-Security-Policy — the
+// API keeps the strict `default-src 'none'` (securityHeaders) while the HTML
+// shell gets webCSP (self + the script/style/font origins HTMX+Alpine need),
+// with neither policy loosening the other (SPEC-0001 REQ "Security Headers").
+// The RequestID/RealIP/Recoverer and per-IP rate limiter are shared, so id
+// resolution is throttled on both surfaces (SPEC-0001 REQ "Rate Limiting").
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	r.Use(s.securityHeaders)
 	r.Use(s.rateLimit)
 
+	// The HTML web app shell (ADR-0011): its own CSP, the link-capability read
+	// routes GET /{id} and GET /run/{id}, the landing, and the embedded assets.
+	r.Group(func(r chi.Router) {
+		r.Use(s.webSecurityHeaders)
+		s.mountWeb(r)
+	})
+
+	// The /v1 REST/JSON API, under the strict API CSP.
+	r.Group(func(r chi.Router) {
+		r.Use(s.securityHeaders)
+		s.mountAPI(r)
+	})
+	return r
+}
+
+// mountAPI registers the /v1 REST/JSON routes on the given router (already under
+// the strict-CSP group).
+func (s *Server) mountAPI(r chi.Router) {
 	r.Route("/v1", func(r chi.Router) {
 		// Mutating / workspace-scoped endpoints require authentication.
 		r.With(s.requireAuth).Post("/artifacts", s.handleCreate)
@@ -156,7 +186,6 @@ func (s *Server) Handler() http.Handler {
 		// router (ADR-0002).
 		s.reg.MountRoutes(r)
 	})
-	return r
 }
 
 // artifactResponse is the JSON view of an artifact. checksum is the SHA-256 a

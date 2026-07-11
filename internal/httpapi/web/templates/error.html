@@ -1,0 +1,15 @@
+{{define "error"}}<!doctype html>
+<html lang="en">
+<head>
+{{template "doc-head" .}}
+<title>{{.Status}} · cairn</title>
+</head>
+<body class="landing">
+<main class="landing-wrap" role="main">
+  <div class="landing-stones" aria-hidden="true"><i class="s1"></i><i class="s2"></i><i class="s3"></i></div>
+  <h1 class="landing-word">{{.Status}}</h1>
+  <p class="landing-tag">{{.Message}}</p>
+  <p class="landing-foot"><a href="/">back to cairn</a></p>
+</main>
+</body>
+</html>{{end}}
