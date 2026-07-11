@@ -18,6 +18,14 @@ type Principal struct {
 	Channel artifact.Channel
 	IsAgent bool
 	Scopes  map[string]bool
+	// Ambient reports whether the caller was authenticated by an ambient
+	// credential the browser attaches automatically — a session cookie — rather
+	// than an explicit bearer token. Only ambient credentials are forgeable by
+	// a cross-site request, so CSRF protection is gated on this flag: token
+	// callers (API/MCP/CLI) are exempt, cookie-session callers are guarded
+	// (SPEC-0006 REQ "CSRF Protection"). The dev BearerAuthenticator leaves it
+	// false; the future web-session Authenticator (#11) sets it true.
+	Ambient bool
 }
 
 // HasScope reports whether the principal holds scope.

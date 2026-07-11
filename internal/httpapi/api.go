@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/joestump/cairn/internal/annotation"
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/sharetype"
 	"github.com/joestump/cairn/internal/store"
@@ -31,6 +32,7 @@ type Config struct {
 // Server is the /v1 REST adapter over the core store.
 type Server struct {
 	store   *store.Store
+	annot   *annotation.Service
 	reg     *sharetype.Registry
 	auth    Authenticator
 	cfg     Config
@@ -61,8 +63,18 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	if cfg.DefaultTTL <= 0 {
 		cfg.DefaultTTL = 7 * 24 * time.Hour
 	}
+	// The annotation core is a peer of the artifact store, projected by this
+	// same adapter (SPEC-0006 REQ "Cross-Surface Parity"). It shares the
+	// store's pool and registry so its writes land in the same database and
+	// gate anchors against the same capability matrix. A nil store (unit tests
+	// that exercise only URL/auth helpers) leaves it nil.
+	var annot *annotation.Service
+	if st != nil {
+		annot = annotation.NewService(st.Pool(), reg)
+	}
 	return &Server{
 		store:   st,
+		annot:   annot,
 		reg:     reg,
 		auth:    auth,
 		cfg:     cfg,
@@ -92,6 +104,18 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/artifacts/{id}", s.handleGet)
 		r.Get("/artifacts/{id}/body", s.handleGetBody)
 		r.Get("/artifacts/{id}/members/*", s.handleGetMember)
+
+		// Annotations (SPEC-0006, ADR-0006). Writes are authenticated and pass
+		// the CSRF seam (a no-op for token auth, the guard the future
+		// cookie-session surface plugs into, #11); reads follow the annotated
+		// artifact's ADR-0007 link capability, so a valid id reads and an
+		// unknown/expired id is a uniform 404.
+		r.Get("/artifacts/{id}/reactions", s.handleListReactions)
+		r.With(s.requireAuth, s.enforceCSRF).Post("/artifacts/{id}/reactions", s.handleReact)
+		r.With(s.requireAuth, s.enforceCSRF).Delete("/artifacts/{id}/reactions", s.handleUnreact)
+		r.With(s.requireAuth, s.enforceCSRF).Delete("/artifacts/{id}/reactions/{rid}", s.handleUnreactByID)
+		r.Get("/artifacts/{id}/comments", s.handleListComments)
+		r.With(s.requireAuth, s.enforceCSRF).Post("/artifacts/{id}/comments", s.handleComment)
 
 		// Share types contribute their own service surfaces (e.g. trajectory's
 		// /v1/runs* ingest routes) through the registry's RouteMounter
