@@ -14,11 +14,13 @@ import (
 // trajectory = SPEC-0005); this registry owns their identity and the anchor +
 // previewability affordances that must not drift between viewer and validator.
 const (
-	KeyMarkdown   artifact.ShareType = "markdown"
-	KeyCode       artifact.ShareType = "code"
-	KeyImage      artifact.ShareType = "image"
-	KeyWebhook    artifact.ShareType = "webhook"
-	KeyTrajectory artifact.ShareType = "trajectory"
+	KeyMarkdown artifact.ShareType = "markdown"
+	KeyCode     artifact.ShareType = "code"
+	KeyImage    artifact.ShareType = "image"
+	KeyWebhook  artifact.ShareType = "webhook"
+	// KeyTrajectory is sourced from the artifact aggregate, which knows the
+	// trajectory type is bodyless (like a bundle) so it needs no body blob.
+	KeyTrajectory artifact.ShareType = artifact.TypeTrajectory
 )
 
 // simpleType is the common ShareType value: an identity, a badge, a
