@@ -117,6 +117,16 @@ func (s *Server) mountWeb(r chi.Router) {
 
 	r.Get("/{id}", s.handleArtifactShell)
 	r.Get("/run/{id}", s.handleRunShell)
+	// A sniff-proof body download served on the web surface itself (#12): the
+	// generic-file card links here rather than bouncing to the /v1 API, so the
+	// download stays same-origin under the web CSP. It is a link-capability read
+	// (ADR-0007) like the shell, canonically bare-scheme (a prefixed type such as
+	// a trajectory at /run/ is not reachable, matching handleArtifactShell), and
+	// streams as `application/octet-stream` + `Content-Disposition: attachment`
+	// with X-Content-Type-Options nosniff so untrusted bytes can never be sniffed
+	// into an executable type or rendered inline in Cairn's origin (SPEC-0001 REQ
+	// "Security Headers"; supersedes upstream #2).
+	r.Get("/{id}/download", s.handleWebDownload)
 	// Web annotation post (SPEC-0001, SPEC-0006): the shell's comment composer
 	// posts here. It requires a session and passes the CSRF seam — the guard that
 	// only bites ambient (cookie) principals — and returns the server-rendered
@@ -156,6 +166,35 @@ func (s *Server) handleArtifactShell(w http.ResponseWriter, r *http.Request) {
 // does not carry that prefix yields a uniform 404.
 func (s *Server) handleRunShell(w http.ResponseWriter, r *http.Request) {
 	s.renderShellFor(w, r, "run")
+}
+
+// handleWebDownload streams an artifact's single content-addressed body as a
+// safe attachment on the web surface (#12). It enforces the same canonical
+// bare-scheme discipline as the shell: the id must resolve, its registry web
+// prefix must be empty (a prefixed type such as a trajectory at /run/ is not
+// reachable here), and it must have a body — otherwise the request yields the
+// same uniform 404 as an unknown id, so the id space stays canonical and leaks
+// no signal (ADR-0007). serveBody sets `application/octet-stream` +
+// `Content-Disposition: attachment` and the web group has already set nosniff,
+// so a browser can only download — never render or sniff — the bytes.
+func (s *Server) handleWebDownload(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	a, err := s.store.GetByPublicID(r.Context(), id)
+	if err != nil {
+		s.renderWebError(w, r, err)
+		return
+	}
+	if s.reg.URLPrefixFor(a.ShareType).Web != "" || a.BodySHA256 == "" {
+		s.renderWebError(w, r, errs.ErrNotFound)
+		return
+	}
+	rc, info, err := s.store.OpenBody(r.Context(), id)
+	if err != nil {
+		s.renderWebError(w, r, err)
+		return
+	}
+	defer rc.Close()
+	s.serveBody(w, r, rc, info, firstNonEmpty(a.Title, a.PublicID))
 }
 
 // renderShellFor resolves the id, enforces that the route's URL sub-prefix
@@ -214,9 +253,8 @@ type shellView struct {
 	MCPHandle     string
 	MetaLine      string // e.g. "1.2 kB · text/markdown"
 	Body          template.HTML
-	HasRichBody   bool // a registered BodyViewer produced the body
-	HasDownload   bool // a single content-addressed body is downloadable
-	DownloadURL   string
+	HasRichBody   bool          // a registered BodyViewer produced the body
+	FileCard      *fileCardView // the generic-file floor when no viewer resolved
 	Provenance    provenanceLine
 	PanelFields   []sharetype.PanelField // type-specific (registry MetadataPanel)
 	Details       []sharetype.PanelField // shell-owned artifact facts
@@ -229,6 +267,26 @@ type shellView struct {
 	// read leaves both zero and sees the read-only thread.
 	Authenticated bool
 	Actor         string
+}
+
+// fileCardView is the generic-file viewer — the total-resolution floor every
+// share type falls back to when no rich BodyViewer is registered (#12). It is a
+// server-rendered card carrying the type glyph/badge, the title, the size, the
+// media type, and the sha256, plus a sniff-proof `Content-Disposition:
+// attachment` download for a bodied artifact (a bodyless type such as a
+// trajectory or bundle leaves HasDownload false). The floor guarantees the
+// SPEC-0001 REQ "Type-Specific Body Slot" total-resolution property: EVERY
+// artifact — including an unknown/unregistered share type — resolves to some
+// viewer and stays viewable, checksummed, and downloadable.
+type fileCardView struct {
+	Badge       string
+	Title       string
+	Size        string // humanized, empty for a bodyless type
+	MediaType   string
+	SHA256      string // short display form
+	SHA256Full  string // full digest, shown as the title attribute
+	HasDownload bool
+	DownloadURL string
 }
 
 type provenanceLine struct {
@@ -276,24 +334,26 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact) shell
 		},
 	}
 
-	// Body slot. A type that implements the ADR-0002 BodyViewer capability
-	// renders its own (already-escaped) fragment from the streamed body; every
-	// other type falls back to the generic-file card the shell template draws
-	// (SPEC-0001 REQ "Type-Specific Body Slot" — total resolution).
-	if a.BodySHA256 != "" {
-		vm.HasDownload = true
-		vm.DownloadURL = s.cfg.BaseURL + "/v1/artifacts/" + a.PublicID + "/body"
-		if viewer, ok := s.reg.BodyViewerFor(a.ShareType); ok {
-			if rc, _, err := s.store.OpenBody(ctx, a.PublicID); err == nil {
-				defer rc.Close()
-				if html, err := viewer.RenderBody(ctx, a, rc); err == nil {
-					vm.Body = html
-					vm.HasRichBody = true
-				} else {
-					s.log.WarnContext(ctx, "web: body viewer failed, falling back to generic card", "id", a.PublicID, "error", err)
-				}
+	// Body slot — registry-driven viewer resolution with the generic-file card as
+	// the total-resolution floor (SPEC-0001 REQ "Type-Specific Body Slot",
+	// ADR-0002). A type that implements the BodyViewer capability renders its own
+	// (already-escaped) fragment from the streamed body; every other type — and
+	// any type whose viewer errors — resolves to the generic-file card, so EVERY
+	// share type resolves to some viewer (#12). Resolution is driven entirely by
+	// the registry (BodyViewerFor), never a switch on the type key.
+	if viewer, ok := s.reg.BodyViewerFor(a.ShareType); ok && a.BodySHA256 != "" {
+		if rc, _, err := s.store.OpenBody(ctx, a.PublicID); err == nil {
+			defer rc.Close()
+			if html, err := viewer.RenderBody(ctx, a, rc); err == nil {
+				vm.Body = html
+				vm.HasRichBody = true
+			} else {
+				s.log.WarnContext(ctx, "web: body viewer failed, falling back to generic file card", "id", a.PublicID, "error", err)
 			}
 		}
+	}
+	if !vm.HasRichBody {
+		vm.FileCard = fileCard(a, vm.Badge)
 	}
 
 	// Comments are read under the same link capability as the artifact; a nil
@@ -323,6 +383,27 @@ func toCommentLines(cs []annotation.Comment) []commentLine {
 		})
 	}
 	return out
+}
+
+// fileCard builds the generic-file floor view model for an artifact whose type
+// resolved to no rich viewer (#12). The badge is passed in already-resolved
+// through the registry (BadgeFor), so this stays a pure projection. A bodied
+// artifact gets its size, sha256, and a same-origin `/{id}/download` link (the
+// sniff-proof web download route); a bodyless type gets a card with no download.
+func fileCard(a *artifact.Artifact, badge string) *fileCardView {
+	fc := &fileCardView{
+		Badge:     badge,
+		Title:     firstNonEmpty(a.Title, a.PublicID),
+		MediaType: a.MediaType,
+	}
+	if a.BodySHA256 != "" {
+		fc.HasDownload = true
+		fc.Size = humanizeBytes(a.Size)
+		fc.SHA256 = shortSHA(a.BodySHA256)
+		fc.SHA256Full = a.BodySHA256
+		fc.DownloadURL = "/" + a.PublicID + "/download"
+	}
+	return fc
 }
 
 // detailFields are the shell-owned artifact facts shown under provenance for a

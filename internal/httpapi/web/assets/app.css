@@ -157,13 +157,21 @@ code { font-family: var(--mono); }
   max-width: 640px; margin: 24px auto; padding: 28px;
   background: var(--card); border: 1px solid var(--border-2); border-radius: var(--radius-frame);
 }
-.generic-badge {
-  display: inline-block; font: 600 10px var(--mono); letter-spacing: .5px;
+.file-head { display: flex; align-items: center; gap: 12px; }
+.file-glyph { display: inline-flex; line-height: 0; }
+.file-badge {
+  font: 600 10px var(--mono); letter-spacing: .5px;
   padding: 3px 8px; border-radius: var(--radius-chip);
   color: var(--t1); background: var(--well); border: 1px solid var(--border);
 }
-.generic-title { margin: 14px 0 4px; font: 500 20px var(--sans); color: var(--t0); word-break: break-word; }
-.generic-meta { margin: 0 0 18px; font: 400 12px var(--mono); color: var(--t6); }
+.generic-title { margin: 16px 0 14px; font: 500 20px var(--sans); color: var(--t0); word-break: break-word; }
+.file-facts {
+  margin: 0 0 20px; display: grid; grid-template-columns: max-content 1fr;
+  gap: 6px 16px; font-size: 12.5px;
+}
+.file-facts dt { color: var(--t6); font: 400 11px var(--mono); }
+.file-facts dd { margin: 0; color: var(--t2); word-break: break-all; }
+.file-facts dd.mono { font-family: var(--mono); color: var(--t3); }
 .download-btn {
   display: inline-block; text-decoration: none;
   background: rgba(86,227,159,.14); color: var(--green-2);
