@@ -81,3 +81,14 @@ func New(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *Store {
 		newID:      newID,
 	}
 }
+
+// Pool exposes the underlying Postgres pool so a peer core service that shares
+// this store's database — notably the annotation service, which the REST/MCP/CLI
+// adapters project alongside the artifact core — can be constructed over the
+// same connection pool and transaction domain (ADR-0012 one binary, one core).
+func (s *Store) Pool() *pgxpool.Pool { return s.pool }
+
+// Registry returns the share-type registry this store resolves affordances
+// through, so a co-constructed peer service gates anchors against the same
+// capability matrix (ADR-0002).
+func (s *Store) Registry() *sharetype.Registry { return s.registry }
