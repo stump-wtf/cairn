@@ -188,6 +188,92 @@ func (s *Service) spansByID(ctx context.Context, runID int64, inputs []SpanInput
 	return out, nil
 }
 
+// StreamSpan is a flat span carrying its per-run stream_seq cursor — the replay
+// unit the SSE endpoint emits (id: = StreamSeq) and the client resumes after via
+// Last-Event-ID (SPEC-0004 "Live Span Stream Delivery").
+type StreamSpan struct {
+	*Span
+	StreamSeq int64
+}
+
+// SpansAfter returns a run's spans whose stream_seq is greater than afterSeq, in
+// ascending stream_seq (ingest) order, together with the run's current status.
+// It is the SSE replay read: a fresh viewer passes afterSeq = 0 to load the
+// whole history; a reconnecting viewer passes its Last-Event-ID so the stream
+// resumes with no loss or duplication. An unknown, unauthorized, or expired run
+// is a uniform ErrRunNotFound (ADR-0007 link-capability).
+func (s *Service) SpansAfter(ctx context.Context, publicID string, afterSeq int64) ([]StreamSpan, Status, error) {
+	var (
+		runID  int64
+		status Status
+	)
+	err := s.pool.QueryRow(ctx,
+		`SELECT r.id, r.status FROM runs r JOIN artifacts a ON a.id = r.artifact_id
+		 WHERE a.public_id = $1 AND a.expires_at > now()`, publicID).Scan(&runID, &status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", fmt.Errorf("trajectory: run %s: %w", publicID, ErrRunNotFound)
+		}
+		return nil, "", fmt.Errorf("trajectory: resolve run %s: %w", publicID, err)
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT span_id, COALESCE(parent_span_id, ''), depth, seq, category, name,
+		       COALESCE(tool, ''), args, output_inline, output_ref_sha256,
+		       output_size, output_truncated, start_offset_ms, duration_ms, stream_seq
+		FROM spans
+		WHERE run_id = $1 AND stream_seq > $2
+		ORDER BY stream_seq`, runID, afterSeq)
+	if err != nil {
+		return nil, "", fmt.Errorf("trajectory: load spans after %d: %w", afterSeq, err)
+	}
+	defer rows.Close()
+
+	var out []StreamSpan
+	for rows.Next() {
+		var (
+			sp        Span
+			args      []byte
+			inline    *string
+			refSHA    *string
+			truncated bool
+			size      int64
+			streamSeq int64
+		)
+		if err := rows.Scan(
+			&sp.SpanID, &sp.ParentSpanID, &sp.Depth, &sp.Seq, &sp.Category, &sp.Name,
+			&sp.Tool, &args, &inline, &refSHA, &size, &truncated,
+			&sp.StartOffsetMS, &sp.DurationMS, &streamSeq,
+		); err != nil {
+			return nil, "", fmt.Errorf("trajectory: scan stream span: %w", err)
+		}
+		if len(args) > 0 {
+			sp.Args = json.RawMessage(args)
+		}
+		if inline != nil {
+			sp.Inline = *inline
+		}
+		if refSHA != nil {
+			sp.Ref = &OutputRef{SHA256: *refSHA, Size: size, Truncated: truncated}
+		}
+		out = append(out, StreamSpan{Span: &sp, StreamSeq: streamSeq})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("trajectory: iterate stream spans: %w", err)
+	}
+
+	// Hang produced-artifact links on any replayed write spans, so a resumed
+	// viewer renders the same cross-link a live-appended write span carries.
+	flat := make([]*Span, len(out))
+	for i := range out {
+		flat[i] = out[i].Span
+	}
+	if err := s.attachProducedEdges(ctx, runID, flat); err != nil {
+		return nil, "", err
+	}
+	return out, status, nil
+}
+
 // OutputInfo describes a span output opened for streaming download.
 type OutputInfo struct {
 	SHA256    string
