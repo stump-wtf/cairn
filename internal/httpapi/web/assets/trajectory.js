@@ -79,17 +79,24 @@
   // ---- Reactions ---------------------------------------------------------
   var REACT_PALETTE = ['🔥', '👍', '👀', '🎯', '🙏', '🚀', '✅', '🐛'];
 
+  // A signed-out click on an annotation control routes to login instead of
+  // silently no-oping (the write endpoints would 401 anyway); ?next returns
+  // the user to this run once the session exists.
+  function requireLogin() {
+    window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+  }
+
   function wireReactions(root, runID, canWrite) {
     root.querySelectorAll('[data-react-cluster]').forEach(function (cluster) {
       cluster.querySelectorAll('.react-pill').forEach(function (pill) {
         pill.addEventListener('click', function () {
-          if (!canWrite) return;
+          if (!canWrite) { requireLogin(); return; }
           togglePill(runID, cluster, pill);
         });
       });
       var add = cluster.querySelector('[data-react-add]');
       if (add) add.addEventListener('click', function () {
-        if (!canWrite) return;
+        if (!canWrite) { requireLogin(); return; }
         openPicker(runID, cluster, add);
       });
     });

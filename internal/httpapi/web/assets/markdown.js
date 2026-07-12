@@ -90,7 +90,13 @@
       b.setAttribute('aria-label', 'React ' + emoji);
       b.textContent = emoji;
       b.addEventListener('click', function () {
-        postReaction(anchor.type, anchor.ref, emoji, function (ok) {
+        postReaction(anchor.type, anchor.ref, emoji, function (ok, status) {
+          // A signed-out reaction 401s: route to login with a return path
+          // instead of silently swallowing the failure.
+          if (!ok && status === 401) {
+            window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+            return;
+          }
           if (ok) trigger.setAttribute('data-reacted', emoji);
           closePicker(true);
         });

@@ -21,22 +21,22 @@
 
   <div class="url-control" role="group" aria-label="Run URL">
     <div class="url-seg">
-      <button type="button" class="seg-btn" x-on:click="showLink()" x-bind:aria-pressed="isLink()" aria-label="Show web link">🔗 link</button>
-      <button type="button" class="seg-btn" x-on:click="showMcp()" x-bind:aria-pressed="isMcp()" aria-label="Show MCP handle">◆ mcp</button>
+      <button type="button" class="seg-btn" x-on:click="showLink" x-bind:aria-pressed="isLink" aria-label="Show web link">🔗 link</button>
+      <button type="button" class="seg-btn" x-on:click="showMcp" x-bind:aria-pressed="isMcp" aria-label="Show MCP handle">◆ mcp</button>
     </div>
-    <code class="url-value" x-show="isLink()">{{.WebURL}}</code>
-    <code class="url-value" x-show="isMcp()">{{.MCPHandle}}</code>
-    <button type="button" class="copy-btn" x-on:click="copy()" aria-label="Copy URL to clipboard">
-      <span x-show="notCopied()">copy</span>
+    <code class="url-value" x-show="isLink">{{.WebURL}}</code>
+    <code class="url-value" x-show="isMcp">{{.MCPHandle}}</code>
+    <button type="button" class="copy-btn" x-on:click="copy" aria-label="Copy URL to clipboard">
+      <span x-show="notCopied">copy</span>
       <span class="copied" x-show="copied" x-cloak>copied ✓</span>
     </button>
   </div>
 
   <button type="button" class="share-btn" aria-label="Share this run">Share</button>
-  <button type="button" class="panel-toggle" x-on:click="togglePanel()" x-bind:aria-expanded="panelExpanded()" aria-label="Toggle run panel">▤</button>
+  <button type="button" class="panel-toggle" x-on:click="togglePanel" x-bind:aria-expanded="panelExpanded" aria-label="Toggle run panel">▤</button>
 </header>
 
-<main class="traj-grid" x-bind:class="panelClass()">
+<main class="traj-grid" x-bind:class="panelClass">
   <div class="traj-main">
     {{/* SPAN WATERFALL — pinned, bespoke geometry applied by trajectory.js from
     data-left/data-width (CSP style-src 'self' forbids inline style attributes;
