@@ -6,10 +6,12 @@ import (
 	"io"
 	"mime"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/code"
+	"github.com/joestump/cairn/internal/imageview"
 	"github.com/joestump/cairn/internal/markdown"
 )
 
@@ -98,6 +100,51 @@ type bundleShareType struct {
 }
 
 func (bundleShareType) MemberAnchor() Anchor { return AnchorBundleFile }
+
+// imageShareType composes simpleType with three capabilities (SPEC-0003 REQ
+// "Image Viewer", issue #69): BodyViewer (the image + pin-overlay +
+// react-below scaffolding, rendered by internal/imageview — mirroring
+// markdownShareType's split of rendering from registry glue), MetadataPaneler
+// (the pin and reaction counts, sourced straight off the artifact's own
+// rollup counters so they render with no JavaScript or annotation-service
+// call), and InlineViewer (httpapi's own non-attachment body route, since
+// every other type's body streams through the sniff-proof generic download —
+// ADR-0002 "no switch on type" holds because only image implements it, so
+// httpapi resolves the route through the registry same as everything else).
+type imageShareType struct {
+	simpleType
+}
+
+// RenderBody implements the BodyViewer capability. The image bytes are never
+// read here — the fragment links back to the artifact's own inline body route
+// rather than inlining them into the page — so body is accepted only to
+// satisfy the shared BodyViewer signature (ADR-0002).
+func (imageShareType) RenderBody(_ context.Context, a *artifact.Artifact, _ io.Reader) (template.HTML, error) {
+	return imageview.Fragment(a)
+}
+
+// MetadataPanel implements the MetadataPaneler capability: the pin count
+// (image-region reactions plus pinned comments, ADR-0006) and the total
+// reaction count, both read straight off the artifact's denormalized rollups
+// — no annotation-service call needed — so the panel (and, per SPEC-0003
+// Scenario "Pin overlay unavailable", the reaction total specifically) is
+// visible even when image.js never loads.
+func (imageShareType) MetadataPanel(a *artifact.Artifact) []PanelField {
+	return []PanelField{
+		{Label: "pins", Value: strconv.Itoa(a.PinCount)},
+		{Label: "reactions", Value: strconv.Itoa(a.ReactionCount)},
+	}
+}
+
+// InlineBody implements the InlineViewer capability: an image is the one type
+// whose body must render in-browser via `<img src>` rather than force a
+// download through the generic sniff-proof route. DecidePreview only ever
+// classifies an artifact as KeyImage when its media type already passed
+// isImage at ingest (SPEC-0002 "Previewability Detection at Ingest"), so this
+// re-check is defense in depth, not the authority.
+func (imageShareType) InlineBody(a *artifact.Artifact) bool {
+	return isImage(a.MediaType)
+}
 
 // codeShareType composes simpleType with the ArtifactBadger capability (a code
 // artifact's badge is its language, `GO`/`PY`/…, falling back to the static
@@ -257,7 +304,7 @@ var (
 			commentOnly(AnchorTextSelection),
 		},
 	}}
-	imageType = simpleType{
+	imageType = imageShareType{simpleType{
 		key:     KeyImage,
 		badge:   "IMG",
 		preview: isImage,
@@ -265,7 +312,7 @@ var (
 			both(AnchorArtifact),
 			both(AnchorImageRegion),
 		},
-	}
+	}}
 	// A bundle browses its ordered members through the file rail, each rendered by
 	// its own registered viewer (SPEC-0003). Per-member reactions and comments
 	// anchor to bundle_file (name-scoped); a member's own text selections stay

@@ -184,6 +184,35 @@ func validateEmptyObjectRef(ref json.RawMessage) error {
 	return nil
 }
 
+// InlineViewer is the optional capability through which a share type declares
+// that its content-addressed body must stream inline — the real Content-Type,
+// `Content-Disposition: inline` — rather than through the sniff-proof generic
+// download every other bodied type gets (fileCard's `/{id}/download`, the
+// ADR-0002 total-resolution floor). Only the image type implements it
+// (SPEC-0003 REQ "Image Viewer"): its BodyViewer fragment embeds an `<img>`
+// pointing back at its own body, and a browser never executes active content
+// loaded through an `<img>` element — even `image/svg+xml` is rendered, not
+// scripted, in that context — so serving the real media type inline cannot
+// execute untrusted content in Cairn's origin.
+type InlineViewer interface {
+	// InlineBody reports whether a's body should stream inline. A type MAY key
+	// this off the concrete artifact (re-checking the media type) rather than
+	// being unconditionally true.
+	InlineBody(a *artifact.Artifact) bool
+}
+
+// InlineBodyFor resolves the artifact's type and reports whether its body
+// should stream inline, or false when the type does not implement
+// InlineViewer — the default, so every non-image type keeps the sniff-proof
+// download. Total, like BadgeFor: httpapi calls this instead of switching on
+// the type key (ADR-0002).
+func (r *Registry) InlineBodyFor(a *artifact.Artifact) bool {
+	if v, ok := r.Resolve(a.ShareType).(InlineViewer); ok {
+		return v.InlineBody(a)
+	}
+	return false
+}
+
 // RouteMounter is the optional capability through which a share type
 // contributes its own service surface — e.g. trajectory's /v1/runs* ingest
 // routes — to the API router. The type captures its own dependencies at

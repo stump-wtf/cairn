@@ -246,6 +246,36 @@ func (s *Server) serveBody(w http.ResponseWriter, r *http.Request, rc io.Reader,
 	}
 }
 
+// serveInlineBody streams bytes with the artifact's real Content-Type and an
+// `inline` disposition — the one deliberate exception to serveBody's
+// sniff-proof download floor, reserved for the image viewer's own `<img src>`
+// (handleWebImage, SPEC-0003 REQ "Image Viewer", #69). It is reachable only
+// through a route gated by the registry InlineViewer capability, which only
+// the image type implements, so no other body can ride this path.
+// X-Content-Type-Options: nosniff (set by the web group's security-header
+// middleware) still applies; it is a no-op here because Content-Type already
+// names the real, store-verified media type — never a client claim (an
+// artifact only ever carries share type "image" once its media type already
+// passed the isImage predicate at ingest, SPEC-0002 "Previewability Detection
+// at Ingest").
+func (s *Server) serveInlineBody(w http.ResponseWriter, r *http.Request, rc io.Reader, info store.BodyInfo, mediaType, filename string) {
+	h := w.Header()
+	h.Set("Content-Type", mediaType)
+	h.Set("Content-Disposition", "inline; filename="+strconv.Quote(filename))
+	h.Set("Content-Length", strconv.FormatInt(info.Size, 10))
+	h.Set("X-Cairn-Checksum", info.SHA256)
+	if info.SHA256 != "" {
+		h.Set("ETag", strconv.Quote(info.SHA256))
+	}
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return
+	}
+	if _, err := io.Copy(w, rc); err != nil {
+		s.log.WarnContext(r.Context(), "httpapi: inline body stream aborted", "error", err)
+	}
+}
+
 // handleDelete removes an artifact, owner-only. Deletion is a human-only
 // capability (ADR-0004 / SPEC-0004: agents receive no delete scope and cannot
 // delete on the human's behalf); the route gates this via requireHuman, and this

@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -147,6 +148,14 @@ func (s *Server) mountWeb(r chi.Router) {
 	// into an executable type or rendered inline in Cairn's origin (SPEC-0001 REQ
 	// "Security Headers"; supersedes upstream #2).
 	r.Get("/{id}/download", s.handleWebDownload)
+	// The image viewer's own inline body route (SPEC-0003 REQ "Image Viewer",
+	// #69): unlike the generic sniff-proof download above, this serves the raw
+	// bytes with their real Content-Type and an `inline` disposition, so the
+	// `<img src>` the viewer fragment (internal/imageview) renders actually
+	// paints on-page instead of triggering a download prompt. Gated by the
+	// registry InlineViewer capability — only the image type implements it —
+	// so this stays registry-resolved rather than a type-key switch (ADR-0002).
+	r.Get("/{id}/image", s.handleWebImage)
 	// The bundle viewer's member surfaces (SPEC-0003, #19), both link-capability
 	// reads gated exactly like the shell: `/{id}/pane/<name>` returns one member's
 	// pane fragment for an HTMX swap (no full reload), and `/{id}/members/<name>`
@@ -278,6 +287,34 @@ func (s *Server) handleWebDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Close()
 	s.serveBody(w, r, rc, info, firstNonEmpty(a.Title, a.PublicID))
+}
+
+// handleWebImage streams an artifact's body inline (real Content-Type,
+// `Content-Disposition: inline`) for the image viewer's own `<img src>`
+// (SPEC-0003 REQ "Image Viewer", #69). It holds the same canonical
+// bare-scheme + bodied discipline as handleWebDownload, plus the registry
+// InlineViewer gate: an artifact whose type does not declare inline serving
+// (every type except image) yields the same uniform 404 as an unknown id, so
+// this route can never be used to bypass the sniff-proof download for an
+// arbitrary body (ADR-0007).
+func (s *Server) handleWebImage(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	a, err := s.store.GetByPublicID(r.Context(), id)
+	if err != nil {
+		s.renderWebError(w, r, err)
+		return
+	}
+	if s.reg.URLPrefixFor(a.ShareType).Web != "" || a.BodySHA256 == "" || !s.reg.InlineBodyFor(a) {
+		s.renderWebError(w, r, errs.ErrNotFound)
+		return
+	}
+	rc, info, err := s.store.OpenBody(r.Context(), id)
+	if err != nil {
+		s.renderWebError(w, r, err)
+		return
+	}
+	defer rc.Close()
+	s.serveInlineBody(w, r, rc, info, a.MediaType, firstNonEmpty(a.Title, a.PublicID))
 }
 
 // renderShellFor resolves the id, enforces that the route's URL sub-prefix
@@ -425,6 +462,11 @@ type provenanceLine struct {
 }
 
 type commentLine struct {
+	// ID is the comment's own row id: the shell renders it as `id="comment-N"`
+	// on the card so the image viewer's pin markers can jump/scroll straight to
+	// their thread (SPEC-0003 REQ "Image Viewer": "clicking a marker opens/
+	// scrolls to its comment thread", #69).
+	ID         int64
 	Actor      string
 	OnBehalfOf string
 	Body       string
@@ -435,6 +477,15 @@ type commentLine struct {
 	// `on span s2` or `on "…quote…"` — shown as a purple prefix on the comment
 	// card (design t7a "anchor context"). Empty for a whole-artifact comment.
 	AnchorContext string
+	// HasPin/PinX/PinY carry an image_region comment's normalized fractional
+	// {x,y} (ADR-0006) as the comment-item partial's `data-pin-x`/`data-pin-y`
+	// attributes — image.js reads them straight off the already-rendered panel
+	// thread to place (and, on a fresh HTMX append, immediately place) the pin
+	// marker over the image with no extra round-trip (SPEC-0003 REQ "Image
+	// Annotation Anchors", #69).
+	HasPin bool
+	PinX   string
+	PinY   string
 }
 
 // buildShellView projects an artifact into the shell view model: the header
@@ -526,7 +577,8 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activ
 func toCommentLines(cs []annotation.Comment) []commentLine {
 	out := make([]commentLine, 0, len(cs))
 	for _, c := range cs {
-		out = append(out, commentLine{
+		line := commentLine{
+			ID:            c.ID,
 			Actor:         c.ActorID,
 			OnBehalfOf:    c.OnBehalfOf,
 			Body:          c.Body,
@@ -534,9 +586,34 @@ func toCommentLines(cs []annotation.Comment) []commentLine {
 			IsReply:       c.ParentID != nil,
 			Deleted:       c.Deleted,
 			AnchorContext: anchorContext(c.Anchor.Type, c.Anchor.Ref),
-		})
+		}
+		if x, y, ok := imagePinFromRef(c.Anchor.Type, c.Anchor.Ref); ok {
+			line.HasPin, line.PinX, line.PinY = true, x, y
+		}
+		out = append(out, line)
 	}
 	return out
+}
+
+// imagePinFromRef extracts an image_region comment's normalized {x,y}
+// (ADR-0006) for the comment-item partial's `data-pin-x`/`data-pin-y`
+// attributes (SPEC-0003 REQ "Image Annotation Anchors", #69). Any other
+// anchor type, or a malformed ref, yields ok=false — the locator schema
+// already guarantees a well-formed image_region ref by the time a comment
+// commits (sharetype.imageRegionLocator), so this only defends against a
+// future anchor shape drifting out from under it.
+func imagePinFromRef(anchorType sharetype.Anchor, ref json.RawMessage) (x, y string, ok bool) {
+	if anchorType != sharetype.AnchorImageRegion {
+		return "", "", false
+	}
+	var loc struct {
+		X *float64 `json:"x"`
+		Y *float64 `json:"y"`
+	}
+	if json.Unmarshal(ref, &loc) != nil || loc.X == nil || loc.Y == nil {
+		return "", "", false
+	}
+	return strconv.FormatFloat(*loc.X, 'f', -1, 64), strconv.FormatFloat(*loc.Y, 'f', -1, 64), true
 }
 
 // anchorContext renders a short human cue for a comment's anchor, shown as the
@@ -572,6 +649,13 @@ func anchorContext(anchorType sharetype.Anchor, ref json.RawMessage) string {
 		if json.Unmarshal(ref, &loc) == nil && loc.Line > 0 {
 			return "on line " + itoa(loc.Line)
 		}
+	case sharetype.AnchorImageRegion:
+		if x, y, ok := imagePinFromRef(anchorType, ref); ok {
+			fx, _ := strconv.ParseFloat(x, 64)
+			fy, _ := strconv.ParseFloat(y, 64)
+			return "on a pin at " + itoa(int(fx*100)) + "%, " + itoa(int(fy*100)) + "%"
+		}
+		return "on a pinned region"
 	case sharetype.AnchorBundleFile:
 		// A per-file bundle comment is labelled by its member name — the "· on
 		// notes.md" context the aggregated COMMENTS panel shows (issue #19).

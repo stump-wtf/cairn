@@ -188,6 +188,27 @@ func webCommentAnchor(r *http.Request) (sharetype.Anchor, json.RawMessage, error
 		}
 		return sharetype.AnchorBundleFile, ref, nil
 	}
+	// The image viewer's pin-drop composer sets pin_x/pin_y (normalized
+	// fractional coordinates, ADR-0006) before submitting, mirroring the
+	// bundle/markdown anchors above (SPEC-0003 REQ "Image Annotation Anchors",
+	// #69). The annotation service still validates the ref against the
+	// image_region locator schema (sharetype.imageRegionLocator), so an
+	// out-of-range or malformed pair is rejected there, not trusted here.
+	if px, py := r.PostFormValue("pin_x"), r.PostFormValue("pin_y"); px != "" && py != "" {
+		x, errX := strconv.ParseFloat(px, 64)
+		y, errY := strconv.ParseFloat(py, 64)
+		if errX != nil || errY != nil {
+			return "", nil, errs.Validationf("comment: pin coordinates must be numbers")
+		}
+		ref, err := json.Marshal(struct {
+			X float64 `json:"x"`
+			Y float64 `json:"y"`
+		}{x, y})
+		if err != nil {
+			return "", nil, errs.Validationf("comment: bad pin anchor")
+		}
+		return sharetype.AnchorImageRegion, ref, nil
+	}
 	if spanID := r.PostFormValue("span_id"); spanID != "" {
 		ref, err := json.Marshal(struct {
 			SpanID string `json:"span_id"`

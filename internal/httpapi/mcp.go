@@ -406,7 +406,21 @@ func (s *Server) mcpReadArtifact(ctx context.Context, req *mcp.CallToolRequest, 
 // --- artifact_create -----------------------------------------------------------
 
 type mcpCreateInput struct {
-	// Body is the artifact content to store.
+	// Body is the artifact content to store. It is written to the store
+	// VERBATIM as the JSON string's bytes — there is no base64/binary decoding
+	// path yet, so an image (or any other genuinely binary) body created this
+	// way would be corrupted (the JSON string is UTF-8 text, not an arbitrary
+	// byte string) unless a caller supplies a body that happens to already be
+	// valid text. This is a known, documented gap (issue #69's follow-up on
+	// #65): a model actor can post an image_region annotation once the image
+	// artifact already exists (annotations are plain JSON, no binary
+	// involved), but creating the IMAGE artifact itself over MCP needs its own
+	// base64-body (or a dedicated upload-and-return-a-handle) tool — tracked
+	// as a follow-up rather than folded into this signature, since it is a
+	// breaking-ish addition (a new encoding field) better landed with its own
+	// story. The web upload path (POST /v1/artifacts with a raw or multipart
+	// binary body) is unaffected and is the supported way to create an image
+	// artifact today.
 	Body string `json:"body"`
 	// Title is an optional display title.
 	Title string `json:"title,omitempty"`
@@ -415,6 +429,9 @@ type mcpCreateInput struct {
 	// ShareType selects the artifact kind (default "file"); "bundle" and
 	// "trajectory" are not creatable through this tool (bundles need N member
 	// bodies, trajectories need a span tree — neither fits a single text body).
+	// "image" is technically accepted, but see the Body field's doc comment:
+	// there is no binary-safe path yet, so this only works for text bodies a
+	// generous media-type sniff happens to accept.
 	ShareType string `json:"share_type,omitempty"`
 }
 

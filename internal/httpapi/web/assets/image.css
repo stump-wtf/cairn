@@ -1,0 +1,150 @@
+/* Image viewer styles (SPEC-0003 REQ "Image Viewer", issue #69). Loaded for
+   every shell page but scoped under .img-viewer, so it is inert on
+   non-image bodies. Colors follow the shared design tokens from app.css
+   (the --t-, --well-, --border-, and --green- custom properties); nothing is
+   conveyed by color alone (WCAG 2.1 AA — every pin and pill also carries a
+   text/aria-label cue). */
+
+.img-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 26px 30px 60px;
+}
+
+/* The pin-drop frame: a positioning context for the image + its pin overlay.
+   Keyboard-focusable (tabindex=0 in the template) so Enter/Space can drop a
+   pin without a pointer (WCAG 2.1.1). */
+.img-frame {
+  position: relative;
+  display: inline-block;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: var(--radius-frame);
+  overflow: hidden;
+  border: 1px solid var(--border-2);
+  background: var(--well-2);
+  cursor: crosshair;
+  line-height: 0;
+}
+.img-frame:focus-visible {
+  outline: 2px solid var(--green-3);
+  outline-offset: 2px;
+}
+.img-body {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* The pin overlay layer: same box as the image, pins positioned by image.js
+   via CSSOM left/top percentages (not inline style attributes in markup —
+   CSP style-src 'self' forbids those; JS-driven CSSOM mutation is exempt,
+   the same pattern trajectory.js already uses for its waterfall bars). */
+.img-pins {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.img-pin {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  pointer-events: auto;
+  width: 18px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5));
+}
+.img-pin svg path { fill: var(--pink); }
+.img-pin .img-pin-hole { fill: var(--well-2); }
+.img-pin:hover svg path, .img-pin:focus-visible svg path { fill: var(--green); }
+.img-pin-pending { pointer-events: none; opacity: 0.7; }
+.img-pin-pending svg path { fill: var(--t5); }
+
+.img-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.img-hint {
+  margin: 0;
+  font: 400 13px/1.4 var(--sans);
+  color: var(--t5);
+}
+
+/* Whole-image react-below cluster (SPEC-0003 "react-below affordance for the
+   whole image"). Self-contained classes (img-react-*) rather than reusing
+   trajectory's .react-cluster/.react-pill — trajectory.css is not loaded on
+   the generic shell, and this keeps the image viewer independent of any
+   concurrent trajectory.js/.css changes (#66). */
+.img-react-cluster { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.img-react-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--well);
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font: 500 13px/1.2 var(--sans);
+  color: var(--t3);
+  cursor: pointer;
+}
+.img-react-pill.on { border-color: #244034; background: rgba(86, 227, 159, .12); color: var(--green-2); }
+.img-react-count { font: 600 12px/1 var(--mono); color: var(--t5); }
+.img-react-pill.on .img-react-count { color: var(--green-2); }
+.img-react-add {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--t6);
+  font: 600 14px/1 var(--sans);
+  cursor: pointer;
+}
+.img-react-add:hover, .img-react-add:focus-visible { color: var(--t2); border-color: var(--t6); }
+
+.img-react-picker {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--header);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+.img-react-picker button { background: transparent; border: 0; font-size: 15px; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+.img-react-picker button:hover { background: var(--well); }
+
+/* Pending-pin composer chip, mirroring markdown.css's selection chip. */
+.img-pin-chip {
+  margin: 0 0 6px;
+  font: 500 12px/1.3 var(--mono);
+  color: var(--t5);
+}
+
+/* Comment-card flash when a pin marker jumps its thread into view (mirrors
+   trajectory.css's cairnflash keyframe). */
+.comment.comment-flash { animation: img-comment-flash 0.9s ease; }
+@keyframes img-comment-flash {
+  0% { background: rgba(255, 117, 183, .18); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .comment.comment-flash { animation: none; }
+}
+
+@media (max-width: 720px) {
+  .img-viewer { padding: 18px 16px 48px; }
+}
