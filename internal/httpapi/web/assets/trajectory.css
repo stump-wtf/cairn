@@ -169,6 +169,29 @@
 .sel-toolbar button:hover { background: var(--well); }
 .sel-mark { background: rgba(106,169,255,.18); border-bottom: 1.5px dashed var(--blue); border-radius: 2px; }
 
+/* ---- Inline per-span comment composer (#58) ----
+   Floats at the clicked "💬 comment" button rather than the far-away RUN
+   panel form, mirroring the react-picker's popover chrome above. */
+.comment-inline { position: absolute; z-index: 35; width: 260px; max-width: calc(100vw - 24px);
+  display: flex; flex-direction: column; gap: 7px; padding: 10px;
+  background: var(--header); border: 1px solid #2A2E37; border-radius: 9px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+.comment-inline-label { margin: 0; color: var(--purple-2); font: 500 10.5px var(--mono);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.comment-inline textarea { width: 100%; min-height: 58px; resize: vertical; background: var(--well);
+  border: 1px solid var(--border-2); border-radius: 6px; padding: 6px 8px; color: var(--t1);
+  font: 400 12.5px var(--sans); }
+.comment-inline textarea:focus { border-color: var(--green-3); outline: none; }
+.comment-inline-error { margin: 0; color: var(--pink); font: 400 10.5px var(--mono); }
+.comment-inline-error[hidden] { display: none; }
+.comment-inline-foot { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.comment-inline-cancel { background: transparent; border: 0; color: var(--t6); font: 500 11px var(--mono);
+  cursor: pointer; padding: 5px 8px; border-radius: 6px; }
+.comment-inline-cancel:hover { color: var(--t2); background: var(--well); }
+.comment-inline-post { background: var(--green-3); border: 0; border-radius: 6px; color: #06110B;
+  font: 700 11px var(--mono); padding: 5px 12px; cursor: pointer; }
+.comment-inline-post:hover { background: var(--green-2); }
+.comment-inline-post:disabled, .comment-inline-cancel:disabled { opacity: .5; cursor: default; }
+
 /* ---- RUN panel ---- */
 .traj-panel { background: var(--panel); border-left: 1px solid var(--border); overflow: auto; min-width: 0; }
 .prov-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

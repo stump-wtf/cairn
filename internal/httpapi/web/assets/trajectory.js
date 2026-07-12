@@ -176,6 +176,7 @@
   function openPicker(runID, cluster, add) {
     var open = document.querySelector('.react-picker');
     if (open) open.remove();
+    if (activeCommentComposer) activeCommentComposer.close(false);
     var pick = document.createElement('div');
     pick.className = 'react-picker';
     REACT_PALETTE.forEach(function (emoji) {
@@ -231,33 +232,40 @@
   }
 
   // ---- Comment anchoring (span + selection) ------------------------------
+  // wireComments wires two independent things behind one gate:
+  //   1. the RUN panel's composer form — whole-run (unanchored) comments and
+  //      the select-text-to-comment flow (wireSelection, below) — unchanged
+  //      from before #58, still an HTMX form post.
+  //   2. every per-span/per-turn "💬 comment" button (comment-anchor-btn):
+  //      instead of scrolling the anchor over to that far-away RUN panel
+  //      form, a click opens a small floating composer AT the clicked line
+  //      (openCommentComposer, mirroring openPicker's popover pattern right
+  //      above), which posts straight to the same POST /{id}/comments
+  //      endpoint the form uses (#58).
+  // Both a signed-out click on a span button (previously a silent no-op —
+  // the button rendered but was never wired when the RUN panel form was
+  // absent) and one on the react-add trigger route to /login?next=,
+  // consistent with the reaction affordance fixed in #41.
+  //
   // Returns a handle exposing wireCommentButtons so a live-appended stream
-  // row's "💬 comment" button (wireLive, below) can be wired against the same
-  // form/setSpan closure the initial page load used — or null when there is
-  // no composer (signed out), so live rows correctly stay inert too.
-  function wireComments(root) {
+  // row's button (wireLive, below) can be wired against the same runID/
+  // canWrite closure the initial page load used.
+  function wireComments(root, runID, canWrite) {
     var form = root.querySelector('[data-comment-form]');
-    if (!form) return null;
-    var chip = form.querySelector('[data-anchor-chip]');
-    var chipLabel = form.querySelector('[data-anchor-label]');
-    var fSpan = form.querySelector('[data-f-span]');
-    var fStart = form.querySelector('[data-f-start]');
-    var fEnd = form.querySelector('[data-f-end]');
-    var fQuote = form.querySelector('[data-f-quote]');
-    var textarea = form.querySelector('#comment-body');
+    var chip = form && form.querySelector('[data-anchor-chip]');
+    var chipLabel = form && form.querySelector('[data-anchor-label]');
+    var fStart = form && form.querySelector('[data-f-start]');
+    var fEnd = form && form.querySelector('[data-f-end]');
+    var fQuote = form && form.querySelector('[data-f-quote]');
+    var textarea = form && form.querySelector('#comment-body');
 
     function clearAnchor() {
-      fSpan.value = ''; fStart.value = ''; fEnd.value = ''; fQuote.value = '';
+      if (!form) return;
+      fStart.value = ''; fEnd.value = ''; fQuote.value = '';
       if (chip) chip.hidden = true;
     }
-    function setSpan(spanID, name) {
-      clearAnchor();
-      fSpan.value = spanID;
-      if (chipLabel) chipLabel.textContent = 'on ' + (name || spanID);
-      if (chip) chip.hidden = false;
-      if (textarea) textarea.focus();
-    }
     function setSelection(start, end, quote) {
+      if (!form) return;
       clearAnchor();
       fStart.value = String(start); fEnd.value = String(end); fQuote.value = quote;
       if (chipLabel) chipLabel.textContent = 'on “' + quote.slice(0, 34) + '”';
@@ -265,24 +273,182 @@
       if (textarea) textarea.focus();
     }
 
-    var clearBtn = form.querySelector('[data-anchor-clear]');
-    if (clearBtn) clearBtn.addEventListener('click', clearAnchor);
+    if (form) {
+      var clearBtn = form.querySelector('[data-anchor-clear]');
+      if (clearBtn) clearBtn.addEventListener('click', clearAnchor);
+
+      // Clear the selection state after a successful HTMX comment post.
+      form.addEventListener('htmx:afterRequest', function (e) {
+        if (e.detail && e.detail.successful) { clearAnchor(); if (textarea) textarea.value = ''; }
+      });
+
+      wireSelection(root, setSelection);
+    }
 
     function wireCommentButtons(scope) {
       scope.querySelectorAll('[data-comment-span]').forEach(function (btn) {
-        btn.addEventListener('click', function () { setSpan(btn.dataset.commentSpan, btn.dataset.commentName); });
+        btn.addEventListener('click', function () {
+          if (!canWrite) { requireLogin(); return; }
+          openCommentComposer(root, runID, btn);
+        });
       });
     }
     wireCommentButtons(root);
 
-    // Clear the anchor + selection state after a successful HTMX comment post.
-    form.addEventListener('htmx:afterRequest', function (e) {
-      if (e.detail && e.detail.successful) { clearAnchor(); if (textarea) textarea.value = ''; }
+    return { wireCommentButtons: wireCommentButtons };
+  }
+
+  // A single floating comment composer open at a time (mirrors the reaction
+  // picker's implicit singleton — clicking a second "💬 comment" button
+  // replaces, rather than stacks on top of, the first).
+  var activeCommentComposer = null;
+
+  // Opens a labeled, focus-trapped floating composer at the clicked span/turn
+  // button: a textarea + Post/Cancel, Escape to dismiss, focus restored to the
+  // trigger on close (SPEC-0004 Keyboard Navigation & Focus Management —
+  // MANDATORY, same bar as openPicker above). Posting submits a
+  // trajectory_span-anchored comment (span_id = the button's data-comment-span)
+  // to the same `POST /{id}/comments` endpoint the RUN panel form uses; the
+  // server-rendered comment partial it returns is appended to the RUN panel's
+  // #comment-list (mirroring the form's own hx-swap="beforeend") and the
+  // Comments count is bumped, so the new comment is visible in the panel
+  // without a full reload — the anchor visibly attached at the point of
+  // authorship even though the record of it lives in the panel thread (#58).
+  function openCommentComposer(root, runID, trigger) {
+    if (activeCommentComposer) activeCommentComposer.close(false);
+
+    var spanID = trigger.dataset.commentSpan;
+    var label = trigger.dataset.commentName || spanID;
+    var taID = 'inline-comment-' + Math.random().toString(36).slice(2);
+
+    var box = document.createElement('div');
+    box.className = 'comment-inline';
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', 'Comment on ' + label);
+
+    var heading = document.createElement('p');
+    heading.className = 'comment-inline-label';
+    heading.textContent = 'commenting on ' + label;
+    box.appendChild(heading);
+
+    var lbl = document.createElement('label');
+    lbl.className = 'sr-only';
+    lbl.setAttribute('for', taID);
+    lbl.textContent = 'Comment on ' + label;
+    box.appendChild(lbl);
+
+    var ta = document.createElement('textarea');
+    ta.id = taID;
+    ta.rows = 3;
+    ta.placeholder = 'comment on this span…';
+    box.appendChild(ta);
+
+    var err = document.createElement('p');
+    err.className = 'comment-inline-error';
+    err.setAttribute('role', 'status');
+    err.hidden = true;
+    box.appendChild(err);
+
+    var foot = document.createElement('div');
+    foot.className = 'comment-inline-foot';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button'; cancelBtn.className = 'comment-inline-cancel'; cancelBtn.textContent = 'Cancel';
+    var postBtn = document.createElement('button');
+    postBtn.type = 'button'; postBtn.className = 'comment-inline-post'; postBtn.textContent = 'Post';
+    foot.appendChild(cancelBtn); foot.appendChild(postBtn);
+    box.appendChild(foot);
+
+    document.body.appendChild(box);
+
+    // Position at the trigger, clamped so a span near the right/bottom edge
+    // doesn't render the composer off-screen.
+    var r = trigger.getBoundingClientRect();
+    var maxLeft = window.scrollX + document.documentElement.clientWidth - box.offsetWidth - 12;
+    var left = Math.min(window.scrollX + r.left, Math.max(maxLeft, window.scrollX + 12));
+    box.style.left = left + 'px';
+    box.style.top = (window.scrollY + r.bottom + 6) + 'px';
+
+    var focusables = [ta, cancelBtn, postBtn];
+    var closed = false;
+    function close(restoreFocus) {
+      if (closed) return;
+      closed = true;
+      activeCommentComposer = null;
+      box.remove();
+      document.removeEventListener('click', onDocClick, true);
+      box.removeEventListener('keydown', onKeydown);
+      if (restoreFocus && trigger && document.contains(trigger)) trigger.focus();
+    }
+    function onDocClick(e) {
+      if (!box.contains(e.target)) close(false);
+    }
+    // Trap Tab within the composer and dismiss on Escape.
+    function onKeydown(e) {
+      if (e.key === 'Escape') { e.preventDefault(); close(true); return; }
+      if (e.key !== 'Tab') return;
+      var first = focusables[0], last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); first.focus();
+      }
+    }
+    box.addEventListener('keydown', onKeydown);
+    cancelBtn.addEventListener('click', function () { close(true); });
+    postBtn.addEventListener('click', function () {
+      var body = ta.value.trim();
+      if (!body) { ta.focus(); return; }
+      err.hidden = true;
+      postBtn.disabled = true; cancelBtn.disabled = true; ta.disabled = true;
+      // application/x-www-form-urlencoded, matching the RUN panel <form>'s
+      // default enctype: the server side (webbin.go handleWebComment) only
+      // calls r.ParseForm(), which does not parse multipart/form-data, so a
+      // FormData body here would silently arrive as an empty form.
+      var params = new URLSearchParams();
+      params.set('span_id', spanID);
+      params.set('body', body);
+      fetch('/' + encodeURIComponent(runID) + '/comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrf() },
+        credentials: 'same-origin',
+        body: params.toString()
+      }).then(function (resp) {
+        if (!resp.ok) throw new Error('post failed');
+        return resp.text();
+      }).then(function (html) {
+        appendCommentHTML(root, html);
+        close(true);
+      }).catch(function () {
+        postBtn.disabled = false; cancelBtn.disabled = false; ta.disabled = false;
+        err.hidden = false; err.textContent = 'Could not post comment — try again.';
+        ta.focus();
+      });
     });
 
-    wireSelection(root, setSelection);
+    activeCommentComposer = { close: close };
+    ta.focus();
+    // Defer the outside-click listener so the click that opened the composer
+    // does not immediately close it. Capture phase so it fires before row
+    // handlers (matches openPicker above).
+    setTimeout(function () { document.addEventListener('click', onDocClick, true); }, 0);
+  }
 
-    return { wireCommentButtons: wireCommentButtons };
+  // Appends the server-rendered comment partial (already HTML-escaped by
+  // html/template — the same trust boundary the RUN panel form's own
+  // hx-swap="beforeend" HTMX post relies on) to the RUN panel's #comment-list,
+  // dropping the "No comments yet" placeholder if this is the first comment,
+  // and bumps the Comments panel-heading count so both stay in agreement with
+  // no full-page reload (#58).
+  function appendCommentHTML(root, html) {
+    var list = root.querySelector('#comment-list');
+    if (!list) return;
+    var empty = list.querySelector('.comments-empty');
+    if (empty) empty.remove();
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    while (tmp.firstChild) list.appendChild(tmp.firstChild);
+    var count = root.querySelector('#comments-h .count');
+    if (count) count.textContent = String((num(count.textContent) || 0) + 1);
   }
 
   // Floating selection toolbar over the activity stream: on a text selection,
@@ -556,20 +722,21 @@
     var actions = document.createElement('div'); actions.className = 'turn-actions';
     var anchorType = span.tool ? 'trajectory_toolcall' : 'trajectory_turn';
     actions.appendChild(buildReactionCluster(anchorType, span.span_id, 'Reactions on ' + (span.name || span.span_id)));
-    if (canWrite) {
-      var commentBtn = document.createElement('button'); commentBtn.type = 'button'; commentBtn.className = 'comment-anchor-btn';
-      commentBtn.dataset.commentSpan = span.span_id;
-      commentBtn.dataset.commentName = span.name || '';
-      commentBtn.setAttribute('aria-label', 'Comment on ' + (span.name || span.span_id));
-      commentBtn.textContent = '💬 comment';
-      actions.appendChild(commentBtn);
-    }
+    // Rendered regardless of canWrite, matching the server-rendered "stream-row"
+    // template: a signed-out click still routes to /login?next= (wired below via
+    // commentsHandle), rather than the button silently being absent (#58).
+    var commentBtn = document.createElement('button'); commentBtn.type = 'button'; commentBtn.className = 'comment-anchor-btn';
+    commentBtn.dataset.commentSpan = span.span_id;
+    commentBtn.dataset.commentName = span.name || '';
+    commentBtn.setAttribute('aria-label', 'Comment on ' + (span.name || span.span_id));
+    commentBtn.textContent = '💬 comment';
+    actions.appendChild(commentBtn);
     body.appendChild(actions);
 
     turn.appendChild(rail); turn.appendChild(body);
     wireLazyOutput(turn);
     wireReactions(turn, runID, canWrite);
-    if (commentsHandle) commentsHandle.wireCommentButtons(turn);
+    commentsHandle.wireCommentButtons(turn);
 
     var parent = span.parent_span_id ? stream.querySelector('.turn[data-turnrow="' + cssEsc(span.parent_span_id) + '"]') : null;
     var container = parent ? parent.querySelector('.subagent-children') : null;
@@ -665,7 +832,7 @@
     layoutCategoryBar(root);
     wireWaterfallJumps(root);
     wireReactions(root, runID, canWrite);
-    var commentsHandle = wireComments(root);
+    var commentsHandle = wireComments(root, runID, canWrite);
     wireLazyOutput(root);
     wireLive(root, canWrite, commentsHandle);
     window.addEventListener('resize', function () { layoutWaterfall(root); });

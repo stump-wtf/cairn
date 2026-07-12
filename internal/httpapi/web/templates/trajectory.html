@@ -128,9 +128,14 @@
           {{range .Comments}}{{template "comment-item" .}}{{else}}<p class="comments-empty">No comments yet.</p>{{end}}
         </div>
         {{if .Authenticated}}
+        {{/* Whole-run comments and the select-text-to-comment flow only — a
+        per-span "💬 comment" click no longer routes here (#58): it opens an
+        inline floating composer at the clicked line (trajectory.js
+        openCommentComposer) and posts straight to the same /{{.ID}}/comments
+        endpoint with its own span_id form field, so this composer keeps no
+        span-anchor state of its own. */}}
         <form class="comment-composer" hx-post="/{{.ID}}/comments" hx-target="#comment-list" hx-swap="beforeend" data-comment-form>
           <p class="composer-anchor" data-anchor-chip hidden>commenting <span data-anchor-label></span> <button type="button" class="anchor-clear" data-anchor-clear aria-label="Clear comment target">✕</button></p>
-          <input type="hidden" name="span_id" data-f-span value="">
           <input type="hidden" name="sel_start" data-f-start value="">
           <input type="hidden" name="sel_end" data-f-end value="">
           <input type="hidden" name="quote" data-f-quote value="">
