@@ -36,6 +36,10 @@ var schemaSeq atomic.Int64
 // isolation the annotation package's newTestPool relies on).
 func testServer(t *testing.T, cfg Config, opts store.Options) *httptest.Server {
 	t.Helper()
+	// The integration suite acts as arbitrary actors via `Bearer <actor>`, so it
+	// opts into the insecure dev bearer shortcut. Production leaves this off and
+	// verifies every token (see the security tests).
+	cfg.DevInsecureBearerAuth = true
 	pool := newTestPool(t)
 	st := store.New(pool, objectstore.NewMemory(), opts)
 	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())

@@ -132,7 +132,7 @@ func (s *Server) mountWeb(r chi.Router) {
 	// only bites ambient (cookie) principals — and returns the server-rendered
 	// comment partial for an HTMX swap. A bearer caller is exempt from CSRF as on
 	// the /v1 surface, so the same route serves scripted posts too.
-	r.With(s.requireAuth, s.enforceCSRF).Post("/{id}/comments", s.handleWebComment)
+	r.With(s.requireAuth, s.requireScope(scopeAnnotationsWrite), s.enforceCSRF).Post("/{id}/comments", s.handleWebComment)
 
 	// The embedded, immutable app assets (HTMX, Alpine, the stylesheet, the
 	// shell script). Long-cache: the files are content-stable for a build.

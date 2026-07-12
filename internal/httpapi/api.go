@@ -46,6 +46,16 @@ type Config struct {
 	// SessionTTL is the lifetime of a web session and its cookies. Defaults to 7
 	// days.
 	SessionTTL time.Duration
+	// APITokens are the static bearer credentials the API/MCP surface accepts
+	// (ADR-0004 MVP token seam). Each secret maps to an actor and role; an absent
+	// set means the bearer surface rejects every token (fail closed). A raw
+	// bearer string is never trusted as an actor id.
+	APITokens []APIToken
+	// DevInsecureBearerAuth, when true, additionally trusts a raw bearer token AS
+	// the actor id (DevActorAuthenticator) after the verifying TokenAuthenticator
+	// declines. It is a development/test-only shortcut that MUST stay false in
+	// production; the production default verifies every bearer token.
+	DevInsecureBearerAuth bool
 }
 
 // Server is the /v1 REST adapter over the core store and the ADR-0011 web app
@@ -121,15 +131,21 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		// session table (ADR-0012).
 		sessions = session.NewPostgresStore(st.Pool())
 	}
-	// Auth seam (ADR-0004): a caller-supplied Authenticator wins; otherwise pick
-	// the session-aware adapter when a session store exists (so the web binary
-	// authenticates both bearer tokens and browser sessions), else the bare
-	// bearer stub for storeless unit wirings.
+	// Auth seam (ADR-0004): a caller-supplied Authenticator wins; otherwise build
+	// the bearer surface from configured static tokens (the verifying
+	// TokenAuthenticator — a raw bearer is never trusted as an actor), optionally
+	// chained with the INSECURE dev shortcut when explicitly enabled. The bearer
+	// surface backs both the standalone API wiring and the session-aware adapter,
+	// so the web binary authenticates browser sessions AND verified bearer tokens.
 	if auth == nil {
+		var bearer Authenticator = NewTokenAuthenticator(cfg.APITokens)
+		if cfg.DevInsecureBearerAuth {
+			bearer = chainAuthenticator{bearer, DevActorAuthenticator{}}
+		}
 		if sessions != nil {
-			auth = &SessionAuthenticator{sessions: sessions, bearer: BearerAuthenticator{}}
+			auth = &SessionAuthenticator{sessions: sessions, bearer: bearer}
 		} else {
-			auth = BearerAuthenticator{}
+			auth = bearer
 		}
 	}
 	return &Server{
@@ -183,9 +199,16 @@ func (s *Server) Handler() http.Handler {
 // the strict-CSP group).
 func (s *Server) mountAPI(r chi.Router) {
 	r.Route("/v1", func(r chi.Router) {
-		// Mutating / workspace-scoped endpoints require authentication.
-		r.With(s.requireAuth).Post("/artifacts", s.handleCreate)
-		r.With(s.requireAuth).Delete("/artifacts/{id}", s.handleDelete)
+		// Mutating / workspace-scoped endpoints require authentication, the
+		// matching capability scope (401 when unauthenticated, 403 when
+		// authenticated but under-scoped), and — for state-changing writes — the
+		// CSRF seam. enforceCSRF is a no-op for token (non-ambient) callers and the
+		// guard the cookie-session surface plugs into, so a browser session cannot
+		// be CSRF-tricked into creating or deleting an artifact (SPEC-0006 REQ
+		// "CSRF Protection"; closes the gap left when only annotation writes were
+		// guarded).
+		r.With(s.requireAuth, s.requireScope(scopeArtifactsWrite), s.enforceCSRF).Post("/artifacts", s.handleCreate)
+		r.With(s.requireAuth, s.requireScope(scopeArtifactsWrite), s.enforceCSRF).Delete("/artifacts/{id}", s.handleDelete)
 		r.With(s.requireAuth).Get("/bin", s.handleBin)
 
 		// Link-capability reads: a valid id grants read; unknown/expired ids
@@ -200,11 +223,11 @@ func (s *Server) mountAPI(r chi.Router) {
 		// artifact's ADR-0007 link capability, so a valid id reads and an
 		// unknown/expired id is a uniform 404.
 		r.Get("/artifacts/{id}/reactions", s.handleListReactions)
-		r.With(s.requireAuth, s.enforceCSRF).Post("/artifacts/{id}/reactions", s.handleReact)
-		r.With(s.requireAuth, s.enforceCSRF).Delete("/artifacts/{id}/reactions", s.handleUnreact)
-		r.With(s.requireAuth, s.enforceCSRF).Delete("/artifacts/{id}/reactions/{rid}", s.handleUnreactByID)
+		r.With(s.requireAuth, s.requireScope(scopeAnnotationsWrite), s.enforceCSRF).Post("/artifacts/{id}/reactions", s.handleReact)
+		r.With(s.requireAuth, s.requireScope(scopeAnnotationsWrite), s.enforceCSRF).Delete("/artifacts/{id}/reactions", s.handleUnreact)
+		r.With(s.requireAuth, s.requireScope(scopeAnnotationsWrite), s.enforceCSRF).Delete("/artifacts/{id}/reactions/{rid}", s.handleUnreactByID)
 		r.Get("/artifacts/{id}/comments", s.handleListComments)
-		r.With(s.requireAuth, s.enforceCSRF).Post("/artifacts/{id}/comments", s.handleComment)
+		r.With(s.requireAuth, s.requireScope(scopeAnnotationsWrite), s.enforceCSRF).Post("/artifacts/{id}/comments", s.handleComment)
 
 		// The trajectory share type contributes its own /v1/runs* ingest,
 		// lifecycle, and lazy-output surface through the ADR-0002 RouteMounter

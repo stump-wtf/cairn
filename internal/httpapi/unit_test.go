@@ -107,8 +107,8 @@ func TestURLScheme(t *testing.T) {
 	}
 }
 
-func TestBearerAuthenticator(t *testing.T) {
-	a := BearerAuthenticator{}
+func TestDevActorAuthenticator(t *testing.T) {
+	a := DevActorAuthenticator{}
 
 	// No credentials.
 	if _, err := a.Authenticate(httptest.NewRequest(http.MethodPost, "/v1/artifacts", nil)); !errors.Is(err, errs.ErrUnauthorized) {
@@ -120,7 +120,8 @@ func TestBearerAuthenticator(t *testing.T) {
 	if _, err := a.Authenticate(r); !errors.Is(err, errs.ErrUnauthorized) {
 		t.Fatalf("empty bearer should be unauthorized, got %v", err)
 	}
-	// Valid token → actor id, server-derived channel.
+	// The dev shortcut trusts the raw token AS the actor id, server-derived
+	// channel. This is the INSECURE behavior gated behind the dev flag.
 	r = httptest.NewRequest(http.MethodPost, "/v1/artifacts", nil)
 	r.Header.Set("Authorization", "Bearer alice")
 	p, err := a.Authenticate(r)
@@ -132,6 +133,9 @@ func TestBearerAuthenticator(t *testing.T) {
 	}
 	if p.Channel != artifact.ChannelAPI {
 		t.Errorf("channel = %q, want %q (server-derived)", p.Channel, artifact.ChannelAPI)
+	}
+	if p.HasScope(scopeSharingManage) {
+		t.Error("dev principal must not carry sharing:manage")
 	}
 }
 

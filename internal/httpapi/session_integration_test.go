@@ -25,6 +25,9 @@ func loginConfig() Config {
 		DefaultTTL:       time.Hour,
 		DevLoginPassword: "devpass",
 		SessionTTL:       time.Hour,
+		// The session suite seeds artifacts and posts as `Bearer <actor>` (a
+		// non-ambient scripted caller), so it enables the dev bearer shortcut.
+		DevInsecureBearerAuth: true,
 	}
 }
 

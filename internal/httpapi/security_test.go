@@ -1,0 +1,222 @@
+package httpapi
+
+import (
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/joestump/cairn/internal/artifact"
+	"github.com/joestump/cairn/internal/errs"
+	"github.com/joestump/cairn/internal/session"
+)
+
+// TestParseAPITokens covers the CAIRN_API_TOKENS grammar: valid single and
+// multi-entry sets, the optional role, whitespace tolerance, and every malformed
+// shape a misconfiguration could take (surfaced as an error, never silently
+// dropped).
+func TestParseAPITokens(t *testing.T) {
+	t.Run("empty yields no tokens", func(t *testing.T) {
+		got, err := ParseAPITokens("   ")
+		if err != nil || got != nil {
+			t.Fatalf("ParseAPITokens(empty) = %v, %v; want nil, nil", got, err)
+		}
+	})
+
+	t.Run("valid set with roles", func(t *testing.T) {
+		got, err := ParseAPITokens(" sk_alice:alice , sk_bot:alice:agent ,sk_joe:joe:human")
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("len = %d, want 3", len(got))
+		}
+		if got[0] != (APIToken{Secret: "sk_alice", ActorID: "alice", IsAgent: false}) {
+			t.Errorf("token[0] = %+v", got[0])
+		}
+		if !got[1].IsAgent {
+			t.Errorf("token[1] should be an agent: %+v", got[1])
+		}
+		if got[2].IsAgent {
+			t.Errorf("token[2] explicit human should not be an agent: %+v", got[2])
+		}
+	})
+
+	for _, bad := range []string{
+		"noactor",           // missing actor
+		":alice",            // blank secret
+		"sk_x:",             // blank actor
+		"sk_x:alice:root",   // unknown role
+		"a:b:c:d",           // too many fields
+		"sk_dup:a,sk_dup:b", // duplicate secret
+	} {
+		t.Run("rejects "+bad, func(t *testing.T) {
+			if _, err := ParseAPITokens(bad); err == nil {
+				t.Fatalf("ParseAPITokens(%q) should have errored", bad)
+			}
+		})
+	}
+}
+
+// TestTokenAuthenticatorVerifies is the core security invariant: a raw bearer
+// string is NEVER trusted as an actor id. Only a registered secret authenticates,
+// it resolves to the token's configured actor (not the presented text), and the
+// server-derived channel is via API.
+func TestTokenAuthenticatorVerifies(t *testing.T) {
+	auth := NewTokenAuthenticator([]APIToken{
+		{Secret: "sk_secret_alice", ActorID: "alice"},
+		{Secret: "sk_secret_bot", ActorID: "alice", IsAgent: true},
+	})
+
+	req := func(bearer string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/v1/artifacts", nil)
+		if bearer != "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		return r
+	}
+
+	// A raw actor id that is NOT a registered secret is rejected — the old
+	// bearer==actor impersonation is dead.
+	for _, bad := range []string{"", "alice", "bob", "sk_wrong"} {
+		if _, err := auth.Authenticate(req(bad)); !errors.Is(err, errs.ErrUnauthorized) {
+			t.Fatalf("bearer %q must be unauthorized, got %v", bad, err)
+		}
+	}
+
+	// A registered secret resolves to its configured actor, not the secret text.
+	p, err := auth.Authenticate(req("sk_secret_alice"))
+	if err != nil {
+		t.Fatalf("valid token: %v", err)
+	}
+	if p.ActorID != "alice" {
+		t.Fatalf("actor = %q, want alice (from the registry, not the token text)", p.ActorID)
+	}
+	if p.Channel != artifact.ChannelAPI {
+		t.Fatalf("channel = %q, want via API (server-derived)", p.Channel)
+	}
+	if p.Ambient {
+		t.Error("token principal must not be Ambient (CSRF-exempt)")
+	}
+	if !p.HasScope(scopeSharingManage) {
+		t.Error("human token should carry sharing:manage")
+	}
+
+	// The agent token authenticates the same human but is capped at the ADR-0004
+	// agent scopes — never sharing:manage.
+	ap, err := auth.Authenticate(req("sk_secret_bot"))
+	if err != nil {
+		t.Fatalf("agent token: %v", err)
+	}
+	if !ap.IsAgent {
+		t.Error("agent token must mark the principal IsAgent")
+	}
+	if ap.HasScope(scopeSharingManage) {
+		t.Error("agent token must NOT carry sharing:manage (ADR-0004)")
+	}
+	if !ap.HasScope(scopeArtifactsWrite) || !ap.HasScope(scopeAnnotationsWrite) {
+		t.Error("agent token should carry artifacts:write and annotations:write")
+	}
+}
+
+// TestTokenAuthenticatorEmptyFailsClosed proves an unconfigured deployment (no
+// tokens) rejects every bearer token, rather than defaulting open.
+func TestTokenAuthenticatorEmptyFailsClosed(t *testing.T) {
+	auth := NewTokenAuthenticator(nil)
+	r := httptest.NewRequest(http.MethodPost, "/v1/artifacts", nil)
+	r.Header.Set("Authorization", "Bearer anything")
+	if _, err := auth.Authenticate(r); !errors.Is(err, errs.ErrUnauthorized) {
+		t.Fatalf("empty token registry must reject all bearers, got %v", err)
+	}
+}
+
+// TestSessionAuthenticatorTokenPathVerifies proves the default web-binary auth
+// seam (nil auth ⇒ SessionAuthenticator over configured tokens, dev shortcut
+// OFF) verifies bearer tokens: a configured secret authenticates as its actor,
+// an unregistered raw actor string does not.
+func TestSessionAuthenticatorTokenPathVerifies(t *testing.T) {
+	sa := &SessionAuthenticator{
+		sessions: session.NewMemoryStore(),
+		bearer:   NewTokenAuthenticator([]APIToken{{Secret: "sk_live", ActorID: "sam"}}),
+	}
+	req := func(bearer string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/v1/artifacts", nil)
+		r.Header.Set("Authorization", "Bearer "+bearer)
+		return r
+	}
+	if _, err := sa.Authenticate(req("sam")); !errors.Is(err, errs.ErrUnauthorized) {
+		t.Error("raw actor string must not authenticate on the token path")
+	}
+	p, err := sa.Authenticate(req("sk_live"))
+	if err != nil {
+		t.Fatalf("configured token: %v", err)
+	}
+	if p.ActorID != "sam" {
+		t.Fatalf("actor = %q, want sam", p.ActorID)
+	}
+}
+
+// TestChainAuthenticatorPrefersToken proves the verifying token authenticator
+// wins over the dev shortcut when both are chained (dev mode on): a real secret
+// resolves to its configured actor, while an unregistered string falls through
+// to the dev actor mapping.
+func TestChainAuthenticatorPrefersToken(t *testing.T) {
+	chain := chainAuthenticator{
+		NewTokenAuthenticator([]APIToken{{Secret: "sk_real", ActorID: "verified"}}),
+		DevActorAuthenticator{},
+	}
+	req := func(bearer string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/v1/artifacts", nil)
+		r.Header.Set("Authorization", "Bearer "+bearer)
+		return r
+	}
+	p, err := chain.Authenticate(req("sk_real"))
+	if err != nil || p.ActorID != "verified" {
+		t.Fatalf("token should win: %+v, %v", p, err)
+	}
+	// Unregistered → dev fallback maps bearer==actor.
+	p, err = chain.Authenticate(req("someone"))
+	if err != nil || p.ActorID != "someone" {
+		t.Fatalf("dev fallback should map bearer==actor: %+v, %v", p, err)
+	}
+}
+
+// TestRequireScope proves the authz middleware distinguishes 401 (no principal)
+// from 403 (authenticated but under-scoped), and passes a sufficiently-scoped
+// principal through.
+func TestRequireScope(t *testing.T) {
+	s := New(nil, nil, DevActorAuthenticator{}, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var reached bool
+	h := s.requireScope(scopeAnnotationsWrite)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// No principal in context → 401.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/artifacts/x/comments", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no principal: status = %d, want 401", rec.Code)
+	}
+
+	// Authenticated but lacks the scope → 403.
+	rec = httptest.NewRecorder()
+	under := &Principal{ActorID: "a", Scopes: map[string]bool{scopeArtifactsRead: true}}
+	h.ServeHTTP(rec, withPrincipal(httptest.NewRequest(http.MethodPost, "/v1/artifacts/x/comments", nil), under))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("under-scoped: status = %d, want 403", rec.Code)
+	}
+	if reached {
+		t.Fatal("under-scoped request must not reach the handler")
+	}
+
+	// Sufficiently scoped → passes through.
+	rec = httptest.NewRecorder()
+	ok := &Principal{ActorID: "a", Scopes: map[string]bool{scopeAnnotationsWrite: true}}
+	h.ServeHTTP(rec, withPrincipal(httptest.NewRequest(http.MethodPost, "/v1/artifacts/x/comments", nil), ok))
+	if rec.Code != http.StatusOK || !reached {
+		t.Fatalf("scoped request should pass: status = %d, reached = %v", rec.Code, reached)
+	}
+}
