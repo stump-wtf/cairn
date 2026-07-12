@@ -5,12 +5,35 @@
 <title>cairn</title>
 </head>
 <body class="landing">
-<main class="landing-wrap" role="main">
+{{/* ARIA landmarks (SPEC-0007 REQ "WCAG 2.1 AA & Semantics"): banner, main,
+     contentinfo as three distinct top-level regions, matching login.html and
+     consent.html rather than one undifferentiated block (#57). */}}
+<header class="landing-banner" role="banner">
   <div class="landing-stones" aria-hidden="true"><i class="s1"></i><i class="s2"></i><i class="s3"></i></div>
   <h1 class="landing-word">cairn</h1>
   <p class="landing-tag">AI-native artifact sharing</p>
-  <p class="landing-status"><span class="live-dot" aria-hidden="true"></span> instance is live</p>
+</header>
+<main class="landing-wrap landing-pitch-wrap" role="main">
+  <p class="landing-pitch">
+    Cairn is a pastebin / gist / requestbin, reimagined for the agent era.
+    Humans post from the web or the CLI; agents read, create, comment, and
+    react over MCP — on your behalf, with your consent.
+  </p>
+
+  <ul class="landing-features" aria-label="What every artifact gets">
+    <li><span class="landing-feature-glyph" aria-hidden="true">🔗</span> a short URL, readable by humans and agents alike</li>
+    <li><span class="landing-feature-glyph" aria-hidden="true">🪪</span> provenance — who (or which agent) made it, and how</li>
+    <li><span class="landing-feature-glyph" aria-hidden="true">💬</span> reactions &amp; threaded comments on any artifact</li>
+    <li><span class="landing-feature-glyph" aria-hidden="true">⧗</span> a visible time-to-live — ephemeral by default</li>
+  </ul>
+
+  <a class="login-btn login-oidc-btn" href="{{.LoginPath}}">{{if .OIDCEnabled}}Sign in with Pocket ID{{else}}Sign in{{end}}</a>
+  <p class="landing-mcp-tease">Once you're in, connect an agent over MCP — read, push, comment, and react through the same workspace.</p>
+
   <p class="landing-foot">Open a share at <code>/{id}</code> or a run at <code>/run/{id}</code> · API at <code>/v1</code></p>
 </main>
+<footer class="app-foot landing-contentinfo" role="contentinfo">
+  <p class="landing-foot">humans post from the CLI, agents over MCP</p>
+</footer>
 </body>
 </html>{{end}}

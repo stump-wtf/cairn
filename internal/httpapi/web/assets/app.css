@@ -451,3 +451,54 @@ body.landing { display: flex; flex-direction: column; align-items: center; justi
 .share-policy dt { color: var(--t7); font: 400 11px var(--mono); }
 .share-policy dd { margin: 0; color: var(--t2); font: 400 12px var(--sans); word-break: break-word; }
 .share-dialog-note { margin: 14px 16px 18px; color: var(--t6); font: 400 11.5px var(--mono); }
+
+/* ---- Logged-out landing pitch (#57) ---- */
+.landing-pitch-wrap { max-width: 460px; }
+.landing-pitch { margin: 0; color: var(--t3); font: 400 13.5px/1.65 var(--sans); }
+.landing-features {
+  list-style: none; margin: 22px 0 0; padding: 0; text-align: left;
+  display: flex; flex-direction: column; gap: 10px;
+  border: 1px solid var(--border-3); border-radius: 10px; background: var(--well-2);
+  padding: 14px 16px;
+}
+.landing-features li { display: flex; align-items: flex-start; gap: 9px; color: var(--t3); font: 400 12.5px var(--mono); }
+.landing-feature-glyph { flex: 0 0 auto; }
+.landing-mcp-tease { margin: 14px 0 0; color: var(--t7); font: 400 11px var(--mono); }
+
+/* ---- Connect an agent (#57) ---- */
+.connect-main { display: flex; flex-direction: column; }
+.connect-back { align-self: flex-start; color: var(--t6); font: 500 11.5px var(--mono); text-decoration: none; margin-bottom: 18px; }
+.connect-back:hover { color: var(--t3); }
+.connect-h1 { margin: 0; color: var(--t0); font: 600 20px var(--sans); }
+.connect-lede { margin: 8px 0 0; color: var(--t5); font: 400 13px/1.6 var(--sans); max-width: 62ch; }
+.connect-section { margin-top: 30px; padding-top: 24px; border-top: 1px solid var(--border-3); }
+.connect-h2 { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--t1); font: 600 14.5px var(--sans); }
+.connect-h2-glyph { color: var(--green-3); font: 600 13px var(--mono); }
+.connect-badge {
+  font: 600 10px var(--mono); letter-spacing: .4px; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 999px; margin-left: 2px;
+}
+.connect-badge-live { color: var(--green-2); background: rgba(86,227,159,.12); border: 1px solid #244034; }
+.connect-badge-soon { color: var(--t6); background: var(--well); border: 1px solid var(--border-2); }
+.connect-note { margin: 10px 0 0; color: var(--t5); font: 400 12.5px/1.6 var(--sans); max-width: 68ch; }
+.connect-note-muted { color: var(--t7); font-size: 11.5px; }
+.connect-code {
+  background: var(--well-2); border: 1px solid var(--border-3); border-radius: 5px;
+  color: var(--green-2); font: 400 12px var(--mono); padding: 2px 7px;
+}
+.connect-steps { margin: 14px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; color: var(--t3); font: 400 13px/1.6 var(--sans); }
+.connect-steps li::marker { color: var(--t7); font: 500 12px var(--mono); }
+.connect-scope-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.connect-scope-list li { color: var(--t4); font: 400 12px var(--sans); }
+.connect-cli-preview { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.connect-cli-preview li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.connect-cli-note { color: var(--t7); font: 400 11px var(--mono); }
+.connect-link { color: var(--green-3); }
+
+/* ---- Bin toolbar: Connect affordance (#57) ---- */
+.bin-connect-btn {
+  display: inline-flex; align-items: center; gap: 5px; text-decoration: none;
+  background: var(--well); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--t3); font: 600 12px var(--mono); padding: 7px 13px;
+}
+.bin-connect-btn:hover { border-color: var(--green-3); color: var(--green-2); }

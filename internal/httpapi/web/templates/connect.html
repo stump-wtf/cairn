@@ -1,0 +1,57 @@
+{{define "connect"}}<!doctype html>
+<html lang="en">
+<head>
+{{template "doc-head" .}}
+<title>connect · cairn</title>
+</head>
+<body>
+<a class="skip-link" href="#connect-main">Skip to content</a>
+
+<header class="app-header" role="banner">
+  <a class="brand" href="/" aria-label="cairn home">{{template "stone-logo" .}}<span class="wordmark">cairn</span></a>
+  <span class="crumb-sep" aria-hidden="true">▸</span>
+  <span class="artifact-title">connect an agent</span>
+  <div class="header-spacer"></div>
+  <span class="whoami" title="signed in">{{.Actor}}</span>
+  <form class="logout-form" method="post" action="/logout">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <button type="submit" class="logout-btn">Sign out</button>
+  </form>
+</header>
+
+<main id="connect-main" class="bin-main connect-main" role="main" tabindex="-1">
+  <a class="connect-back" href="/bin">← back to the bin</a>
+  <h1 class="connect-h1">Connect an agent</h1>
+  <p class="connect-lede">Give Claude (or any MCP-speaking agent) read/write access to your Cairn workspace — the same auth as you, scoped and revocable.</p>
+
+  <section class="connect-section" aria-labelledby="connect-mcp-h">
+    <h2 id="connect-mcp-h" class="connect-h2"><span class="connect-h2-glyph" aria-hidden="true">◆</span> MCP <span class="connect-badge connect-badge-live">available now</span></h2>
+    <p class="connect-note">Add Cairn as an MCP server in your client. It's OAuth 2.1 (code + PKCE) — no static API keys to copy around.</p>
+    <ol class="connect-steps">
+      <li>Add <code class="connect-code">{{.BaseURL}}</code> as an MCP server in your client (e.g. Claude Desktop, Claude Code).</li>
+      <li>Your client discovers the OAuth authorization server at <code class="connect-code">{{.BaseURL}}/.well-known/oauth-authorization-server</code>.</li>
+      <li>You approve the three scopes once, via Pocket ID:
+        <ul class="connect-scope-list">
+          <li><code class="connect-code">artifacts:read</code> — read artifacts you can access</li>
+          <li><code class="connect-code">artifacts:write</code> — create &amp; push new artifacts</li>
+          <li><code class="connect-code">annotations:write</code> — comment &amp; react on your behalf</li>
+        </ul>
+      </li>
+      <li>The client talks to <code class="connect-code">{{.BaseURL}}/mcp</code> — reading, pushing, commenting, and reacting as you.</li>
+    </ol>
+  </section>
+
+  <section class="connect-section" aria-labelledby="connect-cli-h">
+    <h2 id="connect-cli-h" class="connect-h2"><span class="connect-h2-glyph" aria-hidden="true">&gt;_</span> CLI <span class="connect-badge connect-badge-soon">coming soon</span></h2>
+    <p class="connect-note">The <code class="connect-code">cairn</code> CLI (0.0.2) is in progress — tracker #20–#22. The shape it's landing in:</p>
+    <ul class="connect-cli-preview">
+      <li><code class="connect-code">cairn login</code> <span class="connect-cli-note">authorize once over MCP OAuth — same auth as your agent</span></li>
+      <li><code class="connect-code">cat report.md | cairn</code> <span class="connect-cli-note">pipe or pass a file in, get a shareable link back</span></li>
+    </ul>
+    <p class="connect-note connect-note-muted">Not installable yet — check back once #20–#22 ship.</p>
+  </section>
+</main>
+
+{{template "footer" .}}
+</body>
+</html>{{end}}

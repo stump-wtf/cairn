@@ -56,18 +56,29 @@ type binRow struct {
 	IsShared      bool // has a live shareable link (visibility != private)
 }
 
-// handleBinPage renders the workspace Bin as HTML, reusing the base layout with a
-// listing body. It projects store.ListBin — the identical keyset query the JSON
-// /v1/bin and the CLI TUI use — ordered by created_at, keyset-paginated so a
-// "load more" neither skips nor duplicates rows under churn (SPEC-0001 REQ "The
-// Bin Listing", REQ "Bin Pagination"). It runs under requireWebSession, so an
-// unauthenticated browser was already redirected to login.
+// handleBinPage renders the workspace Bin as HTML at its legacy path (#57): `/`
+// is now the canonical authenticated entry point (handleLanding), and this
+// route stays live purely so existing `/bin` links keep resolving — both call
+// the same renderBin projection, so the two paths can never disagree. It runs
+// under requireWebSession, so an unauthenticated browser was already redirected
+// to login.
 func (s *Server) handleBinPage(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFrom(r.Context())
 	if !ok {
 		s.writeError(w, r, errs.ErrUnauthorized, nil)
 		return
 	}
+	s.renderBin(w, r, p)
+}
+
+// renderBin renders the Bin listing for an already-resolved principal, reusing
+// the base layout with a listing body. It projects store.ListBin — the
+// identical keyset query the JSON /v1/bin and the CLI TUI use — ordered by
+// created_at, keyset-paginated so a "load more" neither skips nor duplicates
+// rows under churn (SPEC-0001 REQ "The Bin Listing", REQ "Bin Pagination").
+// Shared by the authenticated root `/` (handleLanding) and the legacy `/bin`
+// path (handleBinPage) so both surfaces render the exact same workspace view.
+func (s *Server) renderBin(w http.ResponseWriter, r *http.Request, p *Principal) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	page, err := s.store.ListBin(r.Context(), p.ActorID, r.URL.Query().Get("cursor"), limit)
 	if err != nil {

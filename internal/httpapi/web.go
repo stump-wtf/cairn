@@ -122,6 +122,11 @@ func (s *Server) mountWeb(r chi.Router) {
 	r.Get("/auth/callback", s.handleOIDCCallback)
 	r.With(s.requireWebSession).Get("/whoami", s.handleWhoami)
 	r.With(s.requireWebSession).Get("/bin", s.handleBinPage)
+	// "Connect an agent" (#57): the actionable MCP OAuth steps (and a CLI
+	// "coming soon" block, tracker #20-#22) live behind auth like the Bin — the
+	// logged-out landing only teases the capability, it never explains how to
+	// exercise it (SPEC-0001 REQ "Connect Instructions").
+	r.With(s.requireWebSession).Get("/connect", s.handleConnectPage)
 
 	// The OAuth 2.1 authorization endpoint (SPEC-0007, ADR-0004): the human
 	// login + consent screen, riding the web session surface above. Its JSON
@@ -166,12 +171,71 @@ func (s *Server) mountWeb(r chi.Router) {
 	})
 }
 
-// handleLanding renders the on-brand landing at the web root. It uses the shell
-// tokens (dark #0A0B0D, the stone logo) rather than chi's bare 404, confirming
-// the instance is live; the Bin (the authenticated workspace listing) arrives
-// with web-session auth (#12).
+// handleLanding renders the ADR-0011 web root split (#57): a caller who
+// already carries a valid session or bearer credential sees their Bin — the
+// SAME store.ListBin projection /bin and the CLI TUI render — never the empty
+// "instance is live" placeholder; a caller with no credential sees the on-brand
+// landing (what Cairn is, plus the "Sign in with Pocket ID" CTA). Resolution
+// goes through optionalPrincipal (never requireWebSession), so an anonymous
+// visitor is served the landing directly rather than bounced through a login
+// redirect, and the store is touched only once a principal actually resolves —
+// an anonymous request never queries or leaks Bin data (SPEC-0001 REQ "Root
+// Split", REQ "Connect Instructions").
 func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
-	s.renderWeb(w, r, "landing", nil)
+	if p, ok := s.optionalPrincipal(r); ok {
+		s.renderBin(w, r, p)
+		return
+	}
+	s.renderWeb(w, r, "landing", newLandingView(s))
+}
+
+// landingView is the logged-out landing's view model. LoginPath is where the
+// primary CTA points: OIDC's passwordless /auth/login when configured (ADR-0013
+// "no second login"), else the dev-only /login form fallback — the same
+// resolution requireWebSession uses (loginRedirectPath), so the landing CTA and
+// every other auth gate on the site always agree on where "sign in" goes.
+type landingView struct {
+	LoginPath   string
+	OIDCEnabled bool
+}
+
+func newLandingView(s *Server) landingView {
+	return landingView{
+		LoginPath:   s.loginRedirectPath(),
+		OIDCEnabled: s.oidc != nil,
+	}
+}
+
+// connectView is the "Connect an agent" page's view model (#57): the signed-in
+// actor + CSRF token for the shared header chrome (whoami, sign-out form,
+// matching bin.html), and the public base URL the MCP steps are built from —
+// server-computed, never hardcoded in the template, so a differently-deployed
+// instance shows its own origin.
+type connectView struct {
+	Actor     string
+	CSRFToken string
+	BaseURL   string
+}
+
+// handleConnectPage renders the copy-pasteable "Connect an agent" instructions
+// (#57): the actionable MCP OAuth steps (server URL, discovery document, the
+// three scopes, no static keys) plus a CLI "coming soon" note (0.0.2, tracker
+// #20-#22) — the cairn CLI does not exist yet, so this never fabricates working
+// install steps for it. Gated by requireWebSession like the Bin: the connect
+// steps are workspace-scoped (the discovery/scopes are the same for everyone,
+// but the affordance itself is part of the authenticated workspace chrome, not
+// the public landing).
+func (s *Server) handleConnectPage(w http.ResponseWriter, r *http.Request) {
+	p, ok := principalFrom(r.Context())
+	if !ok {
+		s.writeError(w, r, errs.ErrUnauthorized, nil)
+		return
+	}
+	vm := connectView{Actor: p.ActorID, BaseURL: s.cfg.BaseURL}
+	if c, cerr := r.Cookie(csrfCookieName); cerr == nil {
+		vm.CSRFToken = c.Value
+	}
+	s.renderWeb(w, r, "connect", vm)
 }
 
 // handleArtifactShell renders the app shell for a bare-scheme artifact at
