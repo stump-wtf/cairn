@@ -573,6 +573,48 @@ func TestIntegrationOAuthRevocationEndpoint(t *testing.T) {
 	}
 }
 
+// TestIntegrationOAuthAudienceMismatchOverHTTP proves RFC 8707 audience
+// binding end-to-end through the wired httpapi bearer adapter — not just the
+// oauth.Service unit (see TestIntegrationAudienceBinding) — by minting a token
+// against one deployment origin and presenting it to a second Server instance
+// bound to a different origin/audience but sharing the same Postgres grant
+// storage (SPEC-0007 REQ "Token Model — Short Audience-Bound Access + Rotating
+// Refresh", scenario "Access token bound to audience").
+func TestIntegrationOAuthAudienceMismatchOverHTTP(t *testing.T) {
+	pool := newTestPool(t)
+	st := store.New(pool, objectstore.NewMemory(), storeOpts())
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	cfgA := oauthConfig()
+	cfgA.BaseURL = "http://cairn-a.test"
+	srvA := httptest.NewServer(New(st, nil, nil, cfgA, logger).Handler())
+	t.Cleanup(srvA.Close)
+	jarA, _ := cookiejar.New(nil)
+	clientA := &http.Client{Jar: jarA, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	cfgB := oauthConfig()
+	cfgB.BaseURL = "http://cairn-b.test"
+	srvB := httptest.NewServer(New(st, nil, nil, cfgB, logger).Handler())
+	t.Cleanup(srvB.Close)
+
+	clientID, code := obtainCode(t, srvA, clientA, "sam@stump.rocks", "", nil)
+	tok := decodeToken(t, exchangeCode(t, srvA, clientID, code, pkceVerifier))
+
+	// The token authenticates against its own audience (server A)…
+	own := do(t, http.MethodGet, srvA.URL+"/v1/bin", tok.AccessToken, nil, "")
+	own.Body.Close()
+	if own.StatusCode != http.StatusOK {
+		t.Fatalf("own-audience access = %d, want 200", own.StatusCode)
+	}
+	// …but a different resource server (audience) rejects it outright, even
+	// though both share the identical grant/token storage.
+	foreign := do(t, http.MethodGet, srvB.URL+"/v1/bin", tok.AccessToken, nil, "")
+	foreign.Body.Close()
+	if foreign.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("foreign-audience access = %d, want 401", foreign.StatusCode)
+	}
+}
+
 // TestIntegrationOAuthConsentDeniedAndCSRF proves a denial creates nothing and
 // returns access_denied, and a consent POST without the CSRF token is refused
 // with no grant (SPEC-0007 scenarios "Consent denied", "Cross-site consent
