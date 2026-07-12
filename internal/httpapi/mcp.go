@@ -90,7 +90,9 @@ func (s *Server) mountMCP(r chi.Router) {
 
 	verifier := s.mcpTokenVerifier()
 	authed := sdkauth.RequireBearerToken(verifier, &sdkauth.RequireBearerTokenOptions{
-		ResourceMetadataURL: s.cfg.BaseURL + "/.well-known/oauth-protected-resource",
+		// Point the 401 challenge at the path-specific metadata for this
+		// resource (RFC 9728), whose `resource` is the /mcp canonical URI.
+		ResourceMetadataURL: s.cfg.BaseURL + "/.well-known/oauth-protected-resource/mcp",
 	})(transport)
 
 	r.Handle("/mcp", s.mcpBodyLimit(authed))

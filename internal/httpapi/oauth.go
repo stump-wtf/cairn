@@ -54,6 +54,9 @@ func (s *Server) mountOAuthJSON(r chi.Router) {
 	}
 	r.Get("/.well-known/oauth-authorization-server", s.handleOAuthASMetadata)
 	r.Get("/.well-known/oauth-protected-resource", s.handleOAuthResourceMetadata)
+	// RFC 9728 path-insertion form: an MCP client whose resource is
+	// <base>/mcp looks for the metadata at /.well-known/oauth-protected-resource/mcp.
+	r.Get("/.well-known/oauth-protected-resource/mcp", s.handleOAuthResourceMetadata)
 	r.Group(func(r chi.Router) {
 		r.Use(s.oauthRateLimit)
 		r.Post("/oauth/register", s.handleOAuthRegister)
@@ -141,11 +144,40 @@ type resourceMetadata struct {
 	BearerMethodsSupported []string `json:"bearer_methods_supported"`
 }
 
+// mcpResourceIndicator is the canonical RFC 8707 resource identifier for this
+// deployment's MCP server: the /mcp endpoint URI. This is what MCP clients send
+// as `resource` and what the protected-resource metadata advertises.
+func (s *Server) mcpResourceIndicator() string {
+	return strings.TrimRight(s.cfg.BaseURL, "/") + "/mcp"
+}
+
+// validResourceIndicator reports whether an RFC 8707 `resource` indicator names
+// this deployment. An empty value is allowed (the indicator is optional). A
+// present value must be our own origin or any path under it — this accepts both
+// the MCP canonical URI (<base>/mcp) and the bare origin while rejecting any
+// foreign audience, so a token minted here can never be steered at another
+// resource server (SPEC-0007 "Access token bound to audience"). The trailing
+// slash on the prefix is load-bearing: it stops a look-alike host such as
+// https://cairn.stump.rocks.evil.example from matching.
+func (s *Server) validResourceIndicator(res string) bool {
+	if res == "" {
+		return true
+	}
+	res = strings.TrimRight(res, "/")
+	base := strings.TrimRight(s.cfg.BaseURL, "/")
+	return res == base || strings.HasPrefix(res, base+"/")
+}
+
 // handleOAuthResourceMetadata serves the protected-resource metadata (the MCP
 // discovery counterpart of the AS document). Public: same bootstrap rationale.
 func (s *Server) handleOAuthResourceMetadata(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, resourceMetadata{
-		Resource:               s.cfg.BaseURL,
+		// The protected resource is the MCP server, whose canonical URI (per the
+		// MCP authorization spec + RFC 8707) is <base>/mcp — the value clients
+		// send as the `resource` indicator. Advertising the bare origin here made
+		// spec-compliant clients (Crush, etc.) request <base>/mcp and get
+		// invalid_target; see mcpResourceIndicator / validResourceIndicator.
+		Resource:               s.mcpResourceIndicator(),
 		AuthorizationServers:   []string{s.cfg.BaseURL},
 		ScopesSupported:        oauth.AllScopes(),
 		BearerMethodsSupported: []string{"header"},
@@ -315,8 +347,10 @@ func (s *Server) validateAuthorize(r *http.Request, values url.Values) (*authori
 	if !oauth.ValidChallenge(req.challenge) {
 		return req, "", "invalid_request"
 	}
-	// RFC 8707: an explicit resource indicator must name this server.
-	if res := values.Get("resource"); res != "" && res != s.oauth.Audience() {
+	// RFC 8707: an explicit resource indicator must name this server (its origin
+	// or the /mcp resource URI). A foreign audience is invalid_target.
+	if res := values.Get("resource"); !s.validResourceIndicator(res) {
+		s.log.InfoContext(r.Context(), "oauth: authorize rejected resource indicator", "resource", res)
 		return req, "", "invalid_target"
 	}
 	return req, "", ""
@@ -519,8 +553,10 @@ func (s *Server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
 		s.writeOAuthError(w, r, http.StatusBadRequest, "invalid_request", "malformed form body")
 		return
 	}
-	// RFC 8707: an explicit resource indicator must name this resource server.
-	if res := r.PostFormValue("resource"); res != "" && res != s.oauth.Audience() {
+	// RFC 8707: an explicit resource indicator must name this resource server
+	// (its origin or the /mcp resource URI).
+	if res := r.PostFormValue("resource"); !s.validResourceIndicator(res) {
+		s.log.InfoContext(r.Context(), "oauth: token rejected resource indicator", "resource", res)
 		s.writeOAuthError(w, r, http.StatusBadRequest, "invalid_target", "unknown resource")
 		return
 	}

@@ -258,8 +258,78 @@ func TestIntegrationOAuthDiscoveryMetadata(t *testing.T) {
 	if err := json.NewDecoder(rres.Body).Decode(&rm); err != nil {
 		t.Fatalf("decode resource metadata: %v", err)
 	}
-	if rm.Resource != "http://cairn.test" || len(rm.AuthorizationServers) != 1 {
+	// The advertised resource is the MCP server's canonical URI (<base>/mcp),
+	// the RFC 8707 value clients send back as `resource`.
+	if rm.Resource != "http://cairn.test/mcp" || len(rm.AuthorizationServers) != 1 {
 		t.Fatalf("resource metadata wrong: %+v", rm)
+	}
+	// The RFC 9728 path-insertion variant serves the same document.
+	pres, err := http.Get(srv.URL + "/.well-known/oauth-protected-resource/mcp")
+	if err != nil {
+		t.Fatalf("GET path-specific resource metadata: %v", err)
+	}
+	defer pres.Body.Close()
+	if pres.StatusCode != http.StatusOK {
+		t.Fatalf("path-specific resource metadata = %d, want 200", pres.StatusCode)
+	}
+}
+
+// TestIntegrationOAuthMCPResourceIndicatorAccepted proves the RFC 8707 fix: an
+// MCP client that sends the /mcp canonical URI as `resource` (as the MCP spec
+// requires) is accepted at both authorize and token, while a foreign audience
+// is still rejected with invalid_target. Regression for the Crush
+// "invalid_target" connect failure.
+func TestIntegrationOAuthMCPResourceIndicatorAccepted(t *testing.T) {
+	srv, client := oauthServer(t, oauthConfig())
+	mcpResource := "http://cairn.test/mcp"
+
+	// authorize GET carrying the /mcp resource must NOT redirect with
+	// invalid_target (an unauthenticated caller is sent to /login instead).
+	reg := registerClient(t, srv, "Crush", []string{testRedirectURI})
+	q := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {reg.ClientID},
+		"redirect_uri":          {testRedirectURI},
+		"scope":                 {"artifacts:read"},
+		"state":                 {"s1"},
+		"code_challenge":        {oauth.S256Challenge(pkceVerifier)},
+		"code_challenge_method": {"S256"},
+		"resource":              {mcpResource},
+	}
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	ares, err := noRedirect.Get(srv.URL + "/oauth/authorize?" + q.Encode())
+	if err != nil {
+		t.Fatalf("GET authorize with /mcp resource: %v", err)
+	}
+	ares.Body.Close()
+	if loc := ares.Header.Get("Location"); strings.Contains(loc, "invalid_target") {
+		t.Fatalf("/mcp resource rejected as invalid_target: %s", loc)
+	}
+
+	// A foreign resource at authorize is still invalid_target.
+	q.Set("resource", "https://evil.example/mcp")
+	fres, err := noRedirect.Get(srv.URL + "/oauth/authorize?" + q.Encode())
+	if err != nil {
+		t.Fatalf("GET authorize with foreign resource: %v", err)
+	}
+	fres.Body.Close()
+	if loc := fres.Header.Get("Location"); !strings.Contains(loc, "error=invalid_target") {
+		t.Fatalf("foreign resource not rejected: %s", loc)
+	}
+
+	// Full code→token exchange carrying the /mcp resource succeeds.
+	clientID, code := obtainCode(t, srv, client, "sam@stump.rocks", "", nil)
+	resp := postToken(t, srv, url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"client_id":     {clientID},
+		"redirect_uri":  {testRedirectURI},
+		"code_verifier": {pkceVerifier},
+		"resource":      {mcpResource},
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("token exchange with /mcp resource = %d, want 200", resp.StatusCode)
 	}
 }
 
