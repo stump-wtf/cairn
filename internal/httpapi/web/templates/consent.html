@@ -5,10 +5,15 @@
 <title>authorize · cairn</title>
 </head>
 <body class="landing">
-<main class="landing-wrap login-wrap" role="main">
+{{/* ARIA landmarks (SPEC-0007 REQ "WCAG 2.1 AA & Semantics"): banner, main,
+     contentinfo as three distinct top-level regions. The brand banner is
+     never inside <main>, so landmark navigation lands directly on the grant
+     itself. */}}
+<header class="landing-banner" role="banner">
   <div class="landing-stones" aria-hidden="true"><i class="s1"></i><i class="s2"></i><i class="s3"></i></div>
   <h1 class="landing-word">cairn</h1>
-
+</header>
+<main class="landing-wrap login-wrap" role="main">
   {{if .Error}}
   {{/* Inline consent error, announced assertively (SPEC-0007 Accessibility
        "Dynamic Content Regions"); no redirect is performed for an untrusted
@@ -16,7 +21,6 @@
   <div aria-live="assertive">
     <p class="login-error" role="alert">{{.Error}}</p>
   </div>
-  <p class="landing-foot"><a href="/">back to cairn</a></p>
   {{else}}
   {{/* .ClientName is client-supplied (DCR) and rendered only through
        html/template's contextual escaping, so a hostile registration cannot
@@ -34,6 +38,13 @@
     <input type="hidden" name="code_challenge" value="{{.CodeChallenge}}">
     <input type="hidden" name="code_challenge_method" value="S256">
 
+    {{/* Scope state is never color-only (SPEC-0007 scenario "Color-only scope
+         state"): every line carries a real checkbox (a text-independent
+         control state) plus its plain-language label, and every checkbox and
+         both submit buttons are native, keyboard-operable controls — Tab
+         reaches them in document order, Space toggles a checkbox, Enter/Space
+         activates Approve/Deny (SPEC-0007 REQ "Keyboard Navigation & Focus
+         Management"). */}}
     <fieldset class="consent-scopes">
       <legend class="login-label">This will allow {{.ClientName}} to:</legend>
       {{range .Scopes}}
@@ -50,5 +61,8 @@
   <p class="login-note">Connected over MCP · revoke anytime in settings</p>
   {{end}}
 </main>
+<footer class="app-foot landing-contentinfo" role="contentinfo">
+  <p class="landing-foot"><a href="/">back to cairn</a></p>
+</footer>
 </body>
 </html>{{end}}

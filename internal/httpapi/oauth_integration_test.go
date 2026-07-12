@@ -720,6 +720,64 @@ func TestIntegrationOAuthConsentRequiresLoginAndEscapesClientName(t *testing.T) 
 	}
 }
 
+// TestIntegrationOAuthConsentAndLoginAccessibilityLandmarks proves the login
+// and consent pages structure themselves with the three ARIA landmarks the
+// spec requires — banner, main, contentinfo — in EVERY state a visitor can
+// land on: unauthenticated login, the untrusted-client-pair error branch (no
+// session needed), and the authenticated consent grant itself. Landmark
+// navigation must work identically no matter which branch rendered
+// (SPEC-0007 REQ "WCAG 2.1 AA & Semantics": "Structure MUST use ARIA
+// landmarks (banner, main, contentinfo)").
+func TestIntegrationOAuthConsentAndLoginAccessibilityLandmarks(t *testing.T) {
+	srv, client := oauthServer(t, oauthConfig())
+	landmarks := []string{`<header class="landing-banner" role="banner">`, `<main class="landing-wrap login-wrap" role="main">`, `<footer class="app-foot landing-contentinfo" role="contentinfo">`}
+
+	assertLandmarks := func(t *testing.T, label, page string) {
+		t.Helper()
+		for _, want := range landmarks {
+			if !strings.Contains(page, want) {
+				t.Errorf("%s: missing landmark %q", label, want)
+			}
+		}
+	}
+
+	// 1. Unauthenticated /login.
+	status, page := getHTMLClient(t, client, srv.URL+"/login")
+	if status != http.StatusOK {
+		t.Fatalf("GET /login = %d, want 200", status)
+	}
+	assertLandmarks(t, "/login", page)
+
+	// 2. The untrusted client/redirect error branch — rendered with NO session
+	// and NO redirect anywhere (renderConsentError), so it must carry the same
+	// structure as the happy path.
+	resp, err := client.Get(srv.URL + "/oauth/authorize?response_type=code&client_id=does-not-exist&redirect_uri=https://x.example/cb")
+	if err != nil {
+		t.Fatalf("GET authorize (unknown client): %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown client authorize = %d, want 400", resp.StatusCode)
+	}
+	assertLandmarks(t, "consent error branch", string(body))
+	if !strings.Contains(string(body), `aria-live="assertive"`) {
+		t.Fatal("consent error branch missing the assertive aria-live region")
+	}
+
+	// 3. The authenticated consent grant screen itself.
+	reg := registerClient(t, srv, "Landmark Client", []string{testRedirectURI})
+	lr := doLogin(t, srv, client, "landmarks@stump.rocks", "devpass")
+	lr.Body.Close()
+	resp, err = client.Get(authorizeURL(srv, reg.ClientID, "", "s"))
+	if err != nil {
+		t.Fatalf("GET authorize (authed): %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	assertLandmarks(t, "consent grant screen", string(body))
+}
+
 // TestIntegrationOAuthResourceMismatchAndBodyLimits proves RFC 8707 resource
 // indicators are audience-checked and oversize bootstrap bodies are 413
 // (SPEC-0007 REQ "Request Body Size Limits").

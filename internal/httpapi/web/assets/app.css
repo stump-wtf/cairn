@@ -226,8 +226,15 @@ code { font-family: var(--mono); }
 }
 .app-foot code { color: var(--t6); }
 
-/* ---- Landing / error ---- */
-body.landing { display: flex; align-items: center; justify-content: center; text-align: center; }
+/* ---- Landing / error ----
+   body.landing stacks its landmarks (banner, main, contentinfo — SPEC-0007
+   REQ "WCAG 2.1 AA & Semantics") in a column and centers the whole group, so
+   splitting the page into three real landmarks costs nothing visually: it
+   still reads as one centered block. */
+body.landing { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.landing-banner { margin: 0 0 22px; }
+.landing-banner .landing-stones { margin-bottom: 12px; }
+.landing-contentinfo.app-foot { border-top: 0; padding: 22px 18px 0; }
 .landing-wrap { padding: 40px; }
 .landing-stones { display: flex; flex-direction: column; align-items: center; gap: 3px; margin: 0 auto 22px; }
 .landing-stones i { display: block; border-radius: 999px; }

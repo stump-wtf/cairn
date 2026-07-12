@@ -5,9 +5,15 @@
 <title>sign in · cairn</title>
 </head>
 <body class="landing">
-<main class="landing-wrap login-wrap" role="main">
+{{/* ARIA landmarks (SPEC-0007 REQ "WCAG 2.1 AA & Semantics"): banner, main,
+     contentinfo as three distinct top-level regions rather than one
+     undifferentiated block, so screen-reader landmark navigation can jump
+     straight to the sign-in form. */}}
+<header class="landing-banner" role="banner">
   <div class="landing-stones" aria-hidden="true"><i class="s1"></i><i class="s2"></i><i class="s3"></i></div>
   <h1 class="landing-word">cairn</h1>
+</header>
+<main class="landing-wrap login-wrap" role="main">
   <p class="landing-tag">sign in to your workspace</p>
 
   {{if .LoginEnabled}}
@@ -26,7 +32,9 @@
   <p class="login-error" role="alert">Interactive login is not configured on this instance.</p>
   <p class="landing-foot">Use the <code>/v1</code> API with a bearer token, or set <code>CAIRN_DEV_LOGIN_PASSWORD</code>.</p>
   {{end}}
-  <p class="landing-foot"><a href="/">back to cairn</a></p>
 </main>
+<footer class="app-foot landing-contentinfo" role="contentinfo">
+  <p class="landing-foot"><a href="/">back to cairn</a></p>
+</footer>
 </body>
 </html>{{end}}
