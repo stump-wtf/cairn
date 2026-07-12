@@ -57,6 +57,19 @@ type Config struct {
 
 	// SessionTTL is the lifetime of a web session and its cookies (SPEC-0001).
 	SessionTTL time.Duration
+
+	// APITokensRaw is the unparsed CAIRN_API_TOKENS value: a comma-separated list
+	// of `secret:actor[:role]` static bearer credentials the API/MCP surface
+	// accepts (ADR-0004 MVP token seam). Parsed and validated at startup; an empty
+	// value means the bearer surface accepts no tokens. Real per-agent OAuth
+	// tokens replace this in #22.
+	APITokensRaw string
+
+	// DevInsecureBearerAuth, when true, makes the API trust a raw bearer token AS
+	// the actor id with no verification. It is an INSECURE local-development
+	// shortcut that must never be enabled in production; the default is false, so
+	// production verifies every bearer token against APITokens.
+	DevInsecureBearerAuth bool
 }
 
 // Load resolves configuration from the environment, applying defaults and
@@ -73,9 +86,13 @@ func Load() (*Config, error) {
 		BaseURL:     env("CAIRN_BASE_URL", "https://cairn.sh"),
 
 		DevLoginPassword: os.Getenv("CAIRN_DEV_LOGIN_PASSWORD"),
+		APITokensRaw:     os.Getenv("CAIRN_API_TOKENS"),
 	}
 
 	var err error
+	if c.DevInsecureBearerAuth, err = envBool("CAIRN_DEV_INSECURE_BEARER_AUTH", false); err != nil {
+		return nil, err
+	}
 	if c.S3UseSSL, err = envBool("CAIRN_S3_USE_SSL", false); err != nil {
 		return nil, err
 	}

@@ -74,15 +74,31 @@ func run(logger *slog.Logger) error {
 		PreviewMaxBytes: cfg.PreviewMaxBytes,
 	})
 
+	// Parse the static API bearer credentials (ADR-0004 MVP token seam) at
+	// startup so a malformed CAIRN_API_TOKENS fails the process rather than
+	// silently dropping a credential. A raw bearer token is only ever trusted when
+	// it verifies against this set (or, in dev, when the insecure shortcut is on).
+	apiTokens, err := httpapi.ParseAPITokens(cfg.APITokensRaw)
+	if err != nil {
+		return err
+	}
+	if cfg.DevInsecureBearerAuth {
+		logger.Warn("CAIRN_DEV_INSECURE_BEARER_AUTH is enabled: raw bearer tokens are trusted as actor ids without verification — never enable this in production")
+	} else if len(apiTokens) == 0 && cfg.DevLoginPassword == "" {
+		logger.Warn("no API tokens (CAIRN_API_TOKENS) and no web login (CAIRN_DEV_LOGIN_PASSWORD) configured: all authenticated endpoints will reject every caller")
+	}
+
 	// The /v1 REST/JSON adapter over the core service (ADR-0012).
 	api := httpapi.New(svc, nil, nil, httpapi.Config{
-		BaseURL:          cfg.BaseURL,
-		MaxUploadBytes:   cfg.MaxUploadBytes,
-		DefaultTTL:       cfg.DefaultTTL,
-		RatePerSecond:    cfg.RatePerSecond,
-		RateBurst:        cfg.RateBurst,
-		DevLoginPassword: cfg.DevLoginPassword,
-		SessionTTL:       cfg.SessionTTL,
+		BaseURL:               cfg.BaseURL,
+		MaxUploadBytes:        cfg.MaxUploadBytes,
+		DefaultTTL:            cfg.DefaultTTL,
+		RatePerSecond:         cfg.RatePerSecond,
+		RateBurst:             cfg.RateBurst,
+		DevLoginPassword:      cfg.DevLoginPassword,
+		SessionTTL:            cfg.SessionTTL,
+		APITokens:             apiTokens,
+		DevInsecureBearerAuth: cfg.DevInsecureBearerAuth,
 	}, logger)
 
 	r := chi.NewRouter()

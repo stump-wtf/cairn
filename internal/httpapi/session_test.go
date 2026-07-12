@@ -66,7 +66,7 @@ func TestDevPasswordVerifier(t *testing.T) {
 // a non-ambient API principal even when a (mismatched) session cookie is present,
 // so scripted callers keep the API's CSRF-exempt semantics.
 func TestSessionAuthenticatorBearerWins(t *testing.T) {
-	auth := &SessionAuthenticator{sessions: session.NewMemoryStore(), bearer: BearerAuthenticator{}}
+	auth := &SessionAuthenticator{sessions: session.NewMemoryStore(), bearer: DevActorAuthenticator{}}
 	r := httptest.NewRequest(http.MethodPost, "/v1/artifacts", nil)
 	r.Header.Set("Authorization", "Bearer alice")
 	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "irrelevant"})
@@ -92,7 +92,7 @@ func TestSessionAuthenticatorCookie(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	auth := &SessionAuthenticator{sessions: store, bearer: BearerAuthenticator{}}
+	auth := &SessionAuthenticator{sessions: store, bearer: DevActorAuthenticator{}}
 
 	r := httptest.NewRequest(http.MethodGet, "/bin", nil)
 	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sess.Token})
@@ -151,7 +151,7 @@ func TestValidFormCSRF(t *testing.T) {
 // TestRequireWebSessionRedirects proves an unauthenticated Bin request is
 // redirected to login with a validated next, rather than served a JSON 401.
 func TestRequireWebSessionRedirects(t *testing.T) {
-	s := New(nil, nil, BearerAuthenticator{}, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s := New(nil, nil, DevActorAuthenticator{}, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	h := s.requireWebSession(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

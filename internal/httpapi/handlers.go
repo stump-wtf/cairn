@@ -246,11 +246,19 @@ func (s *Server) serveBody(w http.ResponseWriter, r *http.Request, rc io.Reader,
 	}
 }
 
-// handleDelete removes an artifact, owner-only.
+// handleDelete removes an artifact, owner-only. Deletion is a human-only
+// capability (ADR-0004 / SPEC-0004: agents receive no delete scope and cannot
+// delete on the human's behalf); the route gates this via requireHuman, and this
+// belt-and-suspenders guard refuses an agent principal even if that middleware
+// were ever unwired, so a delete is never performed as p.ActorID for an agent.
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFrom(r.Context())
 	if !ok {
 		s.writeError(w, r, errs.ErrUnauthorized, nil)
+		return
+	}
+	if p.IsAgent {
+		s.writeError(w, r, errs.ErrForbidden, nil)
 		return
 	}
 	id := chi.URLParam(r, "id")
