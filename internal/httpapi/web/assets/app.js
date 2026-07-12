@@ -58,7 +58,7 @@ document.addEventListener('alpine:init', () => {
 
     togglePanel() { this.panelOpen = !this.panelOpen; },
     panelExpanded() { return this.panelOpen ? 'true' : 'false'; },
-    panelClass() { return this.panelOpen ? 'shell-grid panel-open' : 'shell-grid panel-closed'; },
+    panelClass() { return this.panelOpen ? 'panel-open' : 'panel-closed'; },
   }));
 });
 

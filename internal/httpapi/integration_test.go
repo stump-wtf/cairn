@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -341,6 +342,68 @@ func TestIntegrationBundleCreateAndMemberRead(t *testing.T) {
 		t.Fatalf("missing member = %d, want 404", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+// TestIntegrationBundleMemberNameRoundTrip locks in the member-name URL round
+// trip for names carrying spaces and URL-reserved characters: memberPath
+// (bundle_view.go) escapes a member's stored name into a URL path segment for
+// the download link the file rail renders, and handleGetMember reads it back
+// via chi's `*` wildcard on `/artifacts/{id}/members/*`. The two must agree —
+// a name a client escaped via net/url must decode, through chi's wildcard
+// match against the net/http-parsed request path, back to the exact byte
+// sequence stored for that member (PR #40 review note: "chi wildcard decode
+// vs net/http").
+func TestIntegrationBundleMemberNameRoundTrip(t *testing.T) {
+	srv := testServer(t, noRateLimit(), store.Options{MaxUploadBytes: 1 << 20})
+
+	// mime/multipart's Part.FileName() runs the client-declared filename
+	// through filepath.Base before handlers.go ever sees it (Go stdlib, mime/
+	// multipart/formdata.go), so a member name can never legitimately contain
+	// "/" on this ingestion path — every case here is a single path segment.
+	names := []string{
+		"has space.txt",
+		"weird#hash.txt",
+		"question?mark.txt",
+		"percent%20literal.txt",
+		"plus+sign.txt",
+		"quote's.txt",
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("title", "weird member names")
+	for i, name := range names {
+		fw, err := mw.CreateFormFile("file", name)
+		if err != nil {
+			t.Fatalf("form file %q: %v", name, err)
+		}
+		fmt.Fprintf(fw, "body-%d", i)
+	}
+	mw.Close()
+
+	resp := do(t, http.MethodPost, srv.URL+"/v1/artifacts", "alice", &buf, mw.FormDataContentType())
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("bundle create = %d, want 201", resp.StatusCode)
+	}
+	art := decodeArtifact(t, resp)
+
+	for i, name := range names {
+		name, want := name, fmt.Sprintf("body-%d", i)
+		t.Run(name, func(t *testing.T) {
+			// Mirror memberPath's own escaping (bundle_view.go) — the same
+			// transform the rendered web download link applies.
+			escaped := (&url.URL{Path: name}).EscapedPath()
+			resp := do(t, http.MethodGet, srv.URL+"/v1/artifacts/"+art.ID+"/members/"+escaped, "", nil, "")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("member %q read = %d, want 200", name, resp.StatusCode)
+			}
+			got, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if string(got) != want {
+				t.Fatalf("member %q bytes = %q, want %q", name, got, want)
+			}
+		})
+	}
 }
 
 func TestIntegrationRateLimited(t *testing.T) {

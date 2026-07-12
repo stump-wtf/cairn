@@ -193,15 +193,39 @@
 
   // proseOffset maps a (node, offset) inside the prose to a character offset in
   // the prose's text content, so a selection yields {start, end} the
-  // text_selection anchor stores alongside its quoted substring.
+  // text_selection anchor stores alongside its quoted substring (SPEC-0006
+  // "Anchor Stability": the anchor is re-checked by matching its quote at its
+  // stored offsets against the body).
+  //
+  // Offset basis: this counts characters over the goldmark-rendered, sanitized
+  // block HTML ONLY — i.e. `.md-block-body`'s text, the same text a reader
+  // sees as prose. It explicitly EXCLUDES text inside `.md-react` elements
+  // (both the per-block ＋ button viewer.go renders as a `.md-block` sibling of
+  // `.md-block-body`, and the per-bullet ＋ buttons decorateBullets() injects
+  // as the first child of each `<li>`, INSIDE the prose text stream) — without
+  // this exclusion those injected glyphs shift every offset after the point
+  // they're inserted, so a selection's {start, end} would not describe an
+  // offset into the canonical block body the spec anchors against (PR #39
+  // review note).
   function proseOffset(prose, node, offset) {
-    var walker = document.createTreeWalker(prose, NodeFilter.SHOW_TEXT, null);
+    var walker = document.createTreeWalker(prose, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (text) {
+        return isInjectedAffordance(text) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+      }
+    });
     var count = 0, cur;
     while ((cur = walker.nextNode())) {
       if (cur === node) return count + offset;
       count += cur.nodeValue.length;
     }
     return count;
+  }
+
+  // isInjectedAffordance reports whether a text node lives inside one of the
+  // reaction-trigger buttons (`.md-react`, which covers both the block-level
+  // and md_bullet-level ＋ affordances) rather than the rendered prose itself.
+  function isInjectedAffordance(textNode) {
+    return !!(textNode.parentElement && textNode.parentElement.closest('.md-react'));
   }
 
   function onSelection() {

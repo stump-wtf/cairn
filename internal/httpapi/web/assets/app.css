@@ -141,6 +141,14 @@ code { font-family: var(--mono); }
   font-size: 14px; line-height: 1; padding: 6px 9px; border-radius: 7px; cursor: pointer;
 }
 
+/* htmx indicator rules, shipped locally instead of htmx's own <style>
+   injection (blocked by our style-src 'self' CSP, and console-noisy every
+   page load). htmx.config.includeIndicatorStyles=false (base.html
+   htmx-config meta tag) disables that injection; these two rules reproduce
+   its default behavior verbatim. */
+.htmx-indicator { opacity: 0; }
+.htmx-request.htmx-indicator, .htmx-request .htmx-indicator { opacity: 1; transition: opacity 200ms ease-in; }
+
 /* ---- Shell grid: body + collapsible panel ---- */
 .shell-grid {
   display: grid;

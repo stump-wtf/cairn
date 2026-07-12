@@ -124,7 +124,12 @@ type streamRow struct {
 	Tool     string
 	Name     string
 	Meta     string // "· 2.9s", "· 2 tools · 10.6s"
-	Body     string // inline output / reasoning prose (escaped by the template)
+	// DurMS is the span's own duration, rendered as data-dur-ms so
+	// trajectory.js can recompute a sub-agent's "N tools · Xs" Meta line when a
+	// live child streams in under it, without re-parsing the rendered Meta text
+	// (#38 review note 2).
+	DurMS int
+	Body  string // inline output / reasoning prose (escaped by the template)
 	// Spilled reports the body lives in a content-addressed blob fetched lazily
 	// on expand (SPEC-0004 "Large outputs MUST be fetched lazily"); OutputURL is
 	// where trajectory.js fetches it.
@@ -355,6 +360,7 @@ func (s *Server) streamRowFor(publicID string, sp *trajectory.Span, tallies map[
 		Tool:     sp.Tool,
 		Name:     sp.Name,
 		Meta:     "· " + formatSeconds(int64(sp.DurationMS)),
+		DurMS:    sp.DurationMS,
 		Body:     sp.Inline,
 	}
 	switch {
