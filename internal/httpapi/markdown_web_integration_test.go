@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -119,6 +120,108 @@ func TestIntegrationMarkdownSelectionComment(t *testing.T) {
 	if !strings.Contains(html, "session key") {
 		t.Error("selection comment should carry its quoted-substring anchor context")
 	}
+}
+
+// TestIntegrationMarkdownBlockAndBulletReactionsRoundTrip asserts the (#66)
+// server-side contract markdown.js's client-rendered pills depend on: a
+// reaction posted against a real rendered block's md_block anchor — and a real
+// list block's md_bullet anchor — round-trips through
+// GET /v1/artifacts/{id}/reactions with an anchor_key markdown.js's
+// findTrigger can parse straight back to the same block_id/path the page
+// rendered, and toggling the same emoji off (DELETE) removes the tally
+// entirely (the count semantics markdown.js's togglePill relies on).
+func TestIntegrationMarkdownBlockAndBulletReactionsRoundTrip(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+	id := createArtifact(t, srv.URL, "markdown", "joe", markdownDoc)
+
+	_, html := getHTML(t, srv.URL+"/"+id)
+	blockID := blockIDsIn(html)[0]
+	listBlockID := listBlockIDIn(t, html)
+
+	react := func(anchorType, ref, emoji string) {
+		resp := do(t, http.MethodPost, srv.URL+"/v1/artifacts/"+id+"/reactions", "alice",
+			jsonReader(t, reactionRequest{AnchorType: anchorType, AnchorRef: json.RawMessage(ref), Emoji: emoji}),
+			"application/json")
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("react %s = %d, want 201", anchorType, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+	react("md_block", `{"block_id":"`+blockID+`"}`, "👍")
+	react("md_bullet", `{"block_id":"`+listBlockID+`","path":[0]}`, "🎉")
+
+	tallies := decodeTallies(t, do(t, http.MethodGet, srv.URL+"/v1/artifacts/"+id+"/reactions", "alice", nil, ""))
+	if len(tallies.Reactions) != 2 {
+		t.Fatalf("tallies = %+v, want 2", tallies.Reactions)
+	}
+
+	var sawBlock, sawBullet bool
+	for _, tly := range tallies.Reactions {
+		var key struct {
+			BlockID string `json:"block_id"`
+			Path    []int  `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(tly.AnchorKey), &key); err != nil {
+			t.Fatalf("anchor_key %q did not parse as JSON: %v", tly.AnchorKey, err)
+		}
+		switch tly.AnchorType {
+		case "md_block":
+			sawBlock = true
+			if tly.Emoji != "👍" || tly.Count != 1 || !tly.Reacted || key.BlockID != blockID {
+				t.Errorf("md_block tally = %+v (key=%+v), want 👍/1/reacted on %q", tly, key, blockID)
+			}
+		case "md_bullet":
+			sawBullet = true
+			if tly.Emoji != "🎉" || tly.Count != 1 || !tly.Reacted || key.BlockID != listBlockID || len(key.Path) != 1 || key.Path[0] != 0 {
+				t.Errorf("md_bullet tally = %+v (key=%+v), want 🎉/1/reacted on %q path [0]", tly, key, listBlockID)
+			}
+		default:
+			t.Errorf("unexpected anchor_type %q", tly.AnchorType)
+		}
+	}
+	if !sawBlock || !sawBullet {
+		t.Fatalf("missing tallies: sawBlock=%v sawBullet=%v", sawBlock, sawBullet)
+	}
+
+	// Toggle the md_block emoji off (DELETE): the tally must disappear
+	// entirely, not just decrement to a stray zero row.
+	resp := do(t, http.MethodDelete, srv.URL+"/v1/artifacts/"+id+"/reactions", "alice",
+		jsonReader(t, reactionRequest{AnchorType: "md_block", AnchorRef: json.RawMessage(`{"block_id":"` + blockID + `"}`), Emoji: "👍"}),
+		"application/json")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("unreact md_block = %d, want 204", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	tallies = decodeTallies(t, do(t, http.MethodGet, srv.URL+"/v1/artifacts/"+id+"/reactions", "alice", nil, ""))
+	if len(tallies.Reactions) != 1 || tallies.Reactions[0].AnchorType != "md_bullet" {
+		t.Fatalf("tallies after unreact = %+v, want only the md_bullet tally left", tallies.Reactions)
+	}
+}
+
+// listBlockIDIn extracts the data-block-id of the rendered list block (the one
+// carrying data-md-list="true") from markdown viewer HTML.
+func listBlockIDIn(t *testing.T, html string) string {
+	t.Helper()
+	const marker = `data-md-list="true">`
+	i := strings.Index(html, marker)
+	if i < 0 {
+		t.Fatal("no data-md-list block found in rendered HTML")
+	}
+	// Walk backward to this same div tag's own data-block-id attribute (the
+	// template emits data-block-id before data-md-list on one element).
+	prefix := html[:i]
+	const idMarker = `data-block-id="`
+	j := strings.LastIndex(prefix, idMarker)
+	if j < 0 {
+		t.Fatal("list block missing data-block-id")
+	}
+	start := j + len(idMarker)
+	end := strings.IndexByte(html[start:], '"')
+	if end < 0 {
+		t.Fatal("malformed data-block-id attribute")
+	}
+	return html[start : start+end]
 }
 
 // blockIDsIn extracts the ordered list of data-block-id values from rendered

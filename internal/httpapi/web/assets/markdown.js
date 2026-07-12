@@ -31,14 +31,16 @@
     return m ? decodeURIComponent(m[1]) : '';
   }
 
-  // postReaction sends an idempotent reaction to the annotation API. A session
-  // (cookie) caller rides the double-submit CSRF header the server matches; a
-  // token caller is exempt. Failures are surfaced inline, never thrown.
-  function postReaction(anchorType, anchorRef, emoji, onDone) {
+  // reactionFetch posts or removes (toggles) a reaction against the annotation
+  // API. A session (cookie) caller rides the double-submit CSRF header the
+  // server matches; a token caller is exempt. Never throws — onDone(ok, status)
+  // always fires so a caller can tell "not signed in" (401) apart from any
+  // other failure (#66) rather than treating every non-2xx the same way.
+  function reactionFetch(method, anchorType, anchorRef, emoji, onDone) {
     var id = artifactID();
-    if (!id) return;
+    if (!id) { onDone(false, 0); return; }
     fetch('/v1/artifacts/' + encodeURIComponent(id) + '/reactions', {
-      method: 'POST',
+      method: method,
       credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json',
@@ -50,6 +52,141 @@
     }).catch(function () {
       onDone(false, 0);
     });
+  }
+
+  // handleReactError is the shared failure path for both the picker and an
+  // existing pill's toggle click: a signed-out write 401s → route to login with
+  // a return path (mirroring the trajectory viewer, #41); any other failure
+  // surfaces a small inline toast rather than the click silently appearing to
+  // do nothing (#66).
+  function handleReactError(trigger, status) {
+    if (status === 401) {
+      window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+      return;
+    }
+    var el = document.createElement('span');
+    el.className = 'md-react-error';
+    el.setAttribute('role', 'status');
+    el.textContent = 'Could not react — try again.';
+    var parent = trigger.parentNode;
+    parent.insertBefore(el, trigger.nextSibling);
+    setTimeout(function () { if (el.parentNode) el.remove(); }, 3500);
+  }
+
+  // ---- block/bullet reaction pills ----------------------------------------
+  // The markdown viewer renders only the react `＋` affordance server-side (no
+  // reaction state — the body fragment is a pure, annotation-agnostic render of
+  // the type-only BodyViewer capability, ADR-0002). Existing tallies and every
+  // click-time pill are therefore rendered here, progressively (ADR-0011): the
+  // prose and the ＋ affordance work with JS disabled, exactly as before.
+
+  // findPill returns this emoji's already-rendered pill beside a trigger, or
+  // null if none exists yet. Scoped to DIRECT children of the trigger's parent
+  // (`:scope >`) — not all descendants — because a list block's `.md-block`
+  // parent also contains its bullets' own `.md-react-pill`s nested inside the
+  // list, which must never match a lookup for the block-level trigger's pills.
+  function findPill(trigger, emoji) {
+    var pills = trigger.parentNode.querySelectorAll(':scope > .md-react-pill');
+    for (var i = 0; i < pills.length; i++) {
+      if (pills[i].dataset.emoji === emoji) return pills[i];
+    }
+    return null;
+  }
+
+  // pillFor finds (or creates, inserted right before the trigger) this emoji's
+  // pill button beside a react trigger, so a repeat reaction updates the same
+  // element rather than accumulating duplicates.
+  function pillFor(trigger, emoji) {
+    var found = findPill(trigger, emoji);
+    if (found) return found;
+    var parent = trigger.parentNode;
+    var pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'react-pill md-react-pill';
+    pill.dataset.emoji = emoji;
+    pill.setAttribute('aria-pressed', 'false');
+    var em = document.createElement('span'); em.className = 'react-emoji'; em.textContent = emoji;
+    var ct = document.createElement('span'); ct.className = 'react-count'; ct.textContent = '0';
+    pill.appendChild(em);
+    pill.appendChild(document.createTextNode(' '));
+    pill.appendChild(ct);
+    pill.addEventListener('click', function () { togglePill(trigger, pill); });
+    parent.insertBefore(pill, trigger);
+    return pill;
+  }
+
+  // setPillCount renders a pill's count/pressed state, removing it once the
+  // count reaches zero (toggled off with nobody else reacted with that emoji).
+  function setPillCount(pill, count, reacted) {
+    pill.querySelector('.react-count').textContent = String(count);
+    pill.setAttribute('aria-pressed', reacted ? 'true' : 'false');
+    pill.classList.toggle('on', !!reacted);
+    pill.setAttribute('aria-label', 'React ' + pill.dataset.emoji + ', ' + count + ' so far');
+    if (count <= 0) pill.remove();
+  }
+
+  // togglePill posts/removes the viewer's own reaction on an existing pill and
+  // updates its count on success — reacting the same emoji again toggles it off
+  // (SPEC-0006 idempotent reactions; #66 count-semantics parity with the
+  // trajectory viewer).
+  function togglePill(trigger, pill) {
+    var on = pill.getAttribute('aria-pressed') === 'true';
+    var emoji = pill.dataset.emoji;
+    var anchor = anchorRefFor(trigger);
+    reactionFetch(on ? 'DELETE' : 'POST', anchor.type, anchor.ref, emoji, function (ok, status) {
+      if (!ok) { handleReactError(trigger, status); return; }
+      var n = parseInt(pill.querySelector('.react-count').textContent, 10) || 0;
+      n = on ? Math.max(n - 1, 0) : n + 1;
+      setPillCount(pill, n, !on);
+    });
+  }
+
+  // loadReactions fetches the artifact's current per-anchor tallies (the same
+  // GET the trajectory viewer's server-render draws from) and renders a pill
+  // for every md_block/md_bullet anchor matching a trigger on the page, so
+  // reactions show on reload — not just immediately after a click (#66).
+  function loadReactions(viewer) {
+    var id = artifactID();
+    if (!id) return;
+    fetch('/v1/artifacts/' + encodeURIComponent(id) + '/reactions', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (!data || !data.reactions) return;
+        data.reactions.forEach(function (t) {
+          if (t.anchor_type !== 'md_block' && t.anchor_type !== 'md_bullet') return;
+          var trigger = findTrigger(viewer, t.anchor_type, t.anchor_key);
+          if (!trigger) return;
+          setPillCount(pillFor(trigger, t.emoji), t.count, t.reacted);
+        });
+      })
+      .catch(function () { /* reactions are progressive enhancement; a failed fetch just leaves no pills */ });
+  }
+
+  // findTrigger resolves a server tally's anchor_key (the canonical
+  // `{"block_id":…}` / `{"block_id":…,"path":[…]}` JSON the annotation core
+  // groups by) back to the react trigger it belongs to, by comparing PARSED
+  // values rather than the raw string (block_id/path round-trip through JSON
+  // identically either way, so this is exact without depending on the server's
+  // exact key formatting).
+  function findTrigger(viewer, anchorType, anchorKeyJSON) {
+    var key;
+    try { key = JSON.parse(anchorKeyJSON); } catch (e) { return null; }
+    var triggers = viewer.querySelectorAll('.md-react[data-anchor-type="' + anchorType + '"]');
+    for (var i = 0; i < triggers.length; i++) {
+      var t = triggers[i];
+      if (t.getAttribute('data-block-id') !== key.block_id) continue;
+      if (anchorType === 'md_bullet') {
+        var path;
+        try { path = JSON.parse(t.getAttribute('data-path') || '[]'); } catch (e2) { path = []; }
+        var kp = key.path || [];
+        if (kp.length !== path.length) continue;
+        var match = true;
+        for (var j = 0; j < kp.length; j++) { if (kp[j] !== path[j]) { match = false; break; } }
+        if (!match) continue;
+      }
+      return t;
+    }
+    return null;
   }
 
   // --- reaction picker (focus-trapped popover) ------------------------------
@@ -89,16 +226,19 @@
       b.setAttribute('role', 'menuitem');
       b.setAttribute('aria-label', 'React ' + emoji);
       b.textContent = emoji;
+      // A single, clean click path (#66, matching the trajectory viewer's fix):
+      // close the picker WITH focus restore first, then post the reaction and
+      // let the pill insert/update on success — no competing handlers racing to
+      // tear down the popover. An already-rendered pill for this emoji is
+      // toggled (reacting the same emoji again turns it off); otherwise a fresh
+      // pill is posted and inserted at count 1.
       b.addEventListener('click', function () {
-        postReaction(anchor.type, anchor.ref, emoji, function (ok, status) {
-          // A signed-out reaction 401s: route to login with a return path
-          // instead of silently swallowing the failure.
-          if (!ok && status === 401) {
-            window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
-            return;
-          }
-          if (ok) trigger.setAttribute('data-reacted', emoji);
-          closePicker(true);
+        closePicker(true);
+        var existing = findPill(trigger, emoji);
+        if (existing) { togglePill(trigger, existing); return; }
+        reactionFetch('POST', anchor.type, anchor.ref, emoji, function (ok, status) {
+          if (!ok) { handleReactError(trigger, status); return; }
+          setPillCount(pillFor(trigger, emoji), 1, true);
         });
       });
       pop.appendChild(b);
@@ -326,6 +466,9 @@
     var viewer = document.querySelector('.md-viewer');
     if (!viewer) return;
     decorateBullets(viewer);
+    // decorateBullets must run first so md_bullet triggers exist on the page
+    // for loadReactions to match tallies against (#66).
+    loadReactions(viewer);
     document.addEventListener('mouseup', onSelection);
     document.addEventListener('keyup', function (e) {
       if (e.shiftKey || e.key === 'Shift') onSelection();

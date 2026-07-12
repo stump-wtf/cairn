@@ -126,12 +126,31 @@
     return body;
   }
 
+  // A reaction write failed for a reason other than "not signed in": surface it
+  // rather than swallowing it (#66). A small transient role="status" toast near
+  // the cluster tells the reader to retry instead of the click silently
+  // appearing to do nothing.
+  function flashReactError(cluster) {
+    var existing = cluster.querySelector('.react-error');
+    if (existing) existing.remove();
+    var el = document.createElement('span');
+    el.className = 'react-error';
+    el.setAttribute('role', 'status');
+    el.textContent = 'Could not react — try again.';
+    cluster.appendChild(el);
+    setTimeout(function () { if (el.parentNode) el.remove(); }, 3500);
+  }
+
   function togglePill(runID, cluster, pill) {
     var on = pill.getAttribute('aria-pressed') === 'true';
     var emoji = pill.dataset.emoji;
     var method = on ? 'DELETE' : 'POST';
-    reactionFetch(runID, method, anchorBody(cluster, emoji)).then(function (ok) {
-      if (!ok) return;
+    reactionFetch(runID, method, anchorBody(cluster, emoji)).then(function (res) {
+      if (!res.ok) {
+        if (res.status === 401) { requireLogin(); return; }
+        flashReactError(cluster);
+        return;
+      }
       var countEl = pill.querySelector('.react-count');
       var n = parseInt(countEl.textContent, 10) || 0;
       n = on ? Math.max(n - 1, 0) : n + 1;
@@ -143,14 +162,21 @@
   }
 
   function reactFor(runID, cluster, emoji) {
-    // Reacting from the picker: bump an existing pill or create a new one.
+    // Reacting from the picker: an existing pill (whether or not the viewer has
+    // already reacted with it) is toggled — reacting the same emoji again turns
+    // it off, exactly like clicking the pill itself does — otherwise a fresh
+    // pill is created and posted.
     var existing = cluster.querySelector('.react-pill[data-emoji="' + cssEsc(emoji) + '"]');
     if (existing) {
-      if (existing.getAttribute('aria-pressed') !== 'true') togglePill(runID, cluster, existing);
+      togglePill(runID, cluster, existing);
       return;
     }
-    reactionFetch(runID, 'POST', anchorBody(cluster, emoji)).then(function (ok) {
-      if (!ok) return;
+    reactionFetch(runID, 'POST', anchorBody(cluster, emoji)).then(function (res) {
+      if (!res.ok) {
+        if (res.status === 401) { requireLogin(); return; }
+        flashReactError(cluster);
+        return;
+      }
       var pill = document.createElement('button');
       pill.type = 'button';
       pill.className = 'react-pill on';
@@ -164,13 +190,17 @@
     });
   }
 
+  // reactionFetch resolves to {ok, status} (never rejects) so callers can tell
+  // "not signed in" (401 → route to login) apart from any other failure (surface
+  // an inline error) rather than treating every non-2xx the same way (#66).
   function reactionFetch(runID, method, body) {
     return fetch('/v1/artifacts/' + encodeURIComponent(runID) + '/reactions', {
       method: method,
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf() },
       credentials: 'same-origin',
       body: JSON.stringify(body)
-    }).then(function (r) { return r.ok; }).catch(function () { return false; });
+    }).then(function (r) { return { ok: r.ok, status: r.status }; })
+      .catch(function () { return { ok: false, status: 0 }; });
   }
 
   function openPicker(runID, cluster, add) {
@@ -179,20 +209,12 @@
     if (activeCommentComposer) activeCommentComposer.close(false);
     var pick = document.createElement('div');
     pick.className = 'react-picker';
-    REACT_PALETTE.forEach(function (emoji) {
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = emoji;
-      b.setAttribute('aria-label', 'React ' + emoji);
-      b.addEventListener('click', function () { pick.remove(); reactFor(runID, cluster, emoji); });
-      pick.appendChild(b);
-    });
     document.body.appendChild(pick);
     var r = add.getBoundingClientRect();
     pick.style.left = (window.scrollX + r.left) + 'px';
     pick.style.top = (window.scrollY + r.bottom + 6) + 'px';
 
-    var buttons = pick.querySelectorAll('button');
+    var buttons = [];
     var closed = false;
     // Single teardown: remove the picker, drop listeners, and restore focus to the
     // ＋ trigger (SPEC-0004 Keyboard Navigation & Focus Management — MANDATORY).
@@ -219,10 +241,23 @@
         e.preventDefault(); firstBtn.focus();
       }
     }
-    // A picked emoji closes the picker AND restores focus to the trigger.
-    buttons.forEach = Array.prototype.forEach;
-    Array.prototype.forEach.call(buttons, function (b) {
-      b.addEventListener('click', function () { close(true); });
+    // A single, clean click path per palette button (#66 — previously TWO
+    // competing listeners raced: an original pick.remove()+reactFor() handler
+    // PLUS a second close(true) handler added afterward, which made the
+    // optimistic pill insert unreliable): close the picker with focus restore
+    // FIRST, then post the reaction and let reactFor insert/increment the pill
+    // on success.
+    REACT_PALETTE.forEach(function (emoji) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = emoji;
+      b.setAttribute('aria-label', 'React ' + emoji);
+      b.addEventListener('click', function () {
+        close(true);
+        reactFor(runID, cluster, emoji);
+      });
+      pick.appendChild(b);
+      buttons.push(b);
     });
     pick.addEventListener('keydown', onKeydown);
     if (buttons.length) buttons[0].focus();

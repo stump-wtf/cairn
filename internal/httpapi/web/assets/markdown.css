@@ -176,6 +176,38 @@
   opacity: 0.55;
 }
 
+/* Block/bullet reaction pills (#66) — md.js inserts one per emoji, always
+   visible (unlike the hover-revealed ＋ affordance above), matching the
+   trajectory viewer's react-pill look so a reaction reads the same across
+   surfaces. A block pill flows in the normal document flow right after the
+   prose (the ＋ trigger it sits beside is position:absolute and out of flow);
+   a bullet pill sits inline with the ＋ trigger, both position:static. */
+.md-react-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--well);
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  padding: 2px 9px;
+  margin: 6px 6px 0 0;
+  cursor: pointer;
+  color: var(--t4);
+  font: 500 11px var(--mono);
+}
+.md-react-pill.on { border-color: #244034; background: rgba(86,227,159,.12); color: var(--green-2); }
+.md-react-pill .react-count { color: var(--t3); }
+.md-react-pill.on .react-count { color: var(--green-2); }
+/* A pill beside a bullet trigger (both position:static, inserted right before
+   it) reads inline with the ＋ icon rather than dropping to a new line. */
+li > .md-react-pill { display: inline-flex; vertical-align: middle; margin: 0 4px 0 0; }
+.md-react-error {
+  display: inline-block;
+  color: var(--red, #e05a5a);
+  font: 500 10.5px var(--mono);
+  margin-left: 4px;
+}
+
 /* Selection → comment toolbar md.js floats above a text selection. */
 .md-sel-toolbar {
   position: absolute;
