@@ -397,3 +397,49 @@ body.landing { display: flex; align-items: center; justify-content: center; text
 .comment-post-btn:hover { background: var(--green-2); }
 .comments-signedout { margin: 14px 0 0; color: var(--t6); font: 400 12px var(--mono); }
 .comments-signedout a { color: var(--green-3); }
+
+/* ---- Share dialog (#46, design turn 7 share sheet) ---- */
+.share-dialog {
+  width: min(420px, calc(100vw - 32px));
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-frame);
+  background: var(--card);
+  color: var(--t2);
+}
+.share-dialog::backdrop { background: rgba(4, 5, 7, .6); }
+.share-dialog-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--border-3);
+}
+.share-dialog-title { margin: 0; font: 600 14px var(--sans); color: var(--t0); }
+.share-dialog-close {
+  border: 1px solid var(--border); background: var(--well); color: var(--t4);
+  border-radius: 6px; width: 26px; height: 26px; line-height: 1; cursor: pointer;
+}
+.share-dialog-close:hover { color: var(--t1); border-color: var(--border-2); }
+.share-field { padding: 14px 16px 0; }
+.share-field-label {
+  display: block; color: var(--t6); font: 600 10.5px var(--mono);
+  letter-spacing: .5px; text-transform: uppercase; margin-bottom: 6px;
+}
+.share-field-row { display: flex; gap: 8px; align-items: center; }
+.share-field-value {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: var(--well-2); border: 1px solid var(--border-2); border-radius: 6px;
+  padding: 7px 10px; font: 400 12px var(--mono); color: var(--t3);
+}
+.share-copy-btn {
+  flex: 0 0 auto; border: 1px solid var(--border); background: var(--well); color: var(--t3);
+  font: 500 11px var(--mono); padding: 7px 11px; border-radius: 6px; cursor: pointer;
+}
+.share-copy-btn.copied { color: var(--green-2); border-color: #244034; }
+.share-policy {
+  margin: 16px 16px 4px; padding: 12px 14px; background: var(--well-2);
+  border: 1px solid var(--border-3); border-radius: 8px;
+  display: grid; grid-template-columns: auto 1fr; gap: 6px 12px;
+}
+.share-policy dt { color: var(--t7); font: 400 11px var(--mono); }
+.share-policy dd { margin: 0; color: var(--t2); font: 400 12px var(--sans); word-break: break-word; }
+.share-dialog-note { margin: 14px 16px 18px; color: var(--t6); font: 400 11.5px var(--mono); }

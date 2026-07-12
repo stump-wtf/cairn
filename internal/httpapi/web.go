@@ -237,6 +237,7 @@ func (s *Server) renderShellFor(w http.ResponseWriter, r *http.Request, wantPref
 	if p, ok := s.optionalPrincipal(r); ok {
 		vm.Authenticated = true
 		vm.Actor = p.ActorID
+		vm.ShareDialog.IsOwner = p.ActorID == a.Access.OwnerID
 	}
 	s.renderWeb(w, r, "shell", vm)
 }
@@ -283,6 +284,41 @@ type shellView struct {
 	// read leaves both zero and sees the read-only thread.
 	Authenticated bool
 	Actor         string
+	// ShareDialog is the Share button's view model (#46).
+	ShareDialog shareDialogView
+}
+
+// shareDialogView is the Share dialog's view model (#46, SPEC-0001 REQ "Share
+// Affordance"; design turn 7 share sheet). It is a read-only summary sourced
+// from the same server-computed facts as the header and panel: the shareable
+// web link and mcp:// handle (duplicated from the header URL control so the
+// copy affordance works without closing the dialog), the current link access
+// policy line and TTL/expiry countdown (ADR-0007 "🔒 you + anyone with link" /
+// "⧗ expires 7d"), and the provenance line. Adjusting the policy itself (rotate
+// id, change TTL/visibility via POST /v1/artifacts/{id}/share) is a later
+// story; this dialog never re-implements or mutates access rules client-side —
+// it only shows a non-owner why the controls are absent.
+type shareDialogView struct {
+	WebURL      string
+	MCPHandle   string
+	AccessLabel string // "🔒 you + anyone with link" | "🔒 you only" (ADR-0007)
+	ExpiresIn   string // humanized ("expires in 6d"), empty when no expiry
+	Provenance  provenanceLine
+	// IsOwner reports whether the resolved viewer is the artifact's owner. It is
+	// set by the caller once the request's principal is known (buildShellView /
+	// buildTrajectoryView run before authentication is resolved), and gates the
+	// dialog's owner-only note (SPEC-0001 REQ "Share Affordance": "A non-owner
+	// or unauthenticated viewer MUST NOT be able to change sharing").
+	IsOwner bool
+}
+
+// shareAccessLabel renders the ADR-0007 access-policy line for the Share
+// dialog from the artifact's stored visibility.
+func shareAccessLabel(v artifact.Visibility) string {
+	if v == artifact.VisibilityPrivate {
+		return "🔒 you only"
+	}
+	return "🔒 you + anyone with link"
 }
 
 // fileCardView is the generic-file viewer — the total-resolution floor every
@@ -352,6 +388,13 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activ
 			Captured:   humanizeSince(a.Provenance.CapturedAt),
 			Expires:    humanizeUntil(a.ExpiresAt),
 		},
+	}
+	vm.ShareDialog = shareDialogView{
+		WebURL:      vm.WebURL,
+		MCPHandle:   vm.MCPHandle,
+		AccessLabel: shareAccessLabel(a.Access.Visibility),
+		ExpiresIn:   vm.Provenance.Expires,
+		Provenance:  vm.Provenance,
 	}
 
 	// Comments are read under the same link capability as the artifact; a nil

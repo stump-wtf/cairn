@@ -86,6 +86,11 @@ type trajectoryView struct {
 	Authenticated bool
 	Actor         string
 	CSRFToken     string
+
+	// ShareDialog is the Share button's view model (#46), the same shared
+	// partial the generic shell renders (SPEC-0001 REQ "Share Affordance":
+	// "Works on both the generic shell and the trajectory viewer").
+	ShareDialog shareDialogView
 }
 
 // rulerTick is one time-axis label at a fractional position across the track.
@@ -219,6 +224,7 @@ func (s *Server) handleRunShell(w http.ResponseWriter, r *http.Request) {
 	if p, ok := s.optionalPrincipal(r); ok {
 		vm.Authenticated = true
 		vm.Actor = p.ActorID
+		vm.ShareDialog.IsOwner = p.ActorID == a.Access.OwnerID
 		if c, cerr := r.Cookie(csrfCookieName); cerr == nil {
 			vm.CSRFToken = c.Value
 		}
@@ -260,6 +266,14 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 			Captured:   humanizeSince(run.Provenance.CapturedAt),
 		},
 		ExpiresIn: humanizeUntil(run.ExpiresAt),
+	}
+	vm.Provenance.Expires = vm.ExpiresIn
+	vm.ShareDialog = shareDialogView{
+		WebURL:      vm.WebURL,
+		MCPHandle:   vm.MCPHandle,
+		AccessLabel: shareAccessLabel(a.Access.Visibility),
+		ExpiresIn:   vm.ExpiresIn,
+		Provenance:  vm.Provenance,
 	}
 
 	// Time ruler: five ticks 0→wall at quartile positions (SPEC-0004 waterfall

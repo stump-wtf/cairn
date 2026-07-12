@@ -96,6 +96,74 @@ func TestShellChromeIsIdenticalAcrossTypes(t *testing.T) {
 	}
 }
 
+// TestShareDialogSkeletonRenders asserts the Share dialog (#46, SPEC-0001 REQ
+// "Share Affordance") is present in the server-rendered HTML for every share
+// type: a native <dialog> carrying the web link + mcp handle each with their
+// own copy affordance, the access-policy line, the expiry summary, and the
+// provenance line — all sourced from the same server-computed facts as the
+// header/panel, never re-derived client-side.
+func TestShareDialogSkeletonRenders(t *testing.T) {
+	s := newWebServer(t)
+
+	types := []artifact.ShareType{
+		artifact.TypeFile,
+		sharetype.KeyMarkdown,
+		artifact.TypeTrajectory,
+	}
+	for _, tp := range types {
+		html := renderShellHTML(t, s, fixtureArtifact(tp, tp != artifact.TypeTrajectory))
+		for _, frag := range []string{
+			`<dialog class="share-dialog" data-share-dialog aria-labelledby="share-dialog-title">`,
+			`id="share-dialog-title"`,
+			`aria-label="Close share dialog"`,
+			`aria-label="Copy web link to clipboard"`,
+			`aria-label="Copy MCP handle to clipboard"`,
+			`https://cairn.sh/`,            // the web link value inside the dialog
+			`mcp://cairn/`,                 // the mcp handle value inside the dialog
+			`🔒 you &#43; anyone with link`, // ADR-0007 default access line (html/template escapes "+")
+			`⧗ expires`,                    // TTL/expiry summary
+			`via MCP · captured`,           // provenance line
+		} {
+			if !strings.Contains(html, frag) {
+				t.Errorf("share type %q: share dialog missing %q", tp, frag)
+			}
+		}
+		// Exactly one Share dialog per page.
+		if n := strings.Count(html, `data-share-dialog`); n != 1 {
+			t.Errorf("share type %q: want exactly one share dialog, got %d", tp, n)
+		}
+	}
+}
+
+// TestShareDialogOwnerNote asserts the dialog shows a non-owner/signed-out
+// note when the viewer is not the owner and omits it for the owner — the
+// dialog is a read-only summary this story, so a non-owner must be told why no
+// mutating control is present (SPEC-0001 REQ "Share Affordance": "A non-owner
+// or unauthenticated viewer MUST NOT be able to change sharing").
+func TestShareDialogOwnerNote(t *testing.T) {
+	s := newWebServer(t)
+	a := fixtureArtifact(artifact.TypeFile, true)
+
+	nonOwner := s.buildShellView(context.Background(), a, "")
+	var sb strings.Builder
+	if err := s.webTmpl.ExecuteTemplate(&sb, "shell", nonOwner); err != nil {
+		t.Fatalf("render shell: %v", err)
+	}
+	if !strings.Contains(sb.String(), "Only the owner can change this artifact's sharing policy.") {
+		t.Error("non-owner/signed-out viewer should see the owner-only note")
+	}
+
+	owner := s.buildShellView(context.Background(), a, "")
+	owner.ShareDialog.IsOwner = true
+	sb.Reset()
+	if err := s.webTmpl.ExecuteTemplate(&sb, "shell", owner); err != nil {
+		t.Fatalf("render shell: %v", err)
+	}
+	if strings.Contains(sb.String(), "Only the owner can change") {
+		t.Error("owner should not see the owner-only note")
+	}
+}
+
 // TestShellBadgeAndURLVaryByType asserts the two header data points that DO
 // vary: the registry badge and the ADR-0005 URL scheme (a trajectory carries
 // the /run/ sub-prefix on both the web link and the mcp handle).

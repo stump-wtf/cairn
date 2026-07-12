@@ -182,6 +182,88 @@ func TestIntegrationWebDownloadIsSniffProof(t *testing.T) {
 	}
 }
 
+// TestIntegrationShareDialogOnGenericShell asserts the Share dialog (#46,
+// SPEC-0001 REQ "Share Affordance") renders on the generic (bare-scheme) shell:
+// the dialog skeleton with the web link + mcp handle copy affordances, the
+// access/expiry/provenance summary, and the owner-only note toggled correctly
+// for an anonymous read versus the authenticated owner.
+func TestIntegrationShareDialogOnGenericShell(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+	id := createArtifact(t, srv.URL, "markdown", "joe", "# Checkout Web Audit")
+
+	// Anonymous link read: the dialog is present but shows the owner-only note.
+	status, html := getHTML(t, srv.URL+"/"+id)
+	if status != http.StatusOK {
+		t.Fatalf("GET /%s = %d, want 200", id, status)
+	}
+	for _, frag := range []string{
+		`data-share-dialog`,
+		`aria-label="Copy web link to clipboard"`,
+		`aria-label="Copy MCP handle to clipboard"`,
+		`https://cairn.sh/` + id,
+		`mcp://cairn/` + id,
+		`🔒 you &#43; anyone with link`,
+		`⧗ expires`,
+		"Only the owner can change this artifact's sharing policy.",
+	} {
+		if !strings.Contains(html, frag) {
+			t.Errorf("generic shell share dialog (anon) missing %q", frag)
+		}
+	}
+
+	// The authenticated owner sees the dialog with no owner-only note.
+	resp := do(t, http.MethodGet, srv.URL+"/"+id, "joe", nil, "")
+	ownerHTML := readBody(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /%s (owner) = %d, want 200", id, resp.StatusCode)
+	}
+	if strings.Contains(ownerHTML, "Only the owner can change") {
+		t.Error("owner should not see the owner-only note in the share dialog")
+	}
+
+	// A different authenticated actor (non-owner) still sees the note.
+	resp = do(t, http.MethodGet, srv.URL+"/"+id, "mallory", nil, "")
+	otherHTML := readBody(t, resp)
+	if !strings.Contains(otherHTML, "Only the owner can change") {
+		t.Error("a non-owner viewer should see the owner-only note in the share dialog")
+	}
+}
+
+// TestIntegrationShareDialogOnTrajectoryViewer asserts the Share dialog also
+// renders on the trajectory viewer at /run/{id} — the two surfaces share one
+// dialog partial (SPEC-0001 REQ "Share Affordance": "Works on both the generic
+// shell and the trajectory viewer").
+func TestIntegrationShareDialogOnTrajectoryViewer(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+	resp := do(t, http.MethodPost, srv.URL+"/v1/runs", "joe",
+		jsonReader(t, runRequest{Mode: "open", Title: "checkout-web-audit",
+			Prompt: "Audit checkout.", Model: "claude-sonnet-4.6", StartedAt: fixedRunStart}),
+		"application/json")
+	run := decodeRun(t, resp)
+
+	status, html := getHTML(t, srv.URL+"/run/"+run.ID)
+	if status != http.StatusOK {
+		t.Fatalf("GET /run/%s = %d, want 200", run.ID, status)
+	}
+	for _, frag := range []string{
+		`data-share-dialog`,
+		`aria-label="Copy web link to clipboard"`,
+		`aria-label="Copy MCP handle to clipboard"`,
+		`mcp://cairn/run/` + run.ID,
+		"Only the owner can change this artifact's sharing policy.",
+	} {
+		if !strings.Contains(html, frag) {
+			t.Errorf("trajectory viewer share dialog missing %q", frag)
+		}
+	}
+
+	ownerResp := do(t, http.MethodGet, srv.URL+"/run/"+run.ID, "joe", nil, "")
+	ownerHTML := readBody(t, ownerResp)
+	if strings.Contains(ownerHTML, "Only the owner can change") {
+		t.Error("run owner should not see the owner-only note in the share dialog")
+	}
+}
+
 // TestIntegrationLandingAtRoot asserts the shell owns the web root: GET / is the
 // on-brand landing, 200, not a bare 404.
 func TestIntegrationLandingAtRoot(t *testing.T) {

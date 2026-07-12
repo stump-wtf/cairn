@@ -141,3 +141,72 @@ document.addEventListener('alpine:init', () => {
     initBin();
   }
 })();
+
+// Share dialog (SPEC-0001 REQ "Share Affordance"; #46): a native <dialog> so
+// the browser furnishes the modal focus trap and Escape-to-dismiss for free —
+// while a modal <dialog> is open, everything outside it is inert and Escape
+// fires 'cancel' then 'close' with no listener needed. This script only opens
+// it from the Share button, wires the explicit close affordances, restores
+// focus to the Share button on close (the same WCAG 2.1 focus-management bar
+// as the reaction picker in trajectory.js/markdown.js — belt-and-suspenders on
+// top of the UA's own restoration), and drives the copy-to-clipboard buttons
+// for the link/mcp fields inside it. Plain JS rather than an Alpine directive
+// because showModal()/close() are imperative calls the CSP build's
+// bare-identifier directives do not fit cleanly; reading data-* attributes and
+// calling dialog/clipboard methods needs no eval, so this stays within the
+// shell's 'self'-only CSP. Runs on both the generic shell and the trajectory
+// viewer, which share the one "share-dialog" template partial (ADR-0011).
+(function () {
+  function initShareDialog() {
+    var trigger = document.querySelector('.share-btn');
+    var dialog = document.querySelector('[data-share-dialog]');
+    if (!trigger || !dialog) return;
+    if (typeof dialog.showModal !== 'function') return; // no-op floor: link/mcp already in the header
+
+    function open() { dialog.showModal(); }
+    function close() { if (dialog.open) dialog.close(); }
+
+    trigger.addEventListener('click', open);
+    dialog.addEventListener('close', function () {
+      if (document.contains(trigger)) trigger.focus();
+    });
+
+    var closeBtn = dialog.querySelector('[data-share-close]');
+    if (closeBtn) closeBtn.addEventListener('click', close);
+
+    // A click landing on the <dialog> element itself (not a descendant) hit
+    // the backdrop/padding box outside the card — dismiss, mirroring the
+    // reaction picker's outside-click close.
+    dialog.addEventListener('click', function (e) {
+      if (e.target === dialog) close();
+    });
+
+    var live = dialog.querySelector('[data-share-live]');
+    Array.prototype.forEach.call(dialog.querySelectorAll('[data-share-copy]'), function (btn) {
+      var defaultLabel = btn.textContent;
+      btn.addEventListener('click', function () {
+        var value = btn.getAttribute('data-share-copy') || '';
+        var done = function () {
+          btn.textContent = 'copied ✓';
+          btn.classList.add('copied');
+          if (live) live.textContent = (btn.getAttribute('data-share-field') || 'value') + ' copied to clipboard';
+          setTimeout(function () {
+            btn.textContent = defaultLabel;
+            btn.classList.remove('copied');
+          }, 1300);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(value).then(done).catch(done);
+        } else {
+          done();
+        }
+      });
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initShareDialog);
+  } else {
+    initShareDialog();
+  }
+})();

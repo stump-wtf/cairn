@@ -33,6 +33,8 @@
   <button type="button" class="panel-toggle" x-on:click="togglePanel" x-bind:aria-expanded="panelExpanded" aria-label="Toggle details panel">▤</button>
 </header>
 
+{{template "share-dialog" .ShareDialog}}
+
 <main class="shell-grid" x-bind:class="panelClass">
   <article id="body" class="body-slot{{if .Bundle}} body-slot-bundle{{end}}" tabindex="-1">
     {{if .Bundle}}
