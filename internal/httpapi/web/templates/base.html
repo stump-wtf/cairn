@@ -13,5 +13,6 @@
 
 {{define "comment-item"}}<div class="comment{{if .IsReply}} reply{{end}}{{if .Deleted}} deleted{{end}}">
   <div class="comment-head"><span class="comment-actor">{{.Actor}}{{if .OnBehalfOf}} · {{.OnBehalfOf}}{{end}}</span> <span class="comment-when">{{.When}}</span></div>
+  {{if .AnchorContext}}<p class="comment-anchor">{{.AnchorContext}}</p>{{end}}
   {{if .Deleted}}<p class="comment-body tombstone">comment deleted</p>{{else}}<p class="comment-body">{{.Body}}</p>{{end}}
 </div>{{end}}

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"html/template"
 	"io/fs"
 	"net/http"
@@ -161,12 +162,9 @@ func (s *Server) handleArtifactShell(w http.ResponseWriter, r *http.Request) {
 	s.renderShellFor(w, r, "")
 }
 
-// handleRunShell renders the app shell for a trajectory at `GET /run/{id}`,
-// whose registry web prefix is "run" (SPEC-0002 URL scheme). Any id whose type
-// does not carry that prefix yields a uniform 404.
-func (s *Server) handleRunShell(w http.ResponseWriter, r *http.Request) {
-	s.renderShellFor(w, r, "run")
-}
+// handleRunShell (the trajectory viewer at `GET /run/{id}`) lives in
+// trajectory_view.go: unlike a bodied share type it renders from the trajectory
+// service's reconstructed span tree, not a single streamed body.
 
 // handleWebDownload streams an artifact's single content-addressed body as a
 // safe attachment on the web surface (#12). It enforces the same canonical
@@ -304,6 +302,10 @@ type commentLine struct {
 	When       string
 	IsReply    bool
 	Deleted    bool
+	// AnchorContext is a short human cue for a non-whole-artifact anchor — e.g.
+	// `on span s2` or `on "…quote…"` — shown as a purple prefix on the comment
+	// card (design t7a "anchor context"). Empty for a whole-artifact comment.
+	AnchorContext string
 }
 
 // buildShellView projects an artifact into the shell view model: the header
@@ -374,15 +376,52 @@ func toCommentLines(cs []annotation.Comment) []commentLine {
 	out := make([]commentLine, 0, len(cs))
 	for _, c := range cs {
 		out = append(out, commentLine{
-			Actor:      c.ActorID,
-			OnBehalfOf: c.OnBehalfOf,
-			Body:       c.Body,
-			When:       humanizeSince(c.CreatedAt),
-			IsReply:    c.ParentID != nil,
-			Deleted:    c.Deleted,
+			Actor:         c.ActorID,
+			OnBehalfOf:    c.OnBehalfOf,
+			Body:          c.Body,
+			When:          humanizeSince(c.CreatedAt),
+			IsReply:       c.ParentID != nil,
+			Deleted:       c.Deleted,
+			AnchorContext: anchorContext(c.Anchor.Type, c.Anchor.Ref),
 		})
 	}
 	return out
+}
+
+// anchorContext renders a short human cue for a comment's anchor, shown as the
+// purple context prefix on the card (design t7a). The whole-artifact anchor has
+// no cue; a trajectory_span names its span; a text_selection quotes up to 34
+// characters of the selected text (SPEC-0006 text_selection self-describing
+// quote). Unknown shapes degrade to naming the anchor type rather than erroring.
+func anchorContext(anchorType sharetype.Anchor, ref json.RawMessage) string {
+	switch anchorType {
+	case sharetype.AnchorArtifact, "":
+		return ""
+	case sharetype.AnchorTrajectorySpan, sharetype.AnchorTrajectoryTurn, sharetype.AnchorTrajectoryToolCall:
+		var loc struct {
+			SpanID string `json:"span_id"`
+		}
+		if json.Unmarshal(ref, &loc) == nil && loc.SpanID != "" {
+			return "on span " + loc.SpanID
+		}
+	case sharetype.AnchorTextSelection:
+		var loc struct {
+			Quote string `json:"quote"`
+		}
+		if json.Unmarshal(ref, &loc) == nil && loc.Quote != "" {
+			return "on “" + truncateRunes(loc.Quote, 34) + "”"
+		}
+	}
+	return "on " + string(anchorType)
+}
+
+// truncateRunes clamps s to at most n runes, appending an ellipsis when it cut.
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // fileCard builds the generic-file floor view model for an artifact whose type

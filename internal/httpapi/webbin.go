@@ -107,13 +107,16 @@ func (s *Server) handleBinPage(w http.ResponseWriter, r *http.Request) {
 	s.renderWeb(w, r, name, vm)
 }
 
-// handleWebComment posts a whole-artifact comment from the shell composer and
-// returns the server-rendered comment partial for an HTMX append (SPEC-0001 REQ
-// "Comment posts through the core"). The actor is the session principal — never a
-// client claim — so provenance is server-derived (SPEC-0009); the anchor is the
-// whole-artifact anchor, which every commentable type accepts. requireAuth +
-// enforceCSRF have already gated it: a session (ambient) caller needed a valid
-// CSRF token, a bearer caller was exempt.
+// handleWebComment posts a comment from the shell composer and returns the
+// server-rendered comment partial for an HTMX append (SPEC-0001 REQ "Comment
+// posts through the core"). The actor is the session principal — never a client
+// claim — so provenance is server-derived; the anchor defaults to whole-artifact
+// but the trajectory viewer's composer/selection toolbar may target a
+// trajectory_span (a `span_id` form field) or a text_selection (`sel_start`,
+// `sel_end`, `quote`), each validated against the share-type registry by the
+// annotation service (SPEC-0006). requireAuth + enforceCSRF have already gated
+// it: a session (ambient) caller needed a valid CSRF token, a bearer caller was
+// exempt.
 func (s *Server) handleWebComment(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFrom(r.Context())
 	if !ok {
@@ -131,9 +134,14 @@ func (s *Server) handleWebComment(w http.ResponseWriter, r *http.Request) {
 		s.renderWebError(w, r, errs.Validationf("comment: malformed form"))
 		return
 	}
+	anchorType, ref, err := webCommentAnchor(r)
+	if err != nil {
+		s.renderWebError(w, r, err)
+		return
+	}
 	comment, err := s.annot.AddComment(r.Context(), id, annotation.CommentInput{
-		AnchorType: sharetype.AnchorArtifact,
-		AnchorRef:  json.RawMessage(`{}`),
+		AnchorType: anchorType,
+		AnchorRef:  ref,
 		ActorID:    p.ActorID,
 		Body:       r.PostFormValue("body"),
 	})
@@ -143,4 +151,40 @@ func (s *Server) handleWebComment(w http.ResponseWriter, r *http.Request) {
 	}
 	line := toCommentLines([]annotation.Comment{comment})[0]
 	s.renderWeb(w, r, "comment-item", line)
+}
+
+// webCommentAnchor reads the composer's optional anchor form fields and builds
+// the (anchor_type, anchor_ref) the comment attaches to. With no anchor fields
+// it is the whole-artifact anchor `{}` (which every commentable type accepts);
+// a `span_id` targets a trajectory_span; `sel_start`/`sel_end`/`quote` target a
+// text_selection. The annotation service still validates the anchor against the
+// registry, so an anchor the type forbids is rejected there — this only shapes
+// the ref, it grants nothing.
+func webCommentAnchor(r *http.Request) (sharetype.Anchor, json.RawMessage, error) {
+	if spanID := r.PostFormValue("span_id"); spanID != "" {
+		ref, err := json.Marshal(struct {
+			SpanID string `json:"span_id"`
+		}{spanID})
+		if err != nil {
+			return "", nil, errs.Validationf("comment: bad span anchor")
+		}
+		return sharetype.AnchorTrajectorySpan, ref, nil
+	}
+	if q := r.PostFormValue("quote"); q != "" {
+		start, err1 := strconv.Atoi(r.PostFormValue("sel_start"))
+		end, err2 := strconv.Atoi(r.PostFormValue("sel_end"))
+		if err1 != nil || err2 != nil {
+			return "", nil, errs.Validationf("comment: selection offsets must be integers")
+		}
+		ref, err := json.Marshal(struct {
+			Start int    `json:"start"`
+			End   int    `json:"end"`
+			Quote string `json:"quote"`
+		}{start, end, q})
+		if err != nil {
+			return "", nil, errs.Validationf("comment: bad selection anchor")
+		}
+		return sharetype.AnchorTextSelection, ref, nil
+	}
+	return sharetype.AnchorArtifact, json.RawMessage(`{}`), nil
 }
