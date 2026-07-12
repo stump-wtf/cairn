@@ -16,13 +16,16 @@ package annotation
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"strings"
+
+	"github.com/joestump/cairn/internal/markdown"
 )
 
 // blockIDHexLen is the number of hex digits a markdown block id carries after
 // its "b_" prefix: 12 digits (48 bits) keeps collisions negligible within a
-// single document while staying short enough for URLs and anchor_refs.
+// single document while staying short enough for URLs and anchor_refs. It
+// mirrors the markdown package's own constant so the anchor layer and the
+// renderer agree on the id length.
 const blockIDHexLen = 12
 
 // lineHashHexLen is the number of hex digits in a code line-text hash — a
@@ -30,14 +33,12 @@ const blockIDHexLen = 12
 const lineHashHexLen = 8
 
 // BlockID derives the deterministic id of a markdown block from its structural
-// position (0-based ordinal among the document's top-level blocks) and its
-// content. The same body therefore renders the same block ids on every surface
-// and every request (ADR-0006 "Deterministic render ids"), e.g. "b_3f2a9c81d04e".
-// Content is used verbatim except for trailing whitespace, which markdown
-// rendering does not preserve.
+// position and content. It delegates to the markdown renderer, which is the
+// single source of truth for block ids, so the id that mints a block (the
+// viewer) and the id an anchor stores (this layer) can never drift (ADR-0006
+// "Deterministic render ids", SPEC-0006 REQ "Anchor Stability").
 func BlockID(position int, content string) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s", position, strings.TrimRight(content, " \t\r\n"))))
-	return "b_" + hex.EncodeToString(sum[:])[:blockIDHexLen]
+	return markdown.BlockID(position, content)
 }
 
 // LineHash returns the short hash of a code line's text that a `code_line`

@@ -343,7 +343,7 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact) shell
 	// any type whose viewer errors — resolves to the generic-file card, so EVERY
 	// share type resolves to some viewer (#12). Resolution is driven entirely by
 	// the registry (BodyViewerFor), never a switch on the type key.
-	if viewer, ok := s.reg.BodyViewerFor(a.ShareType); ok && a.BodySHA256 != "" {
+	if viewer, ok := s.reg.BodyViewerFor(a.ShareType); ok && a.BodySHA256 != "" && s.store != nil {
 		if rc, _, err := s.store.OpenBody(ctx, a.PublicID); err == nil {
 			defer rc.Close()
 			if html, err := viewer.RenderBody(ctx, a, rc); err == nil {

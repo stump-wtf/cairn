@@ -1,11 +1,15 @@
 package sharetype
 
 import (
+	"context"
+	"html/template"
+	"io"
 	"mime"
 	"path"
 	"strings"
 
 	"github.com/joestump/cairn/internal/artifact"
+	"github.com/joestump/cairn/internal/markdown"
 )
 
 // Registry keys for the built-in types beyond the generic file/gz/bundle keys
@@ -52,6 +56,32 @@ type prefixedType struct {
 }
 
 func (t prefixedType) URLPrefix() URLPrefix { return t.prefix }
+
+// markdownShareType composes simpleType with the BodyViewer capability: it
+// renders a markdown body as the sanitized, server-side HTML fragment the app
+// shell drops into its body slot — the rendered prose, a multi-level CONTENTS
+// table of contents, deterministic per-block ids, and the md_block/text_selection
+// annotation affordances (SPEC-0003 REQ "Markdown Viewer", REQ "Markdown
+// Annotation Anchors"). The viewer stays a registry capability discovered by
+// type assertion (ADR-0002): the shell resolves it via BodyViewerFor and never
+// switches on the markdown key. Rendering + sanitization live in
+// internal/markdown so this wrapper is a thin adapter over the streamed body.
+type markdownShareType struct {
+	simpleType
+}
+
+// RenderBody implements the BodyViewer capability. It streams the whole
+// (content-addressed, immutable) body into the markdown renderer, whose output
+// is already goldmark-omitted-raw-HTML + bluemonday-sanitized, so the returned
+// fragment cannot execute active content in Cairn's origin (SPEC-0003 Security
+// REQ "Untrusted markdown body").
+func (markdownShareType) RenderBody(_ context.Context, _ *artifact.Artifact, body io.Reader) (template.HTML, error) {
+	src, err := io.ReadAll(body)
+	if err != nil {
+		return "", err
+	}
+	return markdown.RenderFragment(src)
+}
 
 // codeShareType composes simpleType with the ArtifactBadger capability: a code
 // artifact's badge is its language (`GO`, `PY`, …) when recognizable, falling
@@ -151,7 +181,7 @@ var (
 		anchors: []AnchorSpec{both(AnchorArtifact)},
 	}
 
-	markdownType = simpleType{
+	markdownType = markdownShareType{simpleType{
 		key:     KeyMarkdown,
 		badge:   "MD",
 		preview: isText,
@@ -161,7 +191,7 @@ var (
 			reactionOnly(AnchorMarkdownBullet),
 			commentOnly(AnchorTextSelection),
 		},
-	}
+	}}
 	codeType = codeShareType{simpleType{
 		key:     KeyCode,
 		badge:   "CODE",
