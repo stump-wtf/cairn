@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/joestump/cairn/internal/artifact"
+	"github.com/joestump/cairn/internal/code"
 	"github.com/joestump/cairn/internal/markdown"
 )
 
@@ -98,15 +99,53 @@ type bundleShareType struct {
 
 func (bundleShareType) MemberAnchor() Anchor { return AnchorBundleFile }
 
-// codeShareType composes simpleType with the ArtifactBadger capability: a code
-// artifact's badge is its language (`GO`, `PY`, …) when recognizable, falling
-// back to the static CODE badge (ADR-0002 badge list: "`PY`/lang").
+// codeShareType composes simpleType with the ArtifactBadger capability (a code
+// artifact's badge is its language, `GO`/`PY`/…, falling back to the static
+// CODE badge — ADR-0002 badge list: "`PY`/lang") and the BodyViewer capability:
+// it renders a code body as the sanitized, server-side, line-numbered,
+// syntax-highlighted HTML fragment the app shell drops into its body slot —
+// the highlighted source, a symbol outline, and the code_line/code_range
+// annotation affordances (SPEC-0003 REQ "Code Viewer", REQ "Code Annotation
+// Anchors"). Highlighting + the outline heuristic live in internal/code (the
+// code-viewer analogue of internal/markdown), so this wrapper stays a thin
+// adapter over the streamed body, exactly like markdownShareType.RenderBody
+// above — the viewer stays a registry capability discovered by type assertion
+// (ADR-0002), never a switch on the code key.
 type codeShareType struct {
 	simpleType
 }
 
 func (t codeShareType) BadgeFor(a *artifact.Artifact) string {
 	return langBadge(a.MediaType, a.Title)
+}
+
+// RenderBody implements the BodyViewer capability. chroma HTML-escapes every
+// highlighted token (see internal/code.Render), so the returned fragment
+// cannot execute active content in Cairn's origin (SPEC-0003 Security
+// Requirements: "source is escaped, never executed") — the code analogue of
+// markdownShareType.RenderBody's sanitization guarantee above. The language
+// override, when the caller attached one via WithBodyHint (the web shell's
+// `?lang=` query param), takes precedence over media_type/title detection.
+func (codeShareType) RenderBody(ctx context.Context, a *artifact.Artifact, body io.Reader) (template.HTML, error) {
+	src, err := io.ReadAll(body)
+	if err != nil {
+		return "", err
+	}
+	return code.RenderFragment(src, a.MediaType, a.Title, BodyHint(ctx))
+}
+
+// MetadataPanel implements the MetadataPaneler capability: the language field
+// the panel shows (SPEC-0003 REQ "Code Viewer": "supplies its metadata-panel
+// fields (e.g. language, line count) via the registry capability"). Line
+// count is NOT supplied here — MetadataPanel receives only the artifact, not
+// its body, and line count cannot be derived without reading the body; it is
+// instead shown in the code viewer's own in-fragment STATS line (see
+// internal/code/viewer.go), the same place markdownShareType's body-derived
+// facts (word count, heading count, read time) live rather than the registry
+// panel.
+func (codeShareType) MetadataPanel(a *artifact.Artifact) []PanelField {
+	lang := code.Detect("", a.MediaType, a.Title)
+	return []PanelField{{Label: "language", Value: lang.Display}}
 }
 
 // langBadge derives a short language badge from the artifact's media type,

@@ -167,10 +167,12 @@ func (s *Server) handleWebComment(w http.ResponseWriter, r *http.Request) {
 // webCommentAnchor reads the composer's optional anchor form fields and builds
 // the (anchor_type, anchor_ref) the comment attaches to. With no anchor fields
 // it is the whole-artifact anchor `{}` (which every commentable type accepts);
-// a `span_id` targets a trajectory_span; `sel_start`/`sel_end`/`quote` target a
-// text_selection. The annotation service still validates the anchor against the
-// registry, so an anchor the type forbids is rejected there — this only shapes
-// the ref, it grants nothing.
+// a `span_id` targets a trajectory_span; `line` (the code viewer's per-line
+// comment button, SPEC-0003 REQ "Code Annotation Anchors") targets a
+// code_line; `sel_start`/`sel_end`/`quote` target a text_selection. The
+// annotation service still validates the anchor against the registry, so an
+// anchor the type forbids is rejected there — this only shapes the ref, it
+// grants nothing.
 func webCommentAnchor(r *http.Request) (sharetype.Anchor, json.RawMessage, error) {
 	// A bundle's composer scopes every comment to the active member: the `file`
 	// hidden field names the member, so the comment anchors to bundle_file
@@ -194,6 +196,25 @@ func webCommentAnchor(r *http.Request) (sharetype.Anchor, json.RawMessage, error
 			return "", nil, errs.Validationf("comment: bad span anchor")
 		}
 		return sharetype.AnchorTrajectorySpan, ref, nil
+	}
+	// The code viewer's per-line comment button (code.js) sets a hidden `line`
+	// field before submitting. The anchor_ref deliberately omits the optional
+	// "hash" locator field (internal/annotation.LineHash) — including it would
+	// change the canonical anchor_key (annotation.CanonicalRef sorts and emits
+	// exactly the fields present), splitting one line's reactions/comments
+	// across two keys depending on whether a hash happened to be sent.
+	if lineStr := r.PostFormValue("line"); lineStr != "" {
+		line, err := strconv.Atoi(lineStr)
+		if err != nil || line < 1 {
+			return "", nil, errs.Validationf("comment: line must be a positive integer")
+		}
+		ref, err := json.Marshal(struct {
+			Line int `json:"line"`
+		}{line})
+		if err != nil {
+			return "", nil, errs.Validationf("comment: bad line anchor")
+		}
+		return sharetype.AnchorCodeLine, ref, nil
 	}
 	if q := r.PostFormValue("quote"); q != "" {
 		start, err1 := strconv.Atoi(r.PostFormValue("sel_start"))

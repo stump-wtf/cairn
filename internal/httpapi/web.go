@@ -300,8 +300,12 @@ func (s *Server) renderShellFor(w http.ResponseWriter, r *http.Request, wantPref
 	}
 	// A bundle browses its members through the file rail; `?file=` selects the
 	// active member for the no-JS full-navigation path (an HTMX pane swap uses the
-	// dedicated /{id}/pane route). Non-bundle types ignore it.
-	vm := s.buildShellView(r.Context(), a, r.URL.Query().Get("file"))
+	// dedicated /{id}/pane route). Non-bundle types ignore it. `?lang=` is the
+	// code viewer's language override (SPEC-0003 "overridable"); every other
+	// type ignores it too — it rides the generic sharetype.WithBodyHint seam so
+	// BodyViewer's signature stays the same for every type (ADR-0002).
+	ctx := sharetype.WithBodyHint(r.Context(), r.URL.Query().Get("lang"))
+	vm := s.buildShellView(ctx, a, r.URL.Query().Get("file"))
 	// A logged-in viewer sees the comment composer; an anonymous link reader sees
 	// the read-only thread (posting requires a session + CSRF). Resolution is
 	// optional — an absent/invalid credential simply yields the read-only view.
@@ -557,6 +561,16 @@ func anchorContext(anchorType sharetype.Anchor, ref json.RawMessage) string {
 		}
 		if json.Unmarshal(ref, &loc) == nil && loc.Quote != "" {
 			return "on “" + truncateRunes(loc.Quote, 34) + "”"
+		}
+	case sharetype.AnchorCodeLine:
+		// The code viewer's per-line comment (SPEC-0003 REQ "Code Annotation
+		// Anchors") — "on line 42" resolves to the same #L42 the viewer's own
+		// line anchors use (internal/code/viewer.go's lineID).
+		var loc struct {
+			Line int `json:"line"`
+		}
+		if json.Unmarshal(ref, &loc) == nil && loc.Line > 0 {
+			return "on line " + itoa(loc.Line)
 		}
 	case sharetype.AnchorBundleFile:
 		// A per-file bundle comment is labelled by its member name — the "· on
