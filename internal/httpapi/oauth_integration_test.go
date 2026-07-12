@@ -274,6 +274,29 @@ func TestIntegrationOAuthDiscoveryMetadata(t *testing.T) {
 	}
 }
 
+// TestIntegrationOAuthConsentCSPAllowsRedirectOrigin proves the consent page's
+// CSP widens form-action to the client's validated redirect origin, so the
+// browser permits the approval POST to redirect to an off-origin callback (e.g.
+// a CLI's http://localhost:PORT). Without it, WebKit blocks the redirect and
+// clicking Approve silently does nothing — the Crush connect failure.
+func TestIntegrationOAuthConsentCSPAllowsRedirectOrigin(t *testing.T) {
+	srv, client := oauthServer(t, oauthConfig())
+	reg := registerClient(t, srv, "Crush", []string{testRedirectURI})
+	resp := doLogin(t, srv, client, "sam@stump.rocks", "devpass")
+	resp.Body.Close()
+
+	cres, err := client.Get(authorizeURL(srv, reg.ClientID, "artifacts:read", "s1"))
+	if err != nil {
+		t.Fatalf("GET consent: %v", err)
+	}
+	cres.Body.Close()
+	csp := cres.Header.Get("Content-Security-Policy")
+	// testRedirectURI = https://client.example/cb → origin https://client.example
+	if !strings.Contains(csp, "form-action 'self' https://client.example") {
+		t.Fatalf("consent CSP form-action missing redirect origin: %q", csp)
+	}
+}
+
 // TestIntegrationOAuthMCPResourceIndicatorAccepted proves the RFC 8707 fix: an
 // MCP client that sends the /mcp canonical URI as `resource` (as the MCP spec
 // requires) is accepted at both authorize and token, while a foreign audience

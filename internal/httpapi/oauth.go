@@ -400,6 +400,20 @@ func (s *Server) sessionPrincipal(r *http.Request) (*Principal, bool) {
 	return p, true
 }
 
+// consentCSP returns webCSP with the client's validated redirect origin added
+// to the form-action allowlist, so the browser permits the approval POST's
+// redirect to the registered callback. The redirect_uri has already been
+// exact-matched against the registered client (validateAuthorize), so its
+// origin is trusted and adds no new attack surface; a missing/opaque origin
+// falls back to the strict default.
+func consentCSP(redirectURI string) string {
+	u, err := url.Parse(redirectURI)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return webCSP
+	}
+	return strings.Replace(webCSP, "form-action 'self'", "form-action 'self' "+u.Scheme+"://"+u.Host, 1)
+}
+
 // handleAuthorizeForm renders the consent screen for GET /oauth/authorize. An
 // unauthenticated visitor is redirected to the login page with this request
 // (an internal path) as the post-login destination; the consent screen itself
@@ -439,6 +453,12 @@ func (s *Server) handleAuthorizeForm(w http.ResponseWriter, r *http.Request) {
 	for _, sc := range req.scopes {
 		lines = append(lines, consentScopeView{Value: sc, Label: oauth.ConsentLine(sc)})
 	}
+	// Approving the consent form redirects to the client's registered callback,
+	// which is off-origin (e.g. a CLI's http://localhost:PORT/callback). WebKit
+	// enforces `form-action` on the redirect target of a form submission, so the
+	// default `form-action 'self'` would silently block the redirect. Widen it to
+	// include the already-exact-matched redirect origin for this consent render.
+	w.Header().Set("Content-Security-Policy", consentCSP(req.redirectURI))
 	s.renderWeb(w, r, "consent", consentView{
 		ClientName:    firstNonEmpty(req.client.Name, req.client.ID),
 		ClientID:      req.client.ID,
@@ -483,6 +503,9 @@ func (s *Server) handleAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		s.redirectAuthorizeError(w, r, req.redirectURI, redirErr, req.state)
 		return
 	}
+	// Every outcome below redirects the form to the (validated) client callback;
+	// widen form-action so the browser permits that off-origin navigation.
+	w.Header().Set("Content-Security-Policy", consentCSP(req.redirectURI))
 	if r.PostFormValue("action") != "approve" {
 		// Consent denied: no grant, no token, access_denied to the client
 		// (SPEC-0007 scenario "Consent denied").
