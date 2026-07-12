@@ -307,6 +307,38 @@ func (s *Server) requireScope(scope string) func(http.Handler) http.Handler {
 	}
 }
 
+// requireHuman is middleware that refuses every agent token: it runs after
+// requireAuth and 403s any principal marked IsAgent, letting only human callers
+// (personal API tokens and cookie sessions, both IsAgent=false) through. It is
+// the seam for capabilities the three-scope model deliberately gives no scope —
+// deletion and, in a future Share endpoint, sharing/expiry changes — which
+// ADR-0004 / SPEC-0004 keep as "explicit human actions" that agents can never
+// perform on the human's behalf. Gating delete on artifacts:write alone was
+// insufficient because agentScopes grants artifacts:write; the human/agent
+// distinction, not a write scope, is what separates a deletable-by-agent write
+// from a human-only delete. Using IsAgent (rather than a human-only scope such
+// as sharing:manage) is deliberate: a web session carries neither sharing:manage
+// nor an agent marker, so it correctly retains delete, while an agent token is
+// refused.
+//
+// Governing: ADR-0004 (least-privilege agent grant — no delete/sharing scope),
+// SPEC-0004 (mcp-server-and-oauth: "deletion stays an explicit human action"),
+// SPEC-0006 (consistent 401/403).
+func (s *Server) requireHuman(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, ok := principalFrom(r.Context())
+		if !ok || p == nil {
+			s.writeError(w, r, errs.ErrUnauthorized, nil)
+			return
+		}
+		if p.IsAgent {
+			s.writeError(w, r, errs.ErrForbidden, nil)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // principalFrom returns the authenticated principal stashed by requireAuth.
 func principalFrom(ctx context.Context) (*Principal, bool) {
 	p, ok := ctx.Value(principalCtxKey{}).(*Principal)

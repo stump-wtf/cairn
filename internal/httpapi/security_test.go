@@ -220,3 +220,67 @@ func TestRequireScope(t *testing.T) {
 		t.Fatalf("scoped request should pass: status = %d, reached = %v", rec.Code, reached)
 	}
 }
+
+// TestRequireHuman proves the human-only middleware refuses agent tokens (403),
+// distinguishes the missing-principal 401, and passes a human principal through.
+// This is the seam that keeps deletion a human-only capability (ADR-0004 /
+// SPEC-0004): agents carry artifacts:write but no delete scope, so the
+// write-scope gate alone would let an agent delete on the human's behalf.
+func TestRequireHuman(t *testing.T) {
+	s := New(nil, nil, DevActorAuthenticator{}, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var reached bool
+	h := s.requireHuman(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// No principal in context → 401.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/v1/artifacts/abc12345", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no principal: status = %d, want 401", rec.Code)
+	}
+
+	// Agent principal → 403; the handler is never reached even though the agent
+	// holds artifacts:write.
+	rec = httptest.NewRecorder()
+	agent := &Principal{ActorID: "alice", IsAgent: true, Scopes: agentScopes()}
+	h.ServeHTTP(rec, withPrincipal(httptest.NewRequest(http.MethodDelete, "/v1/artifacts/abc12345", nil), agent))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("agent: status = %d, want 403", rec.Code)
+	}
+	if reached {
+		t.Fatal("agent request must not reach the handler")
+	}
+
+	// Human principal (IsAgent=false) → passes through.
+	rec = httptest.NewRecorder()
+	human := &Principal{ActorID: "alice", Scopes: humanScopes()}
+	h.ServeHTTP(rec, withPrincipal(httptest.NewRequest(http.MethodDelete, "/v1/artifacts/abc12345", nil), human))
+	if rec.Code != http.StatusOK || !reached {
+		t.Fatalf("human request should pass: status = %d, reached = %v", rec.Code, reached)
+	}
+}
+
+// TestDeleteRouteRejectsAgentToken proves the wired DELETE /v1/artifacts/{id}
+// route refuses an agent token with a 403 before the handler ever touches the
+// store. An agent-role token (CAIRN_API_TOKENS=sk_bot:alice:agent) carries
+// artifacts:write yet must never delete on the human's behalf (ADR-0004 /
+// SPEC-0004 — agents receive no delete scope). The server is deliberately
+// storeless: requireHuman short-circuits ahead of handleDelete, so reaching the
+// nil store at all would itself be the bug this test guards against.
+func TestDeleteRouteRejectsAgentToken(t *testing.T) {
+	auth := NewTokenAuthenticator([]APIToken{{Secret: "sk_bot", ActorID: "alice", IsAgent: true}})
+	s := New(nil, nil, auth, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	resp := do(t, http.MethodDelete, srv.URL+"/v1/artifacts/abc12345", "sk_bot", nil, "")
+	if resp.StatusCode != http.StatusForbidden {
+		resp.Body.Close()
+		t.Fatalf("agent delete: status = %d, want 403", resp.StatusCode)
+	}
+	if env := decodeError(t, resp); env.Error.Code != errs.CodeForbidden {
+		t.Fatalf("code = %q, want forbidden", env.Error.Code)
+	}
+}

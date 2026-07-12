@@ -208,7 +208,12 @@ func (s *Server) mountAPI(r chi.Router) {
 		// "CSRF Protection"; closes the gap left when only annotation writes were
 		// guarded).
 		r.With(s.requireAuth, s.requireScope(scopeArtifactsWrite), s.enforceCSRF).Post("/artifacts", s.handleCreate)
-		r.With(s.requireAuth, s.requireScope(scopeArtifactsWrite), s.enforceCSRF).Delete("/artifacts/{id}", s.handleDelete)
+		// Delete is a human-only capability: the three-scope model (ADR-0004) grants
+		// agents artifacts:write but NO delete scope, so requireHuman refuses every
+		// agent token (403) — an agent can never delete on the human's behalf, while
+		// human tokens and web sessions (both non-agent) retain it. requireScope keeps
+		// the write-capability gate; requireHuman adds the human-only gate on top.
+		r.With(s.requireAuth, s.requireScope(scopeArtifactsWrite), s.requireHuman, s.enforceCSRF).Delete("/artifacts/{id}", s.handleDelete)
 		r.With(s.requireAuth).Get("/bin", s.handleBin)
 
 		// Link-capability reads: a valid id grants read; unknown/expired ids
