@@ -99,6 +99,10 @@ func run(logger *slog.Logger) error {
 		SessionTTL:            cfg.SessionTTL,
 		APITokens:             apiTokens,
 		DevInsecureBearerAuth: cfg.DevInsecureBearerAuth,
+		AccessTokenTTL:        cfg.OAuthAccessTokenTTL,
+		RefreshTokenTTL:       cfg.OAuthRefreshTokenTTL,
+		OAuthRatePerSecond:    cfg.OAuthRatePerSecond,
+		OAuthRateBurst:        cfg.OAuthRateBurst,
 	}, logger)
 
 	r := chi.NewRouter()

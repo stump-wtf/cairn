@@ -12,6 +12,7 @@ import (
 
 	"github.com/joestump/cairn/internal/annotation"
 	"github.com/joestump/cairn/internal/artifact"
+	"github.com/joestump/cairn/internal/oauth"
 	"github.com/joestump/cairn/internal/session"
 	"github.com/joestump/cairn/internal/sharetype"
 	"github.com/joestump/cairn/internal/store"
@@ -56,6 +57,18 @@ type Config struct {
 	// declines. It is a development/test-only shortcut that MUST stay false in
 	// production; the production default verifies every bearer token.
 	DevInsecureBearerAuth bool
+	// OAuth 2.1 authorization-server tuning (SPEC-0007, ADR-0004).
+	// AccessTokenTTL is the short audience-bound access-token lifetime (default
+	// ~1h); RefreshTokenTTL the rotating refresh-token lifetime (default 30d).
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
+	// OAuthRatePerSecond / OAuthRateBurst configure the dedicated per-IP rate
+	// limiter on the OAuth bootstrap endpoints (register/token/revoke/authorize),
+	// throttled tighter than the general surface to blunt client-spraying and
+	// code/refresh brute force (SPEC-0007 REQ "Rate Limiting"). Defaults: 10/s,
+	// burst 30; always on when the authorization server is wired.
+	OAuthRatePerSecond float64
+	OAuthRateBurst     int
 }
 
 // Server is the /v1 REST adapter over the core store and the ADR-0011 web app
@@ -79,6 +92,11 @@ type Server struct {
 	sessions      session.Store
 	verifier      CredentialVerifier
 	secureCookies bool
+	// OAuth 2.1 authorization server (SPEC-0007, ADR-0004): the in-process core
+	// service the /oauth endpoints adapt, plus its dedicated tighter rate
+	// limiter. Nil on storeless unit wirings (the AS persists in Postgres).
+	oauth        *oauth.Service
+	oauthLimiter *rateLimiter
 }
 
 // New constructs a Server. If auth is nil, a session-aware Authenticator is used
@@ -111,6 +129,12 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	if cfg.SessionTTL <= 0 {
 		cfg.SessionTTL = 7 * 24 * time.Hour
 	}
+	if cfg.OAuthRatePerSecond <= 0 {
+		cfg.OAuthRatePerSecond = 10
+	}
+	if cfg.OAuthRateBurst <= 0 {
+		cfg.OAuthRateBurst = 30
+	}
 	// The annotation and trajectory cores are peers of the artifact store,
 	// projected by this same adapter (SPEC-0006 REQ "Cross-Surface Parity",
 	// SPEC-0004). Each shares the store's pool and registry so its writes land in
@@ -122,6 +146,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		annot    *annotation.Service
 		traj     *trajectory.Service
 		sessions session.Store
+		oauthSvc *oauth.Service
 	)
 	if st != nil {
 		annot = annotation.NewService(st.Pool(), reg)
@@ -130,18 +155,31 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		// single binary carries its schema and a scaled deployment shares one
 		// session table (ADR-0012).
 		sessions = session.NewPostgresStore(st.Pool())
+		// The OAuth 2.1 authorization server is an in-process peer of the core —
+		// not a separate service (SPEC-0007 design "In-process adapter over the
+		// core"). Access tokens are audience-bound to this deployment's public
+		// origin (RFC 8707).
+		oauthSvc = oauth.NewService(st.Pool(), cfg.BaseURL, oauth.Options{
+			AccessTTL:  cfg.AccessTokenTTL,
+			RefreshTTL: cfg.RefreshTokenTTL,
+		})
 	}
 	// Auth seam (ADR-0004): a caller-supplied Authenticator wins; otherwise build
 	// the bearer surface from configured static tokens (the verifying
-	// TokenAuthenticator — a raw bearer is never trusted as an actor), optionally
-	// chained with the INSECURE dev shortcut when explicitly enabled. The bearer
-	// surface backs both the standalone API wiring and the session-aware adapter,
-	// so the web binary authenticates browser sessions AND verified bearer tokens.
+	// TokenAuthenticator — a raw bearer is never trusted as an actor), then the
+	// OAuth access tokens the authorization server issues, optionally chained
+	// with the INSECURE dev shortcut when explicitly enabled. The bearer surface
+	// backs both the standalone API wiring and the session-aware adapter, so the
+	// web binary authenticates browser sessions AND verified bearer tokens.
 	if auth == nil {
-		var bearer Authenticator = NewTokenAuthenticator(cfg.APITokens)
-		if cfg.DevInsecureBearerAuth {
-			bearer = chainAuthenticator{bearer, DevActorAuthenticator{}}
+		bearers := chainAuthenticator{NewTokenAuthenticator(cfg.APITokens)}
+		if oauthSvc != nil {
+			bearers = append(bearers, &OAuthAuthenticator{svc: oauthSvc})
 		}
+		if cfg.DevInsecureBearerAuth {
+			bearers = append(bearers, DevActorAuthenticator{})
+		}
+		var bearer Authenticator = bearers
 		if sessions != nil {
 			auth = &SessionAuthenticator{sessions: sessions, bearer: bearer}
 		} else {
@@ -162,6 +200,8 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		sessions:      sessions,
 		verifier:      DevPasswordVerifier{Password: cfg.DevLoginPassword},
 		secureCookies: strings.HasPrefix(cfg.BaseURL, "https://"),
+		oauth:         oauthSvc,
+		oauthLimiter:  newRateLimiter(cfg.OAuthRatePerSecond, cfg.OAuthRateBurst),
 	}
 }
 
@@ -187,10 +227,14 @@ func (s *Server) Handler() http.Handler {
 		s.mountWeb(r)
 	})
 
-	// The /v1 REST/JSON API, under the strict API CSP.
+	// The /v1 REST/JSON API, under the strict API CSP. The OAuth 2.1 JSON
+	// endpoints (discovery, DCR, token, revoke; SPEC-0007) share this strict
+	// policy — only the browser-facing /oauth/authorize consent screen renders
+	// HTML, and it lives in the web group above (see mountOAuthWeb).
 	r.Group(func(r chi.Router) {
 		r.Use(s.securityHeaders)
 		s.mountAPI(r)
+		s.mountOAuthJSON(r)
 	})
 	return r
 }

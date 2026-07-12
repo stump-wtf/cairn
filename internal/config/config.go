@@ -58,6 +58,15 @@ type Config struct {
 	// SessionTTL is the lifetime of a web session and its cookies (SPEC-0001).
 	SessionTTL time.Duration
 
+	// OAuth 2.1 authorization-server tuning (SPEC-0007, ADR-0004):
+	// access-token lifetime (~1h default), rotating refresh-token lifetime
+	// (30d default), and the dedicated per-IP rate limit on the OAuth
+	// bootstrap endpoints (register/token/revoke/authorize).
+	OAuthAccessTokenTTL  time.Duration
+	OAuthRefreshTokenTTL time.Duration
+	OAuthRatePerSecond   float64
+	OAuthRateBurst       int
+
 	// APITokensRaw is the unparsed CAIRN_API_TOKENS value: a comma-separated list
 	// of `secret:actor[:role]` static bearer credentials the API/MCP surface
 	// accepts (ADR-0004 MVP token seam). Parsed and validated at startup; an empty
@@ -116,6 +125,20 @@ func Load() (*Config, error) {
 	if c.SessionTTL, err = envDuration("CAIRN_SESSION_TTL", 7*24*time.Hour); err != nil {
 		return nil, err
 	}
+	if c.OAuthAccessTokenTTL, err = envDuration("CAIRN_OAUTH_ACCESS_TTL", time.Hour); err != nil {
+		return nil, err
+	}
+	if c.OAuthRefreshTokenTTL, err = envDuration("CAIRN_OAUTH_REFRESH_TTL", 30*24*time.Hour); err != nil {
+		return nil, err
+	}
+	if c.OAuthRatePerSecond, err = envFloat("CAIRN_OAUTH_RATE_PER_SECOND", 10); err != nil {
+		return nil, err
+	}
+	var oauthBurst int64
+	if oauthBurst, err = envInt64("CAIRN_OAUTH_RATE_BURST", 30); err != nil {
+		return nil, err
+	}
+	c.OAuthRateBurst = int(oauthBurst)
 	return c, nil
 }
 

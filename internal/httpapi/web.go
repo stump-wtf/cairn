@@ -116,6 +116,13 @@ func (s *Server) mountWeb(r chi.Router) {
 	r.With(s.requireWebSession).Get("/whoami", s.handleWhoami)
 	r.With(s.requireWebSession).Get("/bin", s.handleBinPage)
 
+	// The OAuth 2.1 authorization endpoint (SPEC-0007, ADR-0004): the human
+	// login + consent screen, riding the web session surface above. Its JSON
+	// siblings (discovery, DCR, token, revoke) live on the strict-CSP API group
+	// (see mountOAuthJSON). "oauth" is a reserved id word, so no artifact id can
+	// shadow the path (ADR-0005).
+	s.mountOAuthWeb(r)
+
 	r.Get("/{id}", s.handleArtifactShell)
 	r.Get("/run/{id}", s.handleRunShell)
 	// A sniff-proof body download served on the web surface itself (#12): the
