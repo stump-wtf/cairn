@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/joestump/cairn/internal/annotation"
 	"github.com/joestump/cairn/internal/artifact"
@@ -97,6 +98,12 @@ type Server struct {
 	// limiter. Nil on storeless unit wirings (the AS persists in Postgres).
 	oauth        *oauth.Service
 	oauthLimiter *rateLimiter
+	// mcpSrv is the MCP tool/resource server (SPEC-0007), built once by
+	// mountMCP and shared by every /mcp request so server->client
+	// notifications (e.g. resources/updated) can reach every connected
+	// session. Nil until mountMCP runs; nil entirely when MCP is disabled
+	// (mcpEnabled() false).
+	mcpSrv *mcp.Server
 }
 
 // New constructs a Server. If auth is nil, a session-aware Authenticator is used
@@ -235,6 +242,9 @@ func (s *Server) Handler() http.Handler {
 		r.Use(s.securityHeaders)
 		s.mountAPI(r)
 		s.mountOAuthJSON(r)
+		// The MCP transport (SPEC-0007): tools + resource reads, OAuth-bearer
+		// authenticated, under the same strict CSP as the rest of /v1.
+		s.mountMCP(r)
 	})
 	return r
 }

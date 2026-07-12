@@ -489,5 +489,5 @@ func (s *Service) AuthenticateAccess(ctx context.Context, token string) (*Identi
 	if err != nil {
 		return nil, fmt.Errorf("oauth: stored scope invalid: %w", err)
 	}
-	return &Identity{ActorID: actorID, ClientID: clientID, GrantID: grantID, Scopes: scopes}, nil
+	return &Identity{ActorID: actorID, ClientID: clientID, GrantID: grantID, Scopes: scopes, ExpiresAt: expiresAt}, nil
 }

@@ -272,4 +272,8 @@ type Identity struct {
 	ClientID string
 	GrantID  string
 	Scopes   []string
+	// ExpiresAt is the access token's own expiry, exposed so a bearer-token
+	// adapter (e.g. the MCP transport's auth.TokenVerifier, SPEC-0007) can
+	// populate its own token-info expiration without a second lookup.
+	ExpiresAt time.Time
 }
