@@ -51,12 +51,24 @@ type Config struct {
 	RateBurst     int
 
 	// DevLoginPassword is the shared secret the MVP web login accepts for any
-	// actor id (SPEC-0001, ADR-0004). Empty disables interactive login (the
-	// deployment relies on bearer tokens only); real per-user auth is OAuth (#22).
+	// actor id (SPEC-0001, ADR-0004). Real human auth is native OIDC against
+	// Pocket ID (ADR-0013); this fallback is demoted to local-dev-only — it is
+	// honored only when CAIRN_OIDC_ISSUER is unset, so a production deployment
+	// that configures OIDC can never fall back to it. Empty disables interactive
+	// login entirely (the deployment relies on bearer tokens only).
 	DevLoginPassword string
 
 	// SessionTTL is the lifetime of a web session and its cookies (SPEC-0001).
 	SessionTTL time.Duration
+
+	// OIDC relying-party config (ADR-0013): Cairn logs the human in directly
+	// against Pocket ID rather than fronting itself with oauth2-proxy. OIDC is
+	// "enabled" iff OIDCIssuer is non-empty (OIDCConfigured); the redirect URI is
+	// always derived as BaseURL + /auth/callback, never separately configured, so
+	// it can never drift from the public origin Pocket ID was registered against.
+	OIDCIssuer       string // e.g. https://pocket-id.stump.rocks
+	OIDCClientID     string // defaults to "cairn"
+	OIDCClientSecret string
 
 	// OAuth 2.1 authorization-server tuning (SPEC-0007, ADR-0004):
 	// access-token lifetime (~1h default), rotating refresh-token lifetime
@@ -96,6 +108,10 @@ func Load() (*Config, error) {
 
 		DevLoginPassword: os.Getenv("CAIRN_DEV_LOGIN_PASSWORD"),
 		APITokensRaw:     os.Getenv("CAIRN_API_TOKENS"),
+
+		OIDCIssuer:       os.Getenv("CAIRN_OIDC_ISSUER"),
+		OIDCClientID:     env("CAIRN_OIDC_CLIENT_ID", "cairn"),
+		OIDCClientSecret: os.Getenv("CAIRN_OIDC_CLIENT_SECRET"),
 	}
 
 	var err error
@@ -140,6 +156,13 @@ func Load() (*Config, error) {
 	}
 	c.OAuthRateBurst = int(oauthBurst)
 	return c, nil
+}
+
+// OIDCConfigured reports whether the OIDC relying-party settings are present —
+// the single gate (ADR-0013) that decides whether Cairn logs humans in via
+// Pocket ID (this true) or falls back to dev_login_password (this false).
+func (c *Config) OIDCConfigured() bool {
+	return c.OIDCIssuer != ""
 }
 
 func envFloat(key string, def float64) (float64, error) {

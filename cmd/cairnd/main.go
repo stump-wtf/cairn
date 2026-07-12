@@ -84,8 +84,11 @@ func run(logger *slog.Logger) error {
 	}
 	if cfg.DevInsecureBearerAuth {
 		logger.Warn("CAIRN_DEV_INSECURE_BEARER_AUTH is enabled: raw bearer tokens are trusted as actor ids without verification — never enable this in production")
-	} else if len(apiTokens) == 0 && cfg.DevLoginPassword == "" {
-		logger.Warn("no API tokens (CAIRN_API_TOKENS) and no web login (CAIRN_DEV_LOGIN_PASSWORD) configured: all authenticated endpoints will reject every caller")
+	} else if len(apiTokens) == 0 && cfg.DevLoginPassword == "" && !cfg.OIDCConfigured() {
+		logger.Warn("no API tokens (CAIRN_API_TOKENS), no OIDC (CAIRN_OIDC_ISSUER), and no dev web login (CAIRN_DEV_LOGIN_PASSWORD) configured: all authenticated endpoints will reject every caller")
+	}
+	if cfg.OIDCConfigured() && cfg.DevLoginPassword != "" {
+		logger.Warn("CAIRN_OIDC_ISSUER and CAIRN_DEV_LOGIN_PASSWORD are both set: OIDC wins — the dev-password login is disabled while OIDC is configured (ADR-0013)")
 	}
 
 	// The /v1 REST/JSON adapter over the core service (ADR-0012).
@@ -97,6 +100,9 @@ func run(logger *slog.Logger) error {
 		RateBurst:             cfg.RateBurst,
 		DevLoginPassword:      cfg.DevLoginPassword,
 		SessionTTL:            cfg.SessionTTL,
+		OIDCIssuer:            cfg.OIDCIssuer,
+		OIDCClientID:          cfg.OIDCClientID,
+		OIDCClientSecret:      cfg.OIDCClientSecret,
 		APITokens:             apiTokens,
 		DevInsecureBearerAuth: cfg.DevInsecureBearerAuth,
 		AccessTokenTTL:        cfg.OAuthAccessTokenTTL,
@@ -104,6 +110,16 @@ func run(logger *slog.Logger) error {
 		OAuthRatePerSecond:    cfg.OAuthRatePerSecond,
 		OAuthRateBurst:        cfg.OAuthRateBurst,
 	}, logger)
+
+	// Discover the OIDC issuer and wire the "Sign in with Pocket ID" relying
+	// party (ADR-0013). A no-op when CAIRN_OIDC_ISSUER is unset; a discovery
+	// failure is fatal — never start serving with human login silently broken.
+	if err := api.EnableOIDC(ctx); err != nil {
+		return err
+	}
+	if cfg.OIDCConfigured() {
+		logger.Info("OIDC login enabled", "issuer", cfg.OIDCIssuer, "client_id", cfg.OIDCClientID)
+	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)

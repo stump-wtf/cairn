@@ -16,7 +16,14 @@
 <main class="landing-wrap login-wrap" role="main">
   <p class="landing-tag">sign in to your workspace</p>
 
-  {{if .LoginEnabled}}
+  {{if .OIDCEnabled}}
+  {{/* ADR-0013: passwordless native OIDC against Pocket ID is the only human
+       login path once configured — no dev-password form is rendered
+       alongside it (loginEnabled is false server-side whenever OIDC is on),
+       so there is exactly one way in. */}}
+  <a class="login-btn login-oidc-btn" href="/auth/login?next={{.Next}}">Sign in with Pocket ID</a>
+  <p class="login-note">Single sign-on via your Pocket ID identity.</p>
+  {{else if .LoginEnabled}}
   {{if .Failed}}<p class="login-error" role="alert">Sign-in failed. Check your details and try again.</p>{{end}}
   <form class="login-form" method="post" action="/login">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -27,10 +34,10 @@
     <input class="login-input" id="password" name="password" type="password" autocomplete="current-password" required>
     <button class="login-btn" type="submit">Sign in</button>
   </form>
-  <p class="login-note">Dev login (SPEC-0001) · OAuth replaces this later.</p>
+  <p class="login-note">Dev login (SPEC-0001, ADR-0013 local-dev fallback) · not available once OIDC is configured.</p>
   {{else}}
   <p class="login-error" role="alert">Interactive login is not configured on this instance.</p>
-  <p class="landing-foot">Use the <code>/v1</code> API with a bearer token, or set <code>CAIRN_DEV_LOGIN_PASSWORD</code>.</p>
+  <p class="landing-foot">Use the <code>/v1</code> API with a bearer token, or set <code>CAIRN_OIDC_ISSUER</code> or <code>CAIRN_DEV_LOGIN_PASSWORD</code>.</p>
   {{end}}
 </main>
 <footer class="app-foot landing-contentinfo" role="contentinfo">

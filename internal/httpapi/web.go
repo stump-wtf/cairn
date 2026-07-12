@@ -113,6 +113,13 @@ func (s *Server) mountWeb(r chi.Router) {
 	r.Get("/login", s.handleLoginForm)
 	r.Post("/login", s.handleLogin)
 	r.Post("/logout", s.handleLogout)
+	// The OIDC relying-party flow (ADR-0013): "Sign in with Pocket ID" on the
+	// login page above links here, and requireWebSession/the consent screen
+	// redirect straight here (loginRedirectPath) when OIDC is configured. Both
+	// routes 503 when OIDC is unconfigured (see oidc.go). "auth" is a reserved
+	// id word (internal/id), so no artifact id can shadow these paths.
+	r.Get("/auth/login", s.handleOIDCLogin)
+	r.Get("/auth/callback", s.handleOIDCCallback)
 	r.With(s.requireWebSession).Get("/whoami", s.handleWhoami)
 	r.With(s.requireWebSession).Get("/bin", s.handleBinPage)
 

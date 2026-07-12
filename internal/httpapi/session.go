@@ -107,12 +107,14 @@ func (a *SessionAuthenticator) Authenticate(r *http.Request) (*Principal, error)
 
 // loginView is the login page view model: the per-request CSRF token (embedded
 // as a hidden field and mirrored in the readable cookie), the validated
-// post-login destination, whether login is configured at all, and whether the
-// prior attempt failed (a generic, field-agnostic failure).
+// post-login destination, whether the dev-password form is available, whether
+// OIDC ("Sign in with Pocket ID") is available, and whether the prior
+// dev-password attempt failed (a generic, field-agnostic failure).
 type loginView struct {
 	CSRFToken    string
 	Next         string
 	LoginEnabled bool
+	OIDCEnabled  bool
 	Failed       bool
 }
 
@@ -133,10 +135,12 @@ func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setCookie(w, r, csrfCookieName, token, s.cfg.SessionTTL, false)
+	next := safeNext(r.URL.Query().Get("next"))
 	s.renderWeb(w, r, "login", loginView{
 		CSRFToken:    token,
-		Next:         safeNext(r.URL.Query().Get("next")),
+		Next:         next,
 		LoginEnabled: s.loginEnabled(),
+		OIDCEnabled:  s.oidc != nil,
 		Failed:       r.URL.Query().Get("error") == "1",
 	})
 }
@@ -234,7 +238,7 @@ func (s *Server) requireWebSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.auth.Authenticate(r)
 		if err != nil || p == nil {
-			http.Redirect(w, r, "/login?next="+url.QueryEscape(safeNext(r.URL.RequestURI())), http.StatusSeeOther)
+			http.Redirect(w, r, s.loginRedirectPath()+"?next="+url.QueryEscape(safeNext(r.URL.RequestURI())), http.StatusSeeOther)
 			return
 		}
 		ctx := context.WithValue(r.Context(), principalCtxKey{}, p)
@@ -242,12 +246,27 @@ func (s *Server) requireWebSession(next http.Handler) http.Handler {
 	})
 }
 
-// loginEnabled reports whether an interactive session can be established — a
-// session store, a credential verifier, and a configured dev password must all
-// be present (a pure-unit server wiring, or a deployment that set no password,
-// has login disabled and fails closed).
+// loginRedirectPath is where an unauthenticated web route sends the browser.
+// When OIDC is configured it goes straight into the passwordless flow at
+// /auth/login — no intermediate form to click through, matching "passwordless,
+// one identity, no second login" (issue #55, ADR-0013). Otherwise it goes to
+// the interactive /login form (the dev-only password fallback).
+func (s *Server) loginRedirectPath() string {
+	if s.oidc != nil {
+		return "/auth/login"
+	}
+	return "/login"
+}
+
+// loginEnabled reports whether the dev-password form can be used to establish
+// a session. Demoted by ADR-0013 to a local-dev-only fallback: it additionally
+// requires OIDC to be unconfigured, so a deployment that has wired Pocket ID
+// can never fall back to the shared dev password even if one is still set in
+// its environment. A session store, a credential verifier, and a configured
+// dev password must all be present too (a pure-unit server wiring, or a
+// deployment that set no password, has login disabled and fails closed).
 func (s *Server) loginEnabled() bool {
-	return s.sessions != nil && s.verifier != nil && s.cfg.DevLoginPassword != ""
+	return s.oidc == nil && s.sessions != nil && s.verifier != nil && s.cfg.DevLoginPassword != ""
 }
 
 // setCookie writes a cookie scoped to the whole site. httpOnly is set for the

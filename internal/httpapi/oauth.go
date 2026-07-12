@@ -382,7 +382,7 @@ func (s *Server) handleAuthorizeForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, ok := s.sessionPrincipal(r); !ok {
-		http.Redirect(w, r, "/login?next="+url.QueryEscape(safeNext(r.URL.RequestURI())), http.StatusSeeOther)
+		http.Redirect(w, r, s.loginRedirectPath()+"?next="+url.QueryEscape(safeNext(r.URL.RequestURI())), http.StatusSeeOther)
 		return
 	}
 	// The double-submit CSRF secret: reuse the session's readable cairn_csrf
@@ -431,7 +431,7 @@ func (s *Server) handleAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	p, ok := s.sessionPrincipal(r)
 	if !ok {
-		http.Redirect(w, r, "/login?next="+url.QueryEscape(safeNext("/oauth/authorize")), http.StatusSeeOther)
+		http.Redirect(w, r, s.loginRedirectPath()+"?next="+url.QueryEscape(safeNext("/oauth/authorize")), http.StatusSeeOther)
 		return
 	}
 	if !validFormCSRF(r) {

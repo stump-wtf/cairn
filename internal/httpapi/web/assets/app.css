@@ -280,6 +280,7 @@ body.landing { display: flex; flex-direction: column; align-items: center; justi
   border-radius: 8px; font: 600 13px var(--mono); padding: 10px 14px; cursor: pointer;
 }
 .login-btn:hover { background: var(--green-2); }
+.login-oidc-btn { display: block; margin-top: 24px; text-decoration: none; text-align: center; }
 .login-error {
   margin: 18px 0 0; padding: 9px 12px; border-radius: 8px; text-align: left;
   border: 1px solid #4a2b2b; background: rgba(255,107,107,.10);

@@ -41,13 +41,22 @@ type Config struct {
 	// server notice a vanished client on the next write. Defaults to 15s.
 	StreamHeartbeat time.Duration
 	// DevLoginPassword is the shared secret the MVP dev login (SPEC-0001,
-	// ADR-0004) accepts for any actor id. An empty value disables interactive web
-	// login entirely (the deployment opted out), so login fails closed. Real
-	// per-user auth replaces this with OAuth (#22).
+	// ADR-0004) accepts for any actor id. Demoted to a local-dev-only fallback
+	// by ADR-0013: it is honored only when OIDC is unconfigured (see
+	// loginEnabled). An empty value disables interactive web login entirely.
 	DevLoginPassword string
 	// SessionTTL is the lifetime of a web session and its cookies. Defaults to 7
 	// days.
 	SessionTTL time.Duration
+	// OIDC relying-party config (ADR-0013): Cairn authenticates humans directly
+	// against Pocket ID rather than an external forward-auth proxy. OIDCIssuer
+	// gates the whole feature — empty means OIDC is not configured and
+	// EnableOIDC is a no-op, leaving the dev-password fallback as the only login
+	// path. The redirect URI is always BaseURL + /auth/callback (derived, never
+	// separately configured).
+	OIDCIssuer       string
+	OIDCClientID     string // defaults to "cairn" when empty
+	OIDCClientSecret string
 	// APITokens are the static bearer credentials the API/MCP surface accepts
 	// (ADR-0004 MVP token seam). Each secret maps to an actor and role; an absent
 	// set means the bearer surface rejects every token (fail closed). A raw
@@ -93,6 +102,11 @@ type Server struct {
 	sessions      session.Store
 	verifier      CredentialVerifier
 	secureCookies bool
+	// oidc is the OIDC relying-party wiring (ADR-0013): nil until EnableOIDC
+	// discovers the configured issuer (or forever nil when OIDC is not
+	// configured), gating both the /auth/login|callback routes and whether the
+	// dev-password fallback stays honored (loginEnabled).
+	oidc *oidcRP
 	// OAuth 2.1 authorization server (SPEC-0007, ADR-0004): the in-process core
 	// service the /oauth endpoints adapt, plus its dedicated tighter rate
 	// limiter. Nil on storeless unit wirings (the AS persists in Postgres).
