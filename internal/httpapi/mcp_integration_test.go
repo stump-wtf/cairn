@@ -129,6 +129,21 @@ func toolText(t *testing.T, res *mcp.CallToolResult) string {
 	return b.String()
 }
 
+// mcpSpanList type-asserts a [mcpRunOutput].Spans `any` value (or a nested
+// span's "children" field, same shape) down to the list of span objects it
+// holds on the wire, for tests that need to walk the tree without a typed
+// Go struct (mcpRunOutput.Spans is `any` — see its doc for why).
+func mcpSpanList(v any) []map[string]any {
+	arr, _ := v.([]any)
+	out := make([]map[string]any, 0, len(arr))
+	for _, e := range arr {
+		if m, ok := e.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // decodeToolJSON decodes a successful tool result's JSON text content into v.
 func decodeToolJSON(t *testing.T, res *mcp.CallToolResult, v any) {
 	t.Helper()
@@ -516,6 +531,304 @@ func openRunViaMCP(t *testing.T, srv *httptest.Server, token string) string {
 		t.Fatalf("decode run: %v", err)
 	}
 	return run.ID
+}
+
+// TestIntegrationMCPRunCreateRendersAtRunURL is the headline round trip for
+// issue #65's run_create tool (SPEC-0007 REQ "Create & Push"): a run created
+// over MCP with a parent/child span tree is readable via the trajectory-run
+// MCP resource AND renders at /run/<id> with the right span tree — the same
+// core trajectory.Service.CreateBatchRun the REST POST /v1/runs (mode
+// "batch") handler calls, so both surfaces converge on the identical stored
+// run. It also asserts provenance (human subject actor, channel `via MCP`,
+// on_behalf_of the connecting MCP client identity) and derived stats.
+func TestIntegrationMCPRunCreateRendersAtRunURL(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "claude-code")
+
+	created := callTool(t, sess, "run_create", map[string]any{
+		"title":  "fix the flaky test",
+		"prompt": "make CI green",
+		"model":  "test-model",
+		"spans": []map[string]any{
+			{
+				"span_id":         "root-1",
+				"category":        "exec",
+				"tool":            "bash",
+				"name":            "run the suite",
+				"args":            map[string]any{"cmd": "go test ./..."},
+				"start_offset_ms": 0,
+				"duration_ms":     500,
+			},
+			{
+				"span_id":         "child-1",
+				"parent_span_id":  "root-1",
+				"category":        "read",
+				"tool":            "read_file",
+				"name":            "inspect the failure",
+				"start_offset_ms": 100,
+				"duration_ms":     50,
+			},
+		},
+	})
+	var runOut mcpRunOutput
+	decodeToolJSON(t, created, &runOut)
+	if runOut.ID == "" {
+		t.Fatalf("run_create returned no id: %+v", runOut)
+	}
+	if runOut.Status != "closed" {
+		t.Fatalf("run_create status = %q, want closed (batch runs are created closed)", runOut.Status)
+	}
+	if runOut.Stats.SpanCount != 2 || runOut.Stats.ToolCallCount != 2 {
+		t.Fatalf("run stats = %+v, want span_count 2 tool_call_count 2", runOut.Stats)
+	}
+	if runOut.Provenance.Actor != "sam@stump.rocks" {
+		t.Fatalf("provenance actor = %q, want the human subject", runOut.Provenance.Actor)
+	}
+	if runOut.Provenance.Channel != "via MCP" {
+		t.Fatalf("provenance channel = %q, want %q", runOut.Provenance.Channel, "via MCP")
+	}
+	if runOut.Provenance.OnBehalfOf != "claude-code/1.2.3" {
+		t.Fatalf("provenance on_behalf_of = %q, want the MCP client identity", runOut.Provenance.OnBehalfOf)
+	}
+	rootSpans := mcpSpanList(runOut.Spans)
+	if len(rootSpans) != 1 || len(mcpSpanList(rootSpans[0]["children"])) != 1 {
+		t.Fatalf("run spans = %+v, want one root with one child", runOut.Spans)
+	}
+	if args, ok := rootSpans[0]["args"].(map[string]any); !ok || args["cmd"] != "go test ./..." {
+		t.Fatalf("root span args = %#v, want the embedded JSON object to round-trip, not a base64 string", rootSpans[0]["args"])
+	}
+
+	// The trajectory-run MCP resource reads back the identical span tree
+	// (ADR-0003 parity between the tool's create response and the resource
+	// read).
+	uri := "mcp://cairn/run/" + runOut.ID
+	read, err := sess.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: uri})
+	if err != nil {
+		t.Fatalf("read run resource: %v", err)
+	}
+	var resourceRun runResponse
+	if err := json.Unmarshal([]byte(read.Contents[0].Text), &resourceRun); err != nil {
+		t.Fatalf("decode run resource: %v", err)
+	}
+	if resourceRun.ID != runOut.ID || len(resourceRun.Spans) != 1 || len(resourceRun.Spans[0].Children) != 1 {
+		t.Fatalf("run resource = %+v, want the same one-root-one-child tree", resourceRun)
+	}
+
+	// It also renders at /run/<id> with the right span tree: both the root
+	// and child span markers the waterfall/stream templates emit
+	// (data-spanjump="<span_id>") are present in the HTML.
+	resp, err := http.Get(srv.URL + "/run/" + runOut.ID)
+	if err != nil {
+		t.Fatalf("GET /run/%s: %v", runOut.ID, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /run/%s status = %d, want 200", runOut.ID, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read /run/%s body: %v", runOut.ID, err)
+	}
+	html := string(body)
+	if !strings.Contains(html, `data-spanjump="root-1"`) {
+		t.Fatalf("/run/%s HTML has no waterfall row for root-1", runOut.ID)
+	}
+	if !strings.Contains(html, `data-spanjump="child-1"`) {
+		t.Fatalf("/run/%s HTML has no waterfall row for child-1", runOut.ID)
+	}
+}
+
+// TestIntegrationMCPRunAppendSpans covers the "optional but nice"
+// run_append_spans tool (issue #65): a run opened live (over REST, mirroring
+// a CLI-opened run an agent then appends to) accepts an appended span over
+// MCP via the same trajectory.Service.AppendSpans the REST
+// POST /v1/runs/{id}/spans handler calls, staying open; appending to a
+// CLOSED run (one created via run_create) is refused with a conflict, never
+// silently accepted.
+func TestIntegrationMCPRunAppendSpans(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "claude-code")
+
+	runID := openRunViaMCP(t, srv, token)
+
+	appended := callTool(t, sess, "run_append_spans", map[string]any{
+		"id": runID,
+		"spans": []map[string]any{{
+			"span_id":         "span-a",
+			"category":        "exec",
+			"tool":            "bash",
+			"start_offset_ms": 0,
+			"duration_ms":     20,
+		}},
+	})
+	var runOut mcpRunOutput
+	decodeToolJSON(t, appended, &runOut)
+	if runOut.ID != runID {
+		t.Fatalf("run_append_spans id = %q, want %q", runOut.ID, runID)
+	}
+	if runOut.Status != "open" {
+		t.Fatalf("run_append_spans status = %q, want open (append does not close)", runOut.Status)
+	}
+	appendedSpans := mcpSpanList(runOut.Spans)
+	if len(appendedSpans) != 1 || appendedSpans[0]["span_id"] != "span-a" {
+		t.Fatalf("run spans = %+v, want one span-a", runOut.Spans)
+	}
+
+	// Re-posting the same span_id is an idempotent no-op (SPEC-0004).
+	reposted := callTool(t, sess, "run_append_spans", map[string]any{
+		"id": runID,
+		"spans": []map[string]any{{
+			"span_id":         "span-a",
+			"category":        "exec",
+			"tool":            "bash",
+			"start_offset_ms": 0,
+			"duration_ms":     20,
+		}},
+	})
+	var repostOut mcpRunOutput
+	decodeToolJSON(t, reposted, &repostOut)
+	if len(mcpSpanList(repostOut.Spans)) != 1 {
+		t.Fatalf("re-posted span_id spans = %+v, want the idempotent no-op to still show exactly one span", repostOut.Spans)
+	}
+
+	// Appending to a run created (closed) via run_create must be refused.
+	var closedOut mcpRunOutput
+	decodeToolJSON(t, callTool(t, sess, "run_create", map[string]any{
+		"title": "already closed",
+		"spans": []map[string]any{{
+			"span_id":         "only-span",
+			"category":        "exec",
+			"start_offset_ms": 0,
+			"duration_ms":     5,
+		}},
+	}), &closedOut)
+
+	res := callTool(t, sess, "run_append_spans", map[string]any{
+		"id": closedOut.ID,
+		"spans": []map[string]any{{
+			"span_id":         "too-late",
+			"category":        "exec",
+			"start_offset_ms": 0,
+			"duration_ms":     5,
+		}},
+	})
+	if !res.IsError || !strings.HasPrefix(toolText(t, res), "conflict:") {
+		t.Fatalf("append to a closed run: IsError=%v text=%q, want a conflict failure", res.IsError, toolText(t, res))
+	}
+}
+
+// TestIntegrationMCPBundleCreate covers the bundle_create tool (issue #65):
+// a bundle created over MCP with N named members is readable via
+// artifact_read (listing members, then each member's body) exactly like a
+// bundle created over the web/CLI multipart path — same core
+// store.CreateBundle. It asserts provenance and the default link-visibility
+// policy, matching artifact_create's contract.
+func TestIntegrationMCPBundleCreate(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "claude-desktop")
+
+	created := callTool(t, sess, "bundle_create", map[string]any{
+		"title": "patch bundle",
+		"members": []map[string]any{
+			{"name": "README.md", "body": "# patch notes", "media_type": "text/markdown"},
+			{"name": "fix.diff", "body": "--- a\n+++ b\n"},
+		},
+	})
+	var bundleOut mcpBundleCreateOutput
+	decodeToolJSON(t, created, &bundleOut)
+	if bundleOut.ID == "" {
+		t.Fatalf("bundle_create returned no id: %+v", bundleOut)
+	}
+	if bundleOut.ShareType != "bundle" {
+		t.Fatalf("bundle_create share_type = %q, want bundle", bundleOut.ShareType)
+	}
+	if bundleOut.Visibility != "link" {
+		t.Fatalf("bundle_create visibility = %q, want the default %q", bundleOut.Visibility, "link")
+	}
+	if bundleOut.Provenance.Actor != "sam@stump.rocks" || bundleOut.Provenance.Channel != "via MCP" {
+		t.Fatalf("bundle provenance = %+v, want actor sam@stump.rocks channel via MCP", bundleOut.Provenance)
+	}
+	if bundleOut.Provenance.OnBehalfOf != "claude-desktop/1.2.3" {
+		t.Fatalf("bundle provenance on_behalf_of = %q, want the MCP client identity", bundleOut.Provenance.OnBehalfOf)
+	}
+	if len(bundleOut.Members) != 2 {
+		t.Fatalf("bundle_create members = %+v, want 2", bundleOut.Members)
+	}
+
+	// The bundle's member list resolves via artifact_read (no path: lists
+	// members; SPEC-0007 REQ "MCP Tool Surface — Artifact & Bundle Read").
+	listed := callTool(t, sess, "artifact_read", map[string]any{"id": bundleOut.ID})
+	var listOut mcpReadOutput
+	decodeToolJSON(t, listed, &listOut)
+	if len(listOut.Members) != 2 {
+		t.Fatalf("artifact_read members = %+v, want 2", listOut.Members)
+	}
+
+	// Each member's body resolves too.
+	readme := callTool(t, sess, "artifact_read", map[string]any{"id": bundleOut.ID, "path": "README.md"})
+	var readmeOut mcpReadOutput
+	decodeToolJSON(t, readme, &readmeOut)
+	if readmeOut.Body != "# patch notes" {
+		t.Fatalf("README.md body = %q, want the created content", readmeOut.Body)
+	}
+}
+
+// TestIntegrationMCPRunAndBundleCreateRejectNonBroadenedPolicy proves
+// run_create's and bundle_create's schemas, like artifact_create's, carry no
+// field able to broaden sharing, expiry, or ownership: a call attempting to
+// smuggle one in is rejected before the human's default policy is ever
+// touched (SPEC-0007 REQ "Create & Push" scenario "Create attempts a
+// non-default policy", issue #65 "Uniform not-broadening").
+func TestIntegrationMCPRunAndBundleCreateRejectNonBroadenedPolicy(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "agent")
+
+	res := callTool(t, sess, "run_create", map[string]any{
+		"title":      "sneaky run",
+		"visibility": "private",
+	})
+	if !res.IsError {
+		t.Fatal("run_create with an unrecognized policy field must fail, not silently drop it")
+	}
+
+	res = callTool(t, sess, "bundle_create", map[string]any{
+		"members":    []map[string]any{{"name": "a.txt", "body": "hi"}},
+		"visibility": "private",
+	})
+	if !res.IsError {
+		t.Fatal("bundle_create with an unrecognized policy field must fail, not silently drop it")
+	}
+}
+
+// TestIntegrationMCPRunAndBundleScopeDenials proves run_create,
+// run_append_spans, and bundle_create each refuse a token lacking
+// artifacts:write with a distinct insufficient_scope failure and perform no
+// operation (SPEC-0007 REQ "Missing required scope", issue #65).
+func TestIntegrationMCPRunAndBundleScopeDenials(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	readOnly := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read"})
+	sess := mcpClient(t, srv, readOnly, nil, "readonly-agent")
+
+	res := callTool(t, sess, "run_create", map[string]any{"title": "nope"})
+	if !res.IsError || !strings.HasPrefix(toolText(t, res), "insufficient_scope:") {
+		t.Fatalf("run_create with read-only token: IsError=%v text=%q", res.IsError, toolText(t, res))
+	}
+
+	res = callTool(t, sess, "run_append_spans", map[string]any{"id": "whatever", "spans": []map[string]any{}})
+	if !res.IsError || !strings.HasPrefix(toolText(t, res), "insufficient_scope:") {
+		t.Fatalf("run_append_spans with read-only token: IsError=%v text=%q", res.IsError, toolText(t, res))
+	}
+
+	res = callTool(t, sess, "bundle_create", map[string]any{
+		"members": []map[string]any{{"name": "a.txt", "body": "hi"}},
+	})
+	if !res.IsError || !strings.HasPrefix(toolText(t, res), "insufficient_scope:") {
+		t.Fatalf("bundle_create with read-only token: IsError=%v text=%q", res.IsError, toolText(t, res))
+	}
 }
 
 // appendSpanViaMCP appends one span to an open run over REST, the trigger for

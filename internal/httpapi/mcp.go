@@ -1,11 +1,17 @@
 // The MCP surface (SPEC-0007, ADR-0003, ADR-0004): a Go MCP server exposing
-// Cairn's core operations — read, create & push, comment, react — as MCP
-// tools, and the trajectory live-span stream as a readable MCP resource,
-// mounted in-process at POST/GET /mcp (streamable HTTP transport) alongside
-// the REST and web adapters in the same binary. It is a thin adapter: every
-// handler resolves the caller's OAuth identity and scope, then calls exactly
-// the same core method the REST adapter calls (store, annotation service,
-// trajectory service) — ADR-0003 "no surface can fork the rules".
+// Cairn's core operations — read, create & push (single-body artifacts,
+// bundles, and trajectory runs), comment, react — as MCP tools, and the
+// trajectory live-span stream as a readable MCP resource, mounted in-process
+// at POST/GET /mcp (streamable HTTP transport) alongside the REST and web
+// adapters in the same binary. It is a thin adapter: every handler resolves
+// the caller's OAuth identity and scope, then calls exactly the same core
+// method the REST adapter calls (store, annotation service, trajectory
+// service) — ADR-0003 "no surface can fork the rules". artifact_create covers
+// the single-body types (file, markdown, code); run_create/run_append_spans
+// mirror POST /v1/runs and POST /v1/runs/{id}/spans over the trajectory
+// service; bundle_create mirrors the multipart multi-file path the web/CLI
+// use over store.CreateBundle — every creatable share type is reachable over
+// MCP (issue #65).
 //
 // Authorization is OAuth-only (SPEC-0007 endpoint table: "/mcp ... Required —
 // OAuth 2.1 bearer access token, audience-bound to Cairn"): the static
@@ -152,8 +158,11 @@ func (s *Server) newMCPServer() *mcp.Server {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "artifact_create",
-		Description: "Create and push a new artifact owned by the authorizing human, with the default " +
-			"link-visibility policy and default TTL. Requires artifacts:write.",
+		Description: "Create and push a new single-body artifact (file, markdown, or code — share_type " +
+			"defaults to file, sniffed/declared media type selects the viewer) owned by the authorizing " +
+			"human, with the default link-visibility policy and default TTL. Bundles (N named members) " +
+			"are not creatable here — use bundle_create. Trajectory runs (a header + span tree) are not " +
+			"creatable here — use run_create. Requires artifacts:write.",
 	}, s.mcpCreateArtifact)
 
 	mcp.AddTool(srv, &mcp.Tool{
@@ -166,7 +175,31 @@ func (s *Server) newMCPServer() *mcp.Server {
 		Description: "Add an emoji reaction to an artifact or an anchor within it. Requires annotations:write.",
 	}, s.mcpReact)
 
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "bundle_create",
+		Description: "Create a bundle of N named members (each a body plus an optional media type) " +
+			"owned by the authorizing human, with the default link-visibility policy and default TTL " +
+			"— the same multi-file create store.CreateBundle performs for the web/CLI. Returns the " +
+			"bundle's id, URLs, and member list. Requires artifacts:write.",
+	}, s.mcpCreateBundle)
+
 	if s.traj != nil {
+		mcp.AddTool(srv, &mcp.Tool{
+			Name: "run_create",
+			Description: "Create a complete trajectory run (a title/prompt/model header plus an ordered " +
+				"span tree) owned by the authorizing human, with the default link-visibility policy and " +
+				"default TTL — the same ingest POST /v1/runs (mode \"batch\") performs via the trajectory " +
+				"service. Returns the run's id, web URL (/run/<id>), and mcp:// handle. Requires artifacts:write.",
+		}, s.mcpCreateRun)
+
+		mcp.AddTool(srv, &mcp.Tool{
+			Name: "run_append_spans",
+			Description: "Append one or more spans to a run this human owns — the same incremental ingest " +
+				"POST /v1/runs/{id}/spans performs. Re-posting an already-present span_id is an idempotent " +
+				"no-op; a span naming an unknown parent is rejected atomically. Returns the run's current " +
+				"state. Requires artifacts:write.",
+		}, s.mcpAppendRunSpans)
+
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
 			URITemplate: "mcp://cairn/run/{id}",
 			Name:        "trajectory-run",
@@ -412,7 +445,7 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 	}
 	shareType := artifact.ShareType(firstNonEmpty(in.ShareType, string(artifact.TypeFile)))
 	if shareType == artifact.TypeBundle || shareType == artifact.TypeTrajectory {
-		return nil, mcpCreateOutput{}, fmt.Errorf("validation_failed: share_type must not be %q; use a dedicated flow for bundles and runs", shareType)
+		return nil, mcpCreateOutput{}, fmt.Errorf("validation_failed: share_type must not be %q; use bundle_create for bundles or run_create for trajectory runs", shareType)
 	}
 	now := s.now()
 	art, err := s.store.CreateArtifact(ctx, store.CreateArtifactInput{
@@ -433,6 +466,316 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", err)
 	}
 	return nil, mcpCreateOutput{artifactResponse: s.toArtifactResponse(art)}, nil
+}
+
+// --- bundle_create ---------------------------------------------------------------
+
+// mcpBundleMemberInput is one named file to place in a bundle over MCP: a
+// body plus an optional declared media type (sniffed like any other artifact
+// body when omitted). Unlike artifact_read's inline body cap, there is no
+// size ceiling applied here beyond the ordinary upload ceiling the store
+// itself enforces per member.
+type mcpBundleMemberInput struct {
+	// Name is the member's file name within the bundle (must be unique).
+	Name string `json:"name"`
+	// Body is the member's content.
+	Body string `json:"body"`
+	// MediaType is an optional MIME type; sniffed from the body if omitted.
+	MediaType string `json:"media_type,omitempty"`
+}
+
+type mcpBundleCreateInput struct {
+	// Title is an optional display title for the bundle.
+	Title string `json:"title,omitempty"`
+	// Members are the bundle's named files, in bundle order.
+	Members []mcpBundleMemberInput `json:"members"`
+}
+
+type mcpBundleCreateOutput struct {
+	artifactResponse
+	// Members lists the created bundle's files in bundle order.
+	Members []mcpMemberView `json:"members,omitempty"`
+}
+
+// mcpCreateBundle is the bundle_create tool handler (SPEC-0007 REQ "Create &
+// Push", issue #65): it creates a bundle of N named members via the same
+// core store.CreateBundle the web/CLI multipart path calls, with the default
+// link-visibility policy and default TTL always applied — the input schema
+// (struct-derived, additionalProperties:false) carries no field able to
+// request a broader policy, TTL, or owner, matching artifact_create's
+// not-broadening contract. Provenance stamps the human subject as actor, the
+// MCP client's identification as OnBehalfOf, and channel `via MCP`
+// (ADR-0004). Member validation (non-empty name, uniqueness, at least one
+// member) is the core store's own — never duplicated here — so a bundle
+// created over MCP obeys the identical invariants as one created over the
+// web/CLI.
+func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, in mcpBundleCreateInput) (*mcp.CallToolResult, mcpBundleCreateOutput, error) {
+	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
+		return nil, mcpBundleCreateOutput{}, s.mcpScopeErr(ctx, "bundle_create", oauth.ScopeArtifactsWrite)
+	}
+	actorID := mcpActor(req.Extra)
+	if actorID == "" {
+		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", errs.ErrUnauthorized)
+	}
+	members := make([]store.MemberInput, 0, len(in.Members))
+	for _, m := range in.Members {
+		members = append(members, store.MemberInput{
+			Name:              m.Name,
+			Body:              strings.NewReader(m.Body),
+			DeclaredMediaType: m.MediaType,
+		})
+	}
+	now := s.now()
+	art, err := s.store.CreateBundle(ctx, store.CreateBundleInput{
+		Title:   in.Title,
+		Members: members,
+		Provenance: artifact.Provenance{
+			ActorID:    actorID,
+			OnBehalfOf: mcpModelActor(req.Session),
+			Channel:    artifact.ChannelMCP,
+			CapturedAt: now,
+		},
+		Access:    artifact.AccessPolicy{OwnerID: actorID, Visibility: artifact.VisibilityLink},
+		ExpiresAt: now.Add(s.cfg.DefaultTTL),
+	})
+	if err != nil {
+		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", err)
+	}
+	out := mcpBundleCreateOutput{artifactResponse: s.toArtifactResponse(art)}
+	created, err := s.store.ListMembers(ctx, art.PublicID)
+	if err != nil {
+		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", err)
+	}
+	out.Members = make([]mcpMemberView, 0, len(created))
+	for _, m := range created {
+		out.Members = append(out.Members, mcpMemberView{Name: m.Name, Size: m.Size, MediaType: m.MediaType})
+	}
+	return nil, out, nil
+}
+
+// --- run_create / run_append_spans ------------------------------------------------
+
+// mcpRunSpanInput mirrors [spanRequest] with one deliberate difference: Args
+// is `any` (not json.RawMessage), the same substitution [mcpAnchorInput]
+// makes for its anchor_ref and for the identical reason — a []byte-backed
+// type infers as a JSON *array* (byte-string) schema, which is wrong for a
+// field that actually carries an arbitrary JSON args object. Output stays
+// []byte: it genuinely is raw bytes (base64 on the wire), the same shape
+// POST /v1/runs and /v1/runs/{id}/spans take, so both REST and MCP ingest
+// spans through the identical wire contract.
+type mcpRunSpanInput struct {
+	SpanID             string `json:"span_id"`
+	ParentSpanID       string `json:"parent_span_id,omitempty"`
+	Category           string `json:"category"`
+	Name               string `json:"name,omitempty"`
+	Tool               string `json:"tool,omitempty"`
+	Args               any    `json:"args,omitempty"`
+	Output             []byte `json:"output,omitempty"`
+	OutputTruncated    bool   `json:"output_truncated,omitempty"`
+	StartOffsetMS      int    `json:"start_offset_ms"`
+	DurationMS         int    `json:"duration_ms"`
+	ProducedArtifactID string `json:"produced_artifact_id,omitempty"`
+}
+
+// toRunSpanInputs converts the MCP wire spans to the trajectory service's
+// SpanInput values, re-marshaling each span's Args back to the
+// json.RawMessage the core trajectory service expects (the inverse of
+// [mcpAnchorInput.anchorRefJSON], same reasoning).
+func toRunSpanInputs(tool string, spans []mcpRunSpanInput) ([]trajectory.SpanInput, error) {
+	if len(spans) == 0 {
+		return nil, nil
+	}
+	out := make([]trajectory.SpanInput, 0, len(spans))
+	for _, sp := range spans {
+		var args json.RawMessage
+		if sp.Args != nil {
+			b, err := json.Marshal(sp.Args)
+			if err != nil {
+				return nil, fmt.Errorf("validation_failed: %s: span %q args is not valid JSON", tool, sp.SpanID)
+			}
+			args = b
+		}
+		out = append(out, trajectory.SpanInput{
+			SpanID:             sp.SpanID,
+			ParentSpanID:       sp.ParentSpanID,
+			Category:           trajectory.Category(sp.Category),
+			Name:               sp.Name,
+			Tool:               sp.Tool,
+			Args:               args,
+			Output:             sp.Output,
+			OutputTruncated:    sp.OutputTruncated,
+			StartOffsetMS:      sp.StartOffsetMS,
+			DurationMS:         sp.DurationMS,
+			ProducedArtifactID: sp.ProducedArtifactID,
+		})
+	}
+	return out, nil
+}
+
+// mcpRunOutput mirrors [runResponse]: every field is identical to what GET
+// /v1/runs/{id} (and the trajectory-run MCP resource) already returns
+// (ADR-0003 parity), EXCEPT Spans, which cannot reuse [spanView] directly —
+// see the field doc.
+type mcpRunOutput struct {
+	ID         string         `json:"id"`
+	URL        string         `json:"url"`
+	MCP        string         `json:"mcp"`
+	Status     string         `json:"status"`
+	Title      string         `json:"title,omitempty"`
+	Prompt     string         `json:"prompt,omitempty"`
+	Model      string         `json:"model,omitempty"`
+	TokenCount int64          `json:"token_count"`
+	Provenance provenanceView `json:"provenance"`
+	StartedAt  time.Time      `json:"started_at"`
+	EndedAt    *time.Time     `json:"ended_at,omitempty"`
+	ExpiresAt  time.Time      `json:"expires_at"`
+	Stats      statsView      `json:"stats"`
+	// Spans is the ordered span tree, wire-identical to [spanView] (each span's
+	// args/output_ref/children included), but held as `any` rather than
+	// []spanView for two independent reasons: (1) spanView.Args is a
+	// json.RawMessage, the same byte-array-schema misinference [mcpAnchorInput]
+	// works around for AnchorRef — Args needs to surface as an embedded JSON
+	// object, not a base64 string; (2) spanView.Children is self-referencing,
+	// and the MCP SDK's reflection-based output-schema builder rejects a
+	// recursive struct outright ("cycle detected for type ..."), which a typed
+	// mirror struct (even a distinctly-named one) would reproduce identically.
+	// `any` sidesteps both: the schema is unrestricted, and the value is built
+	// by marshaling []spanView then unmarshaling into `any`, so json.RawMessage
+	// decodes to a plain object and there is no Go type for the schema builder
+	// to recurse into.
+	Spans any `json:"spans"`
+}
+
+// toMCPRunOutput projects a REST [runResponse] (already built by
+// [Server.toRunResponse]) onto the MCP-shaped output, round-tripping Spans
+// through JSON once for the reasons documented on [mcpRunOutput.Spans].
+func toMCPRunOutput(r runResponse) (mcpRunOutput, error) {
+	out := mcpRunOutput{
+		ID: r.ID, URL: r.URL, MCP: r.MCP, Status: r.Status, Title: r.Title, Prompt: r.Prompt,
+		Model: r.Model, TokenCount: r.TokenCount, Provenance: r.Provenance, StartedAt: r.StartedAt,
+		EndedAt: r.EndedAt, ExpiresAt: r.ExpiresAt, Stats: r.Stats,
+	}
+	if len(r.Spans) == 0 {
+		return out, nil
+	}
+	b, err := json.Marshal(r.Spans)
+	if err != nil {
+		return mcpRunOutput{}, fmt.Errorf("internal: encode run spans: %w", err)
+	}
+	var spans any
+	if err := json.Unmarshal(b, &spans); err != nil {
+		return mcpRunOutput{}, fmt.Errorf("internal: decode run spans: %w", err)
+	}
+	out.Spans = spans
+	return out, nil
+}
+
+// mcpRunCreateInput mirrors [runRequest] minus Mode (a run created over MCP
+// is always a complete batch run, exactly POST /v1/runs mode "batch") and
+// minus OnBehalfOf (derived from the connected client's `initialize`
+// identity via [mcpModelActor], the same MCP-native provenance source every
+// other write tool uses — never a client-supplied claim over this transport).
+type mcpRunCreateInput struct {
+	Title      string            `json:"title,omitempty"`
+	Prompt     string            `json:"prompt,omitempty"`
+	Model      string            `json:"model,omitempty"`
+	TokenCount int64             `json:"token_count,omitempty"`
+	StartedAt  time.Time         `json:"started_at,omitempty"`
+	Spans      []mcpRunSpanInput `json:"spans,omitempty"`
+}
+
+// mcpCreateRun is the run_create tool handler (SPEC-0007 REQ "Create & Push",
+// issue #65): it ingests a complete run — header plus ordered span tree — via
+// the same trajectory.Service.CreateBatchRun the REST POST /v1/runs (mode
+// "batch") handler calls, with the default link-visibility policy and
+// default TTL always applied (struct-derived input schema,
+// additionalProperties:false, carries no policy/TTL/owner field — matching
+// artifact_create's not-broadening contract). Provenance stamps the human
+// subject as actor, the MCP client's identification as OnBehalfOf, and
+// channel `via MCP` (ADR-0004).
+func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in mcpRunCreateInput) (*mcp.CallToolResult, mcpRunOutput, error) {
+	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
+		return nil, mcpRunOutput{}, s.mcpScopeErr(ctx, "run_create", oauth.ScopeArtifactsWrite)
+	}
+	actorID := mcpActor(req.Extra)
+	if actorID == "" {
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", errs.ErrUnauthorized)
+	}
+	spans, err := toRunSpanInputs("run_create", in.Spans)
+	if err != nil {
+		return nil, mcpRunOutput{}, err
+	}
+	now := s.now()
+	started := in.StartedAt
+	if started.IsZero() {
+		started = now
+	}
+	run, err := s.traj.CreateBatchRun(ctx, trajectory.RunInput{
+		Title:      in.Title,
+		Prompt:     in.Prompt,
+		Model:      in.Model,
+		TokenCount: in.TokenCount,
+		StartedAt:  started,
+		Provenance: artifact.Provenance{
+			ActorID:    actorID,
+			OnBehalfOf: mcpModelActor(req.Session),
+			Channel:    artifact.ChannelMCP,
+			CapturedAt: now,
+		},
+		Access:    artifact.AccessPolicy{OwnerID: actorID, Visibility: artifact.VisibilityLink},
+		ExpiresAt: now.Add(s.cfg.DefaultTTL),
+		Spans:     spans,
+	})
+	if err != nil {
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", err)
+	}
+	out, err := toMCPRunOutput(s.toRunResponse(run))
+	if err != nil {
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", err)
+	}
+	return nil, out, nil
+}
+
+// mcpRunAppendInput mirrors [appendSpansRequest] plus the run id every tool
+// call needs (the REST shape carries the id in the URL path instead).
+type mcpRunAppendInput struct {
+	// ID is the run's public id, or an mcp://cairn/run/<id> handle.
+	ID    string            `json:"id"`
+	Spans []mcpRunSpanInput `json:"spans"`
+}
+
+// mcpAppendRunSpans is the run_append_spans tool handler (SPEC-0007 REQ
+// "Create & Push", issue #65 "optional but nice"): it appends spans to an
+// open run this human owns via the same trajectory.Service.AppendSpans the
+// REST POST /v1/runs/{id}/spans handler calls — owner-only, additive,
+// idempotent on a re-posted span_id, atomic on a malformed tree — returning
+// the run's current state so batch and incremental read back identically
+// (SPEC-0004 "Batch and incremental converge").
+func (s *Server) mcpAppendRunSpans(ctx context.Context, req *mcp.CallToolRequest, in mcpRunAppendInput) (*mcp.CallToolResult, mcpRunOutput, error) {
+	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
+		return nil, mcpRunOutput{}, s.mcpScopeErr(ctx, "run_append_spans", oauth.ScopeArtifactsWrite)
+	}
+	actorID := mcpActor(req.Extra)
+	if actorID == "" {
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_append_spans", errs.ErrUnauthorized)
+	}
+	id := normalizeMCPHandle(in.ID)
+	spans, err := toRunSpanInputs("run_append_spans", in.Spans)
+	if err != nil {
+		return nil, mcpRunOutput{}, err
+	}
+	if _, err := s.traj.AppendSpans(ctx, id, actorID, spans); err != nil {
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_append_spans", err)
+	}
+	run, err := s.traj.GetRun(ctx, id)
+	if err != nil {
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_append_spans", err)
+	}
+	out, err := toMCPRunOutput(s.toRunResponse(run))
+	if err != nil {
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_append_spans", err)
+	}
+	return nil, out, nil
 }
 
 // --- artifact_comment / artifact_react ------------------------------------------
