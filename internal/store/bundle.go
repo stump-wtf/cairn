@@ -181,6 +181,59 @@ func insertBundleMember(ctx context.Context, tx pgx.Tx, bundleID int64, m staged
 	return nil
 }
 
+// Member is one bundle member's metadata (no body), in bundle order. The bundle
+// viewer projects these into the file rail and delegates each back through the
+// registry to its own viewer (SPEC-0003 REQ "Bundle Viewer").
+type Member struct {
+	Ordinal   int
+	Name      string
+	MediaType string
+	Size      int64
+	SHA256    string
+}
+
+// ListMembers returns a bundle's members in bundle order (ordinal ASC). A
+// non-bundle artifact yields no members (empty slice, no error): the caller
+// resolves the viewer from the artifact's own type, so "not a bundle" is simply
+// "no member rail", never a failure. Unknown/expired ids surface as not-found
+// via GetByPublicID, keeping probing uniform (ADR-0007).
+//
+// Governing: SPEC-0002 REQ "Bundles with N Members" (ordered members),
+// SPEC-0003 REQ "Bundle Viewer".
+func (s *Store) ListMembers(ctx context.Context, publicID string) ([]Member, error) {
+	a, err := s.GetByPublicID(ctx, publicID)
+	if err != nil {
+		return nil, err
+	}
+	if a.ShareType != artifact.TypeBundle {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT ordinal, name, media_type, size_bytes, blob_sha256
+		 FROM bundle_members
+		 WHERE bundle_id = $1
+		 ORDER BY ordinal ASC`,
+		a.ID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list members %s: %w", publicID, err)
+	}
+	defer rows.Close()
+
+	var members []Member
+	for rows.Next() {
+		var m Member
+		if err := rows.Scan(&m.Ordinal, &m.Name, &m.MediaType, &m.Size, &m.SHA256); err != nil {
+			return nil, fmt.Errorf("scan member %s: %w", publicID, err)
+		}
+		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list members %s: %w", publicID, err)
+	}
+	return members, nil
+}
+
 // OpenMember opens a bundle member's body by <bundle public id>/<name>. Unknown
 // bundles, non-bundle artifacts, and unknown member names all return a uniform
 // not-found. The returned SHA-256 lets a reader re-verify integrity.

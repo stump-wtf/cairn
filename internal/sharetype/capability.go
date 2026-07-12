@@ -93,6 +93,30 @@ func (r *Registry) BodyViewerFor(key artifact.ShareType) (BodyViewer, bool) {
 	return v, ok
 }
 
+// ComposedViewer is the optional capability a share type implements when its
+// body is not a single content-addressed blob but an ordered set of member files
+// — a bundle (ADR-0008). The shell resolves it through the registry (never a
+// switch on the type key) to render the member file rail and delegate each
+// selected member back through the registry to that member's own viewer
+// (ADR-0002 "bundle is the one type aware of others' viewers"; SPEC-0003 REQ
+// "Bundle Viewer": "delegating back through the registry"). The capability
+// itself carries only the anchor_type a whole-member annotation attaches to
+// (bundle_file); enumerating members and reading member bodies is the store's job
+// in httpapi, exactly as the trajectory viewer resolves its run tree through the
+// trajectory service rather than through a single-body seam.
+type ComposedViewer interface {
+	// MemberAnchor is the anchor_type a whole-member reaction/comment attaches to.
+	MemberAnchor() Anchor
+}
+
+// ComposedViewerFor resolves key and returns its ComposedViewer capability, or
+// (nil, false) when the type renders from a single body (or none). Total, like
+// Resolve, so httpapi picks the bundle path off registry data — not a type key.
+func (r *Registry) ComposedViewerFor(key artifact.ShareType) (ComposedViewer, bool) {
+	v, ok := r.Resolve(key).(ComposedViewer)
+	return v, ok
+}
+
 // PanelField is one label/value row a type contributes to the metadata panel's
 // type-specific section (a file's checksum, a trajectory's run stats, an
 // image's pin count). Core panel sections — provenance, access, expiry,

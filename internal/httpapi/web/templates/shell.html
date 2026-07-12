@@ -34,8 +34,10 @@
 </header>
 
 <main class="shell-grid" x-bind:class="panelClass()">
-  <article id="body" class="body-slot" tabindex="-1">
-    {{if .HasRichBody}}
+  <article id="body" class="body-slot{{if .Bundle}} body-slot-bundle{{end}}" tabindex="-1">
+    {{if .Bundle}}
+    {{template "bundle-viewer" .Bundle}}
+    {{else if .HasRichBody}}
     {{.Body}}
     {{else if .FileCard}}
     {{template "file-card" .FileCard}}
@@ -71,6 +73,21 @@
     </section>
     {{end}}
 
+    {{if .Bundle}}
+    <section class="panel-section" aria-labelledby="contains-h">
+      <h2 class="panel-h" id="contains-h">Contains <span class="count">{{.Bundle.FileCount}}</span></h2>
+      <ul class="bundle-contains">
+        {{range .Bundle.Files}}
+        <li class="contains-row">
+          <span class="bundle-file-badge" aria-hidden="true">{{.Badge}}</span>
+          <span class="contains-name">{{.Name}}</span>
+          <span class="contains-meta">{{.Size}}{{if gt .Engagement 0}} · <span title="{{.Reactions}} reactions · {{.Comments}} comments">{{.Engagement}} ✦</span>{{end}}</span>
+        </li>
+        {{end}}
+      </ul>
+    </section>
+    {{end}}
+
     <section class="panel-section" aria-labelledby="comments-h">
       <h2 class="panel-h" id="comments-h">Comments <span class="count">{{.CommentCount}}</span></h2>
       <div class="comments">
@@ -79,6 +96,7 @@
         </div>
         {{if .Authenticated}}
         <form class="comment-composer" hx-post="/{{.ID}}/comments" hx-target="#comment-list" hx-swap="beforeend">
+          {{if .Bundle}}<input type="hidden" name="file" value="{{.Bundle.Active.Name}}" data-bundle-file>{{end}}
           <label class="sr-only" for="comment-body">Add a comment</label>
           <textarea id="comment-body" name="body" rows="2" placeholder="Add a comment…" required></textarea>
           <div class="composer-foot">
@@ -127,5 +145,52 @@ ADR-0002 (registry-resolved viewer). */}}
   {{else}}
   <p class="generic-note">This share type has no single downloadable body; its rich viewer arrives in a later story.</p>
   {{end}}
+</div>
+{{end}}
+
+{{/* The bundle viewer (SPEC-0003 REQ "Bundle Viewer", #19): a 196px file rail +
+a pane, split inside the shell's body slot. The rail is a vertical tablist whose
+items are real links to `/{id}?file=<name>` (so a no-JS reader navigates member
+to member with a full render) enhanced with HTMX to swap only the pane; bundle.js
+layers on the roving-tabindex keyboard nav and moves focus to the pane on switch.
+The pane is a tabpanel labelled by the active file, announced polite on swap.
+Governing: SPEC-0003 (Bundle Viewer, a11y), ADR-0011 (server-rendered + HTMX). */}}
+{{define "bundle-viewer"}}
+<div class="bundle-viewer" data-bundle-viewer data-bundle-id="{{.ID}}">
+  <nav class="bundle-rail" aria-label="Bundle files">
+    <p class="bundle-rail-head">{{.FileCount}} FILE{{if ne .FileCount 1}}S{{end}} · {{.TotalSize}}</p>
+    <ul class="bundle-rail-list" role="tablist" aria-orientation="vertical" aria-label="Bundle member files">
+      {{range .Files}}
+      <li role="presentation">
+        <a class="bundle-file{{if .Active}} bundle-file-active{{end}}"
+           id="{{.TabID}}" role="tab"
+           href="{{.ShellURL}}"
+           hx-get="{{.PaneURL}}" hx-target="#bundle-pane" hx-swap="innerHTML" hx-push-url="{{.ShellURL}}"
+           aria-selected="{{if .Active}}true{{else}}false{{end}}"
+           aria-controls="bundle-pane"
+           tabindex="{{if .Active}}0{{else}}-1{{end}}"
+           data-file-name="{{.Name}}">
+          <span class="bundle-file-badge" aria-hidden="true">{{.Badge}}</span>
+          <span class="bundle-file-name">{{.Name}}</span>
+          <span class="bundle-file-meta"><span class="sr-only">{{.Badge}} file, </span>{{.Size}}{{if gt .Engagement 0}} <span class="bundle-file-count" title="{{.Reactions}} reactions · {{.Comments}} comments" aria-label="{{.Engagement}} annotations">{{.Engagement}}</span>{{end}}</span>
+        </a>
+      </li>
+      {{end}}
+    </ul>
+  </nav>
+  <section id="bundle-pane" class="bundle-pane" role="tabpanel" tabindex="-1" aria-labelledby="{{.Active.TabID}}" aria-live="polite">
+    {{template "bundle-pane" .ActivePane}}
+  </section>
+</div>
+{{end}}
+
+{{/* One member's pane content — a delegated rich viewer fragment (markdown) or
+the generic-file card floor for a non-previewable member. Returned standalone by
+`GET /{id}/pane/<name>` for an HTMX swap and embedded on first render inside
+#bundle-pane. Governing: SPEC-0003 (delegate the member back through the
+registry; non-md members degrade to the file card). */}}
+{{define "bundle-pane"}}
+<div class="member-pane" data-member="{{.Name}}" data-member-badge="{{.Badge}}">
+  {{if .Body}}{{.Body}}{{else if .Card}}{{template "file-card" .Card}}{{end}}
 </div>
 {{end}}

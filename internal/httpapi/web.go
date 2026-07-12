@@ -128,6 +128,13 @@ func (s *Server) mountWeb(r chi.Router) {
 	// into an executable type or rendered inline in Cairn's origin (SPEC-0001 REQ
 	// "Security Headers"; supersedes upstream #2).
 	r.Get("/{id}/download", s.handleWebDownload)
+	// The bundle viewer's member surfaces (SPEC-0003, #19), both link-capability
+	// reads gated exactly like the shell: `/{id}/pane/<name>` returns one member's
+	// pane fragment for an HTMX swap (no full reload), and `/{id}/members/<name>`
+	// streams that member's body as a sniff-proof same-origin attachment so the
+	// generic-file pane's download stays under the web CSP.
+	r.Get("/{id}/pane/*", s.handleBundlePane)
+	r.Get("/{id}/members/*", s.handleWebMemberDownload)
 	// Web annotation post (SPEC-0001, SPEC-0006): the shell's comment composer
 	// posts here. It requires a session and passes the CSRF seam — the guard that
 	// only bites ambient (cookie) principals — and returns the server-rendered
@@ -213,7 +220,10 @@ func (s *Server) renderShellFor(w http.ResponseWriter, r *http.Request, wantPref
 		s.renderWebError(w, r, errs.ErrNotFound)
 		return
 	}
-	vm := s.buildShellView(r.Context(), a)
+	// A bundle browses its members through the file rail; `?file=` selects the
+	// active member for the no-JS full-navigation path (an HTMX pane swap uses the
+	// dedicated /{id}/pane route). Non-bundle types ignore it.
+	vm := s.buildShellView(r.Context(), a, r.URL.Query().Get("file"))
 	// A logged-in viewer sees the comment composer; an anonymous link reader sees
 	// the read-only thread (posting requires a session + CSRF). Resolution is
 	// optional — an absent/invalid credential simply yields the read-only view.
@@ -252,6 +262,7 @@ type shellView struct {
 	MetaLine      string // e.g. "1.2 kB · text/markdown"
 	Body          template.HTML
 	HasRichBody   bool          // a registered BodyViewer produced the body
+	Bundle        *bundleView   // the composed member rail + active pane (bundle)
 	FileCard      *fileCardView // the generic-file floor when no viewer resolved
 	Provenance    provenanceLine
 	PanelFields   []sharetype.PanelField // type-specific (registry MetadataPanel)
@@ -313,7 +324,7 @@ type commentLine struct {
 // (the registry BodyViewer capability when present, else the generic-file
 // card), the type-specific panel fields (registry MetadataPanel capability),
 // the shell-owned detail facts, provenance, and the comment thread.
-func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact) shellView {
+func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activeFile string) shellView {
 	vm := shellView{
 		ID:            a.PublicID,
 		Badge:         s.reg.BadgeFor(a),
@@ -336,36 +347,51 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact) shell
 		},
 	}
 
-	// Body slot — registry-driven viewer resolution with the generic-file card as
-	// the total-resolution floor (SPEC-0001 REQ "Type-Specific Body Slot",
-	// ADR-0002). A type that implements the BodyViewer capability renders its own
-	// (already-escaped) fragment from the streamed body; every other type — and
-	// any type whose viewer errors — resolves to the generic-file card, so EVERY
-	// share type resolves to some viewer (#12). Resolution is driven entirely by
-	// the registry (BodyViewerFor), never a switch on the type key.
-	if viewer, ok := s.reg.BodyViewerFor(a.ShareType); ok && a.BodySHA256 != "" && s.store != nil {
-		if rc, _, err := s.store.OpenBody(ctx, a.PublicID); err == nil {
-			defer rc.Close()
-			if html, err := viewer.RenderBody(ctx, a, rc); err == nil {
-				vm.Body = html
-				vm.HasRichBody = true
-			} else {
-				s.log.WarnContext(ctx, "web: body viewer failed, falling back to generic file card", "id", a.PublicID, "error", err)
-			}
-		}
-	}
-	if !vm.HasRichBody {
-		vm.FileCard = fileCard(a, vm.Badge)
-	}
-
 	// Comments are read under the same link capability as the artifact; a nil
-	// annotation service (unit paths without a store) yields an empty thread.
+	// annotation service (unit paths without a store) yields an empty thread. The
+	// raw thread is loaded once and reused for the panel rows AND (for a bundle)
+	// the per-file engagement counts, so both project one query.
+	var rawComments []annotation.Comment
 	if s.annot != nil {
 		if comments, err := s.annot.ListComments(ctx, a.PublicID); err == nil {
+			rawComments = comments
 			vm.Comments = toCommentLines(comments)
 		} else {
 			s.log.WarnContext(ctx, "web: list comments failed", "id", a.PublicID, "error", err)
 		}
+	}
+
+	// Body slot — registry-driven viewer resolution with the generic-file card as
+	// the total-resolution floor (SPEC-0001 REQ "Type-Specific Body Slot",
+	// ADR-0002). Resolution order is entirely registry data, never a switch on the
+	// type key:
+	//   1. a ComposedViewer type (a bundle) renders its member file rail + the
+	//      selected member's pane, each member delegated back through the registry
+	//      to its own viewer (SPEC-0003 REQ "Bundle Viewer");
+	//   2. a BodyViewer type renders its own (already-escaped) fragment from the
+	//      streamed body (markdown, #39);
+	//   3. every other type — and any viewer that errors — resolves to the
+	//      generic-file card, so EVERY share type resolves to some viewer (#12).
+	if _, ok := s.reg.ComposedViewerFor(a.ShareType); ok && s.store != nil {
+		if bv := s.buildBundleView(ctx, a, activeFile, rawComments); bv != nil {
+			vm.Bundle = bv
+		}
+	}
+	if vm.Bundle == nil {
+		if viewer, ok := s.reg.BodyViewerFor(a.ShareType); ok && a.BodySHA256 != "" && s.store != nil {
+			if rc, _, err := s.store.OpenBody(ctx, a.PublicID); err == nil {
+				defer rc.Close()
+				if html, err := viewer.RenderBody(ctx, a, rc); err == nil {
+					vm.Body = html
+					vm.HasRichBody = true
+				} else {
+					s.log.WarnContext(ctx, "web: body viewer failed, falling back to generic file card", "id", a.PublicID, "error", err)
+				}
+			}
+		}
+	}
+	if !vm.HasRichBody && vm.Bundle == nil {
+		vm.FileCard = fileCard(a, vm.Badge)
 	}
 	return vm
 }
@@ -410,6 +436,15 @@ func anchorContext(anchorType sharetype.Anchor, ref json.RawMessage) string {
 		}
 		if json.Unmarshal(ref, &loc) == nil && loc.Quote != "" {
 			return "on “" + truncateRunes(loc.Quote, 34) + "”"
+		}
+	case sharetype.AnchorBundleFile:
+		// A per-file bundle comment is labelled by its member name — the "· on
+		// notes.md" context the aggregated COMMENTS panel shows (issue #19).
+		var loc struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(ref, &loc) == nil && loc.Name != "" {
+			return "on " + loc.Name
 		}
 	}
 	return "on " + string(anchorType)

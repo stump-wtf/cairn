@@ -18,6 +18,7 @@ var typeForAnchor = map[Anchor]artifact.ShareType{
 	AnchorCodeLine:           KeyCode,
 	AnchorCodeRange:          KeyCode,
 	AnchorImageRegion:        KeyImage,
+	AnchorBundleFile:         artifact.TypeBundle,
 	AnchorWebhookRequest:     KeyWebhook,
 	AnchorTrajectorySpan:     KeyTrajectory,
 	AnchorTrajectoryTurn:     KeyTrajectory,
@@ -87,6 +88,14 @@ func TestLocatorSchemas(t *testing.T) {
 				`{}`, `{"x":0.42}`, `{"y":0.31}`, `{"x":1.2,"y":0.3}`, `{"x":-0.1,"y":0.3}`,
 				`{"x":0.1,"y":0.2,"w":0.3}`, `{"x":0.1,"y":0.2,"h":0.4}`,
 				`{"x":0.1,"y":0.2,"w":1.5,"h":0.4}`, `{"x":420,"y":310}`,
+			},
+		},
+		{
+			anchor: AnchorBundleFile,
+			valid:  []string{`{"name":"notes.md"}`, `{"block_id":"b_3f2a","name":"notes.md"}`},
+			invalid: []string{
+				`{}`, `{"name":""}`, `{"name":7}`, `{"file":"notes.md"}`,
+				`{"name":"notes.md","block_id":""}`, `{"name":"notes.md","extra":true}`,
 			},
 		},
 		{

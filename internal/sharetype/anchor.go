@@ -35,6 +35,15 @@ const (
 	// Image anchors — a pinned region in normalized fractional coordinates.
 	AnchorImageRegion Anchor = "image_region"
 
+	// AnchorBundleFile targets one member file of a bundle, named by its
+	// in-bundle path. It scopes a whole-member reaction or comment to a specific
+	// member so per-file engagement and the aggregated COMMENTS panel resolve to
+	// the right file rather than the bundle as a whole (SPEC-0003 REQ "Bundle
+	// Viewer": "annotations MUST be anchored so they resolve to the correct member
+	// file"). Its locator carries the member name and, optionally, a member-scoped
+	// markdown block id so a reaction can pin a block inside a markdown member.
+	AnchorBundleFile Anchor = "bundle_file"
+
 	// Webhook anchors — a captured request. Reaction-only: reactable but never
 	// comment-threaded (SPEC-0006 expresses this as a property of the type).
 	AnchorWebhookRequest Anchor = "webhook_request"

@@ -38,6 +38,7 @@ var defaultLocators = map[Anchor]LocatorFunc{
 	AnchorCodeLine:           codeLineLocator,
 	AnchorCodeRange:          codeRangeLocator,
 	AnchorImageRegion:        imageRegionLocator,
+	AnchorBundleFile:         bundleFileLocator,
 	AnchorWebhookRequest:     webhookRequestLocator,
 	AnchorTrajectorySpan:     spanIDLocator(AnchorTrajectorySpan),
 	AnchorTrajectoryTurn:     spanIDLocator(AnchorTrajectoryTurn),
@@ -197,6 +198,30 @@ func imageRegionLocator(ref json.RawMessage) error {
 	}
 	if loc.W != nil && (!inUnit(*loc.W) || !inUnit(*loc.H)) {
 		return errs.Validationf("sharetype: %q anchor_ref w/h must be normalized fractions in [0,1]", AnchorImageRegion)
+	}
+	return nil
+}
+
+// bundleFileLocator validates {"name":"notes.md"} with an optional member-scoped
+// "block_id" — the in-bundle member name (required) plus, for a markdown member,
+// the deterministic block id a reaction pins inside it. The name scopes every
+// per-file annotation to a specific member so the aggregated COMMENTS panel and
+// per-file engagement counts resolve to the right file (SPEC-0003 REQ "Bundle
+// Viewer"). Member-internal comment selections stay their own text_selection
+// anchor; this locator carries only whole-member and block-level scope.
+func bundleFileLocator(ref json.RawMessage) error {
+	var loc struct {
+		Name    *string `json:"name"`
+		BlockID *string `json:"block_id"`
+	}
+	if err := decodeStrict(AnchorBundleFile, ref, &loc); err != nil {
+		return err
+	}
+	if loc.Name == nil || *loc.Name == "" {
+		return errs.Validationf("sharetype: %q anchor_ref requires a non-empty member name", AnchorBundleFile)
+	}
+	if loc.BlockID != nil && *loc.BlockID == "" {
+		return errs.Validationf("sharetype: %q anchor_ref block_id, when present, must be non-empty", AnchorBundleFile)
 	}
 	return nil
 }

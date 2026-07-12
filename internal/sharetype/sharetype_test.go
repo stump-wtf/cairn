@@ -152,6 +152,14 @@ func TestCapabilityMatrix(t *testing.T) {
 		artifact.TypeGZ: {
 			AnchorArtifact: {true, true},
 		},
+		// Bundle: per-member reactions + comments anchor to bundle_file; a member's
+		// own text selections stay text_selection (comment-only). SPEC-0003 pins
+		// this down from the SPEC-0006 matrix's provisional bundle row.
+		artifact.TypeBundle: {
+			AnchorArtifact:      {true, true},
+			AnchorBundleFile:    {true, true},
+			AnchorTextSelection: {false, true},
+		},
 		// Webhook: reactable on artifact + webhook_request, comments on NOTHING
 		// (SPEC-0006 REQ "Webhook Reaction-Only Asymmetry").
 		KeyWebhook: {

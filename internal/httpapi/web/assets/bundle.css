@@ -1,0 +1,95 @@
+/* Bundle viewer (SPEC-0003 REQ "Bundle Viewer", design turn 6e, issue #19). The
+   body slot splits into a 196px file rail + a member pane, inside the shell's
+   own content|panel grid. Colors and tokens come from app.css; nothing here is
+   conveyed by color alone — the active file carries an aria-selected state, a
+   left accent bar, AND a tinted background, and every type is labelled by its
+   text badge (WCAG). */
+
+.body-slot-bundle { padding: 0; overflow: hidden; }
+
+.bundle-viewer {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  height: 100%;
+  min-height: calc(100vh - 96px);
+}
+
+/* ---- File rail ---- */
+.bundle-rail {
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  overflow: auto;
+  min-width: 0;
+}
+.bundle-rail-head {
+  margin: 0;
+  padding: 14px 14px 10px;
+  font: 600 10px var(--mono); letter-spacing: .8px; text-transform: uppercase;
+  color: var(--t6);
+  border-bottom: 1px solid var(--border-3);
+}
+.bundle-rail-list { list-style: none; margin: 0; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+
+.bundle-file {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-areas: "badge name" "badge meta";
+  column-gap: 8px; row-gap: 1px;
+  align-items: center;
+  padding: 7px 9px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  border-left: 2px solid transparent;
+  text-decoration: none;
+  color: var(--t3);
+  cursor: pointer;
+}
+.bundle-file:hover { background: var(--well); }
+.bundle-file:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+.bundle-file-active {
+  background: rgba(106,169,255,.12);
+  border-color: rgba(106,169,255,.25);
+  border-left-color: var(--blue, #6AA9FF);
+  color: var(--t1);
+}
+.bundle-file-badge {
+  grid-area: badge;
+  font: 600 9px var(--mono); letter-spacing: .4px;
+  padding: 3px 6px; border-radius: var(--radius-chip);
+  color: var(--t2); background: var(--well); border: 1px solid var(--border);
+}
+.bundle-file-name {
+  grid-area: name;
+  font: 500 12.5px var(--sans);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bundle-file-meta {
+  grid-area: meta;
+  display: flex; align-items: center; gap: 6px;
+  font: 400 10.5px var(--mono); color: var(--t7);
+}
+.bundle-file-count {
+  color: var(--t5); background: var(--well); border: 1px solid var(--border-2);
+  border-radius: 999px; padding: 0 6px; font-size: 10px; line-height: 15px;
+}
+
+/* ---- Member pane ---- */
+.bundle-pane { overflow: auto; min-width: 0; padding: 22px 26px; }
+.bundle-pane:focus-visible { outline: 2px solid var(--green); outline-offset: -3px; }
+.member-pane { min-width: 0; }
+.member-pane .generic-card { margin-top: 4px; }
+
+/* ---- CONTAINS panel section (member manifest) ---- */
+.bundle-contains { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.contains-row { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; align-items: center; gap: 8px; }
+.contains-name {
+  font: 500 12px var(--sans); color: var(--t3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.contains-meta { font: 400 10.5px var(--mono); color: var(--t7); white-space: nowrap; }
+
+/* Narrow screens: the rail stacks above the pane, no horizontal scroll. */
+@media (max-width: 720px) {
+  .bundle-viewer { grid-template-columns: 1fr; }
+  .bundle-rail { border-right: 0; border-bottom: 1px solid var(--border); }
+}

@@ -83,6 +83,21 @@ func (markdownShareType) RenderBody(_ context.Context, _ *artifact.Artifact, bod
 	return markdown.RenderFragment(src)
 }
 
+// bundleShareType composes simpleType with the ComposedViewer capability: a
+// bundle has no single body but an ordered set of member files (ADR-0008), so
+// the shell renders its file rail and delegates each selected member back
+// through the registry to that member's own viewer (SPEC-0003 REQ "Bundle
+// Viewer"). MemberAnchor names the anchor a whole-member annotation attaches to
+// (bundle_file); member-internal anchors (a markdown block, a text selection)
+// resolve through the member's own type. The capability stays registry data
+// discovered by type assertion (ADR-0002): httpapi resolves the bundle path via
+// ComposedViewerFor and never switches on the bundle key.
+type bundleShareType struct {
+	simpleType
+}
+
+func (bundleShareType) MemberAnchor() Anchor { return AnchorBundleFile }
+
 // codeShareType composes simpleType with the ArtifactBadger capability: a code
 // artifact's badge is its language (`GO`, `PY`, …) when recognizable, falling
 // back to the static CODE badge (ADR-0002 badge list: "`PY`/lang").
@@ -212,15 +227,21 @@ var (
 			both(AnchorImageRegion),
 		},
 	}
-	bundleType = simpleType{
+	// A bundle browses its ordered members through the file rail, each rendered by
+	// its own registered viewer (SPEC-0003). Per-member reactions and comments
+	// anchor to bundle_file (name-scoped); a member's own text selections stay
+	// text_selection, so the aggregated COMMENTS panel resolves each thread to its
+	// file (SPEC-0006 matrix, pinned down by SPEC-0003).
+	bundleType = bundleShareType{simpleType{
 		key:     artifact.TypeBundle,
 		badge:   "BUNDLE",
 		preview: anyMedia,
 		anchors: []AnchorSpec{
 			both(AnchorArtifact),
+			both(AnchorBundleFile),
 			commentOnly(AnchorTextSelection),
 		},
-	}
+	}}
 	// Webhook artifacts accept comments on NO anchor — not even whole-artifact —
 	// while staying reactable; the asymmetry is registry data, not special-cased
 	// code (SPEC-0006 REQ "Webhook Reaction-Only Asymmetry"). The MCP handle

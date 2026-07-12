@@ -161,6 +161,20 @@ func (s *Server) handleWebComment(w http.ResponseWriter, r *http.Request) {
 // registry, so an anchor the type forbids is rejected there — this only shapes
 // the ref, it grants nothing.
 func webCommentAnchor(r *http.Request) (sharetype.Anchor, json.RawMessage, error) {
+	// A bundle's composer scopes every comment to the active member: the `file`
+	// hidden field names the member, so the comment anchors to bundle_file
+	// {"name":…} and the aggregated COMMENTS panel resolves it to that file (#19).
+	// This precedes the selection path so a member's comment is member-scoped
+	// even when a text selection was captured in the member pane.
+	if file := r.PostFormValue("file"); file != "" {
+		ref, err := json.Marshal(struct {
+			Name string `json:"name"`
+		}{file})
+		if err != nil {
+			return "", nil, errs.Validationf("comment: bad bundle file anchor")
+		}
+		return sharetype.AnchorBundleFile, ref, nil
+	}
 	if spanID := r.PostFormValue("span_id"); spanID != "" {
 		ref, err := json.Marshal(struct {
 			SpanID string `json:"span_id"`

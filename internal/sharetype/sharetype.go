@@ -165,6 +165,27 @@ func (r *Registry) ValidateAnchor(key artifact.ShareType, anchor Anchor, kind An
 	return errs.Validationf("sharetype: %s not permitted against %q anchor for type %q", kind, anchor, key)
 }
 
+// ClassifyMember resolves a bundle member's own share type from its in-bundle
+// file name and (sniffed) media type, so the bundle viewer can delegate the
+// member back through the registry to that type's viewer (SPEC-0003 "Bundle
+// delegates back through the registry"). Ingest sniffs member bodies with
+// http.DetectContentType, which reports markdown/plain text as `text/plain`, so
+// markdown is recognized by its `.md`/`.markdown` extension (or an explicit
+// markdown media type) rather than by sniffing. In 0.0.2 markdown is the only
+// rich member viewer, so every other member resolves to the generic file type —
+// the total-resolution floor (ADR-0002); later member viewers (code, image)
+// extend this mapping, and the shell keeps delegating through the registry.
+func (r *Registry) ClassifyMember(name, mediaType string) artifact.ShareType {
+	lower := strings.ToLower(name)
+	if strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".markdown") ||
+		strings.Contains(strings.ToLower(mediaType), "markdown") {
+		if r.Registered(KeyMarkdown) {
+			return KeyMarkdown
+		}
+	}
+	return genericFileType(mediaType)
+}
+
 // genericFileType is the generic file share type for a non-previewable body:
 // GZ for gzip bodies, FILE otherwise (SPEC-0002 "FILE/GZ").
 func genericFileType(mediaType string) artifact.ShareType {

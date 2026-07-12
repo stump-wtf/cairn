@@ -45,7 +45,7 @@ func fixtureArtifact(shareType artifact.ShareType, hasBody bool) *artifact.Artif
 
 func renderShellHTML(t *testing.T, s *Server, a *artifact.Artifact) string {
 	t.Helper()
-	vm := s.buildShellView(context.Background(), a)
+	vm := s.buildShellView(context.Background(), a, "")
 	var sb strings.Builder
 	if err := s.webTmpl.ExecuteTemplate(&sb, "shell", vm); err != nil {
 		t.Fatalf("render shell (%s): %v", a.ShareType, err)
