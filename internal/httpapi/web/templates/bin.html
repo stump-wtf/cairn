@@ -12,6 +12,10 @@
   <span class="crumb-sep" aria-hidden="true">▸</span>
   <span class="artifact-title">the bin</span>
   <div class="header-spacer"></div>
+  {{/* The Settings entry point (issue #75): a gear icon in the app shell
+       header/nav, next to the identity chip, on every page that already
+       carries the authenticated header chrome. */}}
+  <a class="settings-gear" href="/settings" aria-label="Settings">⚙</a>
   <span class="whoami" title="signed in">{{.Actor}}</span>
   <form class="logout-form" method="post" action="/logout">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -43,10 +47,10 @@
           </ul>
         </div>
       </details>
-      {{/* The "Connect an agent" affordance (#57): a persistent link into the
-           full MCP OAuth + CLI instructions at /connect, visible everywhere the
-           Bin is (this toolbar is shared by `/` and `/bin`). */}}
-      <a class="bin-connect-btn" href="/connect" aria-label="Connect an agent over MCP"><span aria-hidden="true">◆</span> connect</a>
+      {{/* The "Connect an agent" affordance (#57): a persistent link straight
+           into the MCP connection section of Settings (#75), visible
+           everywhere the Bin is (this toolbar is shared by `/` and `/bin`). */}}
+      <a class="bin-connect-btn" href="/settings#mcp" aria-label="Connect an agent over MCP"><span aria-hidden="true">◆</span> connect</a>
     </div>
   </div>
 

@@ -193,6 +193,40 @@ reload.
   expired
 - **THEN** the keyset cursor MUST advance without skipping or repeating rows already shown
 
+### Requirement: Settings & Connect Instructions
+
+The web app MUST provide a single, sectioned Settings page (`/settings`) covering: API
+tokens (create with a name and a scope subset, view the plaintext secret exactly once at
+creation, list existing tokens by name/scopes/created/last-used, revoke), MCP connection
+(the server URL, the OAuth 2.1 + PKCE note, the three consent scopes, copy-paste connector
+steps), CLI (install + login instructions once the `cairn` CLI ships, else an explicit
+"not yet released" state that fabricates no working command), and Account (the signed-in
+identity and a sign-out control). The shell header/nav MUST carry a persistent entry point
+into Settings. Settings MUST require authentication like the Bin (unauthenticated → login
+redirect with a validated `?next`); the API tokens section's management actions MUST be
+CSRF-guarded. A legacy `/connect` URL MUST redirect (permanently) to `/settings`.
+
+#### Scenario: Settings entry point
+
+- **WHEN** an authenticated caller views the app shell header
+- **THEN** a Settings entry point MUST be present and MUST navigate to `/settings`
+
+#### Scenario: One-time token secret
+
+- **WHEN** an authenticated caller creates a new API token
+- **THEN** the plaintext secret MUST be shown exactly once in that response and MUST NOT
+  be retrievable again from any later request
+
+#### Scenario: Legacy /connect redirects
+
+- **WHEN** any caller requests `/connect`
+- **THEN** the server MUST respond with a permanent redirect to `/settings`
+
+#### Scenario: Unauthenticated Settings access
+
+- **WHEN** an unauthenticated client requests `/settings`
+- **THEN** the server MUST redirect to login rather than render any Settings content
+
 ## Security Requirements
 
 This capability is web-facing. The following are MANDATORY.

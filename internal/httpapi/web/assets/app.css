@@ -465,14 +465,12 @@ body.landing { display: flex; flex-direction: column; align-items: center; justi
 .landing-feature-glyph { flex: 0 0 auto; }
 .landing-mcp-tease { margin: 14px 0 0; color: var(--t7); font: 400 11px var(--mono); }
 
-/* ---- Connect an agent (#57) ---- */
-.connect-main { display: flex; flex-direction: column; }
+/* ---- Settings copy blocks, shared by the MCP connection + CLI cards (#75,
+   formerly the standalone "Connect an agent" page, #57) ---- */
 .connect-back { align-self: flex-start; color: var(--t6); font: 500 11.5px var(--mono); text-decoration: none; margin-bottom: 18px; }
 .connect-back:hover { color: var(--t3); }
 .connect-h1 { margin: 0; color: var(--t0); font: 600 20px var(--sans); }
 .connect-lede { margin: 8px 0 0; color: var(--t5); font: 400 13px/1.6 var(--sans); max-width: 62ch; }
-.connect-section { margin-top: 30px; padding-top: 24px; border-top: 1px solid var(--border-3); }
-.connect-h2 { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--t1); font: 600 14.5px var(--sans); }
 .connect-h2-glyph { color: var(--green-3); font: 600 13px var(--mono); }
 .connect-badge {
   font: 600 10px var(--mono); letter-spacing: .4px; text-transform: uppercase;
@@ -502,3 +500,87 @@ body.landing { display: flex; flex-direction: column; align-items: center; justi
   color: var(--t3); font: 600 12px var(--mono); padding: 7px 13px;
 }
 .bin-connect-btn:hover { border-color: var(--green-3); color: var(--green-2); }
+
+/* ---- Header Settings entry point (#75, gear/avatar menu) ---- */
+.settings-gear {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 7px; text-decoration: none;
+  color: var(--t4); font-size: 15px; border: 1px solid transparent;
+}
+.settings-gear:hover, .settings-gear:focus-visible { color: var(--t1); border-color: var(--border); background: var(--well); }
+
+/* ---- Settings page (#75) ---- */
+.settings-main { max-width: 980px; }
+.settings-shell { display: grid; grid-template-columns: 180px 1fr; gap: 28px; margin-top: 30px; align-items: start; }
+.settings-nav { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 20px; }
+.settings-nav-link {
+  color: var(--t5); text-decoration: none; font: 500 12.5px var(--sans);
+  padding: 8px 12px; border-radius: 7px; border: 1px solid transparent;
+}
+.settings-nav-link:hover, .settings-nav-link:focus-visible { color: var(--t1); background: var(--well); border-color: var(--border-3); }
+.settings-cards { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.settings-card {
+  background: var(--card); border: 1px solid var(--border-2); border-radius: var(--radius-frame);
+  padding: 22px 24px; scroll-margin-top: 20px;
+}
+.settings-card-h {
+  display: flex; align-items: center; gap: 8px; margin: 0; color: var(--t1);
+  font: 600 15px var(--sans);
+}
+.settings-card-note { margin: 10px 0 0; color: var(--t5); font: 400 12.5px/1.6 var(--sans); max-width: 68ch; }
+
+@media (max-width: 760px) {
+  .settings-shell { grid-template-columns: 1fr; }
+  .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; gap: 6px; }
+}
+
+/* ---- Settings: API tokens (#75) ---- */
+.token-secret-card {
+  margin-top: 16px; padding: 12px 14px; border: 1px solid #244034;
+  background: rgba(86,227,159,.08); border-radius: 8px;
+}
+.token-secret-warn { margin: 0 0 8px; color: var(--green-2); font: 600 11.5px var(--mono); }
+.token-secret-row { display: flex; gap: 8px; align-items: center; }
+.token-secret-value {
+  flex: 1 1 auto; min-width: 0; overflow-x: auto; white-space: nowrap;
+  background: var(--well-2); border: 1px solid var(--border-2); border-radius: 6px;
+  padding: 8px 10px; font: 400 12px var(--mono); color: var(--t1);
+}
+.token-form { margin-top: 16px; display: flex; flex-direction: column; gap: 12px; padding: 16px; background: var(--well-2); border: 1px solid var(--border-3); border-radius: 8px; }
+.token-form-row { display: flex; flex-direction: column; gap: 6px; }
+.token-form-row .login-input { max-width: 320px; }
+.token-scopes { margin: 0; }
+.token-agent-toggle { color: var(--t4); }
+.token-form-error {
+  margin: 0; padding: 8px 11px; border-radius: 7px;
+  border: 1px solid #4a2b2b; background: rgba(255,107,107,.10);
+  color: #FF9B9B; font: 500 11.5px var(--mono);
+}
+.token-create-btn { align-self: flex-start; margin-top: 0; }
+
+.token-table { margin-top: 18px; width: 100%; border-collapse: collapse; font: 400 12.5px var(--sans); }
+.token-table th {
+  text-align: left; color: var(--t6); font: 600 10.5px var(--mono); letter-spacing: .04em;
+  text-transform: uppercase; padding: 8px 10px; border-bottom: 1px solid var(--border-3);
+}
+.token-table td { padding: 10px; border-bottom: 1px solid var(--border-3); color: var(--t3); vertical-align: middle; }
+.token-cell-name { color: var(--t1); font-weight: 500; }
+.token-cell-scopes code { color: var(--t4); font-size: 11px; }
+.token-agent-badge {
+  color: var(--purple-2); background: rgba(125,86,244,.14); border: 1px solid #35305A;
+  font: 600 10px var(--mono); padding: 1px 6px; border-radius: 999px; margin-left: 4px;
+}
+.token-row-revoked { opacity: .55; }
+.token-revoked-label { color: var(--t7); font: 400 11px var(--mono); }
+.token-revoke-btn {
+  border: 1px solid var(--border); background: var(--well); color: #FF9B9B;
+  font: 600 11px var(--mono); padding: 5px 10px; border-radius: 6px; cursor: pointer;
+}
+.token-revoke-btn:hover { border-color: #4a2b2b; background: rgba(255,107,107,.10); }
+.token-empty-row td { color: var(--t7); font: 400 12px var(--mono); text-align: center; padding: 18px 10px; }
+
+/* ---- Settings: Account (#75) ---- */
+.account-facts { margin: 14px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; }
+.account-facts dt { color: var(--t6); font: 400 11px var(--mono); }
+.account-facts dd { margin: 0; color: var(--t2); font: 400 13px var(--sans); }
+.account-signout-btn { margin-top: 18px; }

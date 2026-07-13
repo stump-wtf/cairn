@@ -123,11 +123,15 @@ func (s *Server) mountWeb(r chi.Router) {
 	r.Get("/auth/callback", s.handleOIDCCallback)
 	r.With(s.requireWebSession).Get("/whoami", s.handleWhoami)
 	r.With(s.requireWebSession).Get("/bin", s.handleBinPage)
-	// "Connect an agent" (#57): the actionable MCP OAuth steps (and a CLI
-	// "coming soon" block, tracker #20-#22) live behind auth like the Bin — the
-	// logged-out landing only teases the capability, it never explains how to
-	// exercise it (SPEC-0001 REQ "Connect Instructions").
-	r.With(s.requireWebSession).Get("/connect", s.handleConnectPage)
+	// Settings (issue #75): API tokens, MCP connection, CLI, and Account, all
+	// behind auth like the Bin — the logged-out landing only teases the
+	// capability, it never explains how to exercise it (SPEC-0001 REQ
+	// "Settings & Connect Instructions"). The standalone "Connect an agent"
+	// page (#57) is retired: /connect is now a permanent redirect into this
+	// page's MCP connection section, so any bookmarked/shared link still
+	// resolves.
+	r.With(s.requireWebSession).Get("/settings", s.handleSettingsPage)
+	r.Get("/connect", s.handleConnectRedirect)
 
 	// The OAuth 2.1 authorization endpoint (SPEC-0007, ADR-0004): the human
 	// login + consent screen, riding the web session surface above. Its JSON
@@ -213,38 +217,6 @@ func newLandingView(s *Server) landingView {
 		LoginPath:   s.loginRedirectPath(),
 		OIDCEnabled: s.oidc != nil,
 	}
-}
-
-// connectView is the "Connect an agent" page's view model (#57): the signed-in
-// actor + CSRF token for the shared header chrome (whoami, sign-out form,
-// matching bin.html), and the public base URL the MCP steps are built from —
-// server-computed, never hardcoded in the template, so a differently-deployed
-// instance shows its own origin.
-type connectView struct {
-	Actor     string
-	CSRFToken string
-	BaseURL   string
-}
-
-// handleConnectPage renders the copy-pasteable "Connect an agent" instructions
-// (#57): the actionable MCP OAuth steps (server URL, discovery document, the
-// three scopes, no static keys) plus a CLI "coming soon" note (0.0.2, tracker
-// #20-#22) — the cairn CLI does not exist yet, so this never fabricates working
-// install steps for it. Gated by requireWebSession like the Bin: the connect
-// steps are workspace-scoped (the discovery/scopes are the same for everyone,
-// but the affordance itself is part of the authenticated workspace chrome, not
-// the public landing).
-func (s *Server) handleConnectPage(w http.ResponseWriter, r *http.Request) {
-	p, ok := principalFrom(r.Context())
-	if !ok {
-		s.writeError(w, r, errs.ErrUnauthorized, nil)
-		return
-	}
-	vm := connectView{Actor: p.ActorID, BaseURL: s.cfg.BaseURL}
-	if c, cerr := r.Cookie(csrfCookieName); cerr == nil {
-		vm.CSRFToken = c.Value
-	}
-	s.renderWeb(w, r, "connect", vm)
 }
 
 // handleArtifactShell renders the app shell for a bare-scheme artifact at

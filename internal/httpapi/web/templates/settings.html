@@ -1,0 +1,155 @@
+{{define "settings"}}<!doctype html>
+<html lang="en">
+<head>
+{{template "doc-head" .}}
+<title>settings · cairn</title>
+<script defer src="/assets/settings.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#settings-main">Skip to content</a>
+
+<header class="app-header" role="banner">
+  <a class="brand" href="/" aria-label="cairn home">{{template "stone-logo" .}}<span class="wordmark">cairn</span></a>
+  <span class="crumb-sep" aria-hidden="true">▸</span>
+  <span class="artifact-title">settings</span>
+  <div class="header-spacer"></div>
+  <span class="whoami" title="signed in">{{.Actor}}</span>
+  <form class="logout-form" method="post" action="/logout">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <button type="submit" class="logout-btn">Sign out</button>
+  </form>
+</header>
+
+<main id="settings-main" class="bin-main settings-main" role="main" tabindex="-1">
+  <a class="connect-back" href="/bin">← back to the bin</a>
+  <h1 class="connect-h1">Settings</h1>
+  <p class="connect-lede">Your API tokens, MCP connection, CLI, and account — all in one place.</p>
+
+  <div class="settings-shell">
+    {{/* The left-nav (design: "sectioned, left-nav or stacked cards" — issue
+         #75). Plain in-page anchor links: no JS required, and each target is
+         a real landmark <section> with its own heading, so this degrades to
+         ordinary same-page navigation with zero script. */}}
+    <nav class="settings-nav" aria-label="Settings sections">
+      <a class="settings-nav-link" href="#tokens">API tokens</a>
+      <a class="settings-nav-link" href="#mcp">MCP connection</a>
+      <a class="settings-nav-link" href="#cli">CLI</a>
+      <a class="settings-nav-link" href="#account">Account</a>
+    </nav>
+
+    <div class="settings-cards">
+      <section class="settings-card" id="tokens" aria-labelledby="tokens-h">
+        <h2 id="tokens-h" class="settings-card-h">API tokens</h2>
+        <p class="settings-card-note">Mint a bearer token for a script or an agent that doesn't speak OAuth. A token acts as you within its scopes — treat it like a password.</p>
+
+        {{/* The one-time secret reveal (issue #75: "show the plaintext ONCE
+             with a copy button + a 'store it now' note"). Hidden until
+             settings.js's create-token handler populates and reveals it;
+             there is no server-rendered fallback because the secret exists
+             only in the POST /v1/tokens response body, never again. */}}
+        <div class="token-secret-card" data-token-secret hidden>
+          <p class="token-secret-warn" aria-live="polite" data-token-secret-live>⚠ Store this token now — you won't see it again.</p>
+          <div class="token-secret-row">
+            <code class="token-secret-value" data-token-secret-value></code>
+            <button type="button" class="share-copy-btn" data-token-copy aria-label="Copy new token to clipboard">copy</button>
+          </div>
+        </div>
+
+        <form class="token-form" data-token-form aria-describedby="tokens-h">
+          <div class="token-form-row">
+            <label class="login-label" for="token-name">Name</label>
+            <input class="login-input" id="token-name" name="name" type="text" maxlength="128" placeholder="e.g. laptop script" autocomplete="off" required>
+          </div>
+          <fieldset class="consent-scopes token-scopes">
+            <legend class="login-label">Scopes</legend>
+            {{range .ScopeOptions}}
+            <label class="consent-scope">
+              <input type="checkbox" name="scopes" value="{{.Value}}" checked>
+              <span>{{.Label}}</span>
+            </label>
+            {{end}}
+          </fieldset>
+          <label class="consent-scope token-agent-toggle">
+            <input type="checkbox" name="is_agent" value="1">
+            <span>This token is for an agent, not a script you run yourself</span>
+          </label>
+          <p class="token-form-error" data-token-error role="alert" hidden></p>
+          <button type="submit" class="login-btn token-create-btn">Create token</button>
+        </form>
+
+        <table class="token-table" data-token-table>
+          <caption class="sr-only">Your API tokens</caption>
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Scopes</th>
+              <th scope="col">Created</th>
+              <th scope="col">Last used</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody data-token-rows>
+            {{range .Tokens}}{{template "token-row" .}}{{else}}<tr class="token-empty-row" data-token-empty><td colspan="5">No tokens yet.</td></tr>{{end}}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="settings-card" id="mcp" aria-labelledby="mcp-h">
+        <h2 id="mcp-h" class="settings-card-h"><span class="connect-h2-glyph" aria-hidden="true">◆</span> MCP connection <span class="connect-badge connect-badge-live">available now</span></h2>
+        <p class="settings-card-note">Give Claude (or any MCP-speaking agent) read/write access to your Cairn workspace — the same auth as you, scoped and revocable.</p>
+        <p class="connect-note">It's OAuth 2.1 (code + PKCE) — no static API keys to copy around.</p>
+        <ol class="connect-steps">
+          <li>Add <code class="connect-code">{{.BaseURL}}</code> as an MCP server in your client (e.g. Claude Desktop, Claude Code).</li>
+          <li>Your client discovers the OAuth authorization server at <code class="connect-code">{{.BaseURL}}/.well-known/oauth-authorization-server</code>.</li>
+          <li>You approve the three scopes once, via Pocket ID:
+            <ul class="connect-scope-list">
+              {{range .ScopeOptions}}<li><code class="connect-code">{{.Value}}</code> — {{.Label}}</li>{{end}}
+            </ul>
+          </li>
+          <li>The client talks to <code class="connect-code">{{.BaseURL}}/mcp</code> — reading, pushing, commenting, and reacting as you.</li>
+        </ol>
+      </section>
+
+      <section class="settings-card" id="cli" aria-labelledby="cli-h">
+        <h2 id="cli-h" class="settings-card-h"><span class="connect-h2-glyph" aria-hidden="true">&gt;_</span> CLI <span class="connect-badge connect-badge-soon">coming in v0.0.3</span></h2>
+        <p class="connect-note">The <code class="connect-code">cairn</code> CLI is in progress — tracker #20–#22. The shape it's landing in:</p>
+        <ul class="connect-cli-preview">
+          <li><code class="connect-code">cairn login</code> <span class="connect-cli-note">authorize once over MCP OAuth — same auth as your agent</span></li>
+          <li><code class="connect-code">cat report.md | cairn</code> <span class="connect-cli-note">pipe or pass a file in, get a shareable link back</span></li>
+        </ul>
+        <p class="connect-note connect-note-muted">Not installable yet — no install command exists until v0.0.3 ships. Check back once #20–#22 close.</p>
+      </section>
+
+      <section class="settings-card" id="account" aria-labelledby="account-h">
+        <h2 id="account-h" class="settings-card-h">Account</h2>
+        <dl class="account-facts">
+          <dt>Signed in as</dt>
+          <dd>{{.Actor}}</dd>
+          <dt>Sign-in method</dt>
+          <dd>{{.AuthMethod}}</dd>
+        </dl>
+        <form class="logout-form" method="post" action="/logout">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <button type="submit" class="login-btn account-signout-btn">Sign out</button>
+        </form>
+      </section>
+    </div>
+  </div>
+</main>
+
+{{template "footer" .}}
+</body>
+</html>{{end}}
+
+{{/* One token list row, shared by the server-rendered initial table and
+     settings.js's create/revoke DOM updates (built via createElement, not
+     this template — Go templates don't run client-side — but the row SHAPE
+     mirrors this partial exactly so no visual seam appears between a
+     page-load row and a freshly-minted one). */}}
+{{define "token-row"}}<tr class="token-row{{if .Revoked}} token-row-revoked{{end}}" id="token-{{.ID}}" data-token-id="{{.ID}}">
+  <td class="token-cell-name">{{.Name}}{{if .IsAgent}} <span class="token-agent-badge" title="minted for an agent">◆ agent</span>{{end}}</td>
+  <td class="token-cell-scopes"><code>{{.ScopeLabel}}</code></td>
+  <td class="token-cell-created">{{.Created}}</td>
+  <td class="token-cell-lastused">{{.LastUsed}}</td>
+  <td class="token-cell-action">{{if .Revoked}}<span class="token-revoked-label">revoked {{.RevokedAt}}</span>{{else}}<button type="button" class="token-revoke-btn" data-token-revoke data-token-id="{{.ID}}" data-token-name="{{.Name}}">Revoke</button>{{end}}</td>
+</tr>{{end}}
