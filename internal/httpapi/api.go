@@ -14,6 +14,7 @@ import (
 	"github.com/joestump/cairn/internal/annotation"
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/oauth"
+	"github.com/joestump/cairn/internal/pat"
 	"github.com/joestump/cairn/internal/session"
 	"github.com/joestump/cairn/internal/sharetype"
 	"github.com/joestump/cairn/internal/store"
@@ -112,6 +113,11 @@ type Server struct {
 	// limiter. Nil on storeless unit wirings (the AS persists in Postgres).
 	oauth        *oauth.Service
 	oauthLimiter *rateLimiter
+	// pat is the personal-access-token core (issue #74, ADR-0004 token seam):
+	// the in-process service backing POST/GET/DELETE /v1/tokens and the
+	// PATAuthenticator bearer surface. Nil on storeless unit wirings, like
+	// oauth above.
+	pat *pat.Service
 	// mcpSrv is the MCP tool/resource server (SPEC-0007), built once by
 	// mountMCP and shared by every /mcp request so server->client
 	// notifications (e.g. resources/updated) can reach every connected
@@ -168,6 +174,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		traj     *trajectory.Service
 		sessions session.Store
 		oauthSvc *oauth.Service
+		patSvc   *pat.Service
 	)
 	if st != nil {
 		annot = annotation.NewService(st.Pool(), reg)
@@ -184,6 +191,10 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 			AccessTTL:  cfg.AccessTokenTTL,
 			RefreshTTL: cfg.RefreshTokenTTL,
 		})
+		// Personal access tokens (issue #74) are a peer in-process core too: a
+		// human-minted alternative to CAIRN_API_TOKENS, persisted in the same
+		// Postgres pool.
+		patSvc = pat.NewService(st.Pool())
 	}
 	// Auth seam (ADR-0004): a caller-supplied Authenticator wins; otherwise build
 	// the bearer surface from configured static tokens (the verifying
@@ -194,6 +205,9 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	// web binary authenticates browser sessions AND verified bearer tokens.
 	if auth == nil {
 		bearers := chainAuthenticator{NewTokenAuthenticator(cfg.APITokens)}
+		if patSvc != nil {
+			bearers = append(bearers, &PATAuthenticator{svc: patSvc})
+		}
 		if oauthSvc != nil {
 			bearers = append(bearers, &OAuthAuthenticator{svc: oauthSvc})
 		}
@@ -223,6 +237,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		secureCookies: strings.HasPrefix(cfg.BaseURL, "https://"),
 		oauth:         oauthSvc,
 		oauthLimiter:  newRateLimiter(cfg.OAuthRatePerSecond, cfg.OAuthRateBurst),
+		pat:           patSvc,
 	}
 }
 
@@ -283,6 +298,17 @@ func (s *Server) mountAPI(r chi.Router) {
 		// the write-capability gate; requireHuman adds the human-only gate on top.
 		r.With(s.requireAuth, s.requireScope(scopeArtifactsWrite), s.requireHuman, s.enforceCSRF).Delete("/artifacts/{id}", s.handleDelete)
 		r.With(s.requireAuth).Get("/bin", s.handleBin)
+
+		// Personal access tokens (issue #74, ADR-0004 token seam): the human
+		// Settings surface for minting/listing/revoking PATs. Management is
+		// session/OIDC-authenticated only (requireHumanSession refuses every
+		// bearer caller, including a PAT itself) and CSRF-guarded on writes,
+		// per issue #74 ("session/OIDC-authenticated, CSRF-guarded"). Once
+		// minted, the token authenticates on /v1 via PATAuthenticator in the
+		// bearer chain (api.go New), not through this route group.
+		r.With(s.requireHumanSession).Get("/tokens", s.handleListTokens)
+		r.With(s.requireHumanSession, s.enforceCSRF).Post("/tokens", s.handleCreateToken)
+		r.With(s.requireHumanSession, s.enforceCSRF).Delete("/tokens/{id}", s.handleRevokeToken)
 
 		// Link-capability reads: a valid id grants read; unknown/expired ids
 		// return a uniform 404 (ADR-0007).
