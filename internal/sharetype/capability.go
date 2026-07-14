@@ -117,6 +117,32 @@ func (r *Registry) ComposedViewerFor(key artifact.ShareType) (ComposedViewer, bo
 	return v, ok
 }
 
+// StreamViewer is the optional capability a share type implements when its
+// body is neither a single content-addressed blob nor a bundle's ordered
+// member set, but a live, continuously-updating log reconstructed from its
+// own service state — a webhook's captured-request ring buffer (ADR-0010,
+// SPEC-0005). Unlike ComposedViewer's static member set, a stream viewer's
+// content keeps growing after the artifact is created, fanned out over SSE
+// (ADR-0012); the capability itself carries only the anchor a single
+// streamed item's whole-item reaction attaches to (webhook_request),
+// mirroring ComposedViewer.MemberAnchor's shape. Enumerating and rendering
+// stream items is the type's own service's job in httpapi (s.hook), exactly
+// as the bundle/trajectory viewers resolve their own state through their own
+// services rather than through a single-body seam (issue #86).
+type StreamViewer interface {
+	// ItemAnchor is the anchor_type a whole-item reaction attaches to.
+	ItemAnchor() Anchor
+}
+
+// StreamViewerFor resolves key and returns its StreamViewer capability, or
+// (nil, false) when the type does not render a live stream. Total, like
+// Resolve, so httpapi picks the webhook viewer path off registry data — never
+// a switch on the type key.
+func (r *Registry) StreamViewerFor(key artifact.ShareType) (StreamViewer, bool) {
+	v, ok := r.Resolve(key).(StreamViewer)
+	return v, ok
+}
+
 // PanelField is one label/value row a type contributes to the metadata panel's
 // type-specific section (a file's checksum, a trajectory's run stats, an
 // image's pin count). Core panel sections — provenance, access, expiry,

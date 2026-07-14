@@ -61,7 +61,13 @@ func renderShellHTML(t *testing.T, s *Server, a *artifact.Artifact) string {
 func TestShellChromeIsIdenticalAcrossTypes(t *testing.T) {
 	s := newWebServer(t)
 
-	// The chrome fragments every type must present, verbatim.
+	// The chrome fragments every type must present, verbatim. `>Comments `
+	// (the panel's Comments section heading) is asserted separately below,
+	// per type: webhook is the one registered type whose registry entry
+	// declares NO comment anchors at all (SPEC-0006 REQ "Webhook
+	// Reaction-Only Asymmetry"), so its shell hides the whole Comments
+	// section — CommentsSupported gates it off the SAME registry data this
+	// invariant is about, never a type-key switch (issue #86).
 	chrome := []string{
 		`role="banner"`,       // banner landmark (header)
 		`class="url-control"`, // exactly one URL control
@@ -72,7 +78,6 @@ func TestShellChromeIsIdenticalAcrossTypes(t *testing.T) {
 		`<main`,                             // main landmark
 		`aria-label="Details and comments"`, // panel
 		`>Provenance<`,                      // panel provenance section
-		`>Comments `,                        // panel comments section
 	}
 
 	types := []artifact.ShareType{
@@ -88,6 +93,13 @@ func TestShellChromeIsIdenticalAcrossTypes(t *testing.T) {
 			if !strings.Contains(html, frag) {
 				t.Errorf("share type %q: shell missing required chrome fragment %q", tp, frag)
 			}
+		}
+		if tp == sharetype.KeyWebhook {
+			if strings.Contains(html, `>Comments `) {
+				t.Errorf("share type %q: shell must expose NO comment affordance (SPEC-0006 Webhook Reaction-Only Asymmetry), but found the Comments section", tp)
+			}
+		} else if !strings.Contains(html, `>Comments `) {
+			t.Errorf("share type %q: shell missing required chrome fragment %q", tp, `>Comments `)
 		}
 		// Exactly one URL control across every type.
 		if n := strings.Count(html, `class="url-control"`); n != 1 {

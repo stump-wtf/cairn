@@ -4,7 +4,7 @@
 {{template "doc-head" .}}
 <title>{{.Title}} · cairn</title>
 </head>
-<body x-data="shell" data-link="{{.WebURL}}" data-mcp="{{.MCPHandle}}">
+<body x-data="shell" data-link="{{.WebURL}}" data-mcp="{{.MCPHandle}}" data-authenticated="{{if .Authenticated}}1{{else}}0{{end}}">
 <a class="skip-link" href="#body">Skip to content</a>
 
 <header class="app-header" role="banner">
@@ -36,9 +36,11 @@
 {{template "share-dialog" .ShareDialog}}
 
 <main class="shell-grid" x-bind:class="panelClass">
-  <article id="body" class="body-slot{{if .Bundle}} body-slot-bundle{{end}}" tabindex="-1">
+  <article id="body" class="body-slot{{if .Bundle}} body-slot-bundle{{end}}{{if .Hook}} body-slot-hook{{end}}" tabindex="-1">
     {{if .Bundle}}
     {{template "bundle-viewer" .Bundle}}
+    {{else if .Hook}}
+    {{template "hook-viewer" .Hook}}
     {{else if .HasRichBody}}
     {{.Body}}
     {{else if .FileCard}}
@@ -90,6 +92,27 @@
     </section>
     {{end}}
 
+    {{if .Hook}}
+    <section class="panel-section" aria-labelledby="hook-h">
+      <h2 class="panel-h" id="hook-h">Endpoint</h2>
+      <dl class="facts">
+        <dt>ingress</dt><dd class="mono" data-hook-ingress>{{.Hook.IngressURL}}</dd>
+        <dt>capacity</dt><dd><span data-hook-total>{{.Hook.TotalCount}}</span> / {{.Hook.RequestCap}} requests</dd>
+      </dl>
+      {{if .Hook.StatusMix}}
+      <h3 class="panel-h hook-mix-h" id="hook-mix-h">Status mix</h3>
+      <div class="hook-mix-bar" role="img" aria-label="Response status distribution" data-hook-mix-bar>
+        {{range .Hook.StatusMix}}<span class="hook-mix-seg" data-class="{{.Class}}" data-pct="{{.Pct}}"></span>{{end}}
+      </div>
+      <ul class="hook-mix-legend" data-hook-mix-legend>
+        {{range .Hook.StatusMix}}<li data-class="{{.Class}}"><span class="swatch" data-class="{{.Class}}" aria-hidden="true"></span>{{.Class}} <span class="hook-mix-count">{{.Count}}</span></li>{{end}}
+      </ul>
+      {{end}}
+      <div class="hook-endpoint-react">{{template "reaction-cluster" .Hook.React}}</div>
+    </section>
+    {{end}}
+
+    {{if .CommentsSupported}}
     <section class="panel-section" aria-labelledby="comments-h">
       <h2 class="panel-h" id="comments-h">Comments <span class="count">{{.CommentCount}}</span></h2>
       <div class="comments">
@@ -111,6 +134,7 @@
         {{end}}
       </div>
     </section>
+    {{end}}
   </aside>
 </main>
 

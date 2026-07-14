@@ -1,0 +1,65 @@
+{{/* The webhook inspector viewer (SPEC-0005 REQ "Inspector Viewer", ADR-0011,
+issue #86): the live request list, newest prepended, each row a native
+<details> so expand/inspect and keyboard operation need no JS (WCAG 2.1.1,
+mirroring the trajectory activity stream's turn rows). data-hook-viewer /
+data-hook-id / data-hook-live are hook.js's entry point for wiring reactions,
+lazy body fetch, and the live SSE tail (mirroring trajectory.js's `.waterfall`
+data-run-id/data-live entry point). The whole list — including every
+captured request's method/path/status/headers/body — is present with no
+JavaScript; only the live tail and reaction writes are progressive
+enhancement (SPEC-0005 "server-rendered request list readable with JS off;
+live tail layers on"). */}}
+{{define "hook-viewer"}}<div class="hook-viewer" data-hook-viewer data-hook-id="{{.ID}}" data-hook-live="{{if .Live}}1{{else}}0{{end}}">
+  <p class="sr-only" aria-live="polite" data-hook-live-region></p>
+  {{if .Empty}}
+  {{/* Minimal, non-interactive empty state — see hook_view.go's doc comment
+  reconciling issue #86's checklist against SPEC-0005 REQ "v1 Non-Goals Are
+  Absent" (no first-request onboarding AFFORDANCE, just graceful zero-state
+  text). Removed by hook.js the moment the first live request arrives. */}}
+  <div class="hook-empty" data-hook-empty>
+    <p class="hook-empty-title">No requests captured yet.</p>
+    <p class="hook-empty-note">Send any HTTP request to <code class="hook-empty-url">{{.IngressURL}}</code> — it appears here the moment it lands.</p>
+  </div>
+  {{end}}
+  <ul class="hook-list" data-hook-list aria-label="Captured requests">
+    {{range .Requests}}{{template "hook-request-row" .}}{{end}}
+  </ul>
+</div>{{end}}
+
+{{/* One captured request: a summary line (method · path · status · time ·
+size — every one of these is visible TEXT, not a color-only cue, SPEC-0005
+Accessibility REQ "Status is not color-only") that expands to headers, the
+render-time-highlighted (or, for a non-JSON/oversize body, escaped-plain or
+lazily-fetched) body, and a reaction cluster — no comment affordance at all
+(SPEC-0005 REQ "Webhook Reaction-Only Asymmetry": "exposing no comment-thread
+affordance"). hook.js builds the identical DOM shape (element-by-element, no
+innerHTML of untrusted fields) for a live-streamed row. */}}
+{{define "hook-request-row"}}<li>
+<details class="hook-row" data-hook-row data-seq="{{.Seq}}" data-status="{{.Status}}">
+  <summary class="hook-row-summary">
+    <span class="hook-method" data-method="{{.Method}}">{{.Method}}</span>
+    <span class="hook-path">{{.Path}}{{if .Query}}?{{.Query}}{{end}}</span>
+    <span class="hook-status" data-class="{{.StatusClass}}">{{.Status}}</span>
+    <span class="hook-row-meta">{{.ReceivedAt}}{{if .BodySize}} · {{.BodySize}}{{end}}</span>
+  </summary>
+  <div class="hook-row-detail">
+    {{if .Headers}}
+    <h4 class="hook-detail-h">Headers</h4>
+    <dl class="hook-headers">
+      {{range .Headers}}<dt>{{.Name}}</dt><dd>{{.Value}}</dd>{{end}}
+    </dl>
+    {{end}}
+    {{if .HasBody}}
+    <h4 class="hook-detail-h">Body{{if .Truncated}} <span class="hook-body-truncated">· truncated</span>{{end}}</h4>
+    {{if .BodyLazy}}
+    <pre class="hook-body-pre" data-hook-body-lazy data-body-url="{{.BodyURL}}"><button type="button" class="hook-body-load" data-hook-body-load>Load body ↧</button></pre>
+    {{else}}
+    <pre class="hook-body-pre chroma-chroma">{{.BodyHTML}}</pre>
+    {{end}}
+    {{end}}
+    <div class="hook-row-actions">
+      {{template "reaction-cluster" .React}}
+    </div>
+  </div>
+</details>
+</li>{{end}}

@@ -103,6 +103,23 @@ type bundleShareType struct {
 
 func (bundleShareType) MemberAnchor() Anchor { return AnchorBundleFile }
 
+// hookShareType composes prefixedType (the bare web URL + `hook/` MCP prefix,
+// ADR-0005) with the StreamViewer capability: a webhook endpoint's body is its
+// live captured-request ring buffer (ADR-0010), not a content-addressed blob
+// or a bundle's static member set, so the shell resolves it through
+// StreamViewerFor (never a switch on the type key) and renders it by
+// delegating to the webhook service the web server already holds — exactly as
+// bundleShareType/ComposedViewer delegates to the store and the trajectory
+// viewer delegates to the trajectory service (issue #86). ItemAnchor names
+// the anchor a single captured request's whole-item reaction attaches to
+// (webhook_request), matching the SPEC-0006 capability matrix entry declared
+// on webhookType's anchors below.
+type hookShareType struct {
+	prefixedType
+}
+
+func (hookShareType) ItemAnchor() Anchor { return AnchorWebhookRequest }
+
 // imageShareType composes simpleType with three capabilities (SPEC-0003 REQ
 // "Image Viewer", issue #69): BodyViewer (the image + pin-overlay +
 // react-below scaffolding, rendered by internal/imageview — mirroring
@@ -334,7 +351,7 @@ var (
 	// while staying reactable; the asymmetry is registry data, not special-cased
 	// code (SPEC-0006 REQ "Webhook Reaction-Only Asymmetry"). The MCP handle
 	// carries the legible hook/ prefix; the web URL stays bare (ADR-0005).
-	webhookType = prefixedType{
+	webhookType = hookShareType{prefixedType{
 		simpleType{
 			key:     KeyWebhook,
 			badge:   "HK",
@@ -345,7 +362,7 @@ var (
 			},
 		},
 		URLPrefix{MCP: "hook"},
-	}
+	}}
 	// Trajectory: reactions pin moments (turns, tool calls); comment threads
 	// attach to spans and text selections (SPEC-0006 matrix). Both the web URL
 	// and the MCP handle carry the run/ prefix (ADR-0005).

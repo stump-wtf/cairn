@@ -355,6 +355,7 @@ type shellView struct {
 	Body          template.HTML
 	HasRichBody   bool          // a registered BodyViewer produced the body
 	Bundle        *bundleView   // the composed member rail + active pane (bundle)
+	Hook          *hookView     // the live captured-request inspector (webhook, issue #86)
 	FileCard      *fileCardView // the generic-file floor when no viewer resolved
 	Provenance    provenanceLine
 	PanelFields   []sharetype.PanelField // type-specific (registry MetadataPanel)
@@ -363,6 +364,13 @@ type shellView struct {
 	ReactionCount int
 	CommentCount  int
 	PinCount      int
+	// CommentsSupported gates the whole Comments panel section (heading, thread,
+	// composer): registry data (AllowsAnchor against the whole-artifact anchor),
+	// never a type-key switch, so a type declaring no comment anchors at all —
+	// webhook, SPEC-0006 REQ "Webhook Reaction-Only Asymmetry" — renders no
+	// comment affordance whatsoever rather than an empty thread inviting a post
+	// the write-time gate would only then refuse.
+	CommentsSupported bool
 	// Authenticated reports whether the viewer holds a session (or token), which
 	// gates the comment composer; Actor is that viewer's id. An anonymous link
 	// read leaves both zero and sees the read-only thread.
@@ -479,6 +487,12 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activ
 		ReactionCount: a.ReactionCount,
 		CommentCount:  a.CommentCount,
 		PinCount:      a.PinCount,
+		// Registry data, not a type-key switch: a type declaring no comment
+		// anchors at all (webhook) hides the whole Comments section rather than
+		// showing an always-empty thread inviting a post the write-time gate
+		// (annotation.Validate) would only then refuse (SPEC-0006 REQ "Webhook
+		// Reaction-Only Asymmetry").
+		CommentsSupported: s.reg.AllowsAnchor(a.ShareType, sharetype.AnchorArtifact, sharetype.KindComment),
 		Provenance: provenanceLine{
 			Actor:      a.Provenance.ActorID,
 			OnBehalfOf: a.Provenance.OnBehalfOf,
@@ -516,9 +530,12 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activ
 	//   1. a ComposedViewer type (a bundle) renders its member file rail + the
 	//      selected member's pane, each member delegated back through the registry
 	//      to its own viewer (SPEC-0003 REQ "Bundle Viewer");
-	//   2. a BodyViewer type renders its own (already-escaped) fragment from the
+	//   2. a StreamViewer type (webhook) renders its live captured-request
+	//      inspector by delegating to the webhook service, exactly as the bundle
+	//      path delegates to the store (SPEC-0005 REQ "Inspector Viewer", #86);
+	//   3. a BodyViewer type renders its own (already-escaped) fragment from the
 	//      streamed body (markdown, #39);
-	//   3. every other type — and any viewer that errors — resolves to the
+	//   4. every other type — and any viewer that errors — resolves to the
 	//      generic-file card, so EVERY share type resolves to some viewer (#12).
 	if _, ok := s.reg.ComposedViewerFor(a.ShareType); ok && s.store != nil {
 		if bv := s.buildBundleView(ctx, a, activeFile, rawComments); bv != nil {
@@ -526,6 +543,13 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activ
 		}
 	}
 	if vm.Bundle == nil {
+		if _, ok := s.reg.StreamViewerFor(a.ShareType); ok && s.hook != nil {
+			if hv := s.buildHookView(ctx, a); hv != nil {
+				vm.Hook = hv
+			}
+		}
+	}
+	if vm.Bundle == nil && vm.Hook == nil {
 		if viewer, ok := s.reg.BodyViewerFor(a.ShareType); ok && a.BodySHA256 != "" && s.store != nil {
 			if rc, _, err := s.store.OpenBody(ctx, a.PublicID); err == nil {
 				defer rc.Close()
@@ -538,7 +562,7 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activ
 			}
 		}
 	}
-	if !vm.HasRichBody && vm.Bundle == nil {
+	if !vm.HasRichBody && vm.Bundle == nil && vm.Hook == nil {
 		vm.FileCard = fileCard(a, vm.Badge)
 	}
 	return vm
