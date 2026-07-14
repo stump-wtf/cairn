@@ -98,12 +98,8 @@ func (s *Store) DeleteArtifact(ctx context.Context, publicID, ownerID string) er
 	// delayed reaper / lifecycle backstop (#32) so a concurrent dedup'd upload that
 	// skipped re-upload is never stranded (see the method doc).
 	for sha := range candidateSHAs {
-		var referenced bool
-		if err := tx.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM artifacts WHERE body_sha256 = $1)
-			     OR EXISTS(SELECT 1 FROM bundle_members WHERE blob_sha256 = $1)`,
-			sha,
-		).Scan(&referenced); err != nil {
+		referenced, err := blobStillReferenced(ctx, tx, sha)
+		if err != nil {
 			return fmt.Errorf("delete: refcount %s: %w", sha, err)
 		}
 		if referenced {

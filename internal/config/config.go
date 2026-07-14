@@ -41,6 +41,24 @@ type Config struct {
 	// one explicitly (ADR-0007 short default TTL).
 	DefaultTTL time.Duration
 
+	// Retention reaper (SPEC-0009 REQ "Hard Delete on Expiry via
+	// Reference-Counted Reaper", REQ "Concurrency Safety (Expiry Reaper)").
+	// ReapInterval is the ticker period of the background reaper worker in
+	// cairnd; ReapBatch bounds each phase's per-cycle work; ReapObjectGrace is
+	// the minimum age a blobs/ object must reach before the orphan-object scan
+	// (the no-DB-row backstop) may delete it — defense-in-depth around the brief
+	// window between a create promoting its object and committing its blob row.
+	ReapInterval    time.Duration
+	ReapBatch       int
+	ReapObjectGrace time.Duration
+
+	// StagingLifecycleTTL sets the S3 lifecycle expiration on the staging/
+	// prefix so abandoned upload debris is reaped even if a process crashed
+	// mid-upload. It is scoped to staging/ ONLY and MUST NEVER be applied to the
+	// committed blobs/ prefix (content-addressed dedup means an object's age has
+	// no relationship to its longest live reference — issue #93 §1, SPEC-0009).
+	StagingLifecycleTTL time.Duration
+
 	// BaseURL is the public origin used to build short URLs (ADR-0005),
 	// e.g. https://cairn.sh.
 	BaseURL string
@@ -140,6 +158,20 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if c.DefaultTTL, err = envDuration("CAIRN_DEFAULT_TTL", 7*24*time.Hour); err != nil {
+		return nil, err
+	}
+	if c.ReapInterval, err = envDuration("CAIRN_REAP_INTERVAL", time.Hour); err != nil {
+		return nil, err
+	}
+	var reapBatch int64
+	if reapBatch, err = envInt64("CAIRN_REAP_BATCH", 500); err != nil {
+		return nil, err
+	}
+	c.ReapBatch = int(reapBatch)
+	if c.ReapObjectGrace, err = envDuration("CAIRN_REAP_OBJECT_GRACE", time.Hour); err != nil {
+		return nil, err
+	}
+	if c.StagingLifecycleTTL, err = envDuration("CAIRN_STAGING_LIFECYCLE_TTL", 7*24*time.Hour); err != nil {
 		return nil, err
 	}
 	if c.RatePerSecond, err = envFloat("CAIRN_RATE_PER_SECOND", 20); err != nil {

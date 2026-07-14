@@ -65,7 +65,7 @@ func (in CreateBundleInput) validate() error {
 type stagedMember struct {
 	ordinal int
 	name    string
-	blob    stagedBlob
+	blob    *StagedBlob
 }
 
 // CreateBundle streams every member to storage (each hashed, size-limited, and
@@ -83,46 +83,27 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	}
 
 	// Stream every member to a staging object first. Each member's staging object
-	// is transient on EVERY path: the new-blob path promotes it by
-	// Copy(staging→final) and the dedup-hit path never promotes it at all, so
-	// once it has served its purpose it is pure debris regardless of whether the
-	// metadata commit succeeds. Remove each unconditionally on the way out. A
-	// committed-gated cleanup leaked one orphan staging/<rand> object per member
-	// per successful bundle (staging keys aren't in `blobs`, so the SPEC-0009
-	// reaper can never reclaim them). WithoutCancel so cleanup still runs when the
-	// request context is cancelled after commit.
+	// is transient on EVERY path (committed OR rolled back); reclaim each
+	// unconditionally on the way out so no staging/<rand> orphan survives.
+	// Promotion to the content-addressed key is deferred to CommitBlob, under the
+	// blob-row lock, so it serializes against the SPEC-0009 reaper (§2).
 	//
 	// Governing: SPEC-0002 REQ "Content Addressing and Blobs".
 	staged := make([]stagedMember, 0, len(in.Members))
 	defer func() {
 		for _, m := range staged {
-			_ = s.obj.Remove(context.WithoutCancel(ctx), m.blob.stagingKey)
+			m.blob.Discard(ctx, s.obj)
 		}
 	}()
 
 	var totalSize int64
 	for i, m := range in.Members {
-		sb, err := streamBlob(ctx, s.obj, m.Body, s.maxBytes, m.DeclaredMediaType)
+		sb, err := StageBlob(ctx, s.obj, m.Body, s.maxBytes, m.DeclaredMediaType)
 		if err != nil {
 			return nil, fmt.Errorf("bundle: stream member %q: %w", m.Name, err)
 		}
 		staged = append(staged, stagedMember{ordinal: i, name: m.Name, blob: sb})
-		totalSize += sb.size
-	}
-
-	// Promote each distinct member blob to its content-addressed key unless the
-	// object already exists (object-level dedup).
-	for _, m := range staged {
-		finalKey := shardedKey(m.blob.sha256)
-		exists, err := s.obj.Stat(ctx, finalKey)
-		if err != nil {
-			return nil, fmt.Errorf("bundle: stat blob %s: %w", m.blob.sha256, err)
-		}
-		if !exists {
-			if err := s.obj.Copy(ctx, m.blob.stagingKey, finalKey); err != nil {
-				return nil, fmt.Errorf("bundle: promote blob %s: %w", m.blob.sha256, err)
-			}
-		}
+		totalSize += sb.Size
 	}
 
 	art := &artifact.Artifact{
@@ -143,13 +124,8 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	for _, m := range staged {
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO blobs (sha256, size_bytes, media_type, storage_key)
-			 VALUES ($1, $2, $3, $4)
-			 ON CONFLICT (sha256) DO NOTHING`,
-			m.blob.sha256, m.blob.size, m.blob.mediaType, shardedKey(m.blob.sha256),
-		); err != nil {
-			return nil, fmt.Errorf("bundle: upsert blob %s: %w", m.blob.sha256, err)
+		if err := CommitBlob(ctx, tx, s.obj, m.blob); err != nil {
+			return nil, fmt.Errorf("bundle: %w", err)
 		}
 	}
 
@@ -174,7 +150,7 @@ func insertBundleMember(ctx context.Context, tx pgx.Tx, bundleID int64, m staged
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO bundle_members (bundle_id, ordinal, name, blob_sha256, media_type, size_bytes)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		bundleID, m.ordinal, m.name, m.blob.sha256, m.blob.mediaType, m.blob.size,
+		bundleID, m.ordinal, m.name, m.blob.SHA256, m.blob.MediaType, m.blob.Size,
 	); err != nil {
 		return fmt.Errorf("bundle: insert member %q: %w", m.name, err)
 	}

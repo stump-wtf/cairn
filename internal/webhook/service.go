@@ -141,21 +141,32 @@ func (s *Service) CreateEndpoint(ctx context.Context, in EndpointInput) (*Endpoi
 }
 
 // spilled holds a captured body's disposition after the inline-vs-blob
-// decision (mirrors internal/trajectory.spilled).
+// decision (mirrors internal/trajectory.spilled). When staged is non-nil the
+// body spilled to a content-addressed blob that is streamed to a staging object
+// but NOT yet promoted or registered — the caller finalizes it with
+// store.CommitBlob under the blob-row lock and Discards the staging object on
+// every path (the reaper-safe two-phase blob write).
 type spilled struct {
 	inline    []byte
-	refSHA    string
-	refMedia  string
-	refKey    string
+	staged    *store.StagedBlob
 	size      int64
 	truncated bool
 }
 
+// refSHA is the captured body's content hash, or "" when the body was inlined or
+// empty (nothing spilled to a blob).
+func (d spilled) refSHA() string {
+	if d.staged == nil {
+		return ""
+	}
+	return d.staged.SHA256
+}
+
 // spillBody decides whether a captured body stays inline or spills to a
-// content-addressed blob, writing an oversized body to object storage BEFORE
-// the transaction opens (mirroring the trajectory span-output and artifact
-// create paths). An object write that outlives a later transaction rollback
-// orphans only a GC-collectable blob (ADR-0008 reaper).
+// content-addressed blob. An oversized body is streamed to a staging object here
+// (before the transaction); the caller promotes and registers it via
+// store.CommitBlob under the blob-row lock so the write serializes against the
+// SPEC-0009 reaper, and Discards the staging object on every path (ADR-0008).
 func (s *Service) spillBody(ctx context.Context, body []byte, declaredMedia string) (spilled, error) {
 	size := int64(len(body))
 	if size > s.maxBodyBytes {
@@ -169,11 +180,11 @@ func (s *Service) spillBody(ctx context.Context, body []byte, declaredMedia stri
 		copy(cp, body)
 		return spilled{inline: cp, size: size}, nil
 	}
-	res, err := store.PutBlob(ctx, s.obj, bytes.NewReader(body), s.maxBodyBytes, declaredMedia)
+	staged, err := store.StageBlob(ctx, s.obj, bytes.NewReader(body), s.maxBodyBytes, declaredMedia)
 	if err != nil {
 		return spilled{}, fmt.Errorf("webhook: spill captured body: %w", err)
 	}
-	return spilled{refSHA: res.SHA256, refMedia: res.MediaType, refKey: res.StorageKey, size: res.Size}, nil
+	return spilled{staged: staged, size: staged.Size, truncated: false}, nil
 }
 
 // Capture records one accepted inbound request against an endpoint: it
@@ -197,6 +208,9 @@ func (s *Service) Capture(ctx context.Context, publicID string, in CaptureInput)
 	if err != nil {
 		return nil, err
 	}
+	// Reclaim the staging object on every path (committed OR rolled back) so no
+	// staging/<rand> orphan survives (ADR-0008 / SPEC-0002 content addressing).
+	defer d.staged.Discard(ctx, s.obj)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -228,13 +242,11 @@ func (s *Service) Capture(ctx context.Context, publicID string, in CaptureInput)
 		return nil, fmt.Errorf("webhook: lock endpoint %s: %w", publicID, err)
 	}
 
-	if d.refSHA != "" {
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO blobs (sha256, size_bytes, media_type, storage_key)
-			 VALUES ($1, $2, $3, $4) ON CONFLICT (sha256) DO NOTHING`,
-			d.refSHA, d.size, d.refMedia, d.refKey,
-		); err != nil {
-			return nil, fmt.Errorf("webhook: upsert captured body blob %s: %w", d.refSHA, err)
+	if d.staged != nil {
+		// Register + promote the captured-body blob under its row lock, so this
+		// write serializes against the reaper's orphan sweep (ADR-0008 / SPEC-0009).
+		if err := store.CommitBlob(ctx, tx, s.obj, d.staged); err != nil {
+			return nil, fmt.Errorf("webhook: %w", err)
 		}
 	}
 
@@ -253,7 +265,7 @@ func (s *Service) Capture(ctx context.Context, publicID string, in CaptureInput)
 			 content_type, body_size, body_inline, body_ref_sha256, body_truncated)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		hookID, seq, receivedAt, in.Method, in.Path, in.Query, headersJSON, in.Status,
-		in.ContentType, d.size, d.inline, nullString(d.refSHA), d.truncated,
+		in.ContentType, d.size, d.inline, nullString(d.refSHA()), d.truncated,
 	); err != nil {
 		return nil, fmt.Errorf("webhook: insert captured request: %w", err)
 	}
@@ -284,8 +296,8 @@ func (s *Service) Capture(ctx context.Context, publicID string, in CaptureInput)
 	if d.inline != nil {
 		req.Inline = d.inline
 	}
-	if d.refSHA != "" {
-		req.Ref = &BodyRef{SHA256: d.refSHA, Size: d.size, Truncated: d.truncated}
+	if d.refSHA() != "" {
+		req.Ref = &BodyRef{SHA256: d.refSHA(), Size: d.size, Truncated: d.truncated}
 	}
 
 	// Fan the durably-committed capture out to live subscribers (browsers over

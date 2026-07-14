@@ -72,42 +72,25 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	}
 
 	// 1. Stream the body to a staging object: compute SHA-256 incrementally
-	//    and enforce the size limit as bytes arrive.
-	staged, err := streamBlob(ctx, s.obj, in.Body, s.maxBytes, in.DeclaredMediaType)
+	//    and enforce the size limit as bytes arrive. The object is NOT promoted
+	//    to its content-addressed key yet — that happens in CommitBlob under the
+	//    blob-row lock so the promotion is serialized against the reaper (§2 of
+	//    the SPEC-0009 retention design).
+	staged, err := StageBlob(ctx, s.obj, in.Body, s.maxBytes, in.DeclaredMediaType)
 	if err != nil {
 		return nil, fmt.Errorf("create: stream body: %w", err)
 	}
-	// The staging object is transient on EVERY path: the new-blob path promotes
-	// it by Copy(staging→final) and the dedup-hit path never promotes it at all,
-	// so once it has served its purpose it is pure debris regardless of whether
-	// the metadata commit succeeds. Remove it unconditionally on the way out.
-	// A committed-gated cleanup leaked one orphan staging/<rand> object per
-	// successful upload (staging keys aren't in `blobs`, so the SPEC-0009 reaper
-	// can never reclaim them). WithoutCancel so cleanup still runs when the
-	// request context is cancelled after commit.
+	// The staging object is transient on EVERY path (committed OR rolled back);
+	// reclaim it unconditionally so no staging/<rand> orphan the reaper cannot
+	// reach survives. WithoutCancel is handled inside Discard.
 	//
 	// Governing: SPEC-0002 REQ "Content Addressing and Blobs".
-	defer func() {
-		_ = s.obj.Remove(context.WithoutCancel(ctx), staged.stagingKey)
-	}()
+	defer staged.Discard(ctx, s.obj)
 
 	// 2. Verify a client-declared checksum, if one was provided.
-	if in.ExpectedSHA256 != "" && !strings.EqualFold(in.ExpectedSHA256, staged.sha256) {
+	if in.ExpectedSHA256 != "" && !strings.EqualFold(in.ExpectedSHA256, staged.SHA256) {
 		return nil, fmt.Errorf("create: expected %s got %s: %w",
-			in.ExpectedSHA256, staged.sha256, errs.ErrChecksumMismatch)
-	}
-
-	// 3. Promote the staging object to its content-addressed key unless the
-	//    blob object already exists (object-level dedup — never re-upload).
-	finalKey := shardedKey(staged.sha256)
-	exists, err := s.obj.Stat(ctx, finalKey)
-	if err != nil {
-		return nil, fmt.Errorf("create: stat blob object %s: %w", staged.sha256, err)
-	}
-	if !exists {
-		if err := s.obj.Copy(ctx, staged.stagingKey, finalKey); err != nil {
-			return nil, fmt.Errorf("create: promote blob object %s: %w", staged.sha256, err)
-		}
+			in.ExpectedSHA256, staged.SHA256, errs.ErrChecksumMismatch)
 	}
 
 	// Decide previewability at ingest from the share type + sniffed/declared
@@ -118,35 +101,32 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	// Governing: ADR-0002 (share-type registry), SPEC-0002 REQ "Previewability
 	// Detection at Ingest".
 	effectiveType, previewable := s.registry.DecidePreview(
-		in.ShareType, staged.mediaType, staged.size, s.previewMax)
+		in.ShareType, staged.MediaType, staged.Size, s.previewMax)
 
 	art := &artifact.Artifact{
 		ShareType:   effectiveType,
 		Title:       in.Title,
-		BodySHA256:  staged.sha256,
-		Size:        staged.size,
-		MediaType:   staged.mediaType,
+		BodySHA256:  staged.SHA256,
+		Size:        staged.Size,
+		MediaType:   staged.MediaType,
 		Previewable: previewable,
 		Provenance:  in.Provenance,
 		Access:      in.Access,
 		ExpiresAt:   in.ExpiresAt,
 	}
 
-	// 4. Persist metadata atomically: upsert the blob registry row (dedup via
-	//    ON CONFLICT DO NOTHING) and insert the artifact.
+	// 3. Persist metadata atomically: lock/register the blob row and promote its
+	//    object under that lock (CommitBlob), then insert the artifact — all in
+	//    one transaction so a live reference and its object commit together and
+	//    the reaper can never delete the object mid-create.
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("create: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op after a successful commit
 
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO blobs (sha256, size_bytes, media_type, storage_key)
-		 VALUES ($1, $2, $3, $4)
-		 ON CONFLICT (sha256) DO NOTHING`,
-		staged.sha256, staged.size, staged.mediaType, finalKey,
-	); err != nil {
-		return nil, fmt.Errorf("create: upsert blob %s: %w", staged.sha256, err)
+	if err := CommitBlob(ctx, tx, s.obj, staged); err != nil {
+		return nil, fmt.Errorf("create: %w", err)
 	}
 
 	bodySHA := &art.BodySHA256

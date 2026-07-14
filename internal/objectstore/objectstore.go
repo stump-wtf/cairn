@@ -13,9 +13,19 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 )
+
+// ObjectInfo is one enumerated object: its key and last-modified time. The
+// SPEC-0009 orphan-object scan uses LastModified as a defense-in-depth grace
+// window so it never races a just-uploaded body of an in-flight create.
+type ObjectInfo struct {
+	Key          string
+	LastModified time.Time
+}
 
 // ObjectStore is a content-addressed byte bucket. Every method takes a context
 // so a cancelled request releases in-flight work (SPEC-0002 "Concurrency").
@@ -31,18 +41,46 @@ type ObjectStore interface {
 	Remove(ctx context.Context, key string) error
 	// Stat reports whether key exists.
 	Stat(ctx context.Context, key string) (bool, error)
+	// List enumerates every object whose key begins with prefix, in ascending
+	// key order. It powers the SPEC-0009 object-storage orphan-scan backstop
+	// (list blobs/, delete those with no live DB reference). The full listing is
+	// materialized; callers bound their own work per cycle.
+	List(ctx context.Context, prefix string) ([]ObjectInfo, error)
 }
 
 // Memory is an in-memory ObjectStore for tests. It is safe for concurrent use
 // and honors context cancellation so cancel-path tests are meaningful.
 type Memory struct {
 	mu      sync.RWMutex
-	objects map[string][]byte
+	objects map[string]memObject
+	// now overrides the modification clock so a test can age an object into the
+	// orphan-scan grace window without sleeping. Nil means time.Now.
+	now func() time.Time
+}
+
+type memObject struct {
+	data     []byte
+	modified time.Time
 }
 
 // NewMemory returns an empty in-memory object store.
 func NewMemory() *Memory {
-	return &Memory{objects: make(map[string][]byte)}
+	return &Memory{objects: make(map[string]memObject)}
+}
+
+// SetClock overrides the modification clock (test helper) so orphan-scan
+// grace-window tests can backdate an object's LastModified deterministically.
+func (m *Memory) SetClock(now func() time.Time) {
+	m.mu.Lock()
+	m.now = now
+	m.mu.Unlock()
+}
+
+func (m *Memory) clock() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
 }
 
 func (m *Memory) Put(ctx context.Context, key string, r io.Reader, _ int64, _ string) error {
@@ -66,7 +104,7 @@ func (m *Memory) Put(ctx context.Context, key string, r io.Reader, _ int64, _ st
 		}
 	}
 	m.mu.Lock()
-	m.objects[key] = buf.Bytes()
+	m.objects[key] = memObject{data: buf.Bytes(), modified: m.clock()}
 	m.mu.Unlock()
 	return nil
 }
@@ -76,13 +114,13 @@ func (m *Memory) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	m.mu.RLock()
-	b, ok := m.objects[key]
+	o, ok := m.objects[key]
 	m.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("objectstore: get %s: %w", key, ErrNotExist)
 	}
-	cp := make([]byte, len(b))
-	copy(cp, b)
+	cp := make([]byte, len(o.data))
+	copy(cp, o.data)
 	return io.NopCloser(bytes.NewReader(cp)), nil
 }
 
@@ -92,13 +130,13 @@ func (m *Memory) Copy(ctx context.Context, srcKey, dstKey string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	b, ok := m.objects[srcKey]
+	o, ok := m.objects[srcKey]
 	if !ok {
 		return fmt.Errorf("objectstore: copy %s: %w", srcKey, ErrNotExist)
 	}
-	cp := make([]byte, len(b))
-	copy(cp, b)
-	m.objects[dstKey] = cp
+	cp := make([]byte, len(o.data))
+	copy(cp, o.data)
+	m.objects[dstKey] = memObject{data: cp, modified: m.clock()}
 	return nil
 }
 
@@ -139,6 +177,23 @@ func (m *Memory) KeysWithPrefix(prefix string) []string {
 		}
 	}
 	return out
+}
+
+// List enumerates objects under prefix in ascending key order (ObjectStore).
+func (m *Memory) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	out := make([]ObjectInfo, 0)
+	for k, o := range m.objects {
+		if strings.HasPrefix(k, prefix) {
+			out = append(out, ObjectInfo{Key: k, LastModified: o.modified})
+		}
+	}
+	m.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out, nil
 }
 
 // ErrNotExist is returned when reading or copying a missing object.

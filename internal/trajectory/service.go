@@ -95,13 +95,31 @@ func NewService(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *
 }
 
 // spilled holds a span's output disposition after the inline-vs-blob decision.
+// When staged is non-nil the output spilled to a content-addressed blob that is
+// streamed to a staging object but NOT yet promoted or registered — persistSpans
+// finalizes it via store.CommitBlob under the blob-row lock, and the caller
+// Discards the staging object on every path (the reaper-safe two-phase write).
 type spilled struct {
 	inline    *string
-	refSHA    string
-	refMedia  string
-	refKey    string
+	staged    *store.StagedBlob
 	size      int64
 	truncated bool
+}
+
+// refSHA is the output's content hash, or "" when it stayed inline or was empty.
+func (d spilled) refSHA() string {
+	if d.staged == nil {
+		return ""
+	}
+	return d.staged.SHA256
+}
+
+// discardStaged reclaims the staging object of every spilled output on the given
+// dispositions (committed OR rolled back) so no staging/<rand> orphan survives.
+func discardStaged(ctx context.Context, obj objectstore.ObjectStore, ds []spilled) {
+	for _, d := range ds {
+		d.staged.Discard(ctx, obj)
+	}
 }
 
 // spillOutputs decides, for each span, whether its output stays inline or spills
@@ -125,15 +143,13 @@ func (s *Service) spillOutputs(ctx context.Context, spans []SpanInput) ([]spille
 			out[i] = spilled{inline: &text, size: size, truncated: sp.OutputTruncated}
 			continue
 		}
-		res, err := store.PutBlob(ctx, s.obj, byteReader(sp.Output), s.maxOutputBytes, "")
+		staged, err := store.StageBlob(ctx, s.obj, byteReader(sp.Output), s.maxOutputBytes, "")
 		if err != nil {
 			return nil, fmt.Errorf("trajectory: spill span %q output: %w", sp.SpanID, err)
 		}
 		out[i] = spilled{
-			refSHA:    res.SHA256,
-			refMedia:  res.MediaType,
-			refKey:    res.StorageKey,
-			size:      res.Size,
+			staged:    staged,
+			size:      staged.Size,
 			truncated: sp.OutputTruncated,
 		}
 	}
@@ -153,6 +169,7 @@ func (s *Service) CreateBatchRun(ctx context.Context, in RunInput) (*Run, error)
 	if err != nil {
 		return nil, err
 	}
+	defer discardStaged(ctx, s.obj, dispositions)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -200,6 +217,7 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer discardStaged(ctx, s.obj, dispositions)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -248,6 +266,7 @@ func (s *Service) AppendSpans(ctx context.Context, publicID, actorID string, spa
 	if err != nil {
 		return nil, err
 	}
+	defer discardStaged(ctx, s.obj, dispositions)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -435,13 +454,11 @@ func (s *Service) loadSpanShape(ctx context.Context, tx pgx.Tx, runID int64) (ma
 func (s *Service) persistSpans(ctx context.Context, tx pgx.Tx, runID, baseStreamSeq int64, prepared []preparedSpan, dispositions []spilled) error {
 	for i, p := range prepared {
 		d := dispositions[i]
-		if d.refSHA != "" {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO blobs (sha256, size_bytes, media_type, storage_key)
-				 VALUES ($1, $2, $3, $4) ON CONFLICT (sha256) DO NOTHING`,
-				d.refSHA, d.size, d.refMedia, d.refKey,
-			); err != nil {
-				return fmt.Errorf("trajectory: upsert output blob %s: %w", d.refSHA, err)
+		if d.staged != nil {
+			// Register + promote the span-output blob under its row lock, so this
+			// write serializes against the reaper's orphan sweep (ADR-0008 / SPEC-0009).
+			if err := store.CommitBlob(ctx, tx, s.obj, d.staged); err != nil {
+				return fmt.Errorf("trajectory: %w", err)
 			}
 		}
 		if err := s.insertSpan(ctx, tx, runID, baseStreamSeq+int64(i)+1, p, d); err != nil {
@@ -469,7 +486,7 @@ func (s *Service) insertSpan(ctx context.Context, tx pgx.Tx, runID, streamSeq in
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		runID, p.in.SpanID, nullString(p.in.ParentSpanID), p.depth, p.seq,
 		string(p.in.Category), p.in.Name, nullString(p.in.Tool), args,
-		d.inline, nullString(d.refSHA), d.size, d.truncated,
+		d.inline, nullString(d.refSHA()), d.size, d.truncated,
 		p.in.StartOffsetMS, p.in.DurationMS, streamSeq,
 	); err != nil {
 		return fmt.Errorf("trajectory: insert span %q: %w", p.in.SpanID, err)
@@ -627,8 +644,8 @@ func spanFromPrepared(p preparedSpan, d spilled) *Span {
 	if d.inline != nil {
 		sp.Inline = *d.inline
 	}
-	if d.refSHA != "" {
-		sp.Ref = &OutputRef{SHA256: d.refSHA, Size: d.size, Truncated: d.truncated}
+	if d.refSHA() != "" {
+		sp.Ref = &OutputRef{SHA256: d.refSHA(), Size: d.size, Truncated: d.truncated}
 	}
 	if p.in.ProducedArtifactID != "" {
 		sp.ProducedArtifactIDs = []string{p.in.ProducedArtifactID}

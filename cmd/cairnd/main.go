@@ -74,6 +74,27 @@ func run(logger *slog.Logger) error {
 		PreviewMaxBytes: cfg.PreviewMaxBytes,
 	})
 
+	// Install the staging/ debris lifecycle rule (best-effort defense-in-depth;
+	// scoped to staging/ ONLY — never the committed blobs/ prefix, issue #93 §1).
+	// A failure here is logged, not fatal: the ingest paths already reclaim their
+	// staging objects, so this rule only mops up crash debris.
+	if err := obj.EnsureStagingLifecycle(ctx, cfg.StagingLifecycleTTL); err != nil {
+		logger.Warn("could not install staging lifecycle rule (non-fatal)", "error", err)
+	}
+
+	// The background retention reaper (SPEC-0009): hard-deletes expired artifacts
+	// and reference-count-GCs their orphaned content-addressed blobs, with an
+	// object-storage orphan-scan backstop. It runs for the life of the process
+	// and stops cleanly when ctx is cancelled (graceful shutdown).
+	reaperDone := make(chan struct{})
+	go func() {
+		defer close(reaperDone)
+		svc.RunReaper(ctx, cfg.ReapInterval, store.ReaperConfig{
+			Batch:       cfg.ReapBatch,
+			ObjectGrace: cfg.ReapObjectGrace,
+		}, logger)
+	}()
+
 	// Parse the static API bearer credentials (ADR-0004 MVP token seam) at
 	// startup so a malformed CAIRN_API_TOKENS fails the process rather than
 	// silently dropping a credential. A raw bearer token is only ever trusted when
@@ -155,7 +176,12 @@ func run(logger *slog.Logger) error {
 		logger.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		err := srv.Shutdown(shutdownCtx)
+		// ctx is already cancelled (that is what woke us); wait for the reaper to
+		// unwind its current sweep so shutdown is clean (SPEC-0009 REQ "Concurrency
+		// Safety (Expiry Reaper)": graceful shutdown, no orphaned goroutine).
+		<-reaperDone
+		return err
 	case err := <-errCh:
 		return err
 	}
