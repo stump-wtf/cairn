@@ -52,9 +52,12 @@ by the trajectory registry entry (below).
 A trajectory MUST store its run as an ordered tree of spans in PostgreSQL keyed by
 `(run_id, span_id)`. Each span MUST carry: a `span_id` stable for the life of the run; a
 `parent_span_id` (null for top-level spans); a derived `depth` and a monotonic sibling
-`seq`; a `category` from the closed set `reason · exec · read · net · write`; a
+`seq`; a `category` string drawn from the recommended set
+`reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`
+(any non-empty string is accepted; values outside the recommended set are rendered with
+a neutral default color); a
 human-readable `name`; a `start_offset_ms` relative to the run's `started_at` and a
-`duration_ms`; an optional `tool` name (non-null only for `exec/read/net/write` spans);
+`duration_ms`; an optional `tool` name (non-null only for tool-category spans);
 optional structured `args`; and an `output` (inline or by reference, per the Span Output
 Storage requirement). A **sub-agent** MUST be represented as an ordinary span whose
 children are its own tool spans — no separate entity. `span_id` MUST NOT be reissued once
@@ -65,10 +68,15 @@ assigned, because it is the anchor target for ADR-0006 annotations.
 - **WHEN** a run is ingested with an `advisory lookup` span whose children are `web_search`, `web_fetch`, and `summarize` spans
 - **THEN** the tree MUST reconstruct with those three spans nested under `advisory lookup` at `depth + 1`, ordered by `seq`
 
-#### Scenario: Unknown category rejected
+#### Scenario: Empty or missing category rejected
 
-- **WHEN** an ingested span declares a `category` outside `reason/exec/read/net/write`
+- **WHEN** an ingested span declares a `category` that is empty, missing, or whitespace-only
 - **THEN** the server MUST reject the ingest with `validation_failed` and persist no span from that payload
+
+#### Scenario: Non-recommended category accepted
+
+- **WHEN** an ingested span declares a `category` not in the recommended set (e.g. `investigation`, `review`, `deploy`)
+- **THEN** the server MUST accept the span and persist it; the waterfall MUST render it with a neutral default color and a text label carrying the category name
 
 #### Scenario: Stable span identity
 
@@ -97,7 +105,7 @@ annotation stream: no span may be added, edited, or removed after close.
 
 The server MUST accept a run over both REST (ADR-0012) and MCP (ADR-0004) in two shapes:
 **batch** (`POST /v1/runs` with the prompt and full span tree; the server assigns the
-public id, validates categories and tree structure, spills oversized outputs, and closes
+public id, validates tree structure, spills oversized outputs, and closes
 the run) and **incremental** (`POST /v1/runs` to open a run and immediately return its id
 and `cairn.sh/run/<id>` URL; `POST /v1/runs/{id}/spans` to append; `POST
 /v1/runs/{id}/close` to close). Appends MUST be additive only. A batch ingest and the
@@ -178,7 +186,9 @@ run in the same MCP session and letting Cairn resolve the reference.
 
 The trajectory viewer MUST render an OTel-style span **waterfall** pinned at the top, with
 spans nested by `depth`, ordered by `seq`, positioned by `start_offset_ms`/`duration_ms`
-against a time ruler (`0s … <wall time>`), and colored by the fixed `category` legend.
+against a time ruler (`0s … <wall time>`), and colored by the `category` legend
+(known categories use their designated accent color; unknown categories use a neutral
+default).
 Clicking a span MUST **jump to and expand** that span's event in the activity stream
 below.
 
@@ -258,7 +268,7 @@ Every layer boundary (transport adapter → core service → PostgreSQL / object
 wrap errors with context preserving the underlying error, so a handler can map a domain
 failure to a stable error `code` (ADR-0012) without string-matching. Sentinel errors MUST
 be defined for domain failures callers distinguish — run-not-found, run-closed
-(append-after-close), unknown-parent-span, and unknown-category. Errors MUST NOT be
+(append-after-close), unknown-parent-span, and empty-category. Errors MUST NOT be
 silently swallowed, and every failure MUST be recorded with structured (key-value) logging
 carrying the `request_id`.
 
@@ -399,8 +409,8 @@ This capability renders user-facing UI. WCAG 2.1 AA is the minimum target.
 
 All trajectory UI MUST meet WCAG 2.1 AA. Page structure MUST use ARIA landmarks (banner,
 navigation, main, contentinfo). Span categories MUST NOT be conveyed by color alone: the
-waterfall's `reason/exec/read/net/write` categories and the time-by-category breakdown MUST
-also carry a text label or shape cue.
+waterfall's category legend and the time-by-category breakdown MUST also carry a text
+label or shape cue.
 
 #### Scenario: Category is not color-only
 

@@ -70,7 +70,7 @@ The flagship addition. A trajectory is a captured agent run.
   cairn.sh/run/<id>] [copy] [Share]`.
 - **Call-trace waterfall** pinned at the top: OTel-style spans nested by depth, with
   a time ruler (`0s … 34.2s`). Span **categories** (color-coded legend):
-  `reason · exec · read · net · write`. A **sub-agent** appears as a nested group
+  `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`\n  (recommended set; any non-empty string is accepted and rendered with a neutral default\n  color). A **sub-agent** appears as a nested group
   (e.g. "advisory lookup" containing `web_search`, `web_fetch`, `summarize`).
   Click any span to **jump to & expand** its event in the stream below.
 - Example spans: `reason · plan the audit` (2.2s) → `bash npm ls --all` (2.9s) →

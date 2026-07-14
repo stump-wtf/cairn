@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import Heading from '@theme/Heading';
 import styles from './styles.module.css';
 
-type Cat = 'reason' | 'exec' | 'read' | 'net' | 'write' | 'mono';
+type Cat = 'reason' | 'exec' | 'read' | 'net' | 'write' | 'search' | 'plan' | 'tool' | 'analyze' | 'test' | 'fix' | 'fail' | 'meta' | 'mono' | 'other';
 
 type Feature = {
   code: string;

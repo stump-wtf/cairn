@@ -49,16 +49,23 @@ Constraints inherited from the ADRs:
 ### Native span tree over verbatim OTLP
 
 **Choice**: Store runs as Cairn-defined span rows keyed by `(run_id, span_id)` with a
-closed `category` enum, `parent_span_id`/`seq` nesting, and run-relative timing.
+recommended `category` set (any non-empty string accepted), `parent_span_id`/`seq`
+nesting, and run-relative timing.
 
 **Rationale**: The model carries exactly the fields the waterfall and RUN panel need and
-nothing else; stats are derivable; sub-agents fall out of `parent_span_id`; the closed enum
-keeps the color legend total.
+nothing else; stats are derivable; sub-agents fall out of `parent_span_id`. The
+recommended set — `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`
+— covers the vocabulary agents naturally produce, and accepting arbitrary non-empty
+strings means agents are never forced to remap their categories. Known categories get
+their designated accent color; unknowns fall back to a neutral default.
 
 **Alternatives considered**:
-- Verbatim OTLP storage: OTel `SpanKind` does not map onto `reason/exec/read/net/write`, so
+- Verbatim OTLP storage: OTel `SpanKind` does not map onto the recommended categories, so
   we would translate at read time anyway — verbatim storage buys nothing and drags in a
-  telemetry vocabulary far larger than five categories.
+  telemetry vocabulary far larger than needed.
+- Closed five-value enum (original ADR-0009 design): too rigid — agents producing spans
+  with categories like `search`, `analyze`, `tool`, or `fail` were rejected at ingest,
+  forcing lossy remapping.
 - Opaque event log: forfeits server-side stat derivation, querying, and stable per-span
   anchoring that ADR-0006 needs.
 - Single immutable blob per run: makes a live run a repeated whole-blob re-upload and forbids
@@ -120,7 +127,7 @@ erDiagram
         text parent_span_id
         int depth
         int seq
-        text category "reason|exec|read|net|write"
+        text category "free-form; recommended set: reason|exec|read|net|write|search|plan|tool|analyze|fix|fail|meta"
         text name
         text tool
         jsonb args
@@ -173,8 +180,11 @@ sequenceDiagram
 - **No OTLP bridge** → teams already exporting OpenTelemetry get no free ingest; they must
   emit Cairn's run shape (a thin adapter). Accepted per ADR-0009 — verbatim OTLP would cost
   a read-time translation for no gain.
-- **Closed category enum** → a genuinely new lane (e.g. "wait/sleep") needs an enum
-  migration, not a config change. Accepted to keep the color legend total.
+- **Open category set** → unknown categories render with a neutral default color rather
+  than being rejected. This is a deliberate trade-off: it means agents can always post their
+  natural vocabulary without remapping, at the cost of a slightly less polished legend for
+  non-standard categories. The recommended set is expanded to twelve values to cover the
+  most common agent activities.
 - **No v1 error modeling** → a failed run is not schema-distinguishable from a successful
   one until the errored-run "try next" lands. Mitigation: failures are captured as ordinary
   spans; the feature is additive.

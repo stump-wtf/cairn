@@ -105,9 +105,18 @@
 .tileBody strong { color: var(--cairn-text); font-weight: 600; }
 
 /* Category accents */
-.cat_reason { --accent: var(--cat-reason); }
-.cat_exec   { --accent: var(--cat-exec); }
-.cat_read   { --accent: var(--cat-read); }
-.cat_net    { --accent: var(--cat-net); }
-.cat_write  { --accent: var(--cat-write); }
-.cat_mono   { --accent: #aab2bd; }
+.cat_reason  { --accent: var(--cat-reason); }
+.cat_exec    { --accent: var(--cat-exec); }
+.cat_read    { --accent: var(--cat-read); }
+.cat_net     { --accent: var(--cat-net); }
+.cat_write   { --accent: var(--cat-write); }
+.cat_search  { --accent: var(--cat-search); }
+.cat_plan    { --accent: var(--cat-plan); }
+.cat_tool    { --accent: var(--cat-tool); }
+.cat_analyze { --accent: var(--cat-analyze); }
+.cat_fix     { --accent: var(--cat-fix); }
+.cat_fail    { --accent: var(--cat-fail); }
+.cat_test    { --accent: var(--cat-test); }
+.cat_meta    { --accent: var(--cat-meta); }
+.cat_mono    { --accent: #aab2bd; }
+.cat_other   { --accent: var(--cat-other); }

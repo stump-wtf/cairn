@@ -32,8 +32,9 @@ transport (ADR-0010/ADR-0012); it decides the *capture format and ingestion path
 
 * **Faithful waterfall** — the model must carry everything the waterfall needs:
   ordering, nesting/depth, a start offset and duration per span, a category from the
-  fixed set (`reason · exec · read · net · write`), a name, and — for tool spans — a
-  tool name, arguments, and output. A sub-agent must render as a nested span group.
+  recommended set (`reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`),
+  a name, and — for tool spans — a tool name, arguments, and output. A sub-agent must
+  render as a nested span group.
 * **Derived run stats, not stored redundantly** — wall time, span count, tool-call
   count, token count, and time-by-category are shown in the RUN panel; they should be
   *computable* from the span tree so they cannot drift from it.
@@ -103,13 +104,23 @@ the agent. Each **span** carries:
   span containing `web_search`, `web_fetch`, `summarize`).
 * **`depth`** and **`seq`** — derived nesting depth and a monotonic sibling order, so
   the waterfall renders deterministically without re-deriving the tree on every draw.
-* **`category`** — one of the fixed set `reason · exec · read · net · write`. This is a
-  closed enum; unknown values are rejected at ingest so the color legend stays total.
+* **`category`** — a free-form string drawn from the recommended set
+  `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`.
+  The recommended categories are color-mapped in the waterfall legend; any other
+  non-empty string is accepted and rendered with a neutral default color, so agents
+  are never forced to remap their natural vocabulary. An empty or missing `category`
+  is rejected at ingest. The recommended set covers the categories agents most
+  commonly produce — thinking/reasoning (`reason`), command execution (`exec`),
+  reading files/data (`read`), network calls (`net`), writing files/data (`write`),
+  searching/looking things up (`search`), planning/decomposing (`plan`), generic tool
+  calls that don't fit a narrower category (`tool`), analyzing or synthesizing results
+  (`analyze`), applying a change (`fix`), a failed attempt (`fail`), and run
+  overhead/metadata (`meta`).
 * **`name`** — the human-readable label (`plan the audit`, `npm ls --all`,
   `read package.json`).
 * **`start_offset_ms`** and **`duration_ms`** — start is relative to the run's
   `started_at`, keeping the time ruler (`0s … 34.2s`) independent of wall-clock skew.
-* **`tool`** (optional) — the tool name for `exec/read/net/write` spans (`bash`, `grep`,
+* **`tool`** (optional) — the tool name for tool-category spans (`bash`, `grep`,
   `read`, `web_fetch`, `write`); null for `reason` spans.
 * **`args`** (optional) — structured tool arguments, shown expandable in the stream.
 * **`output`** — the tool result. Small outputs (below a fixed byte threshold, e.g.
@@ -142,7 +153,7 @@ closed run, but the span rows remain the source of truth.
 | Span (parent/child) | Span (`parent_span_id`) | Nesting kept; sub-agent = span with children. |
 | Span name, start, duration | `name`, `start_offset_ms`, `duration_ms` | Kept, but offsets are run-relative. |
 | Span attributes | `tool`, `args`, `output`/`output_ref` | Narrowed to the fields the viewer shows. |
-| `SpanKind` | *(not adopted)* | Replaced by the closed `category` enum. |
+| `SpanKind` | *(not adopted)* | Replaced by the `category` recommended set. |
 | Trace context propagation (W3C) | *(not adopted)* | Agents send us a self-contained run. |
 | OTLP wire protocol | *(not adopted)* | Ingest is Cairn REST/MCP JSON, not OTLP. |
 | Resource / scope, sampling | *(not adopted)* | No infra topology, no sampling. |
@@ -158,8 +169,9 @@ Two shapes, both available over REST (ADR-0012) and MCP (ADR-0004), because the 
 requires capturing a run "while or after it runs":
 
 1. **Batch** — `POST` a complete run (prompt + full span tree) in one call for an
-   already-finished run. The server assigns the public id, validates categories and
-   the tree, spills oversized outputs to object storage, and closes the run.
+   already-finished run. The server assigns the public id, validates the tree
+   structure (categories are accepted as-is, not rejected for being outside the
+   recommended set), spills oversized outputs to object storage, and closes the run.
 2. **Incremental** — `open` a run (returns its id and URL immediately, so the human can
    be handed a link to a live run), `append` spans as they occur (each append is
    validated and persisted, and pushed to any live viewers), then `close` it (stamps
@@ -209,9 +221,12 @@ above; each is additive:
 * Bad, because declining OTLP compliance means we cannot ingest a stock OpenTelemetry
   exporter's output directly; agents must emit Cairn's run shape (a thin adapter, but a
   real one), and teams already exporting OTel get no free bridge.
-* Bad, because the closed `category` enum forces every tool a future agent invents into
-  one of five buckets; a genuinely new category (e.g. a distinct "wait/sleep" lane)
-  requires an enum migration rather than a config change.
+* Neutral on categories — the recommended set is a superset of the original five
+  (`reason · exec · read · net · write`) plus seven additions that cover common agent
+  activities (`search · plan · tool · analyze · fix · fail · meta`). Because the
+  `category` field accepts any non-empty string, a genuinely new category does not
+  require a migration; it simply renders with a neutral default color until the
+  recommended set and color legend are updated to include it.
 * Neutral, because deferring error/status modeling keeps v1 lean but means a failed run
   is currently indistinguishable from a successful one in the schema until the
   errored-run "try next" is picked up; the append-only, immutable-when-closed rule is a
@@ -221,8 +236,8 @@ above; each is additive:
 
 * Confirmed by the trajectory type's registration in the ADR-0002 viewer registry and
   by the span schema existing as PostgreSQL rows keyed by `(run_id, span_id)` with a
-  closed `category` enum, `parent_span_id`/`seq` nesting, run-relative timing, and an
-  `output`/`output_ref` split at the size threshold.
+  `category` field that accepts any non-empty string, `parent_span_id`/`seq` nesting,
+  run-relative timing, and an `output`/`output_ref` split at the size threshold.
 * An ingestion conformance test drives both paths: a batch POST of a multi-span run
   with a nested sub-agent renders the documented example waterfall and computes the
   documented stats; an incremental open→append→close sequence yields the identical
@@ -234,6 +249,6 @@ above; each is additive:
   `produced` edge resolvable from both the run and the artifact, satisfying the
   ADR-0001 "a run produces artifacts" principle.
 * The specs derived from this ADR (in `docs/openspec/specs/`) assert the invariants:
-  run stats are derived from spans (not independently stored as truth), the category
-  set is closed, a closed run is immutable except for annotations, and the v1 non-goals
-  above are absent from the schema.
+  run stats are derived from spans (not independently stored as truth), empty or
+  missing categories are rejected but any non-empty string is accepted, a closed run is
+  immutable except for annotations, and the v1 non-goals above are absent from the schema.
