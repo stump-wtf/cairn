@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -187,6 +188,97 @@ func TestIntegrationBundlePerFileComment(t *testing.T) {
 	// The rail shows notes.md's engagement count (1 comment) as a badge.
 	if !strings.Contains(html, `class="bundle-file-count"`) {
 		t.Error("rail should show a per-file engagement count for the annotated member")
+	}
+}
+
+// TestIntegrationBundleMemberBlockReactionRoundTrip asserts the (#72) server-side
+// contract bundle.js's click-time feedback depends on: a reaction posted
+// against a real rendered block INSIDE a bundle member anchors as bundle_file
+// {name, block_id} (not md_block — the bundle forbids that anchor on a member's
+// own blocks, SPEC-0006), round-trips through GET /v1/artifacts/{id}/reactions,
+// and — because bundle.js's rail badge update is optimistic client state, not
+// server-pushed — a subsequent server render (what a reload, or any HTMX pane
+// swap that re-renders the shell, would show) reflects the same count via the
+// data-reactions/data-comments attributes bundle.js reads to compute its delta.
+// Toggling the same emoji off (DELETE) removes the tally entirely and the rail
+// count reverts, the same idempotent contract #66 established for markdown.js.
+func TestIntegrationBundleMemberBlockReactionRoundTrip(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+	id := createBundle(t, srv.URL, "joe", "mixed", []bundleMember{
+		{"notes.md", bundleMD},
+		{"data.bin", "\x00\x01binary blob"},
+	})
+
+	_, html := getHTML(t, srv.URL+"/"+id)
+	if !strings.Contains(html, `data-file-name="notes.md" data-reactions="0" data-comments="0"`) {
+		t.Fatal("baseline rail row should carry zeroed data-reactions/data-comments for bumpFileEngagement to read")
+	}
+	blockID := blockIDsIn(html)[0] // notes.md (the active member)'s first block
+
+	ref := `{"name":"notes.md","block_id":"` + blockID + `"}`
+	resp := do(t, http.MethodPost, srv.URL+"/v1/artifacts/"+id+"/reactions", "alice",
+		jsonReader(t, reactionRequest{AnchorType: "bundle_file", AnchorRef: json.RawMessage(ref), Emoji: "👍"}),
+		"application/json")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("react bundle_file = %d, want 201", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	tallies := decodeTallies(t, do(t, http.MethodGet, srv.URL+"/v1/artifacts/"+id+"/reactions", "alice", nil, ""))
+	if len(tallies.Reactions) != 1 {
+		t.Fatalf("tallies = %+v, want 1", tallies.Reactions)
+	}
+	tly := tallies.Reactions[0]
+	var key struct {
+		Name    string `json:"name"`
+		BlockID string `json:"block_id"`
+	}
+	if err := json.Unmarshal([]byte(tly.AnchorKey), &key); err != nil {
+		t.Fatalf("anchor_key %q did not parse as JSON: %v", tly.AnchorKey, err)
+	}
+	if tly.AnchorType != "bundle_file" || tly.Emoji != "👍" || tly.Count != 1 || !tly.Reacted {
+		t.Errorf("tally = %+v, want bundle_file 👍/1/reacted", tly)
+	}
+	if key.Name != "notes.md" || key.BlockID != blockID {
+		t.Errorf("anchor_key = %+v, want name=notes.md block_id=%q", key, blockID)
+	}
+
+	// A server render after the react shows the rail's per-member counters
+	// bumped — the state bundle.js's optimistic bumpFileEngagement mirrors at
+	// click-time so the count is never stale even before any reload happens.
+	_, html = getHTML(t, srv.URL+"/"+id)
+	if !strings.Contains(html, `data-file-name="notes.md" data-reactions="1" data-comments="0"`) {
+		t.Error("rail row should carry data-reactions=1 after the react")
+	}
+	if !strings.Contains(html, `class="bundle-file-count" title="1 reactions · 0 comments" aria-label="1 annotations">1<`) {
+		t.Error("rail badge should render the bumped engagement count")
+	}
+	// data.bin is untouched.
+	if !strings.Contains(html, `data-file-name="data.bin" data-reactions="0" data-comments="0"`) {
+		t.Error("unreacted member's rail row must stay at zero")
+	}
+
+	// Toggling the same emoji off (DELETE) removes the tally entirely — the
+	// idempotent unreact contract #66 established for markdown.js — and the
+	// rail count reverts on the next server render.
+	resp = do(t, http.MethodDelete, srv.URL+"/v1/artifacts/"+id+"/reactions", "alice",
+		jsonReader(t, reactionRequest{AnchorType: "bundle_file", AnchorRef: json.RawMessage(ref), Emoji: "👍"}),
+		"application/json")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("unreact bundle_file = %d, want 204", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	tallies = decodeTallies(t, do(t, http.MethodGet, srv.URL+"/v1/artifacts/"+id+"/reactions", "alice", nil, ""))
+	if len(tallies.Reactions) != 0 {
+		t.Fatalf("tallies after unreact = %+v, want none", tallies.Reactions)
+	}
+	_, html = getHTML(t, srv.URL+"/"+id)
+	if !strings.Contains(html, `data-file-name="notes.md" data-reactions="0" data-comments="0"`) {
+		t.Error("rail row should revert to data-reactions=0 after the unreact")
+	}
+	if strings.Contains(html, `class="bundle-file-count"`) {
+		t.Error("rail badge should be gone once engagement returns to zero")
 	}
 }
 

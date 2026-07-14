@@ -88,6 +88,21 @@
 }
 .contains-meta { font: 400 10.5px var(--mono); color: var(--t7); white-space: nowrap; }
 
+/* Per-member block reaction click-time feedback (issue #72, adapting the #66
+   treatment to the bundle viewer's per-member engagement-count model, which
+   has no per-block pill — only the rail's aggregated `.bundle-file-count`
+   badge, which bundle.js now bumps in place on click too). A reacted
+   `.md-react` trigger inside a member pane switches from the hover-revealed
+   outline into a persistently visible "on" state, reusing the same green
+   treatment as the trajectory/markdown reaction pill's `.on` class so a
+   reaction reads the same across surfaces — WITHOUT depending on a reload. */
+.md-react[data-reacted] {
+  opacity: 1;
+  color: var(--green-2);
+  border-color: #244034;
+  background: rgba(86,227,159,.12);
+}
+
 /* Narrow screens: the rail stacks above the pane, no horizontal scroll. */
 @media (max-width: 720px) {
   .bundle-viewer { grid-template-columns: 1fr; }

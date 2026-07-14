@@ -171,7 +171,7 @@ Governing: SPEC-0003 (Bundle Viewer, a11y), ADR-0011 (server-rendered + HTMX). *
            aria-selected="{{if .Active}}true{{else}}false{{end}}"
            aria-controls="bundle-pane"
            tabindex="{{if .Active}}0{{else}}-1{{end}}"
-           data-file-name="{{.Name}}">
+           data-file-name="{{.Name}}" data-reactions="{{.Reactions}}" data-comments="{{.Comments}}">
           <span class="bundle-file-badge" aria-hidden="true">{{.Badge}}</span>
           <span class="bundle-file-name">{{.Name}}</span>
           <span class="bundle-file-meta"><span class="sr-only">{{.Badge}} file, </span>{{.Size}}{{if gt .Engagement 0}} <span class="bundle-file-count" title="{{.Reactions}} reactions · {{.Comments}} comments" aria-label="{{.Engagement}} annotations">{{.Engagement}}</span>{{end}}</span>
