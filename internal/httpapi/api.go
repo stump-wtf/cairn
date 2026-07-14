@@ -298,6 +298,11 @@ func (s *Server) mountAPI(r chi.Router) {
 		// the write-capability gate; requireHuman adds the human-only gate on top.
 		r.With(s.requireAuth, s.requireScope(scopeArtifactsWrite), s.requireHuman, s.enforceCSRF).Delete("/artifacts/{id}", s.handleDelete)
 		r.With(s.requireAuth).Get("/bin", s.handleBin)
+		// Bearer-token identity round trip (cairn#21, SPEC-0008 "cairn whoami"):
+		// any authenticated principal — static token, PAT, OAuth, or session —
+		// resolves its own actor id and server-derived channel here, with no
+		// workspace-scoping concerns since a principal can only ever be itself.
+		r.With(s.requireAuth).Get("/whoami", s.handleAPIWhoami)
 
 		// Personal access tokens (issue #74, ADR-0004 token seam): the human
 		// Settings surface for minting/listing/revoking PATs. Management is

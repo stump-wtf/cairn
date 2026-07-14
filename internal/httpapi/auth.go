@@ -344,3 +344,24 @@ func principalFrom(ctx context.Context) (*Principal, bool) {
 	p, ok := ctx.Value(principalCtxKey{}).(*Principal)
 	return p, ok
 }
+
+// handleAPIWhoami is the bearer-authenticated identity round trip
+// `cairn whoami` (and any other bearer-token caller) verifies a credential
+// against (cairn#21 "verify against the API (whoami round-trip)", SPEC-0008
+// "Authentication and Session Lifecycle"). It runs under requireAuth so ANY
+// authenticated principal — a CAIRN_API_TOKENS static token, a personal
+// access token (#74), an OAuth access token, or a browser session cookie —
+// resolves here; the response shape mirrors the web session's whoamiResponse
+// (session.go handleWhoami) so both surfaces report identity identically.
+func (s *Server) handleAPIWhoami(w http.ResponseWriter, r *http.Request) {
+	p, ok := principalFrom(r.Context())
+	if !ok || p == nil {
+		s.writeError(w, r, errs.ErrUnauthorized, nil)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, whoamiResponse{
+		ActorID:       p.ActorID,
+		Channel:       string(p.Channel),
+		Authenticated: true,
+	})
+}

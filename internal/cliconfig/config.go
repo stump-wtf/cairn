@@ -35,6 +35,11 @@ const (
 	SourceFile    Source = "file"
 	SourceEnv     Source = "env"
 	SourceFlag    Source = "flag"
+	// SourceKeyring marks a token `cairn login` stored in the OS secret store
+	// (SPEC-0008 "Secure Credential Storage": "MUST prefer the operating-
+	// system secret store ... and, when none is available, MUST fall back to
+	// a file"). See credential.go.
+	SourceKeyring Source = "keyring"
 )
 
 // Config is the fully-resolved CLI configuration.
@@ -128,6 +133,20 @@ func Resolve(opts Options) (*Config, error) {
 		cfg.TokenSource = SourceFlag
 	}
 
+	// No flag, env, or config-file token: try the OS keyring last, keyed on
+	// the FINAL resolved API base URL (so a token stored for one server is
+	// never handed to another) — `cairn login`'s preferred storage location
+	// when the OS secret store is available (SPEC-0008 "Keychain-backed
+	// storage"). A miss (nothing stored, or no secret-service reachable) is
+	// silently ignored: the CLI simply reports not-authenticated, same as
+	// today.
+	if cfg.Token == "" {
+		if tok, err := keyringLookup(cfg.APIBaseURL); err == nil && tok != "" {
+			cfg.Token = tok
+			cfg.TokenSource = SourceKeyring
+		}
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -146,22 +165,9 @@ func Resolve(opts Options) (*Config, error) {
 // `cairn login` (#21): a config file the user hand-edited with a token in
 // it is held to the same at-rest bar.
 func readFileConfig(path string) (*fileConfig, error) {
-	info, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("%w: cliconfig: stat %s: %v", cliexit.ErrUsage, path, err)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("%w: cliconfig: read %s: %v", cliexit.ErrUsage, path, err)
-	}
-
-	var fc fileConfig
-	if _, err := toml.Decode(string(data), &fc); err != nil {
-		return nil, fmt.Errorf("%w: cliconfig: parse %s: %v", cliexit.ErrUsage, path, err)
+	fc, info, err := loadFileConfigRaw(path)
+	if err != nil || fc == nil {
+		return fc, err
 	}
 
 	if fc.Token != "" && info.Mode().Perm()&0o077 != 0 {
@@ -169,7 +175,36 @@ func readFileConfig(path string) (*fileConfig, error) {
 			cliexit.ErrUsage, path, info.Mode().Perm())
 	}
 
-	return &fc, nil
+	return fc, nil
+}
+
+// loadFileConfigRaw reads and parses path without the 0600 permission check
+// readFileConfig layers on top — credential.go's SaveCredential/
+// DeleteCredential use this directly so a pre-existing, insecurely-
+// permissioned config file can still be read, amended, and rewritten with
+// correct 0600 permissions (rather than being permanently stuck, unreadable,
+// because the very check meant to protect it also blocks fixing it). It
+// returns (nil, nil, nil) when the file does not exist.
+func loadFileConfigRaw(path string) (*fileConfig, os.FileInfo, error) {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: cliconfig: stat %s: %v", cliexit.ErrUsage, path, err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: cliconfig: read %s: %v", cliexit.ErrUsage, path, err)
+	}
+
+	var fc fileConfig
+	if _, err := toml.Decode(string(data), &fc); err != nil {
+		return nil, nil, fmt.Errorf("%w: cliconfig: parse %s: %v", cliexit.ErrUsage, path, err)
+	}
+
+	return &fc, info, nil
 }
 
 // localDevHosts are the hostnames the HTTPS requirement is waived for

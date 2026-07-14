@@ -80,3 +80,16 @@ func TestBinaryUnreachableServerExit8(t *testing.T) {
 		t.Errorf("exit code = %d, want 8, stderr=%q", code, stderr)
 	}
 }
+
+// TestBinaryLoginNoTokenExit2 exercises `cairn login` through the real
+// compiled binary (argv, real process exit code) without ever reaching
+// internal/cliconfig.SaveCredential — an empty piped stdin and no --token
+// is a usage error before any credential store (OS keyring or file) is
+// touched, so this is safe to run against whatever real OS secret store
+// happens to be reachable on the test host (cairn#21).
+func TestBinaryLoginNoTokenExit2(t *testing.T) {
+	_, stderr, code := runBinary(t, "", "login", "--url", "https://example.invalid")
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2, stderr=%q", code, stderr)
+	}
+}

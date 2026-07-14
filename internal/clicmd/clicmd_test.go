@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,9 +12,52 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zalando/go-keyring"
+
 	"github.com/joestump/cairn/internal/cliclient"
+	"github.com/joestump/cairn/internal/cliconfig"
 	"github.com/joestump/cairn/internal/cliexit"
 )
+
+// TestMain forces every test in this package onto zalando/go-keyring's
+// in-memory mock, defaulted to "no secret service available." Without this,
+// `cairn login` in these tests would reach whatever REAL OS keyring happens
+// to be reachable on the machine running `go test` (this sandbox has a live
+// one) and leave test credentials behind in it — this package's tests must
+// be deterministic and side-effect-free regardless of the host, so they
+// always exercise the SPEC-0008 "file fallback" path (internal/cliconfig
+// has its own dedicated tests for the keyring-preferred branch).
+func TestMain(m *testing.M) {
+	keyring.MockInitWithError(errors.New("keyring: no secret service in test"))
+	os.Exit(m.Run())
+}
+
+// whoamiTestServer stands up a minimal test double of the server's bearer
+// auth: it accepts exactly one token as `wantToken` and resolves it to
+// actor/channel; any other (or absent) bearer is a 401 in the ADR-0012
+// error envelope shape, exactly like the real GET /v1/whoami.
+func whoamiTestServer(t *testing.T, wantToken, actorID, channel string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/whoami" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		w.Header().Set("Content-Type", "application/json")
+		if got == "" || got != wantToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{"code": "unauthorized", "message": "authentication required"},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(cliclient.Whoami{ActorID: actorID, Channel: channel, Authenticated: true})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
 
 // runCLI builds a fresh root command against configPath, feeds stdin, and
 // executes args, returning stdout, stderr, and the resulting exit code
@@ -81,13 +125,34 @@ func TestWhoamiNoSessionExitsNotAuthenticated(t *testing.T) {
 	}
 }
 
-func TestWhoamiWithTokenReportsAuthenticated(t *testing.T) {
-	stdout, _, code := runCLI(t, emptyConfigPath(t), "", "whoami", "--token", "abc123")
+func TestWhoamiWithValidTokenRoundTripsToServer(t *testing.T) {
+	srv := whoamiTestServer(t, "abc123", "sam@stump.rocks", "via API")
+	stdout, _, code := runCLI(t, emptyConfigPath(t), "", "whoami", "--token", "abc123", "--url", srv.URL)
 	if code != int(cliexit.Success) {
 		t.Errorf("exit code = %d, want 0", code)
 	}
-	if !strings.Contains(stdout, "authenticated") {
-		t.Errorf("stdout = %q, want it to mention authenticated", stdout)
+	if !strings.Contains(stdout, "sam@stump.rocks") {
+		t.Errorf("stdout = %q, want it to mention the verified actor", stdout)
+	}
+	if !strings.Contains(stdout, "authorized") {
+		t.Errorf("stdout = %q, want it to mention authorized", stdout)
+	}
+}
+
+func TestWhoamiWithStaleTokenIsRejectedByServer(t *testing.T) {
+	srv := whoamiTestServer(t, "the-real-token", "sam@stump.rocks", "via API")
+	stdout, stderr, code := runCLI(t, emptyConfigPath(t), "", "whoami", "--token", "a-revoked-token", "--url", srv.URL)
+	if code != int(cliexit.NotAuthenticated) {
+		t.Errorf("exit code = %d, want %d, stderr=%q", code, cliexit.NotAuthenticated, stderr)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want empty on failure", stdout)
+	}
+	if !strings.Contains(stderr, "not authenticated") {
+		t.Errorf("stderr = %q, want it to mention not authenticated", stderr)
+	}
+	if strings.Contains(stderr, "a-revoked-token") {
+		t.Errorf("stderr = %q, must never contain the rejected token value", stderr)
 	}
 }
 
@@ -229,26 +294,171 @@ func TestAddMissingFileIsUsageError(t *testing.T) {
 	}
 }
 
-func TestLoginIsScaffoldedNotImplemented(t *testing.T) {
-	_, stderr, code := runCLI(t, emptyConfigPath(t), "", "login")
-	if code != int(cliexit.Internal) {
-		t.Errorf("exit code = %d, want %d", code, cliexit.Internal)
+// --- cairn login / logout (cairn#21) -----------------------------------
+
+func TestLoginWithTokenFlagSucceedsAndPersists(t *testing.T) {
+	srv := whoamiTestServer(t, "sk_live_login", "sam@stump.rocks", "via API")
+	path := emptyConfigPath(t)
+
+	stdout, stderr, code := runCLI(t, path, "", "login", "--token", "sk_live_login", "--url", srv.URL)
+	if code != int(cliexit.Success) {
+		t.Fatalf("exit code = %d, want 0, stderr=%q", code, stderr)
 	}
-	if !strings.Contains(stderr, "cairn#21") {
-		t.Errorf("stderr = %q, want a pointer to cairn#21", stderr)
+	if !strings.Contains(stdout, "sam@stump.rocks") {
+		t.Errorf("stdout = %q, want it to mention the verified actor", stdout)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat config file after login: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("config file mode = %s, want 0600", info.Mode().Perm())
+	}
+
+	// A follow-up command with NO flags at all resolves the same server and
+	// token straight from what login just persisted.
+	stdout, _, code = runCLI(t, path, "", "whoami")
+	if code != int(cliexit.Success) {
+		t.Fatalf("whoami after login exit code = %d, want 0", code)
+	}
+	if !strings.Contains(stdout, "sam@stump.rocks") {
+		t.Errorf("whoami stdout = %q, want the persisted actor", stdout)
 	}
 }
 
+func TestLoginRejectsInvalidTokenAndPersistsNothing(t *testing.T) {
+	srv := whoamiTestServer(t, "the-only-valid-token", "sam@stump.rocks", "via API")
+	path := emptyConfigPath(t)
+
+	_, stderr, code := runCLI(t, path, "", "login", "--token", "totally-invalid", "--url", srv.URL)
+	if code != int(cliexit.NotAuthenticated) {
+		t.Errorf("exit code = %d, want %d, stderr=%q", code, cliexit.NotAuthenticated, stderr)
+	}
+
+	if _, err := os.Stat(path); err == nil {
+		t.Error("config file was written for a rejected login")
+	}
+
+	cfg, err := cliconfig.Resolve(cliconfig.Options{ConfigPath: path})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cfg.Token != "" {
+		t.Errorf("Token = %q after a rejected login, want empty", cfg.Token)
+	}
+}
+
+func TestLoginReadsTokenFromPipedStdin(t *testing.T) {
+	srv := whoamiTestServer(t, "piped-token", "sam@stump.rocks", "via API")
+	path := emptyConfigPath(t)
+
+	stdout, stderr, code := runCLI(t, path, "piped-token\n", "login", "--url", srv.URL)
+	if code != int(cliexit.Success) {
+		t.Fatalf("exit code = %d, want 0, stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "sam@stump.rocks") {
+		t.Errorf("stdout = %q, want the verified actor", stdout)
+	}
+}
+
+func TestLoginWithNoTokenSourceIsUsageError(t *testing.T) {
+	// Stdin is a strings.Reader (never a terminal), so an empty pipe with no
+	// --token is unambiguous "no token was provided" — a usage error, not a
+	// hang waiting on a prompt that can't happen in a test harness.
+	_, stderr, code := runCLI(t, emptyConfigPath(t), "", "login", "--url", "https://example.invalid")
+	if code != int(cliexit.Usage) {
+		t.Errorf("exit code = %d, want %d, stderr=%q", code, cliexit.Usage, stderr)
+	}
+}
+
+func TestLoginThenLogoutRemovesCredential(t *testing.T) {
+	srv := whoamiTestServer(t, "sk_live_logout", "sam@stump.rocks", "via API")
+	path := emptyConfigPath(t)
+
+	_, stderr, code := runCLI(t, path, "", "login", "--token", "sk_live_logout", "--url", srv.URL)
+	if code != int(cliexit.Success) {
+		t.Fatalf("login exit code = %d, want 0, stderr=%q", code, stderr)
+	}
+
+	stdout, _, code := runCLI(t, path, "", "logout")
+	if code != int(cliexit.Success) {
+		t.Fatalf("logout exit code = %d, want 0", code)
+	}
+	if !strings.Contains(stdout, "logged out") {
+		t.Errorf("logout stdout = %q, want a confirmation", stdout)
+	}
+
+	// whoami now has nothing to resolve — no --url either, since logout
+	// doesn't touch the persisted URL, only the credential.
+	_, stderr, code = runCLI(t, path, "", "whoami")
+	if code != int(cliexit.NotAuthenticated) {
+		t.Errorf("whoami after logout exit code = %d, want %d, stderr=%q", code, cliexit.NotAuthenticated, stderr)
+	}
+}
+
+func TestLogoutWithNoActiveSessionIsIdempotent(t *testing.T) {
+	stdout, _, code := runCLI(t, emptyConfigPath(t), "", "logout")
+	if code != int(cliexit.Success) {
+		t.Errorf("exit code = %d, want 0 (logout is idempotent)", code)
+	}
+	if !strings.Contains(stdout, "not logged in") {
+		t.Errorf("stdout = %q, want it to note there was nothing to remove", stdout)
+	}
+}
+
+// TestLoginRedactsTokenEverywhere is cairn#21's "Token never appears in
+// logs/errors/argv of subprocesses; redaction test": it drives login
+// (success and failure) with --verbose, the one code path that
+// deliberately prints diagnostic information about the token, and asserts
+// the literal secret is never present in stdout or stderr — only its
+// redacted form.
+func TestLoginRedactsTokenEverywhere(t *testing.T) {
+	const secret = "sk_live_SUPER_SECRET_DO_NOT_LEAK_1234567890"
+
+	srv := whoamiTestServer(t, secret, "sam@stump.rocks", "via API")
+	stdout, stderr, code := runCLI(t, emptyConfigPath(t), "", "login", "--token", secret, "--url", srv.URL, "--verbose")
+	if code != int(cliexit.Success) {
+		t.Fatalf("login exit code = %d, want 0, stderr=%q", code, stderr)
+	}
+	if strings.Contains(stdout, secret) {
+		t.Errorf("stdout leaked the token: %q", stdout)
+	}
+	if strings.Contains(stderr, secret) {
+		t.Errorf("stderr leaked the token: %q", stderr)
+	}
+	if !strings.Contains(stderr, "[REDACTED") {
+		t.Errorf("stderr = %q, want the verbose line to show a redacted token marker", stderr)
+	}
+
+	// The failure path (server rejects the token) must redact it too, both
+	// in the CLI's own message and in whatever the mapped error prints.
+	stdout, stderr, code = runCLI(t, emptyConfigPath(t), "", "login", "--token", secret, "--url", srv.URL+"/wrong-path-forces-401", "--verbose")
+	_ = stdout
+	if code == int(cliexit.Success) {
+		t.Fatalf("expected the login against a mismatched path to fail")
+	}
+	if strings.Contains(stderr, secret) {
+		t.Errorf("stderr leaked the token on a failed login: %q", stderr)
+	}
+}
+
+// --- Config-file credential precedence (cairn#21 extends the earlier
+// SPEC-0008 config resolution test to a real login/whoami round trip) -----
+
 func TestConfigFilePrecedenceThroughFullCommand(t *testing.T) {
+	srv := whoamiTestServer(t, "from-file", "sam@stump.rocks", "via API")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte(`token = "from-file"`+"\n"), 0o600); err != nil {
+	contents := "url = \"" + srv.URL + "\"\ntoken = \"from-file\"\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	// Token comes from the file; whoami should report authenticated without
-	// any --token flag or CAIRN_TOKEN env var, and must never print the
-	// token value itself — only its source.
+	// Token and URL both come from the file; whoami should report
+	// authenticated without any --token/--url flag or CAIRN_TOKEN/CAIRN_URL
+	// env var, and must never print the token value itself — only its
+	// source.
 	stdout, _, code := runCLI(t, path, "", "whoami")
 	if code != int(cliexit.Success) {
 		t.Fatalf("exit code = %d, want 0", code)

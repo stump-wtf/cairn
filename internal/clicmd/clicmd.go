@@ -6,15 +6,19 @@
 // returned error to a process exit code via internal/cliexit.
 //
 // This package carries no domain logic — it treats the server's response as
-// authoritative (ADR-0003) — and it is deliberately thin: `login`/`logout`
-// are scaffolded here with the command surface, flags, and help text SPEC-0008
-// specifies, but the OAuth 2.1 + PKCE flow and secure token storage they
-// describe land in cairn#21 (see the stubbed RunE bodies below). `add`
-// uploads as a single atomic request rather than the bounded concurrent
-// uploader with per-file progress (cairn#22).
+// authoritative (ADR-0003) — and it is deliberately thin. `login`/`logout`/
+// `whoami` (cairn#21) authenticate against the ADR-0004 token seam: a
+// bearer credential (a personal access token or a CAIRN_API_TOKENS entry),
+// verified with a whoami round trip and stored via internal/cliconfig's OS-
+// keyring-or-0600-file credential store. The OAuth 2.1 authorization-code +
+// PKCE browser flow SPEC-0008 also describes is a later, separate issue
+// (cairn#22 and on, SPEC-0007) that will layer onto the same command
+// surface. `add` uploads as a single atomic request rather than the bounded
+// concurrent uploader with per-file progress (cairn#22).
 //
 // Governing: SPEC-0008 (The cairn Command-Line Interface), ADR-0003 (Triple
-// Surface Parity), ADR-0012 (Backend Platform and API Shape).
+// Surface Parity), ADR-0004 (MCP/token auth seam), ADR-0012 (Backend
+// Platform and API Shape).
 package clicmd
 
 import (
