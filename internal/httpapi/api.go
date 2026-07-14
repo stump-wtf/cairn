@@ -20,6 +20,7 @@ import (
 	"github.com/joestump/cairn/internal/sharetype"
 	"github.com/joestump/cairn/internal/store"
 	"github.com/joestump/cairn/internal/trajectory"
+	"github.com/joestump/cairn/internal/webhook"
 )
 
 // Config tunes the REST adapter.
@@ -104,6 +105,7 @@ type Server struct {
 	store   *store.Store
 	annot   *annotation.Service
 	traj    *trajectory.Service
+	hook    *webhook.Service
 	reg     *sharetype.Registry
 	auth    Authenticator
 	cfg     Config
@@ -185,16 +187,19 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	if cfg.OAuthRateBurst <= 0 {
 		cfg.OAuthRateBurst = 30
 	}
-	// The annotation and trajectory cores are peers of the artifact store,
-	// projected by this same adapter (SPEC-0006 REQ "Cross-Surface Parity",
-	// SPEC-0004). Each shares the store's pool and registry so its writes land in
-	// the same database and transaction domain and gate anchors against the same
-	// capability matrix (ADR-0012 one binary, one core); the trajectory service
-	// additionally spills oversized span outputs to the store's object store. A
-	// nil store (unit tests that exercise only URL/auth helpers) leaves both nil.
+	// The annotation, trajectory, and webhook cores are peers of the artifact
+	// store, projected by this same adapter (SPEC-0006 REQ "Cross-Surface
+	// Parity", SPEC-0004, SPEC-0005). Each shares the store's pool and registry
+	// so its writes land in the same database and transaction domain and gate
+	// anchors against the same capability matrix (ADR-0012 one binary, one
+	// core); the trajectory and webhook services additionally spill their
+	// oversized span outputs / captured bodies to the store's object store. A
+	// nil store (unit tests that exercise only URL/auth helpers) leaves all
+	// three nil.
 	var (
 		annot      *annotation.Service
 		traj       *trajectory.Service
+		hookSvc    *webhook.Service
 		sessions   session.Store
 		oauthSvc   *oauth.Service
 		patSvc     *pat.Service
@@ -203,6 +208,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	if st != nil {
 		annot = annotation.NewService(st.Pool(), reg)
 		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{Registry: reg})
+		hookSvc = webhook.NewService(st.Pool(), st.ObjectStore(), webhook.Options{})
 		// The web session store lives in the same Postgres as the core, so the
 		// single binary carries its schema and a scaled deployment shares one
 		// session table (ADR-0012).
@@ -253,6 +259,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		store:         st,
 		annot:         annot,
 		traj:          traj,
+		hook:          hookSvc,
 		reg:           reg,
 		auth:          auth,
 		cfg:           cfg,
@@ -377,6 +384,15 @@ func (s *Server) mountAPI(r chi.Router) {
 		// type would use — the core router carries no trajectory-specific paths.
 		if s.traj != nil {
 			runMux{s: s}.MountRoutes(r)
+		}
+
+		// The webhook share type contributes its own /v1/hooks* management and
+		// captured-request read surface through the same RouteMounter seam
+		// (SPEC-0005). This is the model + management story: the public,
+		// anonymous-write ingress that fills the buffer is deliberately not
+		// mounted here (see hooks.go).
+		if s.hook != nil {
+			hookMux{s: s}.MountRoutes(r)
 		}
 
 		// Externally-registered share types contribute their own service

@@ -152,7 +152,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req runRequest
-	if err := s.decodeRunBody(w, r, &req); err != nil {
+	if err := s.decodeJSONBody(w, r, &req); err != nil {
 		s.writeError(w, r, err, nil)
 		return
 	}
@@ -214,7 +214,7 @@ func (s *Server) handleAppendSpans(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "id")
 	var req appendSpansRequest
-	if err := s.decodeRunBody(w, r, &req); err != nil {
+	if err := s.decodeJSONBody(w, r, &req); err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
@@ -296,17 +296,19 @@ func (s *Server) handleGetSpanOutput(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// decodeRunBody caps the request body at MaxRunRequestBytes and decodes it as
-// JSON. An oversize batch is 413 before the whole payload is buffered; malformed
+// decodeJSONBody caps the request body at MaxRunRequestBytes and decodes it as
+// JSON. An oversize payload is 413 before the whole body is buffered; malformed
 // JSON is validation_failed (SPEC-0004 endpoint security — request-size caps).
-func (s *Server) decodeRunBody(w http.ResponseWriter, r *http.Request, dst any) error {
+// Shared by the trajectory run/append and webhook endpoint-create bodies
+// (hooks.go), which are both small, server-derived-envelope JSON payloads.
+func (s *Server) decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxRunRequestBytes)
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			return errs.ErrTooLarge
 		}
-		return errs.Validationf("run request body is not valid JSON")
+		return errs.Validationf("request body is not valid JSON")
 	}
 	return nil
 }

@@ -29,6 +29,7 @@ const (
 	TypeGZ         ShareType = "gz"         // generic gzipped file
 	TypeBundle     ShareType = "bundle"     // manifest of ordered members (ADR-0008)
 	TypeTrajectory ShareType = "trajectory" // agent run: span tree, no single body (ADR-0009)
+	TypeWebhook    ShareType = "webhook"    // live requestbin: capped captured-request stream, no single body (ADR-0010)
 )
 
 // Channel is the surface an artifact was created through. It is derived
@@ -96,10 +97,12 @@ type Artifact struct {
 }
 
 // bodyless reports whether this share type carries no single content-addressed
-// body: a bundle (its members are modeled separately) or a trajectory (its
-// content is the span tree). Every other type MUST reference a body blob.
+// body: a bundle (its members are modeled separately), a trajectory (its
+// content is the span tree), or a webhook (its content is the captured-request
+// stream, filled by third parties after creation rather than pushed by its
+// owner — ADR-0010). Every other type MUST reference a body blob.
 func (a *Artifact) bodyless() bool {
-	return a.ShareType == TypeBundle || a.ShareType == TypeTrajectory
+	return a.ShareType == TypeBundle || a.ShareType == TypeTrajectory || a.ShareType == TypeWebhook
 }
 
 // Validate enforces the creation invariants: a public id, a share type, a body

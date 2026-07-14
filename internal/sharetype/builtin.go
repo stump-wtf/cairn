@@ -24,9 +24,11 @@ const (
 	KeyMarkdown artifact.ShareType = "markdown"
 	KeyCode     artifact.ShareType = "code"
 	KeyImage    artifact.ShareType = "image"
-	KeyWebhook  artifact.ShareType = "webhook"
-	// KeyTrajectory is sourced from the artifact aggregate, which knows the
-	// trajectory type is bodyless (like a bundle) so it needs no body blob.
+	// KeyWebhook and KeyTrajectory are sourced from the artifact aggregate,
+	// which knows both types are bodyless (like a bundle) so they need no body
+	// blob — a webhook's content is the captured-request stream (ADR-0010), a
+	// trajectory's is the span tree (ADR-0009).
+	KeyWebhook    artifact.ShareType = artifact.TypeWebhook
 	KeyTrajectory artifact.ShareType = artifact.TypeTrajectory
 )
 
