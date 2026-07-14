@@ -3,11 +3,10 @@
 // its captured requests in a bounded, seq-ordered ring buffer — metadata in
 // PostgreSQL, oversized bodies spilled to content-addressed object storage —
 // and evicts the oldest record whenever a capture would push the buffer past
-// its cap. It is deliberately the MODEL and MANAGEMENT layer only: this story
-// does not open the public, anonymous-write ingress that fills the buffer
-// (that lands in a follow-up story per issue #83); Capture is the core method
-// the eventual ingress handler will call, exercised directly by integration
-// tests here to simulate captures.
+// its cap. Capture is the core method the public, anonymous-write ingress
+// (internal/httpapi's `ANY /h/{id}` route, issue #84) calls for every
+// real inbound request; this package's own integration tests also call it
+// directly to simulate captures without going through HTTP.
 //
 // The REST (and later MCP) surfaces are thin adapters over this one package
 // (ADR-0003), exactly mirroring internal/trajectory's split for the other live
@@ -29,10 +28,10 @@ import (
 // "Ring-Buffer Retention and Caps", e.g. N = 500).
 const DefaultRequestCap = 500
 
-// DefaultResponseStatus is the fixed, benign status the (future) ingress
-// records for every capture unless the endpoint is configured otherwise — data
-// Cairn returns, never behavior an inbound payload can steer (SPEC-0005 "Fixed
-// Benign Response").
+// DefaultResponseStatus is the fixed, benign status the open ingress
+// (internal/httpapi's `ANY /h/{id}` route) records for every capture unless
+// the endpoint is configured otherwise — data Cairn returns, never behavior
+// an inbound payload can steer (SPEC-0005 "Fixed Benign Response").
 const DefaultResponseStatus = 200
 
 // Sentinel domain errors callers distinguish, each mapped to a stable code by
@@ -100,8 +99,8 @@ type BodyRef struct {
 	Truncated bool
 }
 
-// CaptureInput is one inbound request as the (future) ingress will present it
-// to Capture. Headers is a sanitized-on-write multi-map (SPEC-0005 "Header
+// CaptureInput is one inbound request as the open ingress presents it to
+// Capture. Headers is a sanitized-on-write multi-map (SPEC-0005 "Header
 // Hygiene & Ephemerality as Containment"); Status is the fixed response Cairn
 // decided to return, recorded as data rather than derived from the payload
 // (SPEC-0005 "Fixed Benign Response").

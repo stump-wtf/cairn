@@ -40,12 +40,21 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 		}
 		ok, retry := s.limiter.allow(clientIP(r))
 		if !ok {
-			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retry.Seconds()))))
-			s.writeError(w, r, errs.New(errs.CodeRateLimited, "rate limit exceeded"), nil)
+			s.writeRateLimited(w, r, retry)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// writeRateLimited renders the standard 429 envelope with a Retry-After
+// header sized from retry, shared by the general per-IP middleware above and
+// the webhook open ingress's dedicated per-IP/per-endpoint limiters
+// (hook_ingress.go), so every rate-limited surface in Cairn answers
+// identically (SPEC-0002 / SPEC-0005 REQ "Rate Limiting").
+func (s *Server) writeRateLimited(w http.ResponseWriter, r *http.Request, retry time.Duration) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retry.Seconds()))))
+	s.writeError(w, r, errs.New(errs.CodeRateLimited, "rate limit exceeded"), nil)
 }
 
 // clientIP extracts the client host for rate-limit keying. chi's RealIP

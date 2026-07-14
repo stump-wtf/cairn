@@ -6,13 +6,15 @@
 // and mounts its routes through this seam rather than the core router
 // hard-coding webhook-specific paths.
 //
-// This is the model + management story only (issue #83): creation requires
+// This is the model + management story (issue #83): creation requires
 // authentication and passes the CSRF seam; every read follows the endpoint's
 // ADR-0007 link capability, so a valid id reads and an unknown/expired id is
 // a uniform 404 with no owner check on the read path (SPEC-0005 "Read
 // endpoints MUST enforce the ADR-0007 link-capability policy"). The public,
 // anonymous-write ingress that actually fills the buffer (`ANY /h/{id}`,
-// SPEC-0005) is deliberately NOT mounted here — that is the next story.
+// SPEC-0005) is deliberately NOT mounted on this router group — it carries
+// its own security posture entirely (no auth, its own rate limits) and lives
+// in hook_ingress.go / api.go's separate top-level route group (issue #84).
 //
 // Governing: ADR-0002 (RouteMounter capability), ADR-0010 (Live Webhook
 // Endpoints), SPEC-0005 (Webhook Inspector — HTTP endpoints table), ADR-0007
@@ -61,12 +63,17 @@ type createHookRequest struct {
 }
 
 // hookResponse is the JSON view of a webhook endpoint: its artifact envelope,
-// the human URL, the mcp://cairn/hook/<id> handle, and the ring-buffer cap
-// (SPEC-0005 "Endpoint exposes both addresses"). The public HTTP ingress URL
-// is intentionally absent until the next story mounts it.
+// the human URL, the public HTTP ingress URL, the mcp://cairn/hook/<id>
+// handle, and the ring-buffer cap (SPEC-0005 "Endpoint exposes both
+// addresses": "the response MUST include the human cairn.sh/<id> URL, the
+// HTTP ingress URL, and the mcp://cairn/hook/<id> handle for the same
+// endpoint"). IngressURL is the `ANY /h/{id}` route (hook_ingress.go)
+// external, unauthenticated senders point at — a DIFFERENT address than URL
+// (the human web-shell page for the same endpoint).
 type hookResponse struct {
 	ID         string         `json:"id"`
 	URL        string         `json:"url"`
+	IngressURL string         `json:"ingress_url"`
 	MCP        string         `json:"mcp"`
 	Title      string         `json:"title,omitempty"`
 	RequestCap int            `json:"request_cap"`
@@ -288,6 +295,7 @@ func (s *Server) toHookResponse(ep *webhook.Endpoint, reqs []webhook.Request, ne
 	return hookResponse{
 		ID:         ep.PublicID,
 		URL:        s.cfg.BaseURL + prefixedPath(pref.Web, ep.PublicID),
+		IngressURL: s.hookIngressURL(ep.PublicID),
 		MCP:        "mcp://cairn" + prefixedPath(pref.MCP, ep.PublicID),
 		Title:      ep.Title,
 		RequestCap: ep.RequestCap,

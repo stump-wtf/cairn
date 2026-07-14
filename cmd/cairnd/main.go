@@ -109,6 +109,11 @@ func run(logger *slog.Logger) error {
 		RefreshTokenTTL:       cfg.OAuthRefreshTokenTTL,
 		OAuthRatePerSecond:    cfg.OAuthRatePerSecond,
 		OAuthRateBurst:        cfg.OAuthRateBurst,
+
+		HookIngressRatePerSecond:  cfg.HookIngressRatePerSecond,
+		HookIngressRateBurst:      cfg.HookIngressRateBurst,
+		HookEndpointRatePerSecond: cfg.HookEndpointRatePerSecond,
+		HookEndpointRateBurst:     cfg.HookEndpointRateBurst,
 	}, logger)
 
 	// Discover the OIDC issuer and wire the "Sign in with Pocket ID" relying

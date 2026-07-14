@@ -29,9 +29,9 @@ var hopByHopHeaders = map[string]struct{}{
 
 // sanitizeHeaders normalizes header names to lowercase and drops every
 // sensitive or hop-by-hop header, returning a fresh map so the caller's
-// original headers (which the future ingress reads off the raw *http.Request)
-// are never mutated. A nil or empty input yields a nil map, which persists as
-// the migration's `'{}'::jsonb` default.
+// original headers (the open ingress passes the raw *http.Request's Header
+// map straight through) are never mutated. A nil or empty input yields a nil
+// map, which persists as the migration's `'{}'::jsonb` default.
 func sanitizeHeaders(in map[string][]string) map[string][]string {
 	if len(in) == 0 {
 		return nil

@@ -79,6 +79,18 @@ type Config struct {
 	OAuthRatePerSecond   float64
 	OAuthRateBurst       int
 
+	// Webhook open ingress (SPEC-0005, ADR-0010, issue #84): the
+	// anonymous-write `ANY /h/{id}` route carries its OWN dedicated
+	// per-source-IP and per-endpoint rate limiters, distinct from the
+	// general RatePerSecond/RateBurst above and from OAuth's — the single
+	// most exposed surface in Cairn must never share a budget with
+	// authenticated traffic (SPEC-0005 REQ "Rate Limiting": "per-endpoint
+	// and per-source-IP").
+	HookIngressRatePerSecond  float64
+	HookIngressRateBurst      int
+	HookEndpointRatePerSecond float64
+	HookEndpointRateBurst     int
+
 	// APITokensRaw is the unparsed CAIRN_API_TOKENS value: a comma-separated list
 	// of `secret:actor[:role]` static bearer credentials the API/MCP surface
 	// accepts (ADR-0004 MVP token seam). Parsed and validated at startup; an empty
@@ -155,6 +167,22 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	c.OAuthRateBurst = int(oauthBurst)
+	if c.HookIngressRatePerSecond, err = envFloat("CAIRN_HOOK_INGRESS_RATE_PER_SECOND", 5); err != nil {
+		return nil, err
+	}
+	var hookIngressBurst int64
+	if hookIngressBurst, err = envInt64("CAIRN_HOOK_INGRESS_RATE_BURST", 20); err != nil {
+		return nil, err
+	}
+	c.HookIngressRateBurst = int(hookIngressBurst)
+	if c.HookEndpointRatePerSecond, err = envFloat("CAIRN_HOOK_ENDPOINT_RATE_PER_SECOND", 10); err != nil {
+		return nil, err
+	}
+	var hookEndpointBurst int64
+	if hookEndpointBurst, err = envInt64("CAIRN_HOOK_ENDPOINT_RATE_BURST", 50); err != nil {
+		return nil, err
+	}
+	c.HookEndpointRateBurst = int(hookEndpointBurst)
 	return c, nil
 }
 

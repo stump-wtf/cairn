@@ -25,11 +25,18 @@ import (
 // output split exactly (SPEC-0005 "Request Body Size Limits": "a hard
 // body-size cap (e.g. a few MB)").
 const (
-	defaultInlineThreshold = 16 << 10 // 16 KiB
-	defaultMaxBodyBytes    = 5 << 20  // 5 MiB per captured request body
+	defaultInlineThreshold = 16 << 10            // 16 KiB
+	defaultMaxBodyBytes    = DefaultMaxBodyBytes // 5 MiB per captured request body
 	idMaxAttempts          = 5
 	mediaTypeWebhook       = "application/vnd.cairn.webhook"
 )
+
+// DefaultMaxBodyBytes is the hard per-captured-request body cap Capture
+// enforces by default (SPEC-0005 "Request Body Size Limits"). The open
+// ingress transport (internal/httpapi) reads this back via MaxBodyBytes so
+// its own pre-buffering 413 cap can never drift from the cap Capture itself
+// applies — one number, not two independently maintained ones.
+const DefaultMaxBodyBytes = 5 << 20
 
 // Service is the webhook core service. It shares the store's Postgres pool and
 // object store so a webhook endpoint is an ordinary artifact in the same
@@ -57,6 +64,13 @@ type Options struct {
 	// Now overrides the clock, for deterministic tests.
 	Now func() time.Time
 }
+
+// MaxBodyBytes reports the hard per-captured-request body cap this Service
+// enforces (default DefaultMaxBodyBytes, or Options.MaxBodyBytes when set).
+// The open ingress transport reads this to size its own pre-buffering 413
+// cap, so the HTTP-layer limit can never silently drift from what Capture
+// itself will accept (SPEC-0005 "Request Body Size Limits").
+func (s *Service) MaxBodyBytes() int64 { return s.maxBodyBytes }
 
 // NewService constructs a Service over a Postgres pool and an object store.
 func NewService(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *Service {
@@ -160,8 +174,10 @@ func (s *Service) spillBody(ctx context.Context, body []byte, declaredMedia stri
 // body inlined or spilled), and — atomically in the same transaction — evicts
 // whatever now sits past the ring-buffer cap (SPEC-0005 "Ring-Buffer Retention
 // and Caps", "Capture-and-evict is atomic", "Concurrent captures keep seq
-// monotonic"). It is the core method the (future) public ingress endpoint
-// calls; this story exercises it directly to simulate captures.
+// monotonic"). It is the core method the public open ingress
+// (internal/httpapi's `ANY /h/{id}` route, issue #84) calls for every real
+// inbound request; this package's own tests also call it directly to
+// simulate captures without going through HTTP.
 //
 // An unknown or expired endpoint id returns the uniform ErrEndpointNotFound
 // (ADR-0007 link-capability) so probing an id leaks no signal (SPEC-0005

@@ -78,6 +78,9 @@ func TestIntegrationHookCreateAndRead(t *testing.T) {
 	if created.MCP != "mcp://cairn/hook/"+created.ID {
 		t.Fatalf("MCP handle = %q, want mcp://cairn/hook/%s", created.MCP, created.ID)
 	}
+	if created.IngressURL != "https://cairn.sh/h/"+created.ID {
+		t.Fatalf("ingress URL = %q, want https://cairn.sh/h/%s (SPEC-0005: endpoint exposes both addresses)", created.IngressURL, created.ID)
+	}
 	if created.RequestCap != webhook.DefaultRequestCap {
 		t.Fatalf("request cap = %d, want default %d", created.RequestCap, webhook.DefaultRequestCap)
 	}

@@ -95,6 +95,23 @@ type Config struct {
 	// burst 30; always on when the authorization server is wired.
 	OAuthRatePerSecond float64
 	OAuthRateBurst     int
+	// HookIngressRatePerSecond / HookIngressRateBurst configure the open
+	// webhook ingress's dedicated PER-SOURCE-IP limiter, and
+	// HookEndpointRatePerSecond / HookEndpointRateBurst its PER-ENDPOINT
+	// limiter (SPEC-0005 REQ "Rate Limiting": "rate-limited per-endpoint and
+	// per-source-IP"). Both are separate from the general per-IP limiter
+	// (RatePerSecond/RateBurst) because the anonymous-write ingress is the
+	// single most exposed surface in Cairn and must carry its own budget,
+	// never share one with authenticated traffic. Defaults: 5/s burst 20
+	// per-IP, 10/s burst 50 per-endpoint; always on (a deployment that truly
+	// wants no ingress throttling must set both to a very high value —
+	// zero/negative still falls back to the default rather than disabling
+	// it, matching the OAuth limiter's always-on posture on this
+	// internet-facing surface).
+	HookIngressRatePerSecond  float64
+	HookIngressRateBurst      int
+	HookEndpointRatePerSecond float64
+	HookEndpointRateBurst     int
 }
 
 // Server is the /v1 REST adapter over the core store and the ADR-0011 web app
@@ -129,6 +146,20 @@ type Server struct {
 	// limiter. Nil on storeless unit wirings (the AS persists in Postgres).
 	oauth        *oauth.Service
 	oauthLimiter *rateLimiter
+	// hookIPLimiter / hookEndpointLimiter are the open webhook ingress's own
+	// dedicated per-source-IP and per-endpoint limiters (SPEC-0005 REQ "Rate
+	// Limiting"), separate from both the general per-IP limiter and the
+	// OAuth one — the anonymous-write ingress is its own attack surface with
+	// its own budget. Nil (disabled) only on storeless unit wirings where
+	// s.hook is also nil; otherwise always constructed (see New).
+	hookIPLimiter       *rateLimiter
+	hookEndpointLimiter *rateLimiter
+	// hookMaxBodyBytes is the open ingress's hard pre-buffering body-size cap
+	// (SPEC-0005 REQ "Request Body Size Limits"): read from s.hook.MaxBodyBytes()
+	// at construction so the HTTP-layer 413 cap can never drift from the cap
+	// Capture itself enforces. Zero (storeless wirings, s.hook nil) disables the
+	// ingress route entirely — see Handler.
+	hookMaxBodyBytes int64
 	// pat is the personal-access-token core (issue #74, ADR-0004 token seam):
 	// the in-process service backing POST/GET/DELETE /v1/tokens and the
 	// PATAuthenticator bearer surface. Nil on storeless unit wirings, like
@@ -186,6 +217,18 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	}
 	if cfg.OAuthRateBurst <= 0 {
 		cfg.OAuthRateBurst = 30
+	}
+	if cfg.HookIngressRatePerSecond <= 0 {
+		cfg.HookIngressRatePerSecond = 5
+	}
+	if cfg.HookIngressRateBurst <= 0 {
+		cfg.HookIngressRateBurst = 20
+	}
+	if cfg.HookEndpointRatePerSecond <= 0 {
+		cfg.HookEndpointRatePerSecond = 10
+	}
+	if cfg.HookEndpointRateBurst <= 0 {
+		cfg.HookEndpointRateBurst = 50
 	}
 	// The annotation, trajectory, and webhook cores are peers of the artifact
 	// store, projected by this same adapter (SPEC-0006 REQ "Cross-Surface
@@ -255,25 +298,38 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 			auth = bearer
 		}
 	}
+	// The open ingress's HTTP-layer body cap is read straight off the webhook
+	// service's own configured cap (webhook.Service.MaxBodyBytes), never a
+	// separately maintained number, so the 413-before-buffering guard can
+	// never silently drift from what Capture itself accepts (SPEC-0005 REQ
+	// "Request Body Size Limits"). Zero (hookSvc nil) leaves the ingress
+	// route unmounted — see Handler.
+	var hookMaxBodyBytes int64
+	if hookSvc != nil {
+		hookMaxBodyBytes = hookSvc.MaxBodyBytes()
+	}
 	return &Server{
-		store:         st,
-		annot:         annot,
-		traj:          traj,
-		hook:          hookSvc,
-		reg:           reg,
-		auth:          auth,
-		cfg:           cfg,
-		limiter:       newRateLimiter(cfg.RatePerSecond, cfg.RateBurst),
-		log:           logger,
-		now:           time.Now,
-		webTmpl:       parseWebTemplates(),
-		sessions:      sessions,
-		verifier:      DevPasswordVerifier{Password: cfg.DevLoginPassword},
-		secureCookies: strings.HasPrefix(cfg.BaseURL, "https://"),
-		oauth:         oauthSvc,
-		oauthLimiter:  newRateLimiter(cfg.OAuthRatePerSecond, cfg.OAuthRateBurst),
-		pat:           patSvc,
-		mcpSessions:   mcpSessSvc,
+		store:               st,
+		annot:               annot,
+		traj:                traj,
+		hook:                hookSvc,
+		reg:                 reg,
+		auth:                auth,
+		cfg:                 cfg,
+		limiter:             newRateLimiter(cfg.RatePerSecond, cfg.RateBurst),
+		log:                 logger,
+		now:                 time.Now,
+		webTmpl:             parseWebTemplates(),
+		sessions:            sessions,
+		verifier:            DevPasswordVerifier{Password: cfg.DevLoginPassword},
+		secureCookies:       strings.HasPrefix(cfg.BaseURL, "https://"),
+		oauth:               oauthSvc,
+		oauthLimiter:        newRateLimiter(cfg.OAuthRatePerSecond, cfg.OAuthRateBurst),
+		hookIPLimiter:       newRateLimiter(cfg.HookIngressRatePerSecond, cfg.HookIngressRateBurst),
+		hookEndpointLimiter: newRateLimiter(cfg.HookEndpointRatePerSecond, cfg.HookEndpointRateBurst),
+		hookMaxBodyBytes:    hookMaxBodyBytes,
+		pat:                 patSvc,
+		mcpSessions:         mcpSessSvc,
 	}
 }
 
@@ -311,6 +367,22 @@ func (s *Server) Handler() http.Handler {
 		// authenticated, under the same strict CSP as the rest of /v1.
 		s.mountMCP(r)
 	})
+
+	// The webhook open ingress (SPEC-0005 HTTP endpoints table: `ANY /h/{id}`):
+	// the single Public, anonymous-write route in Cairn, deliberately mounted
+	// as its own top-level group — NOT under /v1, NOT under the web session
+	// group — so it carries the strict /v1-style CSP (never the HTMX/Alpine
+	// webCSP) but is exempt from requireAuth/enforceCSRF/session machinery
+	// entirely (it's a machine ingress like /v1 and /mcp, bypassing Pocket
+	// ID/OIDC by design; ADR-0010 "the endpoint is anonymous-write and
+	// internet-facing"). Nil s.hook (storeless unit wirings) leaves it
+	// unmounted, matching mountAPI's own s.hook guard.
+	if s.hook != nil {
+		r.Group(func(r chi.Router) {
+			r.Use(s.securityHeaders)
+			s.mountHookIngress(r)
+		})
+	}
 	return r
 }
 
