@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -43,10 +44,40 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	s.createSingle(w, r, p)
 }
 
+// requestedTTL parses the optional X-Cairn-Ttl-Seconds header (SPEC-0008
+// `cairn --ttl`): a positive integer number of seconds bounded by
+// cfg.MaxRequestedTTL. An absent header is not an error — the caller falls
+// back to cfg.DefaultTTL — but a present, malformed, non-positive, or
+// over-the-cap value IS validation_failed: the CLI never silently gets a
+// different TTL than what it explicitly asked for (see Config.MaxRequestedTTL
+// docs). The server remains authoritative (ADR-0007): this only interprets an
+// explicit ask, it never computes one.
+func requestedTTL(r *http.Request, cfg Config) (time.Duration, error) {
+	raw := r.Header.Get("X-Cairn-Ttl-Seconds")
+	if raw == "" {
+		return cfg.DefaultTTL, nil
+	}
+	secs, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || secs <= 0 {
+		return 0, errs.Validationf("X-Cairn-Ttl-Seconds must be a positive integer number of seconds")
+	}
+	ttl := time.Duration(secs) * time.Second
+	if ttl > cfg.MaxRequestedTTL {
+		return 0, errs.Validationf("X-Cairn-Ttl-Seconds exceeds the maximum allowed TTL (%s)", cfg.MaxRequestedTTL)
+	}
+	return ttl, nil
+}
+
 func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Principal) {
 	shareType := artifact.ShareType(firstNonEmpty(
 		r.URL.Query().Get("type"), r.Header.Get("X-Cairn-Type"), string(artifact.TypeFile)))
 	now := s.now()
+
+	ttl, err := requestedTTL(r, s.cfg)
+	if err != nil {
+		s.writeError(w, r, err, nil)
+		return
+	}
 
 	// Guard the raw body; the store additionally enforces the limit incrementally.
 	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes+1)
@@ -58,7 +89,7 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 		ExpectedSHA256:    r.Header.Get("X-Cairn-Sha256"),
 		Provenance:        artifact.Provenance{ActorID: p.ActorID, Channel: p.Channel, CapturedAt: now},
 		Access:            artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
-		ExpiresAt:         now.Add(s.cfg.DefaultTTL),
+		ExpiresAt:         now.Add(ttl),
 	})
 	if err != nil {
 		s.writeError(w, r, mapUploadErr(err), nil)
@@ -79,6 +110,11 @@ type spooledFile struct {
 func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Principal, boundary string) {
 	if boundary == "" {
 		s.writeError(w, r, errs.Validationf("multipart: missing boundary"), nil)
+		return
+	}
+	ttl, err := requestedTTL(r, s.cfg)
+	if err != nil {
+		s.writeError(w, r, err, nil)
 		return
 	}
 	mr := multipart.NewReader(r.Body, boundary)
@@ -149,7 +185,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 	now := s.now()
 	prov := artifact.Provenance{ActorID: p.ActorID, Channel: p.Channel, CapturedAt: now}
 	access := artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink}
-	expires := now.Add(s.cfg.DefaultTTL)
+	expires := now.Add(ttl)
 
 	if len(files) == 1 {
 		f := files[0]

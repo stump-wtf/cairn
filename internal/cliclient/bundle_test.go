@@ -83,7 +83,9 @@ func TestCreateBundleSendsAllFilesInOneRequest(t *testing.T) {
 
 	var gotParts []string
 	var gotTitle string
+	var gotTTL string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTTL = r.Header.Get("X-Cairn-Ttl-Seconds")
 		mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil || mediaType != "multipart/form-data" {
 			t.Errorf("Content-Type = %q", r.Header.Get("Content-Type"))
@@ -115,7 +117,7 @@ func TestCreateBundleSendsAllFilesInOneRequest(t *testing.T) {
 	defer closeAll()
 
 	c := New(srv.URL, "tok")
-	art, err := c.CreateBundle(context.Background(), files, "my bundle")
+	art, err := c.CreateBundle(context.Background(), files, CreateBundleOptions{Title: "my bundle", TTLSeconds: 86400})
 	if err != nil {
 		t.Fatalf("CreateBundle: %v", err)
 	}
@@ -127,5 +129,8 @@ func TestCreateBundleSendsAllFilesInOneRequest(t *testing.T) {
 	}
 	if gotTitle != "my bundle" {
 		t.Errorf("title field = %q", gotTitle)
+	}
+	if gotTTL != "86400" {
+		t.Errorf("X-Cairn-Ttl-Seconds = %q, want 86400", gotTTL)
 	}
 }

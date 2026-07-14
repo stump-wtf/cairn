@@ -258,6 +258,97 @@ func TestBareIngestJSONErrorEnvelopeOnStderr(t *testing.T) {
 	}
 }
 
+// TestBareIngestSendsTTLAndTitleFlags is SPEC-0008's `--ttl`/`--title` flags
+// end to end: both reach the server as the corresponding headers on the
+// single-artifact create request.
+func TestBareIngestSendsTTLAndTitleFlags(t *testing.T) {
+	var gotTTL, gotTitle string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTTL = r.Header.Get("X-Cairn-Ttl-Seconds")
+		gotTitle = r.Header.Get("X-Cairn-Title")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(cliclient.Artifact{ID: "abc12", URL: "https://cairn.sh/abc12"})
+	}))
+	defer srv.Close()
+
+	_, stderr, code := runCLI(t, emptyConfigPath(t), "hello world!", "--url", srv.URL, "--token", "tok",
+		"--ttl", "24h", "--title", "my notes")
+	if code != int(cliexit.Success) {
+		t.Fatalf("exit code = %d, want 0, stderr=%q", code, stderr)
+	}
+	if gotTTL != "86400" {
+		t.Errorf("X-Cairn-Ttl-Seconds = %q, want 86400", gotTTL)
+	}
+	if gotTitle != "my notes" {
+		t.Errorf("X-Cairn-Title = %q, want %q", gotTitle, "my notes")
+	}
+}
+
+// TestBareIngestInvalidTTLIsUsageError verifies --ttl parsing failures never
+// reach the network (SPEC-0008 "usage error ... before any network call").
+func TestBareIngestInvalidTTLIsUsageError(t *testing.T) {
+	_, stderr, code := runCLI(t, emptyConfigPath(t), "hello", "--token", "tok", "--ttl", "not-a-duration")
+	if code != int(cliexit.Usage) {
+		t.Errorf("exit code = %d, want %d, stderr=%q", code, cliexit.Usage, stderr)
+	}
+}
+
+// TestBareIngestDetectsMarkdownByExtension is SPEC-0008's media-type
+// detection: a .md path argument declares text/markdown without an explicit
+// --type override.
+func TestBareIngestDetectsMarkdownByExtension(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	if err := os.WriteFile(path, []byte("# hi"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	var gotContentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(cliclient.Artifact{ID: "abc12", URL: "https://cairn.sh/abc12"})
+	}))
+	defer srv.Close()
+
+	_, stderr, code := runCLI(t, emptyConfigPath(t), "", "--url", srv.URL, "--token", "tok", path)
+	if code != int(cliexit.Success) {
+		t.Fatalf("exit code = %d, want 0, stderr=%q", code, stderr)
+	}
+	if gotContentType != "text/markdown" {
+		t.Errorf("Content-Type = %q, want text/markdown", gotContentType)
+	}
+}
+
+// TestBareIngestTypeFlagOverridesDetection verifies an explicit --type wins
+// over extension-based detection.
+func TestBareIngestTypeFlagOverridesDetection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	if err := os.WriteFile(path, []byte("# hi"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	var gotContentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(cliclient.Artifact{ID: "abc12", URL: "https://cairn.sh/abc12"})
+	}))
+	defer srv.Close()
+
+	_, stderr, code := runCLI(t, emptyConfigPath(t), "", "--url", srv.URL, "--token", "tok", "--type", "text/plain", path)
+	if code != int(cliexit.Success) {
+		t.Fatalf("exit code = %d, want 0, stderr=%q", code, stderr)
+	}
+	if gotContentType != "text/plain" {
+		t.Errorf("Content-Type = %q, want text/plain (explicit override)", gotContentType)
+	}
+}
+
 func TestAddDeduplicatesSamePathAndSucceeds(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "a.log")
@@ -291,6 +382,74 @@ func TestAddMissingFileIsUsageError(t *testing.T) {
 	_, _, code := runCLI(t, emptyConfigPath(t), "", "add", "/no/such/file", "--token", "tok")
 	if code != int(cliexit.Usage) {
 		t.Errorf("exit code = %d, want %d", code, cliexit.Usage)
+	}
+}
+
+// TestAddSendsTTLAndTitleFlags is SPEC-0008 bundle creation's `--ttl`/
+// `--title` flags end to end.
+func TestAddSendsTTLAndTitleFlags(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.log")
+	if err := os.WriteFile(a, []byte("log line"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	var gotTTL, gotTitle string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTTL = r.Header.Get("X-Cairn-Ttl-Seconds")
+		_ = r.ParseMultipartForm(1 << 20)
+		gotTitle = r.MultipartForm.Value["title"][0]
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(cliclient.Artifact{ID: "bundle1", URL: "https://cairn.sh/bundle1"})
+	}))
+	defer srv.Close()
+
+	stdout, stderr, code := runCLI(t, emptyConfigPath(t), "", "add", a, "--url", srv.URL, "--token", "tok",
+		"--ttl", "7d", "--title", "my bundle")
+	if code != int(cliexit.Success) {
+		t.Fatalf("exit code = %d, want 0, stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "https://cairn.sh/bundle1") {
+		t.Errorf("stdout = %q, want the bundle link", stdout)
+	}
+	if want := "604800"; gotTTL != want {
+		t.Errorf("X-Cairn-Ttl-Seconds = %q, want %q", gotTTL, want)
+	}
+	if gotTitle != "my bundle" {
+		t.Errorf("title field = %q, want %q", gotTitle, "my bundle")
+	}
+}
+
+// TestAddAbortsBundleWhenServerRejectsIt is SPEC-0008 "One file in the
+// bundle fails": since the bundle is one atomic multipart POST, any server
+// rejection aborts the whole bundle — the CLI MUST NOT print a success link
+// and MUST exit non-zero.
+func TestAddAbortsBundleWhenServerRejectsIt(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.log")
+	b := filepath.Join(dir, "b.log")
+	for _, p := range []string{a, b} {
+		if err := os.WriteFile(p, []byte("data"), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"code": "payload_too_large", "message": "one member too big"},
+		})
+	}))
+	defer srv.Close()
+
+	stdout, stderr, code := runCLI(t, emptyConfigPath(t), "", "add", a, b, "--url", srv.URL, "--token", "tok")
+	if code != int(cliexit.Oversize) {
+		t.Fatalf("exit code = %d, want %d, stderr=%q", code, cliexit.Oversize, stderr)
+	}
+	if strings.Contains(stdout, "cairn.sh") {
+		t.Errorf("stdout = %q, want no success link on a rejected bundle", stdout)
 	}
 }
 

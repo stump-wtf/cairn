@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 // BundleFile is one member of a bundle create request.
@@ -20,6 +21,17 @@ type BundleFile struct {
 	Size int64
 }
 
+// CreateBundleOptions carries the bundle-level create request fields
+// (SPEC-0008 "Bundle Creation", `--title`/`--ttl`).
+type CreateBundleOptions struct {
+	// Title is an optional bundle title.
+	Title string
+	// TTLSeconds is an optional explicit expiry request
+	// (X-Cairn-Ttl-Seconds), zero meaning "let the server assign the
+	// default TTL" — see CreateArtifactOptions.TTLSeconds for the rationale.
+	TTLSeconds int64
+}
+
 // CreateBundle POSTs all files as a single multipart/form-data request to
 // /v1/artifacts (SPEC-0008 "Bundle Creation"). Sending every member in one
 // request makes the bundle atomic by construction: the server either
@@ -28,15 +40,18 @@ type BundleFile struct {
 // NOT report success or emit a link unless the server confirms the complete
 // bundle was created."
 //
-// This buffers the encoded multipart body rather than streaming it; a
-// bounded, concurrent, streaming uploader with per-file progress lands in
-// cairn#22.
-func (c *Client) CreateBundle(ctx context.Context, files []BundleFile, title string) (*Artifact, error) {
+// Callers that want bounded-concurrent local file preparation with per-file
+// progress (cairn#22, SPEC-0008 "Concurrency Safety") build files with
+// PrepareBundleFilesConcurrent first; by the time they land here each
+// BundleFile.Body is already a fully-buffered in-memory reader, so encoding
+// and sending the one multipart request is fast regardless of source disk
+// latency.
+func (c *Client) CreateBundle(ctx context.Context, files []BundleFile, opts CreateBundleOptions) (*Artifact, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
-	if title != "" {
-		if err := w.WriteField("title", title); err != nil {
+	if opts.Title != "" {
+		if err := w.WriteField("title", opts.Title); err != nil {
 			return nil, fmt.Errorf("cliclient: encode bundle title: %w", err)
 		}
 	}
@@ -56,6 +71,9 @@ func (c *Client) CreateBundle(ctx context.Context, files []BundleFile, title str
 	req, err := c.newRequest(ctx, http.MethodPost, "/v1/artifacts", &buf, w.FormDataContentType())
 	if err != nil {
 		return nil, err
+	}
+	if opts.TTLSeconds > 0 {
+		req.Header.Set("X-Cairn-Ttl-Seconds", strconv.FormatInt(opts.TTLSeconds, 10))
 	}
 	resp, err := c.send(req)
 	if err != nil {

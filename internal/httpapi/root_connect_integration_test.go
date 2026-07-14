@@ -136,8 +136,9 @@ func TestIntegrationConnectRedirectsToSettings(t *testing.T) {
 // TestIntegrationSettingsPageRequiresAuth proves the Settings page (#75) is
 // gated exactly like the Bin: an anonymous request is redirected to login,
 // and a signed-in caller sees the copy-pasteable MCP steps (server URL,
-// discovery document, all three scopes, no static keys), the CLI "coming in
-// v0.0.3" note (never fabricated install steps), and the API tokens section.
+// discovery document, all three scopes, no static keys), the CLI install/
+// login/push steps now that the CLI has shipped (#20-#22, no longer "coming
+// in v0.0.3"), and the API tokens section.
 func TestIntegrationSettingsPageRequiresAuth(t *testing.T) {
 	srv, client := sessionServer(t)
 	doLogin(t, srv, client, "joe", "devpass").Body.Close()
@@ -157,7 +158,7 @@ func TestIntegrationSettingsPageRequiresAuth(t *testing.T) {
 		"annotations:write",
 		"http://cairn.test/mcp",
 		"OAuth 2.1",
-		"coming in v0.0.3",
+		"go install github.com/joestump/cairn/cmd/cairn@latest",
 		"cairn login",
 		"API tokens",
 		"Account",

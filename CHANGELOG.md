@@ -7,8 +7,22 @@ reaches 1.0.
 
 ## [Unreleased]
 
-- The `cairn` command-line interface (`cairn login`, pipe/path push, Markdown
-  bundles) — tracked for **v0.0.3** (issues #20–#22).
+- **The `cairn` CLI** (v0.0.3, issues #20–#22): a single static Go binary and
+  pure `/v1` REST client (ADR-0003).
+  - `cat file | cairn` / `cairn file` — pipe or path ingest, with a spinner,
+    extension/content media-type detection, best-effort clipboard copy
+    (OSC52/pbcopy/xclip/xsel/wl-copy fallback chain), and a decorated
+    `✓ pushed` / link / expiry+access summary on an interactive terminal
+    (bare link only when piped). (#22)
+  - `cairn add f1 f2 …` — one atomic bundle via multipart `POST
+    /v1/artifacts`, with a bounded concurrent worker pool preparing files and
+    a Bubble Tea + Lip Gloss per-file progress display (done/in-flight/
+    queued rows) on an interactive terminal. (#22)
+  - `--ttl` / `--title` flags; the server now accepts an optional, capped
+    `X-Cairn-Ttl-Seconds` request on create (SPEC-0008 `--ttl`) alongside the
+    existing `--title`. (#22)
+  - `cairn login` / `logout` / `whoami` against the ADR-0004 bearer-token
+    seam, with secure OS-keyring-or-`0600`-file credential storage. (#20, #21)
 
 ## [0.0.2] - 2026-07-12
 

@@ -38,12 +38,22 @@ type IOStreams struct {
 }
 
 // globalFlags holds the persistent flag destinations shared by every
-// subcommand, bound once on the root command.
+// subcommand, bound once on the root command. title/ttl/mediaType/noCopy/
+// concurrency are only meaningful to the ingest commands (bare `cairn` and
+// `cairn add`) but are bound at the root so both share one flag definition
+// rather than two independently-drifting copies (SPEC-0008 "`--ttl`,
+// `--title` flags").
 type globalFlags struct {
 	apiURL  string
 	token   string
 	jsonOut bool
 	verbose bool
+
+	title       string
+	ttl         string
+	mediaType   string
+	noCopy      bool
+	concurrency int
 }
 
 // NewRootCmd builds the full `cairn` command tree. streams lets callers
@@ -86,6 +96,11 @@ decided by the server and only ever displayed here (SPEC-0008).`,
 	root.PersistentFlags().StringVar(&flags.token, "token", "", "bearer token (env CAIRN_TOKEN)")
 	root.PersistentFlags().BoolVar(&flags.jsonOut, "json", false, "emit machine-readable JSON instead of human-readable output")
 	root.PersistentFlags().BoolVarP(&flags.verbose, "verbose", "v", false, "structured diagnostic output on stderr (tokens redacted)")
+	root.PersistentFlags().StringVar(&flags.title, "title", "", "optional display title for the artifact/bundle")
+	root.PersistentFlags().StringVar(&flags.ttl, "ttl", "", "request an expiry (e.g. \"24h\", \"7d\"); the server decides whether to honor it")
+	root.PersistentFlags().StringVar(&flags.mediaType, "type", "", "override the detected Content-Type")
+	root.PersistentFlags().BoolVar(&flags.noCopy, "no-copy", false, "never copy the resulting link to the clipboard")
+	root.PersistentFlags().IntVar(&flags.concurrency, "concurrency", defaultUploadConcurrency, "bounded worker pool size for `cairn add`'s local file preparation")
 
 	// A flag-parse error (unknown flag, bad value) is a usage error by
 	// definition; wrap it so cliexit maps it to exit code 2 and print it

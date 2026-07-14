@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -37,6 +38,12 @@ type CreateArtifactOptions struct {
 	// SHA256 is an optional pre-computed checksum (X-Cairn-Sha256) the
 	// server verifies against the streamed body.
 	SHA256 string
+	// TTLSeconds is an optional explicit expiry request (`cairn --ttl`,
+	// X-Cairn-Ttl-Seconds), zero meaning "let the server assign the default
+	// TTL" (SPEC-0008 "Data the CLI shows but never decides" — the CLI only
+	// forwards what the human explicitly asked for; the server remains
+	// authoritative and may reject an out-of-bounds request).
+	TTLSeconds int64
 }
 
 // CreateArtifact streams body to POST /v1/artifacts and decodes the created
@@ -70,6 +77,9 @@ func (c *Client) doCreate(ctx context.Context, path string, body io.Reader, cont
 	}
 	if opts.SHA256 != "" {
 		req.Header.Set("X-Cairn-Sha256", opts.SHA256)
+	}
+	if opts.TTLSeconds > 0 {
+		req.Header.Set("X-Cairn-Ttl-Seconds", strconv.FormatInt(opts.TTLSeconds, 10))
 	}
 	return c.send(req)
 }

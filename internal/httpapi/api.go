@@ -31,6 +31,19 @@ type Config struct {
 	MaxUploadBytes int64
 	// DefaultTTL is the artifact expiry assigned at create (ADR-0007).
 	DefaultTTL time.Duration
+	// MaxRequestedTTL bounds an explicit client-requested expiry (the CLI's
+	// `--ttl` flag, SPEC-0008) sent as X-Cairn-Ttl-Seconds on POST
+	// /v1/artifacts: the server remains authoritative over expiry (ADR-0007
+	// "owner-adjustable ... subject to any workspace cap") — a request
+	// outside (0, MaxRequestedTTL] is rejected as validation_failed rather
+	// than silently clamped, so a caller never believes it got a longer TTL
+	// than it did. This header is honored only on the REST create path (the
+	// CLI/web surface); the MCP agent surface's artifact_create/
+	// bundle_create schemas carry no TTL field at all and always get
+	// DefaultTTL (internal/httpapi/mcp.go), matching the existing
+	// human-vs-agent capability split (ADR-0004: e.g. delete is human-only).
+	// Defaults to 30 days.
+	MaxRequestedTTL time.Duration
 	// RatePerSecond / RateBurst configure per-IP rate limiting; <= 0 disables.
 	RatePerSecond float64
 	RateBurst     int
@@ -153,6 +166,9 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	}
 	if cfg.DefaultTTL <= 0 {
 		cfg.DefaultTTL = 7 * 24 * time.Hour
+	}
+	if cfg.MaxRequestedTTL <= 0 {
+		cfg.MaxRequestedTTL = 30 * 24 * time.Hour
 	}
 	if cfg.MaxRunRequestBytes <= 0 {
 		cfg.MaxRunRequestBytes = 64 << 20

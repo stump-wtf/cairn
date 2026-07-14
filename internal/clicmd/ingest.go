@@ -27,6 +27,11 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 		return err
 	}
 
+	ttlSeconds, err := parseTTLFlag(flags.ttl)
+	if err != nil {
+		return err
+	}
+
 	// Determine and validate the body *before* checking auth: an empty
 	// stdin or a bad path is a usage error regardless of authentication
 	// state, and usage errors are reported "before any network call"
@@ -54,6 +59,7 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 		}
 		body = f
 		title = filepath.Base(path)
+		mediaType = detectMediaType(flags.mediaType, path, nil)
 	} else {
 		// No path argument: read the piped body. A stdin that is itself an
 		// interactive terminal (no pipe, no path) is "empty input" per
@@ -65,22 +71,50 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 		}
 		br := bufio.NewReader(streams.In)
 		// Peek so a genuinely empty stdin (immediate EOF) is rejected before
-		// any request is attempted, rather than creating an empty artifact.
-		if _, err := br.Peek(1); err == io.EOF {
+		// any request is attempted, rather than creating an empty artifact,
+		// and so the same peeked bytes double as a content-sniff sample for
+		// media-type detection (SPEC-0008 "media-type detection (md by
+		// content/extension hint flag)") since stdin has no extension to
+		// hint from.
+		peek, err := br.Peek(512)
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+		if len(peek) == 0 {
 			return usageErrorf("stdin is empty: pipe content on stdin or pass a file path")
 		}
 		body = br
+		mediaType = detectMediaType(flags.mediaType, "", peek)
+	}
+	if flags.title != "" {
+		title = flags.title
 	}
 
 	if cfg.Token == "" {
 		return fmt.Errorf("not authenticated: run `cairn login` (or set --token/CAIRN_TOKEN): %w", cliclient.ErrNotAuthenticated)
 	}
 
+	interactive := isTerminal(streams.Out) && !flags.jsonOut
+
+	// Wrap body in a byte counter for the spinner regardless of whether the
+	// spinner actually renders, so the two code paths (with/without a
+	// visible spinner) push identical bytes through identical plumbing —
+	// only the presence of the animation differs.
+	counting := &countingReader{r: body}
+	var sp *spinner
+	if interactive && isTerminal(streams.ErrOut) {
+		sp = newSpinner(streams.ErrOut, "uploading", counting)
+	}
+
 	client := cliclient.New(cfg.APIBaseURL, cfg.Token)
-	art, err := client.CreateArtifact(cmd.Context(), body, cliclient.CreateArtifactOptions{
-		Title:     title,
-		MediaType: mediaType,
+	art, err := client.CreateArtifact(cmd.Context(), counting, cliclient.CreateArtifactOptions{
+		Title:      title,
+		MediaType:  mediaType,
+		TTLSeconds: ttlSeconds,
 	})
+	if sp != nil {
+		sp.Stop()
+	}
 	if err != nil {
 		return err
 	}
@@ -88,6 +122,22 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 	if flags.jsonOut {
 		return writeJSON(streams.Out, art)
 	}
-	fmt.Fprintln(streams.Out, art.URL)
+
+	if !interactive {
+		// Piped/redirected stdout: only the bare link, no decoration, no
+		// clipboard copy (SPEC-0008 "Piped into another command").
+		fmt.Fprintln(streams.Out, art.URL)
+		return nil
+	}
+
+	fmt.Fprintln(streams.Out, "✓ pushed")
+	fmt.Fprintf(streams.Out, "🔗 %s\n", art.URL)
+	fmt.Fprintf(streams.Out, "⧗ expires %s · 🔒 %s\n", formatTTL(art.ExpiresAt), formatAccess(art.Visibility))
+
+	if !flags.noCopy {
+		if err := copyToClipboard(streams.ErrOut, art.URL); err != nil {
+			fmt.Fprintln(streams.ErrOut, "cairn: clipboard unavailable, copy skipped")
+		}
+	}
 	return nil
 }
