@@ -310,18 +310,20 @@ func (s *Server) requireScope(scope string) func(http.Handler) http.Handler {
 // requireHuman is middleware that refuses every agent token: it runs after
 // requireAuth and 403s any principal marked IsAgent, letting only human callers
 // (personal API tokens and cookie sessions, both IsAgent=false) through. It is
-// the seam for capabilities the three-scope model deliberately gives no scope —
-// deletion and, in a future Share endpoint, sharing/expiry changes — which
-// ADR-0004 / SPEC-0004 keep as "explicit human actions" that agents can never
-// perform on the human's behalf. Gating delete on artifacts:write alone was
-// insufficient because agentScopes grants artifacts:write; the human/agent
-// distinction, not a write scope, is what separates a deletable-by-agent write
-// from a human-only delete. Using IsAgent (rather than a human-only scope such
-// as sharing:manage) is deliberate: a web session carries neither sharing:manage
-// nor an agent marker, so it correctly retains delete, while an agent token is
-// refused.
+// the seam for capabilities the three-scope model deliberately gives no
+// scope — deletion — which ADR-0004 / SPEC-0004 keep as an "explicit human
+// action" agents can never perform on the human's behalf. Gating delete on
+// artifacts:write alone was insufficient because agentScopes grants
+// artifacts:write; the human/agent distinction, not a write scope, is what
+// separates a deletable-by-agent write from a human-only delete. Delete
+// deliberately still gates on IsAgent rather than a scope: the owner-policy
+// endpoints (sharing/TTL/rotate, issue #94, policy.go) instead gate on the
+// scopeSharingManage requireScope check, since — unlike delete — they DO have
+// a natural dedicated scope that both the web session and a human API token
+// now carry (SPEC-0009 REQ "Owner-Only Policy Changes"); an agent token or
+// the DevActorAuthenticator dev shortcut still never receives it (ADR-0004).
 //
-// Governing: ADR-0004 (least-privilege agent grant — no delete/sharing scope),
+// Governing: ADR-0004 (least-privilege agent grant — no delete scope),
 // SPEC-0004 (mcp-server-and-oauth: "deletion stays an explicit human action"),
 // SPEC-0006 (consistent 401/403).
 func (s *Server) requireHuman(next http.Handler) http.Handler {

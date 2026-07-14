@@ -13,6 +13,8 @@
 package store
 
 import (
+	"time"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/joestump/cairn/internal/id"
@@ -23,6 +25,18 @@ import (
 // idMaxAttempts bounds public-id collision retries; at the targeted keyspace
 // occupancy a single retry is already astronomically unlikely.
 const idMaxAttempts = 5
+
+// retiredIDGrace bounds how long a retired public id (rotated away by
+// Store.RotateID) stays excluded from re-minting (ADR-0005 "a retired id is
+// not reused within TTL-plus-grace", SPEC-0009 REQ "Id Rotation as
+// Revoke-a-Leaked-Link"). It is set generously longer than the platform's
+// maximum permitted artifact TTL (httpapi.Config.MaxRequestedTTL defaults to
+// 30 days) with margin, mirroring the same "longer than max TTL" posture the
+// object-storage lifecycle backstop uses (SPEC-0009 REQ "Object-Storage
+// Lifecycle Backstop") so a rotated id can never be re-minted while any
+// plausible artifact created before the rotation could still be alive and
+// confusable with it.
+const retiredIDGrace = 60 * 24 * time.Hour
 
 // defaultPreviewMaxBytes is the fallback preview size bound when none is
 // configured: bodies larger than this are never previewable (SPEC-0002).

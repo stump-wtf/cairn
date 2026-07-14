@@ -55,7 +55,7 @@
         <dt>actor</dt><dd>{{.Provenance.Actor}}{{if .Provenance.OnBehalfOf}} <span class="obo">on behalf of {{.Provenance.OnBehalfOf}}</span>{{end}}</dd>
         <dt>channel</dt><dd>{{.Provenance.Channel}}</dd>
         <dt>captured</dt><dd>{{.Provenance.Captured}}</dd>
-        {{if .Provenance.Expires}}<dt>expires</dt><dd>{{.Provenance.Expires}}</dd>{{end}}
+        {{if .Provenance.Expires}}<dt>expires</dt><dd data-provenance-expires>{{.Provenance.Expires}}</dd>{{end}}
       </dl>
     </section>
 

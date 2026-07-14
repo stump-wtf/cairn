@@ -106,8 +106,8 @@ func TestSessionAuthenticatorCookie(t *testing.T) {
 	if !p.Ambient {
 		t.Error("session principal must be Ambient so enforceCSRF guards it")
 	}
-	if p.HasScope("sharing:manage") {
-		t.Error("MVP session must not carry sharing:manage")
+	if !p.HasScope("sharing:manage") {
+		t.Error("web session must carry sharing:manage (issue #94: the Share dialog's owner controls run over the session)")
 	}
 
 	// No credentials → unauthorized.

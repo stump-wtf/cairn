@@ -16,6 +16,7 @@
 <script defer src="/assets/code.js"></script>
 <script defer src="/assets/image.js"></script>
 <script defer src="/assets/hook.js"></script>
+<script defer src="/assets/share.js"></script>
 <script defer src="/assets/htmx.min.js"></script>
 <script defer src="/assets/alpine.min.js"></script>{{end}}
 
@@ -29,20 +30,26 @@
   {{if .Deleted}}<p class="comment-body tombstone">comment deleted</p>{{else}}<p class="comment-body">{{.Body}}</p>{{end}}
 </div>{{end}}
 
-{{/* The Share dialog (#46, SPEC-0001 REQ "Share Affordance"; design turn 7
-share sheet). A native <dialog> so the browser furnishes the modal focus trap
-and Escape-to-dismiss for free (app.js only calls showModal()/close() and adds
-an explicit focus-restore to the Share button — the same WCAG focus-management
-bar as the reaction picker in trajectory.js/markdown.js). It is a read-only
-summary this story: the same web link + mcp:// handle as the header URL
-control with their own copy affordances, the current link-access policy line
-and TTL/expiry countdown (ADR-0007), and the provenance line. It never
-re-implements or mutates the access policy client-side — adjusting it is a
-later story against POST /v1/artifacts/{id}/share (SPEC-0002); a non-owner or
-signed-out viewer sees a note explaining the controls are absent instead of any
-mutating affordance. Shared by both the generic shell and the trajectory
-viewer so the two surfaces present one Share sheet (ADR-0011). */}}
-{{define "share-dialog"}}<dialog class="share-dialog" data-share-dialog aria-labelledby="share-dialog-title">
+{{/* The Share dialog (#46, #94; SPEC-0001 REQ "Share Affordance", SPEC-0009
+REQ "Owner-Only Policy Changes" / "Id Rotation as Revoke-a-Leaked-Link" / REQ
+"Default 7-Day TTL, Owner-Adjustable, Visible Countdown"). A native <dialog>
+so the browser furnishes the modal focus trap and Escape-to-dismiss for free
+(app.js only calls showModal()/close() and adds an explicit focus-restore to
+the Share button — the same WCAG focus-management bar as the reaction picker
+in trajectory.js/markdown.js). It shows the same web link + mcp:// handle as
+the header URL control with their own copy affordances, the current
+link-access policy line and TTL/expiry countdown (ADR-0007), and the
+provenance line — read-only for everyone. For the OWNER it additionally
+surfaces the policy-change controls (share.js, talking straight to the
+PATCH/POST /v1/artifacts/{id}/policy|ttl|rotate JSON endpoints, policy.go):
+extend/shorten the TTL, flip link access, and rotate the id (with a confirm —
+it breaks existing links). A non-owner or signed-out viewer instead sees a
+note explaining the controls are absent — this template NEVER renders a
+mutating control for a non-owner (SPEC-0001 REQ "Share Affordance": "A
+non-owner or unauthenticated viewer MUST NOT be able to change sharing").
+Shared by both the generic shell and the trajectory viewer so the two
+surfaces present one Share sheet (ADR-0011). */}}
+{{define "share-dialog"}}<dialog class="share-dialog" data-share-dialog data-share-id="{{.ID}}" aria-labelledby="share-dialog-title">
   <div class="share-dialog-head">
     <h2 id="share-dialog-title" class="share-dialog-title">Share this artifact</h2>
     <button type="button" class="share-dialog-close" data-share-close aria-label="Close share dialog">✕</button>
@@ -53,7 +60,7 @@ viewer so the two surfaces present one Share sheet (ADR-0011). */}}
   <div class="share-field">
     <span class="share-field-label" id="share-link-label">🔗 Web link</span>
     <div class="share-field-row">
-      <code class="share-field-value" aria-labelledby="share-link-label">{{.WebURL}}</code>
+      <code class="share-field-value" aria-labelledby="share-link-label" data-share-link>{{.WebURL}}</code>
       <button type="button" class="share-copy-btn" data-share-copy="{{.WebURL}}" data-share-field="web link" aria-label="Copy web link to clipboard">copy</button>
     </div>
   </div>
@@ -61,19 +68,51 @@ viewer so the two surfaces present one Share sheet (ADR-0011). */}}
   <div class="share-field">
     <span class="share-field-label" id="share-mcp-label">◆ MCP handle</span>
     <div class="share-field-row">
-      <code class="share-field-value" aria-labelledby="share-mcp-label">{{.MCPHandle}}</code>
+      <code class="share-field-value" aria-labelledby="share-mcp-label" data-share-mcp>{{.MCPHandle}}</code>
       <button type="button" class="share-copy-btn" data-share-copy="{{.MCPHandle}}" data-share-field="MCP handle" aria-label="Copy MCP handle to clipboard">copy</button>
     </div>
   </div>
 
   <dl class="share-policy">
-    <dt>access</dt><dd>{{.AccessLabel}}</dd>
-    {{if .ExpiresIn}}<dt>expires</dt><dd>⧗ expires {{.ExpiresIn}}</dd>{{end}}
+    <dt>access</dt><dd data-share-access-label>{{.AccessLabel}}</dd>
+    <dt>expires</dt><dd>⧗ expires <span data-share-expires>{{if .ExpiresIn}}{{.ExpiresIn}}{{else}}—{{end}}</span></dd>
     <dt>provenance</dt>
     <dd>{{.Provenance.Actor}}{{if .Provenance.OnBehalfOf}} <span class="obo">on behalf of {{.Provenance.OnBehalfOf}}</span>{{end}} · {{.Provenance.Channel}} · captured {{.Provenance.Captured}}</dd>
   </dl>
 
-  {{if not .IsOwner}}
+  {{if .IsOwner}}
+  <div class="share-owner-controls" data-share-owner-controls>
+    <p class="sr-only" aria-live="polite" data-share-owner-live></p>
+
+    <div class="share-field share-owner-field">
+      <label class="share-field-label" for="share-ttl-days">Extend / shorten expiry</label>
+      <div class="share-field-row">
+        <input type="number" id="share-ttl-days" class="share-ttl-input" name="days" min="1" max="30" step="1" inputmode="numeric" data-share-ttl-input placeholder="days">
+        <button type="button" class="share-owner-btn" data-share-ttl-save>Update</button>
+      </div>
+      <p class="share-owner-hint">Sets expiry to this many days from now (up to 30).</p>
+    </div>
+
+    <div class="share-field share-owner-field">
+      <label class="share-field-label" for="share-visibility-select">Link access</label>
+      <div class="share-field-row">
+        <select id="share-visibility-select" class="share-visibility-select" data-share-visibility-select>
+          <option value="link"{{if eq .Visibility "link"}} selected{{end}}>you + anyone with link</option>
+          <option value="private"{{if eq .Visibility "private"}} selected{{end}}>you only</option>
+        </select>
+        <button type="button" class="share-owner-btn" data-share-visibility-save>Save</button>
+      </div>
+    </div>
+
+    <div class="share-field share-owner-field share-rotate-field">
+      <button type="button" class="share-rotate-btn" data-share-rotate
+        data-confirm="Rotate this artifact's link? The current link and MCP handle stop working immediately — anyone still holding them gets a 404. This cannot be undone.">
+        Rotate link
+      </button>
+      <p class="share-owner-hint">Mints a new link and immediately breaks the old one.</p>
+    </div>
+  </div>
+  {{else}}
   <p class="share-dialog-note">Only the owner can change this artifact's sharing policy.</p>
   {{end}}
 </dialog>{{end}}

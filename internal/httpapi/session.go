@@ -92,15 +92,19 @@ func (a *SessionAuthenticator) Authenticate(r *http.Request) (*Principal, error)
 	}
 	// The session actor is the human this browser acts as; the channel is the web
 	// surface, derived here and never taken from the request. The session is
-	// Ambient, so every state-changing annotation write it makes is CSRF-guarded.
-	// A logged-in human may create artifacts and comment/react from the shell, so
-	// the session carries artifacts:write + annotations:write; it does NOT carry
-	// sharing:manage in the MVP — sharing stays an explicit action landing with
-	// the Share dialog (SPEC-0001, ADR-0004).
+	// Ambient, so every state-changing write it makes — including the owner
+	// policy endpoints below — is CSRF-guarded. A logged-in human may create
+	// artifacts and comment/react from the shell (artifacts:write,
+	// annotations:write) and, as of issue #94 (the Share dialog's owner
+	// controls), also change sharing/TTL and rotate the id from the same
+	// session — sharing:manage is still a human-only scope (ADR-0004 / SPEC-0007
+	// "sharing:manage is human-only"; no agent token or DevActorAuthenticator
+	// principal ever carries it), it is simply no longer withheld from the web
+	// session now that the UI that exercises it exists.
 	return &Principal{
 		ActorID: sess.ActorID,
 		Channel: artifact.ChannelWeb,
-		Scopes:  map[string]bool{scopeArtifactsWrite: true, scopeAnnotationsWrite: true},
+		Scopes:  map[string]bool{scopeArtifactsWrite: true, scopeAnnotationsWrite: true, scopeSharingManage: true},
 		Ambient: true,
 	}, nil
 }

@@ -391,16 +391,24 @@ type shellView struct {
 // story; this dialog never re-implements or mutates access rules client-side —
 // it only shows a non-owner why the controls are absent.
 type shareDialogView struct {
+	// ID is the artifact's current public id — the owner controls below (issue
+	// #94) address their PATCH/POST requests at /v1/artifacts/{ID}/..., so the
+	// dialog carries it as a data attribute for share.js to read.
+	ID          string
 	WebURL      string
 	MCPHandle   string
-	AccessLabel string // "🔒 you + anyone with link" | "🔒 you only" (ADR-0007)
-	ExpiresIn   string // humanized ("expires in 6d"), empty when no expiry
+	Visibility  artifact.Visibility // raw value, drives the owner visibility <select>
+	AccessLabel string              // "🔒 you + anyone with link" | "🔒 you only" (ADR-0007)
+	ExpiresIn   string              // humanized ("expires in 6d"), empty when no expiry
 	Provenance  provenanceLine
 	// IsOwner reports whether the resolved viewer is the artifact's owner. It is
 	// set by the caller once the request's principal is known (buildShellView /
 	// buildTrajectoryView run before authentication is resolved), and gates the
 	// dialog's owner-only note (SPEC-0001 REQ "Share Affordance": "A non-owner
-	// or unauthenticated viewer MUST NOT be able to change sharing").
+	// or unauthenticated viewer MUST NOT be able to change sharing") as well as
+	// the owner-only TTL/visibility/rotate controls (issue #94, SPEC-0009 REQ
+	// "Owner-Only Policy Changes"). A non-owner or signed-out viewer sees the
+	// countdown/access line read-only, with no mutating affordance at all.
 	IsOwner bool
 }
 
@@ -502,8 +510,10 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activ
 		},
 	}
 	vm.ShareDialog = shareDialogView{
+		ID:          vm.ID,
 		WebURL:      vm.WebURL,
 		MCPHandle:   vm.MCPHandle,
+		Visibility:  a.Access.Visibility,
 		AccessLabel: shareAccessLabel(a.Access.Visibility),
 		ExpiresIn:   vm.Provenance.Expires,
 		Provenance:  vm.Provenance,
@@ -782,6 +792,21 @@ func humanizeUntil(t time.Time) string {
 		return "expired"
 	}
 	return "in " + humanizeDuration(d)
+}
+
+// secondsUntil renders the raw seconds remaining until t for the machine-
+// readable half of the TTL countdown (SPEC-0009 REQ "...Visible Countdown"),
+// clamped to zero — never negative — once expiry has passed, matching
+// humanizeUntil's "expired" floor.
+func secondsUntil(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	d := time.Until(t)
+	if d < 0 {
+		return 0
+	}
+	return int64(d.Seconds())
 }
 
 func humanizeDuration(d time.Duration) string {

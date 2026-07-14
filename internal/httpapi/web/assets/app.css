@@ -452,6 +452,34 @@ body.landing { display: flex; flex-direction: column; align-items: center; justi
 .share-policy dd { margin: 0; color: var(--t2); font: 400 12px var(--sans); word-break: break-word; }
 .share-dialog-note { margin: 14px 16px 18px; color: var(--t6); font: 400 11.5px var(--mono); }
 
+/* ---- Share dialog owner controls (#94: TTL, visibility, rotate) ---- */
+.share-owner-controls { margin-top: 4px; padding-bottom: 4px; border-top: 1px solid var(--border-3); }
+.share-owner-field { padding-top: 14px; }
+.share-ttl-input {
+  width: 84px; flex: 0 0 auto; background: var(--well-2); border: 1px solid var(--border-2);
+  border-radius: 6px; padding: 7px 10px; font: 400 12.5px var(--mono); color: var(--t1);
+}
+.share-ttl-input:focus { border-color: var(--green-3); outline: none; }
+.share-visibility-select {
+  flex: 1 1 auto; min-width: 0; background: var(--well-2); border: 1px solid var(--border-2);
+  border-radius: 6px; padding: 7px 10px; font: 400 12.5px var(--sans); color: var(--t1);
+}
+.share-visibility-select:focus { border-color: var(--green-3); outline: none; }
+.share-owner-btn {
+  flex: 0 0 auto; border: 1px solid var(--border); background: var(--well); color: var(--t2);
+  font: 600 11px var(--mono); padding: 7px 12px; border-radius: 6px; cursor: pointer;
+}
+.share-owner-btn:hover { color: var(--t0); border-color: var(--border-2); }
+.share-owner-btn:disabled { opacity: .55; cursor: default; }
+.share-owner-hint { margin: 6px 0 0; color: var(--t7); font: 400 11px var(--sans); }
+.share-rotate-field { padding-bottom: 16px; }
+.share-rotate-btn {
+  border: 1px solid var(--border); background: var(--well); color: #FF9B9B;
+  font: 600 11.5px var(--mono); padding: 7px 12px; border-radius: 6px; cursor: pointer;
+}
+.share-rotate-btn:hover { border-color: #4a2b2b; background: rgba(255,107,107,.10); }
+.share-rotate-btn:disabled { opacity: .55; cursor: default; }
+
 /* ---- Logged-out landing pitch (#57) ---- */
 .landing-pitch-wrap { max-width: 460px; }
 .landing-pitch { margin: 0; color: var(--t3); font: 400 13.5px/1.65 var(--sans); }

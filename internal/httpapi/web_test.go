@@ -125,7 +125,8 @@ func TestShareDialogSkeletonRenders(t *testing.T) {
 	for _, tp := range types {
 		html := renderShellHTML(t, s, fixtureArtifact(tp, tp != artifact.TypeTrajectory))
 		for _, frag := range []string{
-			`<dialog class="share-dialog" data-share-dialog aria-labelledby="share-dialog-title">`,
+			`<dialog class="share-dialog" data-share-dialog data-share-id="`,
+			`aria-labelledby="share-dialog-title">`,
 			`id="share-dialog-title"`,
 			`aria-label="Close share dialog"`,
 			`aria-label="Copy web link to clipboard"`,
@@ -148,10 +149,11 @@ func TestShareDialogSkeletonRenders(t *testing.T) {
 }
 
 // TestShareDialogOwnerNote asserts the dialog shows a non-owner/signed-out
-// note when the viewer is not the owner and omits it for the owner — the
-// dialog is a read-only summary this story, so a non-owner must be told why no
-// mutating control is present (SPEC-0001 REQ "Share Affordance": "A non-owner
-// or unauthenticated viewer MUST NOT be able to change sharing").
+// note — and NO mutating control whatsoever — when the viewer is not the
+// owner, and the reverse (owner controls present, no note) for the owner
+// (issue #94, SPEC-0001 REQ "Share Affordance": "A non-owner or
+// unauthenticated viewer MUST NOT be able to change sharing"; SPEC-0009 REQ
+// "Owner-Only Policy Changes").
 func TestShareDialogOwnerNote(t *testing.T) {
 	s := newWebServer(t)
 	a := fixtureArtifact(artifact.TypeFile, true)
@@ -161,8 +163,14 @@ func TestShareDialogOwnerNote(t *testing.T) {
 	if err := s.webTmpl.ExecuteTemplate(&sb, "shell", nonOwner); err != nil {
 		t.Fatalf("render shell: %v", err)
 	}
-	if !strings.Contains(sb.String(), "Only the owner can change this artifact's sharing policy.") {
+	html := sb.String()
+	if !strings.Contains(html, "Only the owner can change this artifact's sharing policy.") {
 		t.Error("non-owner/signed-out viewer should see the owner-only note")
+	}
+	for _, absent := range []string{`data-share-owner-controls`, `data-share-ttl-save`, `data-share-rotate`, `data-share-visibility-save`} {
+		if strings.Contains(html, absent) {
+			t.Errorf("non-owner/signed-out viewer must not see owner control %q", absent)
+		}
 	}
 
 	owner := s.buildShellView(context.Background(), a, "")
@@ -171,8 +179,14 @@ func TestShareDialogOwnerNote(t *testing.T) {
 	if err := s.webTmpl.ExecuteTemplate(&sb, "shell", owner); err != nil {
 		t.Fatalf("render shell: %v", err)
 	}
-	if strings.Contains(sb.String(), "Only the owner can change") {
+	html = sb.String()
+	if strings.Contains(html, "Only the owner can change") {
 		t.Error("owner should not see the owner-only note")
+	}
+	for _, present := range []string{`data-share-owner-controls`, `data-share-ttl-save`, `data-share-rotate`, `data-share-visibility-save`, `data-confirm="Rotate`} {
+		if !strings.Contains(html, present) {
+			t.Errorf("owner should see owner control %q", present)
+		}
 	}
 }
 

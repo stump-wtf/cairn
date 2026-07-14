@@ -160,6 +160,34 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	return art, nil
 }
 
+// freshPublicID draws a candidate public id from the generator and rejects it
+// if it is still a retired id within retiredIDGrace (ADR-0005 "a retired id
+// is not reused within TTL-plus-grace"), retrying until it finds one that is
+// not. It does not itself guard against colliding with a currently-LIVE id —
+// that race is caught by the unique constraint on artifacts.public_id and
+// handled by the caller's savepoint-retry loop (isPublicIDConflict); this only
+// adds the retired-id exclusion on top, using the caller's tx/savepoint so the
+// check is consistent with the write it guards.
+func (s *Store) freshPublicID(ctx context.Context, tx pgx.Tx) (string, error) {
+	for {
+		pid, err := s.newID()
+		if err != nil {
+			return "", err
+		}
+		var retired bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM retired_ids WHERE public_id = $1 AND retired_at > now() - ($2 * interval '1 second'))`,
+			pid, retiredIDGrace.Seconds(),
+		).Scan(&retired); err != nil {
+			return "", fmt.Errorf("check retired id: %w", err)
+		}
+		if retired {
+			continue
+		}
+		return pid, nil
+	}
+}
+
 // insertArtifact mints a public id and inserts the artifact, regenerating the id
 // and retrying via a savepoint on the rare public_id unique conflict. bodySHA is
 // the body blob reference, or nil for a bundle (whose body_sha256 column is
@@ -174,20 +202,22 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 		RETURNING id, created_at`
 
 	for attempt := 0; attempt < idMaxAttempts; attempt++ {
-		pid, err := s.newID()
-		if err != nil {
-			return fmt.Errorf("create: generate id: %w", err)
-		}
-		art.PublicID = pid
-		if err := art.Validate(); err != nil {
-			return err // invariant violation, identical every attempt
-		}
-
 		// Savepoint so a unique conflict aborts only this attempt, not the tx.
 		sp, err := tx.Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("create: savepoint: %w", err)
 		}
+		pid, err := s.freshPublicID(ctx, sp)
+		if err != nil {
+			_ = sp.Rollback(ctx)
+			return fmt.Errorf("create: generate id: %w", err)
+		}
+		art.PublicID = pid
+		if err := art.Validate(); err != nil {
+			_ = sp.Rollback(ctx)
+			return err // invariant violation, identical every attempt
+		}
+
 		err = sp.QueryRow(ctx, insertSQL,
 			art.PublicID, art.ShareType, art.Title, bodySHA, art.Size,
 			art.MediaType, art.Previewable, art.Provenance.ActorID,

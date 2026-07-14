@@ -99,7 +99,7 @@
         <span class="prov-model">{{.Model}}</span>
       </div>
       <p class="prov-captured"><span class="prov-dot" aria-hidden="true"></span>via {{.Provenance.Channel}} · captured {{.Provenance.Captured}}</p>
-      {{if .ExpiresIn}}<p class="ttl-chip-panel">⧗ expires {{.ExpiresIn}}</p>{{end}}
+      {{if .ExpiresIn}}<p class="ttl-chip-panel">⧗ expires <span data-provenance-expires>{{.ExpiresIn}}</span></p>{{end}}
     </section>
 
     <section class="panel-section" aria-labelledby="stats-h">

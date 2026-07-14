@@ -405,6 +405,16 @@ func (s *Server) mountAPI(r chi.Router) {
 		// human tokens and web sessions (both non-agent) retain it. requireScope keeps
 		// the write-capability gate; requireHuman adds the human-only gate on top.
 		r.With(s.requireAuth, s.requireScope(scopeArtifactsWrite), s.requireHuman, s.enforceCSRF).Delete("/artifacts/{id}", s.handleDelete)
+		// The owner policy surface (issue #94, SPEC-0009 Endpoint Table): change
+		// sharing, change TTL, and rotate the id. Gated on sharing:manage — the
+		// human-only capability agentScopes never grants (ADR-0004 / SPEC-0007
+		// "sharing:manage is human-only") — so every agent/PAT token is refused
+		// with 403 before the store is even touched; the store's own
+		// resolveOwned then enforces per-artifact ownership with a distinct 403
+		// for an authenticated non-owner (SPEC-0009 Security Requirements).
+		r.With(s.requireAuth, s.requireScope(scopeSharingManage), s.enforceCSRF).Patch("/artifacts/{id}/policy", s.handleUpdateVisibility)
+		r.With(s.requireAuth, s.requireScope(scopeSharingManage), s.enforceCSRF).Patch("/artifacts/{id}/ttl", s.handleUpdateTTL)
+		r.With(s.requireAuth, s.requireScope(scopeSharingManage), s.enforceCSRF).Post("/artifacts/{id}/rotate", s.handleRotateID)
 		r.With(s.requireAuth).Get("/bin", s.handleBin)
 		// Bearer-token identity round trip (cairn#21, SPEC-0008 "cairn whoami"):
 		// any authenticated principal — static token, PAT, OAuth, or session —
@@ -498,6 +508,16 @@ type artifactResponse struct {
 	PinCount      int       `json:"pin_count"`
 	CreatedAt     time.Time `json:"created_at"`
 	ExpiresAt     time.Time `json:"expires_at"`
+	// ExpiresIn / ExpiresInSeconds are the server-computed TTL countdown
+	// (issue #94, SPEC-0009 REQ "Default 7-Day TTL, Owner-Adjustable, Visible
+	// Countdown": "remaining time MUST be surfaced as a visible countdown").
+	// ExpiresIn is the humanized form the web shell already renders
+	// ("in 6d"/"expired"); ExpiresInSeconds is the same remaining duration in
+	// raw seconds (clamped to 0, never negative) for a scripted caller (CLI,
+	// MCP, the owner-controls JS) to render its own countdown without
+	// re-deriving it from expires_at against its own clock skew.
+	ExpiresIn        string `json:"expires_in"`
+	ExpiresInSeconds int64  `json:"expires_in_seconds"`
 }
 
 type provenanceView struct {
@@ -525,12 +545,14 @@ func (s *Server) toArtifactResponse(a *artifact.Artifact) artifactResponse {
 			Channel:    a.Provenance.Channel,
 			CapturedAt: a.Provenance.CapturedAt,
 		},
-		Visibility:    a.Access.Visibility,
-		ReactionCount: a.ReactionCount,
-		CommentCount:  a.CommentCount,
-		PinCount:      a.PinCount,
-		CreatedAt:     a.CreatedAt,
-		ExpiresAt:     a.ExpiresAt,
+		Visibility:       a.Access.Visibility,
+		ReactionCount:    a.ReactionCount,
+		CommentCount:     a.CommentCount,
+		PinCount:         a.PinCount,
+		CreatedAt:        a.CreatedAt,
+		ExpiresAt:        a.ExpiresAt,
+		ExpiresIn:        humanizeUntil(a.ExpiresAt),
+		ExpiresInSeconds: secondsUntil(a.ExpiresAt),
 	}
 }
 

@@ -269,8 +269,10 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 	}
 	vm.Provenance.Expires = vm.ExpiresIn
 	vm.ShareDialog = shareDialogView{
+		ID:          vm.ID,
 		WebURL:      vm.WebURL,
 		MCPHandle:   vm.MCPHandle,
+		Visibility:  a.Access.Visibility,
 		AccessLabel: shareAccessLabel(a.Access.Visibility),
 		ExpiresIn:   vm.ExpiresIn,
 		Provenance:  vm.Provenance,
