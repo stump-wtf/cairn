@@ -33,6 +33,7 @@
     <nav class="settings-nav" aria-label="Settings sections">
       <a class="settings-nav-link" href="#tokens">API tokens</a>
       <a class="settings-nav-link" href="#mcp">MCP connection</a>
+      <a class="settings-nav-link" href="#sessions">Agent sessions</a>
       <a class="settings-nav-link" href="#cli">CLI</a>
       <a class="settings-nav-link" href="#account">Account</a>
     </nav>
@@ -110,6 +111,27 @@
         </ol>
       </section>
 
+      <section class="settings-card" id="sessions" aria-labelledby="sessions-h">
+        <h2 id="sessions-h" class="settings-card-h">Agent sessions</h2>
+        <p class="settings-card-note">Every agent connected over MCP, which client it is, when it connected, and what it's done — so you can tell your agents apart and cut one off without touching the others.</p>
+
+        <table class="token-table" data-mcp-session-table>
+          <caption class="sr-only">Your connected and recent MCP agent sessions</caption>
+          <thead>
+            <tr>
+              <th scope="col">Client</th>
+              <th scope="col">Connected</th>
+              <th scope="col">Last activity</th>
+              <th scope="col">Activity</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody data-mcp-session-rows>
+            {{range .MCPSessions}}{{template "mcp-session-row" .}}{{else}}<tr class="token-empty-row" data-mcp-session-empty><td colspan="5">No agents have connected yet.</td></tr>{{end}}
+          </tbody>
+        </table>
+      </section>
+
       <section class="settings-card" id="cli" aria-labelledby="cli-h">
         <h2 id="cli-h" class="settings-card-h"><span class="connect-h2-glyph" aria-hidden="true">&gt;_</span> CLI <span class="connect-badge connect-badge-soon">coming in v0.0.3</span></h2>
         <p class="connect-note">The <code class="connect-code">cairn</code> CLI is in progress — tracker #20–#22. The shape it's landing in:</p>
@@ -152,4 +174,15 @@
   <td class="token-cell-created">{{.Created}}</td>
   <td class="token-cell-lastused">{{.LastUsed}}</td>
   <td class="token-cell-action">{{if .Revoked}}<span class="token-revoked-label">revoked {{.RevokedAt}}</span>{{else}}<button type="button" class="token-revoke-btn" data-token-revoke data-token-id="{{.ID}}" data-token-name="{{.Name}}">Revoke</button>{{end}}</td>
+</tr>{{end}}
+
+{{/* One MCP agent session row (issue #76), shared by the server-rendered
+     initial table and settings.js's revoke DOM update — same row-shape
+     discipline as "token-row" above. */}}
+{{define "mcp-session-row"}}<tr class="token-row{{if .Ended}} token-row-revoked{{end}}" id="mcp-session-{{.ID}}" data-mcp-session-id="{{.ID}}">
+  <td class="token-cell-name">{{.ClientName}}{{if .ClientVersion}} <span class="token-agent-badge" title="client version">{{.ClientVersion}}</span>{{end}}</td>
+  <td class="token-cell-created">{{.Connected}}</td>
+  <td class="token-cell-lastused">{{.LastActivity}}</td>
+  <td class="token-cell-scopes"><code>{{.ToolCalls}} tool calls · {{.ArtifactsCreated}} created · {{.AnnotationsPosted}} annotated</code></td>
+  <td class="token-cell-action">{{if .Ended}}<span class="token-revoked-label">revoked</span>{{else}}<button type="button" class="token-revoke-btn" data-mcp-session-revoke data-mcp-session-id="{{.ID}}" data-mcp-session-name="{{.ClientName}}">Revoke</button>{{end}}</td>
 </tr>{{end}}

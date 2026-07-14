@@ -13,6 +13,7 @@ import (
 
 	"github.com/joestump/cairn/internal/annotation"
 	"github.com/joestump/cairn/internal/artifact"
+	"github.com/joestump/cairn/internal/mcpsession"
 	"github.com/joestump/cairn/internal/oauth"
 	"github.com/joestump/cairn/internal/pat"
 	"github.com/joestump/cairn/internal/session"
@@ -118,6 +119,12 @@ type Server struct {
 	// PATAuthenticator bearer surface. Nil on storeless unit wirings, like
 	// oauth above.
 	pat *pat.Service
+	// mcpSessions is the MCP agent-session core (issue #76, SPEC-0007): the
+	// in-process service backing session recording at MCP `initialize`,
+	// per-tool-call activity counters, GET /v1/mcp/sessions, and the
+	// Settings "Agent sessions" section. Nil on storeless unit wirings, like
+	// oauth/pat above.
+	mcpSessions *mcpsession.Service
 	// mcpSrv is the MCP tool/resource server (SPEC-0007), built once by
 	// mountMCP and shared by every /mcp request so server->client
 	// notifications (e.g. resources/updated) can reach every connected
@@ -170,11 +177,12 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	// additionally spills oversized span outputs to the store's object store. A
 	// nil store (unit tests that exercise only URL/auth helpers) leaves both nil.
 	var (
-		annot    *annotation.Service
-		traj     *trajectory.Service
-		sessions session.Store
-		oauthSvc *oauth.Service
-		patSvc   *pat.Service
+		annot      *annotation.Service
+		traj       *trajectory.Service
+		sessions   session.Store
+		oauthSvc   *oauth.Service
+		patSvc     *pat.Service
+		mcpSessSvc *mcpsession.Service
 	)
 	if st != nil {
 		annot = annotation.NewService(st.Pool(), reg)
@@ -195,6 +203,10 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		// human-minted alternative to CAIRN_API_TOKENS, persisted in the same
 		// Postgres pool.
 		patSvc = pat.NewService(st.Pool())
+		// MCP agent sessions (issue #76) are a peer in-process core too:
+		// recorded by the MCP transport, read by the Settings page and
+		// GET /v1/mcp/sessions, persisted in the same Postgres pool.
+		mcpSessSvc = mcpsession.NewService(st.Pool())
 	}
 	// Auth seam (ADR-0004): a caller-supplied Authenticator wins; otherwise build
 	// the bearer surface from configured static tokens (the verifying
@@ -238,6 +250,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		oauth:         oauthSvc,
 		oauthLimiter:  newRateLimiter(cfg.OAuthRatePerSecond, cfg.OAuthRateBurst),
 		pat:           patSvc,
+		mcpSessions:   mcpSessSvc,
 	}
 }
 
@@ -314,6 +327,13 @@ func (s *Server) mountAPI(r chi.Router) {
 		r.With(s.requireHumanSession).Get("/tokens", s.handleListTokens)
 		r.With(s.requireHumanSession, s.enforceCSRF).Post("/tokens", s.handleCreateToken)
 		r.With(s.requireHumanSession, s.enforceCSRF).Delete("/tokens/{id}", s.handleRevokeToken)
+
+		// MCP agent sessions (issue #76, ADR-0004 token seam): the human
+		// Settings surface for seeing which agents are connected and ending
+		// one (revokes its OAuth grant). Session/OIDC-authenticated only,
+		// same reasoning as the tokens routes above.
+		r.With(s.requireHumanSession).Get("/mcp/sessions", s.handleListMCPSessions)
+		r.With(s.requireHumanSession, s.enforceCSRF).Delete("/mcp/sessions/{id}", s.handleEndMCPSession)
 
 		// Link-capability reads: a valid id grants read; unknown/expired ids
 		// return a uniform 404 (ADR-0007).

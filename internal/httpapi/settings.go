@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/joestump/cairn/internal/errs"
+	"github.com/joestump/cairn/internal/mcpsession"
 	"github.com/joestump/cairn/internal/oauth"
 	"github.com/joestump/cairn/internal/pat"
 )
@@ -41,6 +42,10 @@ type settingsView struct {
 	BaseURL      string
 	ScopeOptions []scopeOptionView
 	Tokens       []tokenRowView
+	// MCPSessions lists this human's connected/recent agents (issue #76) —
+	// which client (name + version), when it connected, when it last acted,
+	// and its activity counts, so Joe can tell his agents apart.
+	MCPSessions []mcpSessionRowView
 }
 
 // scopeOptionView is one checkbox in the token-creation form: the wire scope
@@ -87,6 +92,42 @@ func toTokenRowView(t *pat.Token) tokenRowView {
 	return row
 }
 
+// mcpSessionRowView is one row in the Agent sessions list (issue #76): the
+// client identity from the MCP `initialize` handshake, when it connected and
+// last acted, and its activity counts — matching the JSON mcpSessionView
+// (mcpsessions.go) settings.js's revoke-refresh path reads from, the same
+// server/client-shape parity tokenRowView keeps with tokenView.
+type mcpSessionRowView struct {
+	ID                string
+	ClientName        string
+	ClientVersion     string
+	Connected         string // humanized
+	LastActivity      string // humanized
+	ToolCalls         int64
+	ArtifactsCreated  int64
+	AnnotationsPosted int64
+	Ended             bool
+}
+
+// toMCPSessionRowView projects an mcpsession.Session into its display row.
+func toMCPSessionRowView(sess *mcpsession.Session) mcpSessionRowView {
+	name := sess.ClientName
+	if name == "" {
+		name = "unknown client"
+	}
+	return mcpSessionRowView{
+		ID:                sess.ID,
+		ClientName:        name,
+		ClientVersion:     sess.ClientVersion,
+		Connected:         humanizeSince(sess.ConnectedAt),
+		LastActivity:      humanizeSince(sess.LastActivityAt),
+		ToolCalls:         sess.ToolCalls,
+		ArtifactsCreated:  sess.ArtifactsCreated,
+		AnnotationsPosted: sess.AnnotationsPosted,
+		Ended:             sess.Ended(),
+	}
+}
+
 // scopeOptions builds the token-creation form's checkbox vocabulary from the
 // canonical three-scope list (oauth.AllScopes), reusing oauth.ConsentLine so
 // this form and the OAuth consent screen can never describe a scope
@@ -129,6 +170,17 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 			vm.Tokens = make([]tokenRowView, 0, len(toks))
 			for _, t := range toks {
 				vm.Tokens = append(vm.Tokens, toTokenRowView(t))
+			}
+		}
+	}
+	if s.mcpSessions != nil {
+		sessions, err := s.mcpSessions.List(r.Context(), p.ActorID, maxMCPSessionListLimit)
+		if err != nil {
+			s.log.WarnContext(r.Context(), "settings: list mcp sessions failed", "error", err)
+		} else {
+			vm.MCPSessions = make([]mcpSessionRowView, 0, len(sessions))
+			for _, sess := range sessions {
+				vm.MCPSessions = append(vm.MCPSessions, toMCPSessionRowView(sess))
 			}
 		}
 	}

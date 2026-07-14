@@ -50,6 +50,7 @@ import (
 	"github.com/joestump/cairn/internal/annotation"
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/errs"
+	"github.com/joestump/cairn/internal/mcpsession"
 	"github.com/joestump/cairn/internal/oauth"
 	"github.com/joestump/cairn/internal/sharetype"
 	"github.com/joestump/cairn/internal/store"
@@ -120,6 +121,16 @@ func (s *Server) mcpBodyLimit(next http.Handler) http.Handler {
 	})
 }
 
+// mcpExtraGrantID / mcpExtraClientID key the two oauth.Identity fields that
+// sdkauth.TokenInfo has no first-class field for (it carries Scopes,
+// Expiration, and UserID only) into TokenInfo.Extra, so the initialize
+// handler (issue #76: record a session tied to the OAuth grant) can read
+// them back off req.Extra.TokenInfo without a second AuthenticateAccess call.
+const (
+	mcpExtraGrantID  = "grant_id"
+	mcpExtraClientID = "client_id"
+)
+
 // mcpTokenVerifier adapts the OAuth authorization server's AuthenticateAccess
 // to the SDK's auth.TokenVerifier seam. Only OAuth-issued access tokens
 // authenticate here — the static APIToken table and the dev bearer shortcut
@@ -135,6 +146,10 @@ func (s *Server) mcpTokenVerifier() sdkauth.TokenVerifier {
 			Scopes:     ident.Scopes,
 			Expiration: ident.ExpiresAt,
 			UserID:     ident.ActorID,
+			Extra: map[string]any{
+				mcpExtraGrantID:  ident.GrantID,
+				mcpExtraClientID: ident.ClientID,
+			},
 		}, nil
 	}
 }
@@ -149,7 +164,17 @@ func (s *Server) newMCPServer() *mcp.Server {
 		Logger:             s.log,
 		SubscribeHandler:   s.mcpSubscribeRun,
 		UnsubscribeHandler: s.mcpUnsubscribeRun,
+		// mcpInitializedHandler records an agent session the moment the
+		// client completes the handshake (issue #76: "record an MCP
+		// session/connection when an OAuth-authenticated client initializes
+		// the MCP transport").
+		InitializedHandler: s.mcpInitializedHandler,
 	})
+	// mcpActivityMiddleware increments a session's activity counters on every
+	// tools/call (issue #76: "increment activity counters on tool calls").
+	// Receiving middleware wraps every incoming server-bound method, so this
+	// runs after the tool handler itself has returned.
+	srv.AddReceivingMiddleware(s.mcpActivityMiddleware())
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "artifact_read",
@@ -254,6 +279,142 @@ func mcpModelActor(sess *mcp.ServerSession) string {
 		return params.ClientInfo.Name
 	}
 	return params.ClientInfo.Name + "/" + params.ClientInfo.Version
+}
+
+// mcpExtraString reads a string value stashed in a TokenInfo.Extra map by
+// mcpTokenVerifier (mcpExtraGrantID, mcpExtraClientID) — "" if ti is nil, its
+// Extra is nil, or the key is absent/non-string.
+func mcpExtraString(ti *sdkauth.TokenInfo, key string) string {
+	if ti == nil || ti.Extra == nil {
+		return ""
+	}
+	v, _ := ti.Extra[key].(string)
+	return v
+}
+
+// --- MCP agent sessions (issue #76, SPEC-0007) ---------------------------------
+
+// mcpInitializedHandler records an MCP agent session the moment the client
+// completes the handshake: `initialize` followed by the client's
+// `notifications/initialized` (SPEC-0007 acceptance: "Record an MCP
+// session/connection when an OAuth-authenticated client initializes the MCP
+// transport"). This is the earliest point both facts a session row needs are
+// available together: the connecting client's Implementation name/version
+// (session.InitializeParams, the same source mcpModelActor draws on) and its
+// OAuth identity.
+//
+// The identity comes from sdkauth.TokenInfoFromContext(ctx), NOT
+// req.Extra.TokenInfo: the SDK's own dispatch for this one notification
+// (ServerSession.initialized, mcp/server.go) rebuilds the InitializedRequest
+// via serverRequestFor, which does not thread Extra through — so
+// req.Extra is always nil here, unlike every AddTool handler (which the SDK
+// dispatches through the general typed-request path that DOES populate
+// Extra from the incoming jsonrpc.Request). ctx, however, IS the same
+// request-scoped context RequireBearerToken (auth.go) attached TokenInfo to
+// before the streamable transport ever reached the JSON-RPC dispatch, so it
+// carries the identity through unaffected by that SDK quirk.
+//
+// Recording failure is logged, never fatal to the handshake: a session list
+// is a presentation aid for Joe, not a capability gate — a DB hiccup here
+// must not break a legitimate agent's connection.
+func (s *Server) mcpInitializedHandler(ctx context.Context, req *mcp.InitializedRequest) {
+	if s.mcpSessions == nil || req == nil || req.Session == nil {
+		return
+	}
+	ti := sdkauth.TokenInfoFromContext(ctx)
+	if ti == nil || ti.UserID == "" {
+		return
+	}
+	grantID := mcpExtraString(ti, mcpExtraGrantID)
+	if grantID == "" {
+		return
+	}
+	sessionID := req.Session.ID()
+	if sessionID == "" {
+		// Stateless transports mint no durable session id; there is nothing
+		// to key a row on (SPEC-0007's session concept assumes a real
+		// streamable-HTTP connection, which mountMCP always wires non-stateless).
+		return
+	}
+	params := req.Session.InitializeParams()
+	var clientName, clientVersion string
+	if params != nil && params.ClientInfo != nil {
+		clientName, clientVersion = params.ClientInfo.Name, params.ClientInfo.Version
+	}
+	if _, err := s.mcpSessions.Record(ctx, mcpsession.RecordInput{
+		ID:            sessionID,
+		OwnerID:       ti.UserID,
+		GrantID:       grantID,
+		ClientID:      mcpExtraString(ti, mcpExtraClientID),
+		ClientName:    clientName,
+		ClientVersion: clientVersion,
+	}); err != nil {
+		s.log.WarnContext(ctx, "mcp: record session failed", "error", err)
+	}
+}
+
+// mcpToolActivityKind classifies a tool name into the activity Touch records
+// on a SUCCESSFUL call: the create-and-push tools bump ArtifactsCreated, the
+// annotation tools bump AnnotationsPosted, and everything else (artifact_read,
+// or a failed call of any tool) is a plain tool-call count.
+func mcpToolActivityKind(toolName string) mcpsession.Activity {
+	switch toolName {
+	case "artifact_create", "bundle_create", "run_create", "run_append_spans":
+		return mcpsession.ActivityArtifactCreated
+	case "artifact_comment", "artifact_react":
+		return mcpsession.ActivityAnnotationPosted
+	default:
+		return mcpsession.ActivityToolCall
+	}
+}
+
+// mcpActivityMiddleware is receiving middleware (wraps every incoming
+// server-bound JSON-RPC method) that, for a tools/call, touches the calling
+// session's activity counters after the tool handler returns (SPEC-0007
+// acceptance: "increment activity counters on tool calls"). It runs for
+// every tool call regardless of outcome — ToolCalls counts the attempt — and
+// additionally bumps the create/annotate counter only when the call actually
+// succeeded (no transport error, and the packed CallToolResult is not
+// IsError; see mcpScopeErr's doc on how a tool-domain failure is packed).
+// Touch itself no-ops on an unrecorded session id (e.g. this process never
+// saw that session's `initialize`), so this never fails a tool call over a
+// bookkeeping miss.
+func (s *Server) mcpActivityMiddleware() mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if s.mcpSessions != nil && method == "tools/call" {
+				s.recordMCPToolActivity(ctx, req, result, err)
+			}
+			return result, err
+		}
+	}
+}
+
+// recordMCPToolActivity is mcpActivityMiddleware's post-call bookkeeping,
+// split out so the middleware closure stays a straight-line trace.
+func (s *Server) recordMCPToolActivity(ctx context.Context, req mcp.Request, result mcp.Result, callErr error) {
+	ss, ok := req.GetSession().(*mcp.ServerSession)
+	if !ok || ss == nil {
+		return
+	}
+	sessionID := ss.ID()
+	if sessionID == "" {
+		return
+	}
+	var toolName string
+	if params, ok := req.GetParams().(*mcp.CallToolParamsRaw); ok && params != nil {
+		toolName = params.Name
+	}
+	kind := mcpsession.ActivityToolCall
+	if callErr == nil {
+		if res, ok := result.(*mcp.CallToolResult); ok && res != nil && !res.IsError {
+			kind = mcpToolActivityKind(toolName)
+		}
+	}
+	if err := s.mcpSessions.Touch(ctx, sessionID, kind); err != nil {
+		s.log.WarnContext(ctx, "mcp: touch session activity failed", "error", err)
+	}
 }
 
 // mcpScopeErr builds the distinct, stably-coded insufficient_scope failure

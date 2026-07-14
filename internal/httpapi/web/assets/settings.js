@@ -226,9 +226,62 @@
     });
   }
 
+  // initMCPSessions wires the Agent sessions table's Revoke buttons (issue
+  // #76): a fetch DELETE against the SAME owner-scoped /v1/mcp/sessions/{id}
+  // JSON endpoint the settings page's server render reads from — the
+  // identical "one implementation, one view over it" discipline initTokens
+  // follows for PATs. Ending a session revokes its OAuth grant server-side
+  // (mcpsessions.go), so the connected agent's next call fails immediately;
+  // this only updates the row to reflect that.
+  function initMCPSessions() {
+    var rowsBody = document.querySelector('[data-mcp-session-rows]');
+    if (!rowsBody) return;
+
+    rowsBody.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-mcp-session-revoke]') : null;
+      if (!btn) return;
+      var id = btn.dataset.mcpSessionId;
+      var name = btn.dataset.mcpSessionName || 'this agent';
+      if (!id) return;
+      if (!window.confirm('Revoke the connection for "' + name + '"? It will be disconnected immediately.')) {
+        return;
+      }
+      btn.disabled = true;
+      fetch('/v1/mcp/sessions/' + encodeURIComponent(id), {
+        method: 'DELETE',
+        headers: { 'X-CSRF-Token': readCSRFCookie() },
+        credentials: 'same-origin',
+      })
+        .then(function (resp) {
+          if (!resp.ok && resp.status !== 204) {
+            btn.disabled = false;
+            return;
+          }
+          var row = document.getElementById('mcp-session-' + id);
+          if (!row) return;
+          row.classList.add('token-row-revoked');
+          var actionCell = row.querySelector('.token-cell-action');
+          if (actionCell) {
+            actionCell.textContent = '';
+            var label = document.createElement('span');
+            label.className = 'token-revoked-label';
+            label.textContent = 'revoked';
+            actionCell.appendChild(label);
+          }
+        })
+        .catch(function () {
+          btn.disabled = false;
+        });
+    });
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initTokens);
+    document.addEventListener('DOMContentLoaded', function () {
+      initTokens();
+      initMCPSessions();
+    });
   } else {
     initTokens();
+    initMCPSessions();
   }
 })();
