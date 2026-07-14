@@ -297,6 +297,32 @@ func TestIntegrationOAuthConsentCSPAllowsRedirectOrigin(t *testing.T) {
 	}
 }
 
+// TestIntegrationOAuthSemicolonHostRedirectRejected is the #64 regression: a
+// redirect_uri whose host carries a stray ";" (e.g. "https://a;b/c") is
+// syntactically absolute-https and would previously slip past
+// ValidateRedirectURI, then get interpolated verbatim into the consent
+// screen's form-action CSP directive — a malformed (not weakened) header.
+// Registration must now reject it outright with invalid_redirect_uri, so no
+// client can ever reach the consent screen with such a host.
+func TestIntegrationOAuthSemicolonHostRedirectRejected(t *testing.T) {
+	srv, _ := oauthServer(t, oauthConfig())
+
+	body, _ := json.Marshal(map[string]any{
+		"client_name":   "Semicolon Host",
+		"redirect_uris": []string{"https://a;b/c"},
+	})
+	rres, err := http.Post(srv.URL+"/oauth/register", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST register: %v", err)
+	}
+	if rres.StatusCode != http.StatusBadRequest {
+		t.Fatalf("semicolon-host registration = %d, want 400", rres.StatusCode)
+	}
+	if e := decodeOAuthError(t, rres); e.Error != "invalid_redirect_uri" {
+		t.Fatalf("semicolon-host registration error = %q, want invalid_redirect_uri", e.Error)
+	}
+}
+
 // TestIntegrationOAuthMCPResourceIndicatorAccepted proves the RFC 8707 fix: an
 // MCP client that sends the /mcp canonical URI as `resource` (as the MCP spec
 // requires) is accepted at both authorize and token, while a foreign audience

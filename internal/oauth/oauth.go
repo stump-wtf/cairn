@@ -161,6 +161,13 @@ func VerifyPKCE(verifier, challenge string) bool {
 // so a hostile registration cannot point the authorization response at an
 // attacker-controlled or server-side-reachable target (SPEC-0007 REQ
 // "Redirect & SSRF Validation").
+//
+// The host itself must be a syntactically clean hostname or IP literal
+// (ValidHostSyntax). url.Parse is permissive about what it accepts as a
+// Host — e.g. "https://a;b/c" parses cleanly with Host `a;b` — so without
+// this check a registration could smuggle a delimiter character through
+// registration and into the consent screen's form-action CSP directive
+// (consentCSP), producing a malformed rather than weakened header (#64).
 func ValidateRedirectURI(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -168,6 +175,9 @@ func ValidateRedirectURI(raw string) error {
 	}
 	if !u.IsAbs() || u.Host == "" || u.Fragment != "" || u.User != nil {
 		return fmt.Errorf("redirect uri %q must be absolute, host-bearing, fragment- and userinfo-free: %w", raw, ErrInvalidRedirect)
+	}
+	if !ValidHostSyntax(u.Hostname()) {
+		return fmt.Errorf("redirect uri %q: host %q contains characters outside the hostname charset: %w", raw, u.Hostname(), ErrInvalidRedirect)
 	}
 	switch u.Scheme {
 	case "https":
@@ -189,6 +199,36 @@ func isLoopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// ValidHostSyntax reports whether host (as returned by url.URL.Hostname,
+// i.e. with any IPv6 brackets already stripped) is a syntactically legal
+// hostname or IP literal: an IPv4/IPv6 address, or the RFC 1123 "preferred
+// name syntax" charset — ALPHA / DIGIT / "-" / "." only.
+//
+// url.Parse does not enforce this: it happily accepts delimiter characters
+// like ";" into Host as long as they don't collide with its own port/query
+// splitting, e.g. "https://a;b/c" parses with Host `a;b`. Both
+// ValidateRedirectURI (registration time) and consentCSP (the value gets
+// interpolated into a CSP directive) call this so such a host is rejected
+// or falls back to the strict policy rather than producing a malformed
+// header (#64).
+func ValidHostSyntax(host string) bool {
+	if host == "" {
+		return false
+	}
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	for i := 0; i < len(host); i++ {
+		c := host[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // MatchRedirectURI reports whether presented matches one of the client's

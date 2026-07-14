@@ -406,12 +406,39 @@ func (s *Server) sessionPrincipal(r *http.Request) (*Principal, bool) {
 // exact-matched against the registered client (validateAuthorize), so its
 // origin is trusted and adds no new attack surface; a missing/opaque origin
 // falls back to the strict default.
+//
+// The origin is rebuilt from u.Scheme + u.Hostname() plus an explicit
+// validated port rather than interpolating the raw u.Host: url.Parse does
+// not enforce a hostname charset, so a registered redirect_uri whose host
+// carries a stray delimiter (e.g. "https://a;b/c" parses with Host `a;b`)
+// would otherwise flow straight into the Content-Security-Policy header and
+// produce a malformed (not weakened) form-action value. ValidateRedirectURI
+// closes this at registration time (#64); this is defense in depth for that
+// same host, and any host that still fails the hostname-charset check falls
+// back to the strict webCSP.
 func consentCSP(redirectURI string) string {
 	u, err := url.Parse(redirectURI)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return webCSP
 	}
-	return strings.Replace(webCSP, "form-action 'self'", "form-action 'self' "+u.Scheme+"://"+u.Host, 1)
+	host := u.Hostname()
+	if !oauth.ValidHostSyntax(host) {
+		return webCSP
+	}
+	origin := u.Scheme + "://"
+	if strings.Contains(host, ":") {
+		// IPv6 literal — Hostname() strips the brackets, so restore them.
+		origin += "[" + host + "]"
+	} else {
+		origin += host
+	}
+	if port := u.Port(); port != "" {
+		if _, err := strconv.Atoi(port); err != nil {
+			return webCSP
+		}
+		origin += ":" + port
+	}
+	return strings.Replace(webCSP, "form-action 'self'", "form-action 'self' "+origin, 1)
 }
 
 // handleAuthorizeForm renders the consent screen for GET /oauth/authorize. An

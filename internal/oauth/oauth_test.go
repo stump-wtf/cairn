@@ -125,10 +125,49 @@ func TestValidateRedirectURI(t *testing.T) {
 		"myapp://callback",                    // custom scheme
 		"javascript:alert(1)",
 		"ftp://client.example/cb",
+		"https://a;b/c",          // #64: semicolon in host — url.Parse accepts this as Host `a;b`
+		"https://a b.example/cb", // space in host (also rejected by url.Parse itself)
+		"https://a<b>.example/cb",
 	}
 	for _, u := range invalid {
 		if err := ValidateRedirectURI(u); err == nil {
 			t.Errorf("ValidateRedirectURI(%q) = nil, want error", u)
+		}
+	}
+}
+
+// TestValidHostSyntax pins the hostname-charset gate (#64): url.Parse is
+// permissive about Host contents (it happily parses "https://a;b/c" with
+// Host `a;b`), so ValidateRedirectURI and consentCSP both lean on this to
+// reject anything that isn't a clean hostname or IP literal.
+func TestValidHostSyntax(t *testing.T) {
+	valid := []string{
+		"client.example",
+		"CLIENT.EXAMPLE",
+		"a.b-c.example",
+		"localhost",
+		"127.0.0.1",
+		"::1",
+		"2001:db8::1",
+	}
+	for _, h := range valid {
+		if !ValidHostSyntax(h) {
+			t.Errorf("ValidHostSyntax(%q) = false, want true", h)
+		}
+	}
+	invalid := []string{
+		"",
+		"a;b",
+		"a b",
+		"a<b>",
+		"a/b",
+		"a@b",
+		"a\\b",
+		"a\tb",
+	}
+	for _, h := range invalid {
+		if ValidHostSyntax(h) {
+			t.Errorf("ValidHostSyntax(%q) = true, want false", h)
 		}
 	}
 }
