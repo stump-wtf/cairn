@@ -7,6 +7,41 @@ reaches 1.0.
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-07-14
+
+The complete build: every share type, the `cairn` CLI, a Settings surface with
+agent tokens and MCP session tracking, the webhook inspector, owner policy, and
+retention. Every SPEC (0001–0009) is now implemented.
+
+### Added
+
+- **Code viewer** — server-side syntax highlighting (chroma, embedded/CSP-safe),
+  line numbers, a jump-to-symbol outline, and `code_line`/`code_range`/
+  `text_selection` line-level comments and reactions. (#68)
+- **Image viewer** — display with a bespoke SVG **pin overlay**: drop a pin to
+  anchor a region comment (normalized `0..1` coords that survive scaling) plus
+  a react-below affordance; degrades gracefully if the pin script fails. (#71)
+- **Webhook inspector** (`HK`) — the requestbin share type: an endpoint model
+  with ring-buffer retention (#83), a hardened open ingress at `/h/{id}` (inert
+  capture, header redaction, body caps, per-endpoint rate limiting) (#84), live
+  SSE + read-only MCP fan-out (#85), and a live inspector viewer with
+  reactions-only annotation (#86).
+- **Settings page** (`/settings`, absorbs `/connect`) — create/list/revoke
+  **personal access tokens** for agents (secret shown once), the MCP connection
+  info restyled, a CLI section, and account/sign-out. (#74, #75)
+- **MCP agent sessions** — each MCP connection is recorded (client name/version,
+  activity counters); a Settings "Agent sessions" panel shows which agent is
+  doing what, with revoke-to-disconnect. (#76)
+- **MCP create tools** — `run_create`, `run_append_spans`, and `bundle_create`,
+  so agents can create trajectory runs and bundles over MCP (not just read
+  them), through the same core services as `/v1`. (#65)
+- **Owner policy** — TTL countdown, extend/shorten expiry, and **id rotation**
+  (old link 404s, annotations follow the new id); owner + `sharing:manage`
+  only. (#94)
+- **Retention reaper** — a background worker that deletes past-TTL artifacts and
+  reference-counts + garbage-collects orphaned content-addressed blobs (a
+  dedup-shared blob survives until its last referrer expires), with a
+  staging-prefix object-storage backstop. (#93)
 - **The `cairn` CLI** (v0.0.3, issues #20–#22): a single static Go binary and
   pure `/v1` REST client (ADR-0003).
   - `cat file | cairn` / `cairn file` — pipe or path ingest, with a spinner,
@@ -23,6 +58,19 @@ reaches 1.0.
     existing `--title`. (#22)
   - `cairn login` / `logout` / `whoami` against the ADR-0004 bearer-token
     seam, with secure OS-keyring-or-`0600`-file credential storage. (#20, #21)
+
+### Fixed
+
+- **MCP clients could not connect** — the OAuth server now accepts the MCP
+  server's canonical `/mcp` URI as the RFC 8707 resource indicator (and serves
+  the RFC 9728 path-specific metadata), so clients like Crush no longer get
+  `invalid_target`. (#62)
+- **OAuth consent Approve did nothing in Safari** — the consent page's CSP
+  `form-action` now includes the client's validated redirect origin, so the
+  approval redirect to a CLI/localhost callback is allowed. (#63, #64)
+- **Reactions now render on click** — the reaction pill + count appears
+  immediately (a duplicate picker click-handler was removed), across trajectory
+  spans, markdown blocks, and bundle members. (#66, #72)
 
 ## [0.0.2] - 2026-07-12
 
@@ -88,6 +136,7 @@ The MVP: trajectory shares end to end on a composable share-type SDK.
   slot, the Bin listing, generic-file viewer, CSRF protection. (#10, #12)
 - **Minimal web session auth and login.** (#11)
 
-[Unreleased]: https://github.com/joestump/cairn/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/joestump/cairn/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/joestump/cairn/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/joestump/cairn/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/joestump/cairn/releases/tag/v0.0.1
