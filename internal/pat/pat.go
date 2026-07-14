@@ -30,6 +30,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/joestump/cairn/internal/oauth"
@@ -75,6 +76,12 @@ type Token struct {
 // scanners without weakening entropy — the same convention internal/oauth
 // uses for its own secrets ("cairn_ac_", "cairn_at_", "cairn_rt_").
 const secretPrefix = "cairn_pat_"
+
+// IsSecret reports whether a bearer token looks like a Cairn personal access
+// token (the "cairn_pat_" prefix). Callers use it to route a bearer to the PAT
+// authenticator vs. the OAuth access-token verifier; the prefixes are disjoint
+// ("cairn_pat_" vs "cairn_at_"), so this never misroutes a real token.
+func IsSecret(token string) bool { return strings.HasPrefix(token, secretPrefix) }
 
 // newSecret mints a 32-byte high-entropy URL-safe PAT secret.
 func newSecret() (string, error) {

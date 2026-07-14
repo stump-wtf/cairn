@@ -52,6 +52,7 @@ import (
 	"github.com/joestump/cairn/internal/errs"
 	"github.com/joestump/cairn/internal/mcpsession"
 	"github.com/joestump/cairn/internal/oauth"
+	"github.com/joestump/cairn/internal/pat"
 	"github.com/joestump/cairn/internal/sharetype"
 	"github.com/joestump/cairn/internal/store"
 	"github.com/joestump/cairn/internal/trajectory"
@@ -130,6 +131,13 @@ func (s *Server) mcpBodyLimit(next http.Handler) http.Handler {
 const (
 	mcpExtraGrantID  = "grant_id"
 	mcpExtraClientID = "client_id"
+
+	// patTokenInfoTTL is the validity window reported for a PAT-authenticated
+	// MCP request. PATs never expire, but the bearer middleware reads a zero
+	// Expiration as already-expired, so we report a modest future window; the
+	// token is re-verified against the DB (including revoked_at) on every
+	// request regardless, so revocation still takes effect promptly.
+	patTokenInfoTTL = time.Hour
 )
 
 // mcpTokenVerifier adapts the OAuth authorization server's AuthenticateAccess
@@ -139,6 +147,32 @@ const (
 // can never reach the MCP transport (SPEC-0007 endpoint table).
 func (s *Server) mcpTokenVerifier() sdkauth.TokenVerifier {
 	return func(ctx context.Context, token string, _ *http.Request) (*sdkauth.TokenInfo, error) {
+		// A personal access token (cairn_pat_) authenticates on the MCP surface
+		// too — not just /v1. A PAT is a human-issued, scoped, revocable bearer
+		// created in Settings explicitly "for my agents" (#74), and agents connect
+		// over MCP, so rejecting it here (issue #51) defeats its purpose. It carries
+		// no OAuth grant, so mcpInitializedHandler records no session row (it skips
+		// an empty grant_id); the PAT's scopes still gate every tool exactly as an
+		// OAuth access token's do. Extends SPEC-0007's OAuth-only MCP surface to the
+		// equivalent user-scoped PAT credential; the "cairn_pat_" prefix is disjoint
+		// from OAuth's "cairn_at_", so this never misroutes a token. PATs do not
+		// expire, so Expiration is set far ahead — a zero value is read as already
+		// expired by the bearer middleware.
+		if s.pat != nil && pat.IsSecret(token) {
+			t, err := s.pat.Authenticate(ctx, token)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %v", sdkauth.ErrInvalidToken, err)
+			}
+			return &sdkauth.TokenInfo{
+				Scopes:     t.Scopes,
+				Expiration: s.now().Add(patTokenInfoTTL),
+				UserID:     t.OwnerID,
+				Extra: map[string]any{
+					mcpExtraGrantID:  "",
+					mcpExtraClientID: "",
+				},
+			}, nil
+		}
 		ident, err := s.oauth.AuthenticateAccess(ctx, token)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", sdkauth.ErrInvalidToken, err)

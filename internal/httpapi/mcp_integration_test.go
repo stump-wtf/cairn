@@ -16,7 +16,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/joestump/cairn/internal/oauth"
 	"github.com/joestump/cairn/internal/objectstore"
+	"github.com/joestump/cairn/internal/pat"
 	"github.com/joestump/cairn/internal/store"
 )
 
@@ -344,6 +346,41 @@ func TestIntegrationMCPStaticTokenRejected(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("static-token /mcp call status = %d, want 401 (body %s)", resp.StatusCode, b)
+	}
+}
+
+// TestIntegrationMCPPersonalAccessTokenAccepted proves a personal access token
+// (cairn_pat_) authenticates on the MCP surface, not just /v1 — the fix for
+// issue #51. A PAT is created in Settings explicitly "for my agents" (#74), and
+// agents connect over MCP, so it must work here; its scopes gate every tool
+// exactly as an OAuth access token's do, and provenance stamps the PAT owner.
+func TestIntegrationMCPPersonalAccessTokenAccepted(t *testing.T) {
+	srv, st := mcpTestServer(t, mcpConfig(), store.Options{})
+	patSvc := pat.NewService(st.Pool())
+
+	secret, _, err := patSvc.Create(context.Background(), "sam@stump.rocks", "crush-agent",
+		[]string{oauth.ScopeArtifactsRead, oauth.ScopeArtifactsWrite}, true)
+	if err != nil {
+		t.Fatalf("create PAT: %v", err)
+	}
+	// The MCP `initialize` handshake must succeed with the PAT as the bearer
+	// (the exact step issue #51 saw return 401).
+	sess := mcpClient(t, srv, secret, nil, "crush")
+	created := callTool(t, sess, "artifact_create", map[string]any{"body": "made over MCP with a PAT", "share_type": "file"})
+	if created.IsError {
+		t.Fatalf("PAT-authenticated artifact_create failed: %s", toolText(t, created))
+	}
+
+	// Scope enforcement is unchanged: a read-only PAT is denied a write tool.
+	roSecret, _, err := patSvc.Create(context.Background(), "sam@stump.rocks", "readonly",
+		[]string{oauth.ScopeArtifactsRead}, true)
+	if err != nil {
+		t.Fatalf("create read-only PAT: %v", err)
+	}
+	roSess := mcpClient(t, srv, roSecret, nil, "crush-ro")
+	denied := callTool(t, roSess, "artifact_create", map[string]any{"body": "x", "share_type": "file"})
+	if !denied.IsError {
+		t.Fatalf("read-only PAT should be denied artifact_create, got success")
 	}
 }
 
