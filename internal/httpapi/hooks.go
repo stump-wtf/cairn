@@ -48,6 +48,7 @@ func (m hookMux) MountRoutes(r chi.Router) {
 	r.Get("/hooks/{id}/requests", s.handleListHookRequests)
 	r.Get("/hooks/{id}/requests/{seq}", s.handleGetHookRequest)
 	r.Get("/hooks/{id}/requests/{seq}/body", s.handleGetHookRequestBody)
+	r.Get("/hooks/{id}/stream", s.handleHookStream)
 }
 
 // createHookRequest is the POST /v1/hooks body. Provenance channel, owner,

@@ -200,6 +200,48 @@ func (s *Service) OpenRequestBody(ctx context.Context, publicID string, seq int6
 	return io.NopCloser(bytes.NewReader(inline)), BodyInfo{Size: size, Truncated: truncated, Inline: true}, nil
 }
 
+// RequestsAfter returns an endpoint's captured requests whose seq is greater
+// than afterSeq, in ascending seq (ingest) order — the SSE/MCP replay read: a
+// fresh subscriber passes afterSeq = 0 to load the buffer currently retained,
+// a reconnecting subscriber passes its Last-Event-ID so the stream resumes
+// with no loss or duplication (SPEC-0005 "Late joiner sees history then
+// tail"). Because seq is never reused even across ring-buffer eviction, a
+// resume cursor older than the oldest retained request simply yields the
+// current buffer from its start — no distinct error, exactly what the ring
+// buffer already dropped for every other reader. An unknown, unauthorized, or
+// expired endpoint is the uniform ErrEndpointNotFound (ADR-0007
+// link-capability).
+func (s *Service) RequestsAfter(ctx context.Context, publicID string, afterSeq int64) ([]Request, error) {
+	hookID, err := s.resolveHookID(ctx, publicID)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT seq, received_at, method, path, query, headers, status,
+		       content_type, body_size, body_inline, body_ref_sha256, body_truncated
+		FROM hook_requests
+		WHERE hook_id = $1 AND seq > $2
+		ORDER BY seq`, hookID, afterSeq)
+	if err != nil {
+		return nil, fmt.Errorf("webhook: list requests after %d for %s: %w", afterSeq, publicID, err)
+	}
+	defer rows.Close()
+
+	var out []Request
+	for rows.Next() {
+		req, err := scanRequest(rows)
+		if err != nil {
+			return nil, fmt.Errorf("webhook: scan stream request: %w", err)
+		}
+		out = append(out, req)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("webhook: iterate stream requests: %w", err)
+	}
+	return out, nil
+}
+
 // resolveHookID resolves a public endpoint id to its internal hook id,
 // enforcing the expiry (hard non-existence) link-capability policy.
 func (s *Service) resolveHookID(ctx context.Context, publicID string) (int64, error) {

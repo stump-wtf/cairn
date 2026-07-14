@@ -55,6 +55,7 @@ import (
 	"github.com/joestump/cairn/internal/sharetype"
 	"github.com/joestump/cairn/internal/store"
 	"github.com/joestump/cairn/internal/trajectory"
+	"github.com/joestump/cairn/internal/webhook"
 )
 
 // maxMCPReadBodyBytes bounds how much of an artifact/member body the read tool
@@ -159,11 +160,17 @@ func (s *Server) mcpTokenVerifier() sdkauth.TokenVerifier {
 func (s *Server) newMCPServer() *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "cairn", Version: "0.1.0"}, &mcp.ServerOptions{
 		Instructions: "Cairn is an AI-native artifact-sharing service. Read and create shareable " +
-			"artifacts, comment and react on them, and tail live trajectory runs — all scoped to " +
-			"what the authorizing human can already reach.",
-		Logger:             s.log,
-		SubscribeHandler:   s.mcpSubscribeRun,
-		UnsubscribeHandler: s.mcpUnsubscribeRun,
+			"artifacts, comment and react on them, and tail live trajectory runs and webhook " +
+			"streams — all scoped to what the authorizing human can already reach.",
+		Logger: s.log,
+		// The SDK holds exactly one Subscribe/UnsubscribeHandler pair for the
+		// whole server, so mcpSubscribeResource dispatches by URI prefix
+		// (mcp://cairn/run/ vs mcp://cairn/hook/) to the per-share-type watch
+		// starter; mcpUnsubscribeResource is already share-type-agnostic (keyed
+		// purely by session + URI) and serves both (SPEC-0007 REQ "MCP Resource
+		// Surface — Stream Reads").
+		SubscribeHandler:   s.mcpSubscribeResource,
+		UnsubscribeHandler: s.mcpUnsubscribeResource,
 		// mcpInitializedHandler records an agent session the moment the
 		// client completes the handshake (issue #76: "record an MCP
 		// session/connection when an OAuth-authenticated client initializes
@@ -232,6 +239,23 @@ func (s *Server) newMCPServer() *mcp.Server {
 				"receive a notification each time a new span lands. Requires artifacts:read.",
 			MIMEType: "application/json",
 		}, s.mcpReadRun)
+	}
+
+	if s.hook != nil {
+		// The webhook stream is exposed as a READABLE resource only — no tool
+		// registers a write path into it (SPEC-0005 "reactions-only", SPEC-0007
+		// REQ "MCP Resource Surface — Stream Reads": "The MCP surface MUST
+		// provide no write path into a stream in v1"). Reading requires only
+		// artifacts:read, the same single scope the trajectory-run resource
+		// requires — no fourth scope for streams.
+		srv.AddResourceTemplate(&mcp.ResourceTemplate{
+			URITemplate: "mcp://cairn/hook/{id}",
+			Name:        "webhook-stream",
+			Description: "A webhook endpoint's metadata plus its currently-retained captured-request " +
+				"buffer (newest first). Subscribe to receive a notification each time a new request is " +
+				"captured. Requires artifacts:read.",
+			MIMEType: "application/json",
+		}, s.mcpReadHook)
 	}
 
 	return srv
@@ -1148,19 +1172,24 @@ func matchRunURI(uri string) (string, bool) {
 	return id, true
 }
 
-// runWatch is one live subscription to a run's append stream, forwarding each
-// landed span/status transition as an MCP `notifications/resources/updated`
+// runWatch is one live subscription to a trajectory run's append stream or a
+// webhook endpoint's capture stream, forwarding each landed span/status
+// transition or captured request as an MCP `notifications/resources/updated`
 // so a subscribed client knows to re-read the resource (SPEC-0007 "Streaming
-// reads MUST deliver incremental data ... as they land").
+// reads MUST deliver incremental data ... as they land"). The name predates
+// the webhook stream resource; the type itself is share-type-agnostic (just a
+// cancel func) and is shared by both mcpSubscribeRun and mcpSubscribeHook.
 type runWatch struct {
 	cancel context.CancelFunc
 }
 
-// mcpRunWatches tracks each (session, run) subscription this server holds, so
-// Unsubscribe (or session teardown never firing an explicit unsubscribe, which
-// is acceptable: the watch simply outlives an abandoned session until the
-// process recycles it) can be torn down precisely without disturbing a
-// different session's watch on the same run.
+// mcpRunWatches tracks each (session, URI) subscription this server holds —
+// across BOTH the trajectory-run and webhook-stream resources, keyed purely
+// by URI so it needs no per-share-type registry — so Unsubscribe (or session
+// teardown never firing an explicit unsubscribe, which is acceptable: the
+// watch simply outlives an abandoned session until the process recycles it)
+// can be torn down precisely without disturbing a different session's watch
+// on the same resource.
 type mcpRunWatches struct {
 	mu    sync.Mutex
 	watch map[*mcp.ServerSession]map[string]*runWatch // session -> uri -> watch
@@ -1170,7 +1199,7 @@ func newMCPRunWatches() *mcpRunWatches {
 	return &mcpRunWatches{watch: map[*mcp.ServerSession]map[string]*runWatch{}}
 }
 
-var mcpWatches = newMCPRunWatches() //nolint:gochecknoglobals // process-wide registry, mirrors the trajectory hub's own process-wide scope
+var mcpWatches = newMCPRunWatches() //nolint:gochecknoglobals // process-wide registry, mirrors the trajectory/webhook hubs' own process-wide scope
 
 // mcpSubscribeRun is the SDK's SubscribeHandler hook: it starts a background
 // watch on the run's append stream (via the trajectory hub the SSE endpoint
@@ -1231,9 +1260,13 @@ func (s *Server) mcpSubscribeRun(ctx context.Context, req *mcp.SubscribeRequest)
 	return nil
 }
 
-// mcpUnsubscribeRun is the SDK's UnsubscribeHandler hook: it tears down the
-// matching watch goroutine started by mcpSubscribeRun.
-func (s *Server) mcpUnsubscribeRun(_ context.Context, req *mcp.UnsubscribeRequest) error {
+// mcpUnsubscribeResource is the SDK's single, share-type-agnostic
+// UnsubscribeHandler hook: it tears down the matching watch goroutine started
+// by mcpSubscribeRun or mcpSubscribeHook. It never needs to know which share
+// type a URI names — mcpWatches is keyed purely by (session, URI) — so it
+// serves both the trajectory-run and webhook-stream resources without a
+// dispatch.
+func (s *Server) mcpUnsubscribeResource(_ context.Context, req *mcp.UnsubscribeRequest) error {
 	sess := req.Session
 	uri := req.Params.URI
 	mcpWatches.mu.Lock()
@@ -1247,5 +1280,125 @@ func (s *Server) mcpUnsubscribeRun(_ context.Context, req *mcp.UnsubscribeReques
 			delete(mcpWatches.watch, sess)
 		}
 	}
+	return nil
+}
+
+// --- webhook stream resource (SPEC-0007 REQ "MCP Resource Surface — Stream Reads") ---
+
+// mcpReadHook is the ResourceHandler for the mcp://cairn/hook/{id} template:
+// a read returns the endpoint's metadata plus its currently-retained
+// captured-request buffer — the identical projection [hookResponse] the REST
+// GET /v1/hooks/{id} handler renders (ADR-0003 parity) — as JSON text
+// content. Reading requires only artifacts:read; there is no write path
+// (SPEC-0005 "Ingress grants no read" — nor does any authenticated read
+// surface let an agent push into the stream; SPEC-0007: "streams are
+// read-only to agents in v1").
+func (s *Server) mcpReadHook(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsRead] {
+		return nil, s.mcpScopeErr(ctx, "resources/read hook", oauth.ScopeArtifactsRead)
+	}
+	id, ok := matchHookURI(req.Params.URI)
+	if !ok {
+		return nil, fmt.Errorf("validation_failed: %q is not a webhook resource URI", req.Params.URI)
+	}
+	ep, err := s.hook.GetEndpoint(ctx, id)
+	if err != nil {
+		return nil, s.mcpToolErr(ctx, "resources/read hook", err)
+	}
+	page, err := s.hook.ListRequests(ctx, id, 0, webhook.DefaultListLimit)
+	if err != nil {
+		return nil, s.mcpToolErr(ctx, "resources/read hook", err)
+	}
+	body, err := json.Marshal(s.toHookResponse(ep, page.Requests, page.NextBefore))
+	if err != nil {
+		return nil, s.mcpToolErr(ctx, "resources/read hook", fmt.Errorf("encode hook: %w", err))
+	}
+	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{
+		{URI: req.Params.URI, MIMEType: "application/json", Text: string(body)},
+	}}, nil
+}
+
+// matchHookURI extracts the endpoint id from a resolved
+// mcp://cairn/hook/<id> URI.
+func matchHookURI(uri string) (string, bool) {
+	const prefix = "mcp://cairn/hook/"
+	if !strings.HasPrefix(uri, prefix) {
+		return "", false
+	}
+	id := strings.TrimPrefix(uri, prefix)
+	if id == "" || strings.Contains(id, "/") {
+		return "", false
+	}
+	return id, true
+}
+
+// mcpSubscribeResource is the SDK's single SubscribeHandler hook, dispatching
+// by URI prefix to the trajectory or webhook watch starter — the SDK holds
+// exactly one handler pair for the whole server, so the multiplex lives here
+// rather than in a per-resource-template hook (SPEC-0007 REQ "MCP Resource
+// Surface — Stream Reads").
+func (s *Server) mcpSubscribeResource(ctx context.Context, req *mcp.SubscribeRequest) error {
+	uri := req.Params.URI
+	switch {
+	case strings.HasPrefix(uri, "mcp://cairn/run/"):
+		return s.mcpSubscribeRun(ctx, req)
+	case strings.HasPrefix(uri, "mcp://cairn/hook/"):
+		return s.mcpSubscribeHook(ctx, req)
+	default:
+		return fmt.Errorf("validation_failed: %q is not a subscribable resource", uri)
+	}
+}
+
+// mcpSubscribeHook is the webhook half of mcpSubscribeResource: it starts a
+// background watch on the endpoint's capture stream (via the same
+// webhook.Service hub the SSE endpoint uses, internal/httpapi/hook_stream.go)
+// and calls Server.ResourceUpdated on every newly captured request, so a
+// subscribed MCP client is notified live without a fourth scope or a write
+// path into the stream (SPEC-0007: "Streaming reads MUST deliver incremental
+// data ... as they arrive").
+func (s *Server) mcpSubscribeHook(ctx context.Context, req *mcp.SubscribeRequest) error {
+	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsRead] {
+		return s.mcpScopeErr(ctx, "resources/subscribe hook", oauth.ScopeArtifactsRead)
+	}
+	id, ok := matchHookURI(req.Params.URI)
+	if !ok {
+		return fmt.Errorf("validation_failed: %q is not a webhook resource URI", req.Params.URI)
+	}
+	if s.hook == nil {
+		return fmt.Errorf("not_found: not found or expired")
+	}
+	sess := req.Session
+	uri := req.Params.URI
+	watchCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	sub := s.hook.Subscribe(id)
+
+	mcpWatches.mu.Lock()
+	if mcpWatches.watch[sess] == nil {
+		mcpWatches.watch[sess] = map[string]*runWatch{}
+	}
+	if existing, dup := mcpWatches.watch[sess][uri]; dup {
+		existing.cancel()
+	}
+	mcpWatches.watch[sess][uri] = &runWatch{cancel: cancel}
+	mcpWatches.mu.Unlock()
+
+	go func() {
+		defer sub.Close()
+		for {
+			select {
+			case <-watchCtx.Done():
+				return
+			case <-sub.Lagged():
+				return
+			case ev, ok := <-sub.Events():
+				if !ok {
+					return
+				}
+				if ev.Type == webhook.EventRequest {
+					_ = s.mcpSrv.ResourceUpdated(watchCtx, &mcp.ResourceUpdatedNotificationParams{URI: uri})
+				}
+			}
+		}
+	}()
 	return nil
 }

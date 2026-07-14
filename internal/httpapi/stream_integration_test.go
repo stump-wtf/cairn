@@ -33,8 +33,18 @@ type streamConn struct {
 // lastEventID, -1 to omit) and starts parsing events in the background.
 func openStream(t *testing.T, url, runID string, lastEventID int64) *streamConn {
 	t.Helper()
+	return openStreamAt(t, url+"/v1/runs/"+runID+"/stream", lastEventID)
+}
+
+// openStreamAt connects to an arbitrary SSE endpoint URL (optionally resuming
+// after lastEventID, -1 to omit) and starts parsing events in the background
+// — the share-type-agnostic core openStream (above, for trajectory runs) and
+// openHookStream (hook_stream_integration_test.go, for webhook endpoints)
+// both build on.
+func openStreamAt(t *testing.T, url string, lastEventID int64) *streamConn {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+"/v1/runs/"+runID+"/stream", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		cancel()
 		t.Fatalf("new stream request: %v", err)

@@ -49,6 +49,12 @@ type Service struct {
 	maxBodyBytes    int64
 	newID           func() (string, error)
 	now             func() time.Time
+	// hub fans each captured request out to live SSE and MCP subscribers of an
+	// endpoint. It is process-local: one binary owns the capture, so its
+	// in-memory fan-out and the persisted hook_requests rows are the same
+	// seq-ordered log both transports read (SPEC-0005 "One Stream, Two
+	// Transports (Live Fan-out)"), exactly mirroring internal/trajectory.Service's hub.
+	hub *hub
 }
 
 // Options configures a Service. Zero values fall back to safe defaults.
@@ -81,6 +87,7 @@ func NewService(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *
 		maxBodyBytes:    opts.MaxBodyBytes,
 		newID:           opts.NewID,
 		now:             opts.Now,
+		hub:             newHub(),
 	}
 	if s.inlineThreshold <= 0 {
 		s.inlineThreshold = defaultInlineThreshold
@@ -280,6 +287,14 @@ func (s *Service) Capture(ctx context.Context, publicID string, in CaptureInput)
 	if d.refSHA != "" {
 		req.Ref = &BodyRef{SHA256: d.refSHA, Size: d.size, Truncated: d.truncated}
 	}
+
+	// Fan the durably-committed capture out to live subscribers (browsers over
+	// SSE, agents over MCP) in the same seq order the rows now carry —
+	// published only after commit so a subscriber never sees a request a
+	// rolled-back tx would erase (SPEC-0005 "One Stream, Two Transports (Live
+	// Fan-out)": "Capture MUST write the record, then fan the new seq out to
+	// live subscribers").
+	s.hub.publish(publicID, StreamEvent{Type: EventRequest, Seq: seq, Request: req})
 	return req, nil
 }
 
