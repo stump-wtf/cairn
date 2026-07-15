@@ -7,6 +7,18 @@ reaches 1.0.
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-07-15
+
+### Fixed
+
+- **MCP clients using a personal access token got `401` at `initialize`** — the
+  MCP bearer verifier only accepted OAuth access tokens (`cairn_at_`), so a
+  `cairn_pat_` token (the credential Settings creates *for agents*, which
+  connect over MCP) was rejected. `/mcp` now accepts personal access tokens with
+  the same scope enforcement as OAuth; set a client's `CAIRN_API_TOKEN` to a
+  `cairn_pat_…` value and connect, no OAuth browser flow needed. (#99, closes
+  upstream #51)
+
 ## [0.0.3] - 2026-07-14
 
 The complete build: every share type, the `cairn` CLI, a Settings surface with
@@ -136,7 +148,8 @@ The MVP: trajectory shares end to end on a composable share-type SDK.
   slot, the Bin listing, generic-file viewer, CSRF protection. (#10, #12)
 - **Minimal web session auth and login.** (#11)
 
-[Unreleased]: https://github.com/joestump/cairn/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/joestump/cairn/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/joestump/cairn/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/joestump/cairn/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/joestump/cairn/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/joestump/cairn/releases/tag/v0.0.1
