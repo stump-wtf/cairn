@@ -1,0 +1,16 @@
+# Gitleaks config for Cairn. Extends the default ruleset and allowlists known
+# false positives so the secret scan stays green:
+#   - hermetic in-test OIDC issuer signing keys and other fixtures in *_test.go
+#   - illustrative example values in design docs (ADRs / OpenSpec markdown)
+# Real secrets are injected from OpenBao at deploy time as CAIRN_* env, never
+# committed — so allowlisting test/doc paths does not hide any live credential.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and design-doc examples (no live secrets)."
+paths = [
+  '''.*_test\.go$''',
+  '''docs/.*\.md$''',
+  '''website/.*\.(md|mdx)$''',
+]
