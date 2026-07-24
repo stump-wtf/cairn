@@ -1,18 +1,28 @@
 /**
  * Cairn design language — dark, terminal-minimal.
  * IBM Plex Sans (UI) + JetBrains Mono (code/labels/IDs), near-black #0A0B0D,
- * OTel span category accents (reason/exec/read/net/write).
+ * OTel span category accents — recommended set: reason/exec/read/net/write +
+ * search/plan/tool/analyze/test/fix/fail/meta. Any other string gets --cat-other.
  */
 
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 /* ---- Category accent tokens (constant across themes) ---- */
 :root {
-  --cat-reason: #8b7cf6;
-  --cat-exec:   #46c878;
-  --cat-read:   #4f9cf9;
-  --cat-net:    #e6b450;
-  --cat-write:  #f0568f;
+  --cat-reason:  #8b7cf6;   /* purple  */
+  --cat-exec:    #46c878;   /* green   */
+  --cat-read:    #4f9cf9;   /* blue    */
+  --cat-net:     #e6b450;   /* gold    */
+  --cat-write:   #f0568f;   /* pink    */
+  --cat-search:  #5ed4e0;   /* cyan    */
+  --cat-plan:    #c08bff;   /* lavender*/
+  --cat-tool:    #56d9a0;   /* mint    */
+  --cat-analyze: #e0a060;   /* amber   */
+  --cat-test:    #6cc8e8;   /* sky     */
+  --cat-fix:     #f08550;   /* orange  */
+  --cat-fail:    #f0506a;   /* red     */
+  --cat-meta:    #808c9a;   /* slate   */
+  --cat-other:   #aab2bd;   /* neutral default */
 
   --ifm-font-family-base: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --ifm-font-family-monospace: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -113,10 +123,19 @@ table { display: table; width: 100%; }
   letter-spacing: 0.04em;
   border: 1px solid transparent;
 }
-.chip-reason { color: var(--cat-reason); border-color: color-mix(in srgb, var(--cat-reason) 40%, transparent); background: color-mix(in srgb, var(--cat-reason) 12%, transparent); }
-.chip-exec   { color: var(--cat-exec);   border-color: color-mix(in srgb, var(--cat-exec) 40%, transparent);   background: color-mix(in srgb, var(--cat-exec) 12%, transparent); }
-.chip-read   { color: var(--cat-read);   border-color: color-mix(in srgb, var(--cat-read) 40%, transparent);   background: color-mix(in srgb, var(--cat-read) 12%, transparent); }
-.chip-net    { color: var(--cat-net);    border-color: color-mix(in srgb, var(--cat-net) 40%, transparent);    background: color-mix(in srgb, var(--cat-net) 12%, transparent); }
-.chip-write  { color: var(--cat-write);  border-color: color-mix(in srgb, var(--cat-write) 40%, transparent);  background: color-mix(in srgb, var(--cat-write) 12%, transparent); }
+.chip-reason  { color: var(--cat-reason);  border-color: color-mix(in srgb, var(--cat-reason) 40%, transparent);  background: color-mix(in srgb, var(--cat-reason) 12%, transparent); }
+.chip-exec    { color: var(--cat-exec);    border-color: color-mix(in srgb, var(--cat-exec) 40%, transparent);    background: color-mix(in srgb, var(--cat-exec) 12%, transparent); }
+.chip-read    { color: var(--cat-read);    border-color: color-mix(in srgb, var(--cat-read) 40%, transparent);    background: color-mix(in srgb, var(--cat-read) 12%, transparent); }
+.chip-net     { color: var(--cat-net);     border-color: color-mix(in srgb, var(--cat-net) 40%, transparent);     background: color-mix(in srgb, var(--cat-net) 12%, transparent); }
+.chip-write   { color: var(--cat-write);   border-color: color-mix(in srgb, var(--cat-write) 40%, transparent);   background: color-mix(in srgb, var(--cat-write) 12%, transparent); }
+.chip-search  { color: var(--cat-search);  border-color: color-mix(in srgb, var(--cat-search) 40%, transparent);  background: color-mix(in srgb, var(--cat-search) 12%, transparent); }
+.chip-plan    { color: var(--cat-plan);    border-color: color-mix(in srgb, var(--cat-plan) 40%, transparent);    background: color-mix(in srgb, var(--cat-plan) 12%, transparent); }
+.chip-tool    { color: var(--cat-tool);    border-color: color-mix(in srgb, var(--cat-tool) 40%, transparent);    background: color-mix(in srgb, var(--cat-tool) 12%, transparent); }
+.chip-analyze { color: var(--cat-analyze); border-color: color-mix(in srgb, var(--cat-analyze) 40%, transparent); background: color-mix(in srgb, var(--cat-analyze) 12%, transparent); }
+.chip-test    { color: var(--cat-test);    border-color: color-mix(in srgb, var(--cat-test) 40%, transparent);    background: color-mix(in srgb, var(--cat-test) 12%, transparent); }
+.chip-fix     { color: var(--cat-fix);     border-color: color-mix(in srgb, var(--cat-fix) 40%, transparent);     background: color-mix(in srgb, var(--cat-fix) 12%, transparent); }
+.chip-fail    { color: var(--cat-fail);    border-color: color-mix(in srgb, var(--cat-fail) 40%, transparent);    background: color-mix(in srgb, var(--cat-fail) 12%, transparent); }
+.chip-meta    { color: var(--cat-meta);    border-color: color-mix(in srgb, var(--cat-meta) 40%, transparent);    background: color-mix(in srgb, var(--cat-meta) 12%, transparent); }
+.chip-other   { color: var(--cat-other);   border-color: color-mix(in srgb, var(--cat-other) 40%, transparent);   background: color-mix(in srgb, var(--cat-other) 12%, transparent); }
 
 ::selection { background: color-mix(in srgb, var(--ifm-color-primary) 40%, transparent); }
