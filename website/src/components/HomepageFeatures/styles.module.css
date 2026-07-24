@@ -114,9 +114,9 @@
 .cat_plan    { --accent: var(--cat-plan); }
 .cat_tool    { --accent: var(--cat-tool); }
 .cat_analyze { --accent: var(--cat-analyze); }
+.cat_test    { --accent: var(--cat-test); }
 .cat_fix     { --accent: var(--cat-fix); }
 .cat_fail    { --accent: var(--cat-fail); }
-.cat_test    { --accent: var(--cat-test); }
 .cat_meta    { --accent: var(--cat-meta); }
 .cat_mono    { --accent: #aab2bd; }
 .cat_other   { --accent: var(--cat-other); }

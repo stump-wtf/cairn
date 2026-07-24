@@ -222,8 +222,8 @@ above; each is additive:
   exporter's output directly; agents must emit Cairn's run shape (a thin adapter, but a
   real one), and teams already exporting OTel get no free bridge.
 * Neutral on categories — the recommended set is a superset of the original five
-  (`reason · exec · read · net · write`) plus seven additions that cover common agent
-  activities (`search · plan · tool · analyze · fix · fail · meta`). Because the
+  (`reason · exec · read · net · write`) plus eight additions that cover common agent
+  activities (`search · plan · tool · analyze · test · fix · fail · meta`). Because the
   `category` field accepts any non-empty string, a genuinely new category does not
   require a migration; it simply renders with a neutral default color until the
   recommended set and color legend are updated to include it.

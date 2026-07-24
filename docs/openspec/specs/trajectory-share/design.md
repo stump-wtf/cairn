@@ -127,7 +127,7 @@ erDiagram
         text parent_span_id
         int depth
         int seq
-        text category "free-form; recommended set: reason|exec|read|net|write|search|plan|tool|analyze|fix|fail|meta"
+        text category "free-form; recommended set: reason|exec|read|net|write|search|plan|tool|analyze|test|fix|fail|meta"
         text name
         text tool
         jsonb args
@@ -183,7 +183,7 @@ sequenceDiagram
 - **Open category set** → unknown categories render with a neutral default color rather
   than being rejected. This is a deliberate trade-off: it means agents can always post their
   natural vocabulary without remapping, at the cost of a slightly less polished legend for
-  non-standard categories. The recommended set is expanded to twelve values to cover the
+  non-standard categories. The recommended set is expanded to thirteen values to cover the
   most common agent activities.
 - **No v1 error modeling** → a failed run is not schema-distinguishable from a successful
   one until the errored-run "try next" lands. Mitigation: failures are captured as ordinary

@@ -18,9 +18,9 @@
   --cat-plan:    #c08bff;   /* lavender*/
   --cat-tool:    #56d9a0;   /* mint    */
   --cat-analyze: #e0a060;   /* amber   */
+  --cat-test:    #6cc8e8;   /* sky     */
   --cat-fix:     #f08550;   /* orange  */
   --cat-fail:    #f0506a;   /* red     */
-  --cat-test:    #6cc8e8;   /* sky     */
   --cat-meta:    #808c9a;   /* slate   */
   --cat-other:   #aab2bd;   /* neutral default */
 
@@ -132,6 +132,7 @@ table { display: table; width: 100%; }
 .chip-plan    { color: var(--cat-plan);    border-color: color-mix(in srgb, var(--cat-plan) 40%, transparent);    background: color-mix(in srgb, var(--cat-plan) 12%, transparent); }
 .chip-tool    { color: var(--cat-tool);    border-color: color-mix(in srgb, var(--cat-tool) 40%, transparent);    background: color-mix(in srgb, var(--cat-tool) 12%, transparent); }
 .chip-analyze { color: var(--cat-analyze); border-color: color-mix(in srgb, var(--cat-analyze) 40%, transparent); background: color-mix(in srgb, var(--cat-analyze) 12%, transparent); }
+.chip-test    { color: var(--cat-test);    border-color: color-mix(in srgb, var(--cat-test) 40%, transparent);    background: color-mix(in srgb, var(--cat-test) 12%, transparent); }
 .chip-fix     { color: var(--cat-fix);     border-color: color-mix(in srgb, var(--cat-fix) 40%, transparent);     background: color-mix(in srgb, var(--cat-fix) 12%, transparent); }
 .chip-fail    { color: var(--cat-fail);    border-color: color-mix(in srgb, var(--cat-fail) 40%, transparent);    background: color-mix(in srgb, var(--cat-fail) 12%, transparent); }
 .chip-meta    { color: var(--cat-meta);    border-color: color-mix(in srgb, var(--cat-meta) 40%, transparent);    background: color-mix(in srgb, var(--cat-meta) 12%, transparent); }
