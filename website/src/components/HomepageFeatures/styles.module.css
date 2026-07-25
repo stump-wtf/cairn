@@ -14,13 +14,19 @@
   max-width: 680px;
   margin: 0 auto 3rem;
 }
-/* An uppercase mono kicker: a label, not a sentence. */
+/*
+ * An uppercase mono kicker: a label, not a sentence. The role is the global
+ * `.cairn-label` (src/css/custom.css section 6), applied by the markup; only
+ * colour and spacing are local.
+ *
+ * --cairn-accent-label, not --ifm-color-primary-light: a label is small text
+ * (--cairn-label-size 0.74rem ≈ 11.8px at weight 600, so neither of WCAG's
+ * large-text thresholds applies) and the mode-following primary-light measures
+ * 4.24:1 on white, below the 4.5:1 floor. The label token is 5.52:1 in light
+ * mode and 9.52:1 in dark. SPEC-0010 REQ "Contrast".
+ */
 .kicker {
-  font-family: var(--cairn-font-mono);
-  font-size: var(--cairn-label-size);
-  font-weight: var(--cairn-label-weight);
-  letter-spacing: var(--cairn-label-tracking);
-  color: var(--ifm-color-primary-light);
+  color: var(--cairn-accent-label);
   margin-bottom: 0.8rem;
 }
 .headline {

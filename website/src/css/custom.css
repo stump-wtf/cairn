@@ -78,10 +78,17 @@
   --cairn-mono-size: 0.9em;
   --cairn-mono-tracking: 0.01em;
 
-  /* An uppercase mono eyebrow/kicker — a label, not a sentence. */
+  /* An uppercase mono eyebrow/kicker — a label, not a sentence. `.cairn-label`
+     in section 6 is the one place these are applied; a component that wants the
+     role takes that class rather than restating the four declarations. */
   --cairn-label-size: 0.74rem;
   --cairn-label-tracking: 0.16em;
   --cairn-label-weight: 600;
+
+  /* The caret Infima paints on a collapsible sidebar entry. It ships as a data
+     URI with its fill baked in, which no variable can reach; section 7 repaints
+     it as a mask over `currentColor`. */
+  --cairn-caret-icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z'/></svg>");
 }
 
 /* ==========================================================================
@@ -182,6 +189,12 @@
 
   --ifm-heading-color: var(--cairn-paper-1000);
   --ifm-footer-background-color: var(--cairn-paper-100);
+
+  /* A label renders at --cairn-label-size (0.74rem ≈ 11.8px) at weight 600,
+     which is small text, so it needs the full 4.5:1 and cannot borrow
+     --ifm-color-primary-light: that measures 4.24:1 on white. The base primary
+     measures 5.52:1. SPEC-0010 REQ "Contrast". */
+  --cairn-accent-label: var(--ifm-color-primary);
 }
 
 /* Dark mode — the intended look. */
@@ -215,6 +228,9 @@
 
   --ifm-heading-color: var(--cairn-ink-1000);
   --ifm-footer-background-color: var(--cairn-ink-deep);
+
+  /* 9.52:1 on --cairn-ink-0. */
+  --cairn-accent-label: var(--cairn-ink-accent);
 }
 
 /* ==========================================================================
@@ -272,6 +288,23 @@
   --ifm-scrollbar-thumb-background-color: var(--cairn-border);
   --ifm-scrollbar-thumb-hover-background-color: var(--cairn-muted);
 
+  /* Elevation. Infima's three shadow steps are stock `rgba(0, 0, 0, …)` and
+     they are what --ifm-navbar-shadow and --ifm-alert-shadow resolve to, so a
+     navbar and an admonition cast a shadow this file never named until now.
+     Mapping them onto --cairn-shadow-ink is what makes scenario "Stock theme
+     surface" true for everything that renders a shadow. */
+  --ifm-global-shadow-lw: 0 1px 2px 0 color-mix(in srgb, var(--cairn-shadow-ink) 12%, transparent);
+  --ifm-global-shadow-md: 0 5px 40px color-mix(in srgb, var(--cairn-shadow-ink) 26%, transparent);
+  --ifm-global-shadow-tl:
+    0 12px 28px 0 color-mix(in srgb, var(--cairn-shadow-ink) 30%, transparent),
+    0 2px 4px 0 color-mix(in srgb, var(--cairn-shadow-ink) 16%, transparent);
+
+  /* The desktop sidebar's collapse button. theme-classic declares both of its
+     backgrounds as stock `rgb(…)` literals — inside the docusaurus.theme-classic
+     layer, so this unlayered mapping reaches them without a specificity fight. */
+  --docusaurus-collapse-button-bg: transparent;
+  --docusaurus-collapse-button-bg-hover: color-mix(in srgb, var(--cairn-border) 55%, transparent);
+
   /* Prose furniture. `--ifm-hr-background-color` is Infima's real variable;
      the `--ifm-hr-border-color` shipped previously does not exist in Infima
      and never coloured anything. */
@@ -284,8 +317,15 @@
 
   /* Code. `--prism-*` reaches the code block as an inline style built from
      `themeConfig.prism.theme`, which is pointed at --cairn-code-bg/-fg rather
-     than at a hex literal, so the code surface resolves through this file. */
-  --ifm-code-background: var(--cairn-surface-2);
+     than at a hex literal, so the code surface resolves through this file.
+
+     Inline code takes the SAME pinned surface. It is machine content by this
+     file's own rule, and the fenced block cannot follow the colour mode (its
+     syntax palette is built for a dark ground and arrives as an inline style),
+     so pointing inline code at the mode's elevated surface instead would put a
+     light `code` pill and a dark fenced block in the same paragraph. One ramp
+     for machine content, in both modes. */
+  --ifm-code-background: var(--cairn-code-bg);
   --docusaurus-highlighted-code-line-bg: color-mix(in srgb, var(--ifm-color-primary) 16%, transparent);
 
   /* Semantic aliases for the admonition / badge / button families. These are
@@ -336,9 +376,11 @@
 
 html { -webkit-font-smoothing: antialiased; }
 
-/* Machine-emitted content. `.cairn-mono` is the hook for markup carrying an
-   id, a path, a span name, a TTL, an HTTP method or a command. Prose never
-   gets this treatment — SPEC-0010 REQ "Typographic Roles". */
+/* Machine-emitted content. `.cairn-mono` is the hook for markup that carries an
+   id, a path, a span name, a TTL, an HTTP method or a command without being a
+   `code` element — the hero's `zsh — cairn` window title, for instance. It sets
+   the FAMILY only, so a component can take the role and still choose its own
+   size; prose never gets this treatment — SPEC-0010 REQ "Typographic Roles". */
 code,
 kbd,
 samp,
@@ -348,12 +390,9 @@ pre,
   font-family: var(--cairn-font-mono);
 }
 
-.cairn-mono {
-  font-size: var(--cairn-mono-size);
-  letter-spacing: var(--cairn-mono-tracking);
-}
-
-/* An uppercase mono label — an eyebrow or a kicker, never a sentence. */
+/* An uppercase mono label — an eyebrow or a kicker, never a sentence. This is
+   the single definition of that role: `.eyebrow` and `.kicker` take this class
+   and add only their colour and spacing, so the two cannot drift apart. */
 .cairn-label {
   font-family: var(--cairn-font-mono);
   font-size: var(--cairn-label-size);
@@ -362,7 +401,18 @@ pre,
   text-transform: uppercase;
 }
 
-:not(pre) > code { border-color: var(--cairn-border); background: var(--ifm-code-background); }
+/* Inline code sits on the pinned machine surface (see --ifm-code-background in
+   section 5), so its border and foreground come off the ink ramp too rather
+   than following the mode. --cairn-code-fg measures 15.01:1 there. */
+:not(pre) > code {
+  border-color: var(--cairn-ink-300);
+  background: var(--ifm-code-background);
+  color: var(--cairn-code-fg);
+  letter-spacing: var(--cairn-mono-tracking);
+}
+/* Infima's `a code { color: inherit }` would hand a code-only link the page's
+   link colour, which is measured against the page ground and not this one. */
+a > code { color: var(--cairn-ink-accent); }
 
 /* A column heading labels its column; it is not prose. */
 .theme-doc-markdown table th {
@@ -398,13 +448,26 @@ pre,
 
 .button { font-weight: 600; letter-spacing: -0.01em; }
 
-.card,
-.theme-doc-markdown table { border: 1px solid var(--cairn-border); }
+/* Dark-mode only, as it shipped: on the light ramp Infima's own card shadow
+   already separates these from the page, and adding a light-mode outline is a
+   chrome decision owned by REQ "Site Chrome and Layout", not this story. */
+[data-theme='dark'] .card,
+[data-theme='dark'] .theme-doc-markdown table { border: 1px solid var(--cairn-border); }
 table { display: table; width: 100%; }
 
-/* Pagination takes its border from the emphasis ramp, which section 4
-   re-points; only the elevation needs stating. */
-.pagination-nav__link { background: var(--cairn-elevated); }
+/* The sidebar's sublist caret. Infima paints it as a background IMAGE whose
+   fill is baked into a data URI (`rgba(0,0,0,0.5)`) and flips it in dark mode
+   with an `invert()` filter, so its colour is reachable from no variable at
+   all. Repainting it as a mask over `currentColor` puts it back on the token
+   layer and lets the filter go — SPEC-0010 REQ "Design Token Source of Truth",
+   scenario "Stock theme surface". */
+.menu__link--sublist-caret::after,
+.menu__caret::before {
+  background: currentColor;
+  filter: none;
+  -webkit-mask: var(--cairn-caret-icon) center / 1.25rem 1.25rem no-repeat;
+  mask: var(--cairn-caret-icon) center / 1.25rem 1.25rem no-repeat;
+}
 
 /*
  * `themeConfig.footer.style: 'dark'` puts `footer--dark` on the footer, and
@@ -422,19 +485,28 @@ table { display: table; width: 100%; }
   border-top: 1px solid var(--cairn-ink-300);
 }
 
-/* Admonitions get a hairline all round rather than only the 5px left rule, so
-   the tinted ground reads as a block rather than a bleed. */
-.alert {
-  --ifm-alert-border-width: 1px;
-  --ifm-alert-background-color-highlight: color-mix(in srgb, var(--ifm-alert-border-color) 18%, transparent);
-  --ifm-alert-shadow: none;
-}
+/* Inside an admonition Infima re-points --ifm-code-background at its own
+   per-variant `rgba(…)` highlight, which would take inline code back off the
+   pinned machine surface. Nothing else reads that variable. */
+.alert { --ifm-code-background: var(--cairn-code-bg); }
 
 /* Code blocks. The container and its `pre` carry an inline `--prism-*` pair
-   from `themeConfig.prism.theme`, which resolves to --cairn-code-bg/-fg; the
-   border is the part CSS has to supply. */
+   from `themeConfig.prism.theme`, which resolves to --cairn-code-bg/-fg. The
+   ground is pinned across colour modes, so on a light page the block no longer
+   shares the page ground and needs its own edge — and its buttons need one off
+   the ink ramp rather than off the mode-following emphasis scale. */
 .theme-code-block { border: 1px solid var(--cairn-ink-300); }
 .theme-code-block button { border-color: var(--cairn-ink-300); }
+/*
+ * The "copied" tick is `color: #00d600` on a hashed CSS-module class, so there
+ * is no variable to re-point and no stable class to name. The success icon is
+ * the second `svg` inside the copy button's icon span — the word-wrap button
+ * has no such span — which CSS can reach without a wrap or an eject. If
+ * theme-classic changes that structure the tick reverts to its stock green and
+ * nothing else breaks. 8.58:1 on the code surface, well over the 3:1 that
+ * WCAG 1.4.11 asks of a non-text indicator.
+ */
+.theme-code-block button > span > svg + svg { color: var(--cairn-accent-success); }
 
 /* ==========================================================================
    8. Category chips.

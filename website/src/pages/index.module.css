@@ -38,12 +38,12 @@
   text-align: center;
 }
 
-/* An uppercase mono kicker: a label, not a sentence. */
+/* An uppercase mono kicker: a label, not a sentence. The role is the global
+   `.cairn-label` (src/css/custom.css section 6), which the markup applies
+   alongside this class; only colour and spacing are local. Restating the four
+   label declarations here is how this and HomepageFeatures' `.kicker` came to
+   disagree about letter-spacing (0.18em against the token's 0.16em). */
 .eyebrow {
-  font-family: var(--cairn-font-mono);
-  font-size: var(--cairn-label-size);
-  font-weight: var(--cairn-label-weight);
-  letter-spacing: 0.18em;
   color: var(--cairn-muted);
   margin-bottom: 1.1rem;
 }
@@ -57,16 +57,29 @@
 }
 
 /*
- * The gradient paints two category accents as TEXT. On the dark ramp both
- * clear the large-text floor comfortably (--cat-reason 5.92:1, --cat-write
- * 6.03:1, --cairn-gradient-mid 8.51:1 on --cairn-ink-0); on white they measure
- * 3.33:1, 3.26:1 and 2.31:1, so the midpoint misses even 3:1. Accents may not
- * be recoloured, so in light mode the accent is dropped entirely and the
- * headline takes a text token — SPEC-0010 REQ "Category Accents Are
- * Dark-Ground Text Colours", scenario "Accent on a light surface".
+ * The gradient paints two category accents as TEXT. On the dark ramp all three
+ * stops clear the large-text floor comfortably (--cat-reason 5.92:1,
+ * --cairn-gradient-mid 8.51:1, --cat-write 6.03:1 on --cairn-ink-0); on white
+ * they measure 3.33:1, 2.31:1 and 3.26:1, so the midpoint misses even 3:1 and
+ * none of the three reaches 4.5:1. Accents may not be recoloured, so the light
+ * mode demotes the accent rather than dimming it:
+ *
+ *   - the TEXT is `inherit`, i.e. exactly the enclosing h1's --ifm-heading-color.
+ *     Taking --cairn-text instead made "Human or agent." render 1.11:1 lighter
+ *     than "Share anything." on the line above it — a difference a reader can
+ *     see and cannot decode.
+ *   - the ACCENT survives as a 3px rule under the phrase, a non-text indicator
+ *     at 3.33:1 and 3.26:1 on white. --cairn-gradient-mid is left out of the
+ *     stop list precisely because it would not clear 3:1 there.
+ *
+ * SPEC-0010 REQ "Category Accents Are Dark-Ground Text Colours", scenario
+ * "Accent on a light surface".
  */
 .grad {
-  color: var(--cairn-text);
+  color: inherit;
+  padding-bottom: 0.06em;
+  background: linear-gradient(96deg, var(--cat-reason), var(--cat-write)) left bottom / 100% 3px
+    no-repeat;
 }
 
 [data-theme='dark'] .grad {
@@ -145,10 +158,11 @@
 .termBar span:nth-child(1) { background: var(--cat-write); }
 .termBar span:nth-child(2) { background: var(--cat-net); }
 .termBar span:nth-child(3) { background: var(--cat-exec); }
+/* The window title is machine content, so the markup takes the global
+   `.cairn-mono` role and this rule only positions and sizes it. */
 .termBar em {
   margin-left: auto;
   font-style: normal;
-  font-family: var(--cairn-font-mono);
   font-size: 0.74rem;
   color: var(--cairn-ink-700);
 }

@@ -134,7 +134,11 @@ export default function HomepageFeatures(): ReactNode {
     <section className={styles.features}>
       <div className="container">
         <div className={styles.head}>
-          <p className={styles.kicker}>ONE SERVICE · EVERY ARTIFACT · TWO AUDIENCES</p>
+          {/* The same label role as the hero's eyebrow, from one definition —
+              SPEC-0010 REQ "Typographic Roles". */}
+          <p className={clsx('cairn-label', styles.kicker)}>
+            ONE SERVICE · EVERY ARTIFACT · TWO AUDIENCES
+          </p>
           <Heading as="h2" className={styles.headline}>
             Built for humans and agents alike
           </Heading>
