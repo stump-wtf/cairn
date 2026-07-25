@@ -11,10 +11,15 @@
 //
 // The other half of the requirement — that the highlighter actually covers the
 // languages the specification names — is checked by
-// scripts/prism-languages.test.mjs, which is where the site config lives.
+// scripts/prism-languages.test.mjs, which is where the site config lives. The
+// floor the requirement names is READ out of the specification by
+// scripts/required-languages.mjs and shared with that test, so the two cannot
+// drift and a language added to the requirement gets both halves at once.
 
 import assert from 'node:assert/strict';
 import {describe, it} from 'node:test';
+
+import {requiredLanguages} from '../../../scripts/required-languages.mjs';
 
 import {
   literaliseRawHtml,
@@ -50,7 +55,7 @@ function codeNodes(tree: any): any[] {
 
 describe('code block fidelity', () => {
   it('keeps the declared language of every fence', async () => {
-    const languages = ['go', 'bash', 'json', 'sql', 'yaml'];
+    const languages = requiredLanguages();
     const source = languages
       .map((lang) => ['```' + lang, `sample ${lang}`, '```'].join('\n'))
       .join('\n\n');

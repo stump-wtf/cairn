@@ -2,10 +2,11 @@
  * Governing: ADR-0014, SPEC-0010 REQ "Code Block Fidelity"
  *
  * The highlighter's coverage floor is stated in the specification, so it is
- * READ from the specification rather than retyped here — the same discipline
- * `check-tokens.mjs` applies to ADR-0009's category names. A language added to
- * the requirement therefore fails this test until `docusaurus.config.ts` loads
- * it, instead of quietly rendering as plain text on the published site.
+ * READ from the specification rather than retyped here — see
+ * `required-languages.mjs`, the same discipline `check-tokens.mjs` applies to
+ * ADR-0009's category names. A language added to the requirement therefore
+ * fails this test until `docusaurus.config.ts` loads it, instead of quietly
+ * rendering as plain text on the published site.
  *
  * The covered set is the union of two things, because that is how Docusaurus
  * assembles it: `@docusaurus/theme-classic/src/prism-include-languages.ts`
@@ -23,58 +24,13 @@ import {fileURLToPath} from 'node:url';
 
 import {Prism} from 'prism-react-renderer';
 
+import {requiredLanguages} from './required-languages.mjs';
+
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const WEBSITE = join(HERE, '..');
-const REPO = join(WEBSITE, '..');
-const SPEC = join(
-  REPO,
-  'docs',
-  'openspec',
-  'specs',
-  'public-website-and-design-record',
-  'spec.md',
-);
 const CONFIG = join(WEBSITE, 'docusaurus.config.ts');
 
 const require = createRequire(import.meta.url);
-
-/**
- * The languages REQ "Code Block Fidelity" names, taken from the sentence that
- * names them. The requirement body is sliced out first so that a backticked
- * word elsewhere in the specification cannot leak into the floor.
- */
-function requiredLanguages() {
-  const text = readFileSync(SPEC, 'utf8');
-  const start = text.indexOf('### Requirement: Code Block Fidelity');
-  assert.notEqual(
-    start,
-    -1,
-    `${SPEC} no longer contains "### Requirement: Code Block Fidelity". The floor is ` +
-      `derived from the specification and must not be retyped in this test.`,
-  );
-  const rest = text.slice(start + 1);
-  const end = rest.indexOf('\n### ');
-  const body = end === -1 ? rest : rest.slice(0, end);
-
-  const sentence = body
-    .replace(/\s+/g, ' ')
-    .split(/(?<=\.)\s/)
-    .find((s) => s.includes('highlighter') && s.includes('cover'));
-  assert.ok(
-    sentence,
-    `no "the highlighter MUST cover …" sentence found in REQ "Code Block Fidelity". The ` +
-      `parser and the specification have drifted; fix the parser rather than hardcoding ` +
-      `the languages.`,
-  );
-
-  const languages = [...sentence.matchAll(/`([a-z0-9+#-]+)`/g)].map((m) => m[1]);
-  assert.ok(
-    languages.length >= 2,
-    `REQ "Code Block Fidelity" names ${languages.length} language(s); expected the ` +
-      `backticked list the requirement is written with.`,
-  );
-  return languages;
-}
 
 /** The `additionalLanguages` array as the site config declares it. */
 function additionalLanguages() {
