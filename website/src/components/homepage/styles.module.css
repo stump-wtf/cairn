@@ -512,9 +512,10 @@
 }
 .tab:hover { color: var(--cairn-text); }
 /*
- * The selected tab is marked by a filled dot AND by a border and weight change,
- * never by colour alone — SPEC-0010 REQ "Non-Colour Encoding". `aria-selected`
- * carries it for assistive technology.
+ * The selected tab's dot is filled where every other tab's is a ring — a shape
+ * difference that survives a monochrome rendering — alongside the border and
+ * ground change, so selection never rests on colour alone. SPEC-0010 REQ
+ * "Non-Colour Encoding". `aria-selected` carries it for assistive technology.
  */
 .tab[aria-selected='true'] {
   color: var(--cairn-text);
