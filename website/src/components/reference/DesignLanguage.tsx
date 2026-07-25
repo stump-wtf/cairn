@@ -13,11 +13,18 @@
 // derives from `src/css/custom.css` and from ADR-0009 itself. Change a token and
 // rebuild: this file is not edited and the page shows the new value.
 //
+// The fourth thing SPEC-0010 asks this page for — the type-badge set — is not a
+// token at all, so it comes from the other derived module: `badges.ts` reads the
+// share-type codes out of the record and `src/data/record.ts` serves them. See
+// `TypeBadges` for why they are not tinted from the category palette.
+//
 // No colour literal appears here, and none may: the palette lives in exactly one
 // file, `src/css/custom.css`.
 
 import React, {type CSSProperties, type ReactNode} from 'react';
+import Link from '@docusaurus/Link';
 
+import {badges} from '@site/src/data/record';
 import {
   categories,
   families,
@@ -27,6 +34,13 @@ import {
 } from '@site/src/data/tokens';
 
 import styles from './styles.module.css';
+
+/** Comma-separated refs, so a badge's provenance reads as a sentence. */
+function joinRefs(items: ReactNode[]): ReactNode[] {
+  return items.flatMap((item, index) =>
+    index === 0 ? [item] : [index === items.length - 1 ? ' and ' : ', ', item],
+  );
+}
 
 /**
  * An accent handed to a component as a custom property. The value is a `var()`
@@ -131,12 +145,15 @@ function Categories(): ReactNode {
 /**
  * The type badge — the mono pill the app shell puts beside an artifact title.
  *
- * The set rendered is the accent set, and that is the honest set to render: a
- * badge's colour is a category accent, and the record does not own a
- * machine-readable list of badge codes anywhere the pipeline can read. Rendering
- * the badge across every accent shows the form and the whole palette it is
- * drawn from without hardcoding a share-type list this page would then have to
- * be kept in step with by hand.
+ * The set is the record's, not the palette's. `badges.ts` reads every badge code
+ * the record declares — ADR-0002 lists the set, ADR-0009 and ADR-0010 and the
+ * trajectory and webhook specifications each declare their own — so adding a
+ * share type to the record adds its badge here.
+ *
+ * The record does not map a share type to an ADR-0009 span category, and this
+ * page does not invent one: every badge renders in the neutral default, the same
+ * token an unrecognised category takes. Tinting them from the category palette
+ * would publish a mapping the record has never decided.
  */
 function TypeBadges(): ReactNode {
   return (
@@ -144,20 +161,50 @@ function TypeBadges(): ReactNode {
       <h2 id="type-badges">Type badges</h2>
       <p>
         A type badge is machine content: a JetBrains Mono pill on the pinned
-        machine surface, tinted with its accent and outlined in the same accent
-        at higher opacity, with a lit dot. It carries its own label, so the badge
-        is still readable with colour removed. Every badge takes its accent from
-        a category token — the full set is shown here.
+        machine surface, outlined and lit with a dot. It carries its own label,
+        so it is still readable with colour removed. These{' '}
+        {badges.length} codes are the ones the design record declares — each is
+        linked to the records that declare it.
       </p>
       <ul className={styles.badges}>
-        {categories.map((category) => (
+        {badges.map((badge) => (
           <li
-            key={category.token}
+            key={badge.code}
             className={styles.badge}
-            style={accent(category.token, '--badge-accent')}
+            style={
+              neutralDefault
+                ? accent(neutralDefault.token, '--badge-accent')
+                : undefined
+            }
           >
             <span className={styles.badgeDot} aria-hidden="true" />
-            {category.name}
+            {badge.code}
+          </li>
+        ))}
+      </ul>
+      <p>
+        <strong>A badge code is not a category.</strong> The record fixes the
+        codes; it does not assign a share type an ADR-0009 span category, so
+        nothing on this site tints a badge from the category palette. They render
+        in the neutral default
+        {neutralDefault ? (
+          <>
+            , <code>{neutralDefault.token}</code>
+          </>
+        ) : null}{' '}
+        until the record decides otherwise.
+      </p>
+      <ul className={styles.badgeSources}>
+        {badges.map((badge) => (
+          <li key={badge.code}>
+            <span className="cairn-mono">{badge.code}</span>{' '}
+            {joinRefs(
+              badge.sources.map((source) => (
+                <Link key={source.id} to={source.href}>
+                  {source.id}
+                </Link>
+              )),
+            )}
           </li>
         ))}
       </ul>
@@ -209,9 +256,10 @@ export function DesignLanguage(): ReactNode {
   return (
     <>
       <p className={styles.sourceLine}>
-        Every value on this page is read from <code>{tokens.sourcePath}</code> at
-        build time. Nothing here is typed by hand, and changing a token changes
-        this page.
+        Every value on this page is read at build time: the swatches, chips and
+        families from <code>{tokens.sourcePath}</code>, the badge set from the
+        design record itself. Nothing here is typed by hand, and changing a token
+        changes this page.
       </p>
       <Surfaces />
       <Categories />

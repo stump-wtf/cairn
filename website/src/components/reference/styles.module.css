@@ -161,6 +161,22 @@
   background: var(--badge-accent);
 }
 
+/*
+ * Where each badge code is declared. Prose, so it is the sans family; the code
+ * itself is machine content and carries `.cairn-mono` in the markup.
+ */
+.badgeSources {
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+  color: var(--cairn-muted);
+}
+
+.badgeSources li + li {
+  margin-block-start: 0.25rem;
+}
+
 /* ------------------------------------------------------------------- type */
 
 .families {

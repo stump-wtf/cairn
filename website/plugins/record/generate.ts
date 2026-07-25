@@ -32,6 +32,7 @@ import {
   parseDesignFile,
   parseRecordFile,
 } from './parse.ts';
+import {buildBadgeSet} from './badges.ts';
 import {buildEdges, buildRelations} from './graph.ts';
 import {buildEndpointReference} from './endpoints.ts';
 import {collectDesignTokens, stageDesignTokens} from './tokens.ts';
@@ -206,9 +207,18 @@ export async function generateRecord(
   );
   const endpoints = buildEndpointReference(specs, endpointSections);
 
+  // Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+  // The badge set is record-derived, not stylesheet-derived, so it belongs to
+  // the record's module rather than to the token inventory — the requirement
+  // that names the derived data module names "badge" among the things that must
+  // read from it. Decisions come first so the set reads in the order ADR-0002
+  // wrote it.
+  const badges = buildBadgeSet(allRecords, refs);
+
   const data: RecordData = {
     decisions,
     specs,
+    badges,
     endpoints,
     counts: {
       decisions: decisions.length,

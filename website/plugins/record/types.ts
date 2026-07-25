@@ -207,10 +207,25 @@ export interface RecordEndpoints {
   coverage: EndpointSpecCoverage[];
 }
 
+// Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+
+/**
+ * One share-type badge, and the records that declare it. The record fixes the
+ * codes; it assigns them no colour, so nothing here carries one.
+ */
+export interface BadgeEntry {
+  /** The short code the shell renders: `MD`, `TRJ`. */
+  code: string;
+  /** Every record declaring it, in record order, so the page can cite it. */
+  sources: RecordRef[];
+}
+
 export interface RecordData {
   decisions: DecisionEntry[];
   specs: SpecEntry[];
   counts: RecordCounts;
+  /** The share-type badge set, derived from the record's own declarations. */
+  badges: BadgeEntry[];
   /** The service's HTTP surface, derived from the specs' endpoint tables. */
   endpoints: RecordEndpoints;
   graph: {
@@ -240,6 +255,12 @@ export interface ParsedRecord {
    * generator policy, not a parsing one — see `buildEndpointReference`.
    */
   endpointSections: EndpointSection[];
+  /**
+   * Share-type badge codes this file declares, in document order. Collected for
+   * every record; ADR-0002 declares the whole set, and the specifications and
+   * ADR-0009/ADR-0010 declare theirs individually.
+   */
+  badgeCodes: string[];
   /** Absolute path of the source file. */
   absPath: string;
   /** Repo-relative source path. */

@@ -18,6 +18,7 @@
 import generated from '@site/src/generated/record.json';
 
 import type {
+  BadgeEntry,
   DecisionEntry,
   EndpointRow,
   EndpointSpecCoverage,
@@ -29,6 +30,7 @@ import type {
 } from '@site/plugins/record/types';
 
 export type {
+  BadgeEntry,
   DecisionEntry,
   EndpointRow,
   EndpointSpecCoverage,
@@ -44,6 +46,15 @@ export const record = generated as unknown as RecordData;
 export const decisions: DecisionEntry[] = record.decisions;
 export const specs: SpecEntry[] = record.specs;
 export const counts = record.counts;
+
+/**
+ * Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+ *
+ * The share-type badge set, read out of the record's own badge declarations.
+ * The record fixes the codes and assigns them no colour, so a `BadgeEntry`
+ * carries none: whoever renders one decides its surface.
+ */
+export const badges: BadgeEntry[] = record.badges;
 
 /**
  * Governing: ADR-0014, SPEC-0010 REQ "Derived HTTP Reference Page"
