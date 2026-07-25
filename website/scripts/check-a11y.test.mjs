@@ -48,9 +48,18 @@ function fixture({docs = true} = {}) {
   };
 }
 
-function run(root) {
-  const r = spawnSync(process.execPath, [CHECKER, '--root', root], {encoding: 'utf8'});
+function run(root, ...extra) {
+  const r = spawnSync(process.execPath, [CHECKER, '--root', root, ...extra], {encoding: 'utf8'});
   return {status: r.status, out: r.stdout + r.stderr};
+}
+
+/** A scratch directory of built HTML — the shape `postBuild` hands the checker. */
+function builtSite(pages) {
+  const out = mkdtempSync(join(tmpdir(), 'cairn-a11y-html-'));
+  for (const [name, body] of Object.entries(pages)) {
+    writeFileSync(join(out, name), `<!doctype html><html><body>${body}</body></html>`);
+  }
+  return out;
 }
 
 function edit(file, from, to) {
@@ -210,4 +219,57 @@ test('front matter is stripped before headings are counted', () => {
   writeFileSync(join(docsDir, 'page.md'), '---\ntitle: x\n---\n\n# Title\n\n## Section\n');
   const {status, out} = run(root);
   assert.equal(status, 0, out);
+});
+
+/* ------------------------------------------------- rendered heading order */
+
+test('a heading a component emits is caught in the HTML, where markdown cannot show it', () => {
+  /* The shipped defect, reproduced: the page's markdown is one clean h1 and the
+     jump only exists once the component has rendered. The source-level pass
+     below is given the same page and passes it, which is the whole argument for
+     checking the built output as well. */
+  const {root, docsDir} = fixture();
+  writeFileSync(join(docsDir, 'specs.mdx'), '# Specifications\n\n<SpecIndex />\n');
+  const out = builtSite({
+    'specs.html': '<h1>Specifications</h1><h3>SPEC-0001 Core</h3><h3>SPEC-0002 CLI</h3>',
+  });
+
+  assert.equal(run(root).status, 0, 'the markdown source is clean');
+
+  const rendered = run(root, '--out', out);
+  assert.equal(rendered.status, 1);
+  assert.match(rendered.out, /specs\.html/);
+  assert.match(rendered.out, /rendered heading level jumps h1 → h3/);
+  assert.match(rendered.out, /SPEC-0001 Core/);
+  assert.match(rendered.out, /came from a component/);
+});
+
+test('a rendered page with two h1 headings fails', () => {
+  const {root} = fixture();
+  const out = builtSite({'page.html': '<h1>One</h1><h2>Section</h2><h1>Two</h1>'});
+  const {status, out: text} = run(root, '--out', out);
+  assert.equal(status, 1);
+  assert.match(text, /renders 2 top-level headings/);
+  assert.match(text, /outline: h1 h2 h1/);
+});
+
+test('a heading tag quoted inside an inlined script is not a heading', () => {
+  /* Docusaurus inlines its hydration payload, and that payload contains the
+     page's own serialised markup. Counting those would fail every real page. */
+  const {root} = fixture();
+  const out = builtSite({
+    'page.html':
+      '<h1>Title</h1><h2>Section</h2>' +
+      '<script>window.__DATA__ = "<h1>Title</h1><h4>deep</h4>";</script>',
+  });
+  const {status, out: text} = run(root, '--out', out);
+  assert.equal(status, 0, text);
+  assert.match(text, /1 rendered pages agree/);
+});
+
+test('an --out directory that does not exist fails rather than passing vacuously', () => {
+  const {root} = fixture();
+  const {status, out} = run(root, '--out', join(root, 'no-such-build'));
+  assert.equal(status, 1);
+  assert.match(out, /no built output to check/);
 });

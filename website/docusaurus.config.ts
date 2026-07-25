@@ -1,8 +1,12 @@
 import {themes as prismThemes} from 'prism-react-renderer';
-import type {Config} from '@docusaurus/types';
+import type {Config, Plugin} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import {assertTokens} from './scripts/check-tokens.mjs';
-import {assertA11y, assertRecordSemantics} from './scripts/check-a11y.mjs';
+import {
+  assertA11y,
+  assertRecordSemantics,
+  assertRenderedSemantics,
+} from './scripts/check-a11y.mjs';
 
 import {generateRecord} from './plugins/record/generate.ts';
 import remarkRecord from './plugins/record/remark-record.ts';
@@ -61,6 +65,38 @@ console.log(assertA11y().summary);
  * by a dependency rather than part of the site palette, and they are built for
  * exactly this ground.
  */
+/**
+ * Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics", scenario
+ * "Generated page heading order".
+ *
+ * The last of the three heading-order passes, and the only one that reads the
+ * page as a browser receives it. The two above it read markdown — the source
+ * tree and then the staged record — and markdown is where *authors* put
+ * headings. A generated index page is one authored `#` heading plus a React
+ * component, and every other heading on `/docs/specs` is emitted from `.tsx`;
+ * no markdown check can see those, and one of them shipped an h1 → h3 jump.
+ *
+ * `postBuild` is the earliest hook where the HTML exists, so this cannot run in
+ * the dev server. That is the correct division: the source-level passes are
+ * fast and fire on `docusaurus start`, and this one gates the artifact that
+ * actually deploys. It is a plugin rather than an npm script for the same
+ * reason the others are config-load assertions — `npx docusaurus build` routes
+ * around `npm run build`, but it cannot route around a registered plugin.
+ */
+function cairnRenderedA11yPlugin(): Plugin<void> {
+  return {
+    name: 'cairn-rendered-a11y',
+    async postBuild({outDir}) {
+      const rendered = assertRenderedSemantics({outDir});
+      // eslint-disable-next-line no-console
+      console.log(
+        `[cairn-a11y] ${rendered.files} rendered pages carry exactly one h1 and no ` +
+          `skipped heading level`,
+      );
+    },
+  };
+}
+
 const cairnPrismTheme = {
   ...prismThemes.vsDark,
   plain: {
@@ -121,6 +157,7 @@ const config: Config = {
     // TypeScript and would not find `index.ts` by directory resolution. jiti
     // does the transpiling once the exact path is known.
     ['./plugins/record/index.ts', {routeBase: DOCS_ROUTE_BASE}],
+    cairnRenderedA11yPlugin,
   ],
 
   presets: [

@@ -76,11 +76,21 @@ export function SpecIndex(): ReactNode {
     <ul className="cairn-record-cards">
       {specs.map((spec) => (
         <li key={spec.id} className="cairn-record-card">
-          <h3>
+          {/*
+            Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics",
+            scenario "Generated page heading order".
+
+            `h2`, not `h3`. The staged `docs/specs/index.mdx` carries a single
+            `# Specifications` and no other heading, so a card titled `h3` put
+            an h1 → h3 jump on a shipped page. How large the title *looks* is a
+            styling question and is answered from the stylesheet; the tag is the
+            document outline and is not free to follow it.
+          */}
+          <h2>
             <Link to={spec.href}>
               <code>{spec.id}</code> {spec.title}
             </Link>
-          </h3>
+          </h2>
           <p>{spec.summary}</p>
           <p className="cairn-record-card__meta">
             <StatusBadge status={spec.status} />{' '}

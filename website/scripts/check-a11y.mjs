@@ -41,12 +41,22 @@
  *      undo a transform — a matching guard in every stylesheet that moves an
  *      element on hover.
  *
- * `assertRecordSemantics()` is separate because it runs later: it reads the
- * STAGED record, which does not exist until the pipeline has run.
+ * `assertRecordSemantics()` and `assertRenderedSemantics()` are separate
+ * because they run later, and against different material.
+ * `assertRecordSemantics()` reads the STAGED markdown, which does not exist
+ * until the pipeline has run. `assertRenderedSemantics()` reads the BUILT HTML,
+ * which does not exist until `postBuild`, and it is the only one of the three
+ * that sees the whole page: a heading emitted by a React component — a spec
+ * card, a future index widget — is in no markdown file anywhere, so a
+ * source-level outline check is structurally blind to it. That blind spot
+ * shipped an h1 → h3 jump on `/docs/specs`; the two checks are kept because
+ * source-level failures name a line an author can fix and fire in the dev
+ * server, while the rendered pass is the one that cannot be fooled.
  *
  * CLI flags: `--report` prints the measured table; `--root <dir>` checks a
  * different website directory (scripts/check-a11y.test.mjs drives the checks
- * over deliberately broken fixtures that way).
+ * over deliberately broken fixtures that way); `--out <dir>` additionally
+ * checks built HTML in that directory.
  */
 
 import {existsSync, readFileSync, readdirSync, statSync} from 'node:fs';
@@ -399,7 +409,10 @@ export function assertA11y(options = {}) {
  * format is the thing being protected; it does not bend toward the renderer" —
  * and matches the Confirmation section's posture that drift fails the build.
  *
- * Every one of the 53 pages currently served passes.
+ * It reads markdown and only markdown, so it sees the headings an *author*
+ * wrote and none of the headings a *component* emits. That is not a shortcut to
+ * be fixed here — a source-level check has to be able to name a source line —
+ * it is why `checkRenderedSemantics()` below exists.
  */
 export function checkRecordSemantics({root = DEFAULT_WEBSITE} = {}) {
   const DOCS = join(root, 'docs');
@@ -457,6 +470,109 @@ export function assertRecordSemantics(options = {}) {
   return result;
 }
 
+/* ----------------------------------------------------- rendered semantics */
+
+/** Heading text with its markup stripped, for an error message. */
+function headingText(inner) {
+  const text = inner
+    .replace(/<[^>]*>/g, '')
+    .replace(/&[a-z]+;|&#\d+;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > 60 ? `${text.slice(0, 57)}…` : text;
+}
+
+/**
+ * Heading order over the BUILT HTML — every page the deploy would publish.
+ *
+ * Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics", scenario
+ * "Generated page heading order".
+ *
+ * The scenario is about what "a generated record page" *renders*, and a record
+ * page is markdown plus components: `docs/specs/index.mdx` is one h1 and an
+ * `<SpecIndex />`, and every other heading on that page comes out of a `.tsx`
+ * file. `checkRecordSemantics()` cannot see those and never will, so a check
+ * that only reads markdown reports a clean outline for a page that ships a
+ * broken one. This reads the served HTML instead, where the two sources of
+ * headings have already been merged and the question is finally the same
+ * question the assistive technology asks.
+ *
+ * It runs from `postBuild`, which is the earliest point the HTML exists. That
+ * means it does not fire in `docusaurus start` — the source-level pass covers
+ * the dev loop, and this one is the gate on the thing that actually deploys.
+ *
+ * Scripts, styles and comments are stripped first: Docusaurus inlines its
+ * hydration payload and route manifest into `<script>` tags, and a heading tag
+ * quoted inside serialised page data is not a heading in the document.
+ */
+export function checkRenderedSemantics({outDir}) {
+  const failures = [];
+
+  if (!outDir || !existsSync(outDir)) {
+    return {
+      failures: [
+        `${outDir ?? '(no directory given)'}: there is no built output to check. A rendered ` +
+          `heading-order check that silently finds nothing to read is not a check — ` +
+          `SPEC-0010 REQ "WCAG 2.1 AA & Semantics".`,
+      ],
+      files: 0,
+    };
+  }
+
+  const pages = walk(outDir).filter((p) => /\.html$/i.test(p));
+  for (const file of pages) {
+    const html = readFileSync(file, 'utf8')
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ');
+
+    const headings = [];
+    for (const m of html.matchAll(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi)) {
+      headings.push({depth: Number(m[1]), text: headingText(m[2])});
+    }
+
+    const where = relative(outDir, file).split(sep).join('/');
+    const outline = headings.map((h) => `h${h.depth}`).join(' ');
+
+    const h1s = headings.filter((h) => h.depth === 1);
+    if (h1s.length !== 1) {
+      failures.push(
+        `${where}: renders ${h1s.length} top-level headings, expected exactly 1 ` +
+          `(outline: ${outline || 'none'}). SPEC-0010 REQ "WCAG 2.1 AA & Semantics", ` +
+          `scenario "Generated page heading order".`,
+      );
+    }
+
+    let previous = 0;
+    for (const h of headings) {
+      if (previous && h.depth > previous + 1) {
+        failures.push(
+          `${where}: rendered heading level jumps h${previous} → h${h.depth} ` +
+            `("${h.text}"). The whole outline is ${outline}. If this page's markdown ` +
+            `source looks fine, the heading came from a component — SPEC-0010 REQ ` +
+            `"WCAG 2.1 AA & Semantics", scenario "Generated page heading order".`,
+        );
+      }
+      previous = h.depth;
+    }
+  }
+
+  return {failures, files: pages.length};
+}
+
+/** Throw on any failure. Called from the site's `postBuild` hook. */
+export function assertRenderedSemantics(options = {}) {
+  const result = checkRenderedSemantics(options);
+  if (result.failures.length) {
+    throw new Error(
+      `rendered semantics check FAILED (${result.failures.length}):\n\n` +
+        result.failures.map((f) => `  ${f}`).join('\n') +
+        '\n',
+    );
+  }
+  return result;
+}
+
 /* ---------------------------------------------------------------------- CLI */
 
 function reportTable(rows) {
@@ -475,18 +591,38 @@ function reportTable(rows) {
 }
 
 function main(argv) {
-  const rootFlag = argv.indexOf('--root');
-  if (rootFlag !== -1 && !argv[rootFlag + 1]) {
+  const flag = (name) => {
+    const at = argv.indexOf(name);
+    if (at === -1) return undefined;
+    if (!argv[at + 1]) return null;
+    return argv[at + 1];
+  };
+
+  const rootFlag = flag('--root');
+  if (rootFlag === null) {
     console.error('check-a11y: --root needs a directory');
     return 2;
   }
-  const root = rootFlag === -1 ? DEFAULT_WEBSITE : argv[rootFlag + 1];
+  /*
+   * `--out` is opt-in rather than "check `build/` if it happens to exist": a
+   * stale bundle from a previous checkout would otherwise report on code that
+   * is no longer here. The authoritative run of this pass is the `postBuild`
+   * hook, against the directory Docusaurus has just written.
+   */
+  const outFlag = flag('--out');
+  if (outFlag === null) {
+    console.error('check-a11y: --out needs a directory');
+    return 2;
+  }
+  const root = rootFlag ?? DEFAULT_WEBSITE;
 
   let result;
   let record;
+  let rendered = {failures: [], files: 0};
   try {
     result = checkA11y({root});
     record = checkRecordSemantics({root});
+    if (outFlag) rendered = checkRenderedSemantics({outDir: outFlag});
   } catch (err) {
     console.error(`accessibility check ERROR: ${err.message}`);
     return 2;
@@ -494,7 +630,7 @@ function main(argv) {
 
   if (argv.includes('--report')) reportTable(result.rows);
 
-  const failures = [...result.failures, ...record.failures];
+  const failures = [...result.failures, ...record.failures, ...rendered.failures];
   if (failures.length) {
     console.error(`accessibility check FAILED (${failures.length}):\n`);
     for (const f of failures) console.error(`  ${f}`);
@@ -503,7 +639,8 @@ function main(argv) {
   }
   console.log(
     `${result.summary} ${record.files} documentation pages carry one h1 and no skipped ` +
-      `heading level.`,
+      `heading level.` +
+      (outFlag ? ` ${rendered.files} rendered pages agree.` : ''),
   );
   return 0;
 }
