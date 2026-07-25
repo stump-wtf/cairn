@@ -20,7 +20,10 @@ function Hero(): ReactNode {
     <header className={styles.hero}>
       <div className={styles.heroGlow} aria-hidden="true" />
       <div className={clsx('container', styles.heroInner)}>
-        <p className={styles.eyebrow}>◇&nbsp; AI-NATIVE ARTIFACT SHARING</p>
+        {/* `cairn-label` is the one definition of the uppercase-mono label role
+            — SPEC-0010 REQ "Typographic Roles". The module class adds only
+            colour and spacing. */}
+        <p className={clsx('cairn-label', styles.eyebrow)}>◇&nbsp; AI-NATIVE ARTIFACT SHARING</p>
 
         <Heading as="h1" className={styles.title}>
           Share anything.
@@ -56,7 +59,8 @@ function Hero(): ReactNode {
             <span />
             <span />
             <span />
-            <em>zsh — cairn</em>
+            {/* A window title is machine content: `cairn-mono` is the role. */}
+            <em className="cairn-mono">zsh — cairn</em>
           </div>
           <pre className={styles.termBody}>
             <code>

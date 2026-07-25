@@ -73,3 +73,36 @@ jobs:
 
       - name: test (race)
         run: go test -race ./...
+
+  # The token-layer guard is a source-level check that runs at Docusaurus config
+  # load, so building the site here is what makes it fire BEFORE merge rather
+  # than after. SPEC-0010 REQ "Build and Deployment" owns the full trigger shape
+  # (record paths, deploy-on-record-change); this is the minimum that stops a
+  # pull request from landing a hardcoded colour or a recoloured category.
+  website:
+    name: Website
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: install
+        run: npm ci
+
+      - name: token-layer tests
+        run: npm run test:tokens
+
+      - name: typecheck
+        run: npm run typecheck
+
+      # Fails on any token-layer violation: the check throws at config load.
+      - name: build
+        run: npm run build

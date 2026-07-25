@@ -1,3 +1,9 @@
+/*
+ * Governing: ADR-0014, SPEC-0010 REQ "Design Token Source of Truth",
+ *            SPEC-0010 REQ "Category Palette Immutability",
+ *            SPEC-0010 REQ "Category Accents Are Dark-Ground Text Colours"
+ */
+
 .features {
   padding: 5rem 0 5.5rem;
   background: var(--cairn-bg);
@@ -8,12 +14,19 @@
   max-width: 680px;
   margin: 0 auto 3rem;
 }
+/*
+ * An uppercase mono kicker: a label, not a sentence. The role is the global
+ * `.cairn-label` (src/css/custom.css section 6), applied by the markup; only
+ * colour and spacing are local.
+ *
+ * --cairn-accent-label, not --ifm-color-primary-light: a label is small text
+ * (--cairn-label-size 0.74rem ≈ 11.8px at weight 600, so neither of WCAG's
+ * large-text thresholds applies) and the mode-following primary-light measures
+ * 4.24:1 on white, below the 4.5:1 floor. The label token is 5.52:1 in light
+ * mode and 9.52:1 in dark. SPEC-0010 REQ "Contrast".
+ */
 .kicker {
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 0.74rem;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  color: var(--ifm-color-primary-light);
+  color: var(--cairn-accent-label);
   margin-bottom: 0.8rem;
 }
 .headline {
@@ -40,8 +53,14 @@
   .grid { grid-template-columns: 1fr; }
 }
 
+/*
+ * The default accent is the ADR-0009 neutral default, so a tile whose category
+ * string ADR-0009 does not define matches no `.cat_*` rule below and still
+ * renders in --cat-other rather than in a colour of its own — SPEC-0010 REQ
+ * "Category Palette Immutability", scenario "Unrecognised category class".
+ */
 .tile {
-  --accent: var(--ifm-color-primary);
+  --accent: var(--cat-other);
   position: relative;
   padding: 1.5rem 1.5rem 1.6rem;
   background: var(--cairn-elevated);
@@ -61,7 +80,7 @@
 .tile:hover {
   transform: translateY(-3px);
   border-color: color-mix(in srgb, var(--accent) 55%, var(--cairn-border));
-  box-shadow: 0 18px 40px -26px color-mix(in srgb, var(--accent) 60%, black);
+  box-shadow: 0 18px 40px -26px color-mix(in srgb, var(--accent) 60%, var(--cairn-shadow-ink));
 }
 
 .tileTop {
@@ -70,18 +89,27 @@
   justify-content: space-between;
   margin-bottom: 1rem;
 }
+/*
+ * A type badge: machine content, and it renders the accent AS TEXT, so like
+ * the chips it composites its tint over a pinned ink ground in both colour
+ * modes rather than over the mode's elevated surface — SPEC-0010 REQ "Category
+ * Accents Are Dark-Ground Text Colours". This badge tints at 13 % rather than
+ * the chips' 12 %, which costs a little contrast: worst case in the set is
+ * --cat-meta at 4.55:1 (against 4.65:1 at 12 %). Still clears 4.5:1, and
+ * `npm run lint:tokens` asserts it at both tint strengths.
+ */
 .code {
   display: inline-flex;
   align-items: center;
   padding: 3px 9px;
   border-radius: 7px;
-  font-family: var(--ifm-font-family-monospace);
+  font-family: var(--cairn-font-mono);
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.03em;
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 13%, var(--cairn-ink-100));
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--cairn-ink-100));
 }
 .dot {
   width: 7px;
@@ -104,7 +132,12 @@
 }
 .tileBody strong { color: var(--cairn-text); font-weight: 600; }
 
-/* Category accents */
+/*
+ * Category accents. One rule per ADR-0009 category plus the neutral default.
+ * `.cat_mono` names no ADR-0009 category, so it resolves to the neutral-default
+ * TOKEN rather than restating that token's value — SPEC-0010 REQ "Category
+ * Palette Immutability".
+ */
 .cat_reason  { --accent: var(--cat-reason); }
 .cat_exec    { --accent: var(--cat-exec); }
 .cat_read    { --accent: var(--cat-read); }
@@ -118,5 +151,5 @@
 .cat_fix     { --accent: var(--cat-fix); }
 .cat_fail    { --accent: var(--cat-fail); }
 .cat_meta    { --accent: var(--cat-meta); }
-.cat_mono    { --accent: #aab2bd; }
+.cat_mono    { --accent: var(--cat-other); }
 .cat_other   { --accent: var(--cat-other); }

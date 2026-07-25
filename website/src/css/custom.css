@@ -1,13 +1,47 @@
 /**
- * Cairn design language — dark, terminal-minimal.
- * IBM Plex Sans (UI) + JetBrains Mono (code/labels/IDs), near-black #0A0B0D,
- * OTel span category accents — recommended set: reason/exec/read/net/write +
- * search/plan/tool/analyze/test/fix/fail/meta. Any other string gets --cat-other.
+ * Cairn design language — the single definition of the site's visual system.
+ *
+ * Governing: ADR-0014 (the public site is the design record),
+ *            SPEC-0010 REQ "Design Token Source of Truth",
+ *            SPEC-0010 REQ "Category Palette Immutability",
+ *            SPEC-0010 REQ "Typographic Roles",
+ *            SPEC-0010 REQ "Category Accents Are Dark-Ground Text Colours"
+ *
+ * This is the ONLY file under website/src/ allowed to contain a colour literal.
+ * `npm run lint:tokens` fails the build if one appears anywhere else, and also
+ * re-derives the category contrast table quoted below.
+ *
+ * Docusaurus emits this file UNLAYERED, after every `@layer docusaurus.*` block,
+ * so declarations here beat Infima and theme-classic regardless of selector
+ * specificity. That is what lets `:root` / `[data-theme='dark']` re-point the
+ * stock `--ifm-*` variables at Cairn tokens: theme surfaces the site never
+ * styles (admonitions, pagination, tables, blockquotes, code blocks, the
+ * navbar search input) resolve through this file instead of Infima's defaults.
+ *
+ * NOT done here, deliberately: the two families below are still fetched from
+ * fonts.googleapis.com at page load. Self-hosting them is SPEC-0010 REQ
+ * "First-Party Asset Loading" and belongs to its own change. Likewise there is
+ * no `prefers-reduced-motion` guard and no focus styling in this file — those
+ * are SPEC-0010's Accessibility requirements and are owned elsewhere.
  */
 
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
-/* ---- Category accent tokens (constant across themes) ---- */
+/* ==========================================================================
+   1. Category accent tokens — ADR-0009's recommended set plus the neutral
+      default. CONSTANT across colour modes: they encode a category, not a
+      surface. Values are fixed by ADR-0009 and made normative by SPEC-0004;
+      SPEC-0010 REQ "Category Palette Immutability" forbids this capability
+      from adding, removing, renaming, recolouring or capping any of them.
+
+      Measured as foreground they clear 4.5:1 across the whole dark ramp (worst
+      --cat-fail at 5.68:1 on --cairn-ink-0, 4.97:1 on --cairn-ink-200) and on
+      the 12 % chip tint over it (worst --cat-meta at 4.65:1). On a white
+      ground NOT ONE reaches 4.5:1 (best --cat-fail at 3.46:1) and ten of the
+      fourteen miss even 3:1. A category accent is therefore a DARK-GROUND
+      TEXT COLOUR: see section 3 and SPEC-0010 REQ "Category Accents Are
+      Dark-Ground Text Colours".
+   ========================================================================== */
 :root {
   --cat-reason:  #8b7cf6;   /* purple  */
   --cat-exec:    #46c878;   /* green   */
@@ -23,20 +57,127 @@
   --cat-fail:    #f0506a;   /* red     */
   --cat-meta:    #808c9a;   /* slate   */
   --cat-other:   #aab2bd;   /* neutral default */
+}
 
-  --ifm-font-family-base: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --ifm-font-family-monospace: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  --ifm-heading-font-weight: 600;
-  --ifm-code-font-size: 0.9em;
-  --ifm-global-radius: 10px;
+/* ==========================================================================
+   2. Typographic roles — SPEC-0010 REQ "Typographic Roles".
 
-  /* Light mode (secondary — the brand is dark-first) */
-  --cairn-bg: #ffffff;
-  --cairn-elevated: #f6f6f8;
-  --cairn-surface-2: #eeeef2;
-  --cairn-border: #e3e3e8;
-  --cairn-text: #16181d;
-  --cairn-muted: #5c626c;
+      If a human wrote it, it is IBM Plex Sans. If a machine emitted it — an
+      id, a short link, a path, a span name, a category, a TTL, an HTTP method,
+      a command, code — it is JetBrains Mono. Never mono for a sentence.
+
+      Both families are declared here once, with system fallbacks, so a page
+      stays legible when a font resource fails to load.
+   ========================================================================== */
+:root {
+  --cairn-font-sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --cairn-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Mono reads optically larger than sans at the same px, so machine content
+     is stepped down rather than matched. */
+  --cairn-mono-size: 0.9em;
+  --cairn-mono-tracking: 0.01em;
+
+  /* An uppercase mono eyebrow/kicker — a label, not a sentence. `.cairn-label`
+     in section 6 is the one place these are applied; a component that wants the
+     role takes that class rather than restating the four declarations. */
+  --cairn-label-size: 0.74rem;
+  --cairn-label-tracking: 0.16em;
+  --cairn-label-weight: 600;
+
+  /* The caret Infima paints on a collapsible sidebar entry. It ships as a data
+     URI with its fill baked in, which no variable can reach; section 7 repaints
+     it as a mask over `currentColor`. */
+  --cairn-caret-icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z'/></svg>");
+}
+
+/* ==========================================================================
+   3. The two surface ramps.
+
+      Both are declared unconditionally so either is reachable in either colour
+      mode. That is the mechanism behind SPEC-0010 REQ "Category Accents Are
+      Dark-Ground Text Colours": every surface that renders a category accent
+      AS TEXT — chips, type badges, the terminal transcript, code blocks —
+      pins the ink ramp in BOTH modes rather than following the mode, because
+      no accent may be recoloured to make it pass on a light ground.
+
+      Section 4 maps the mode-following `--cairn-*` role tokens onto one ramp
+      or the other.
+   ========================================================================== */
+:root {
+  /* Ink — the dark ramp, and Cairn's intended look. 0 = furthest back. */
+  --cairn-ink-deep: #08090b;
+  --cairn-ink-0:    #0a0b0d;
+  --cairn-ink-100:  #131418;
+  --cairn-ink-200:  #191b21;
+  --cairn-ink-300:  #262a31;
+  --cairn-ink-400:  #43484f;
+  --cairn-ink-500:  #61666d;
+  --cairn-ink-600:  #7e838a;
+  --cairn-ink-700:  #9ba1a8;
+  --cairn-ink-800:  #c1c5c9;
+  --cairn-ink-900:  #e7e8ea;
+  --cairn-ink-1000: #f4f5f6;
+  /* Link/emphasis colour that holds 4.5:1 on the ink ramp in either mode
+     (8.90:1 on --cairn-ink-100). The mode-following primary cannot: light
+     mode's --ifm-color-primary-light measures 4.34:1 there. */
+  --cairn-ink-accent: #b5abf9;
+
+  /* Paper — the light ramp. 0 = furthest back. */
+  --cairn-paper-0:    #ffffff;
+  --cairn-paper-100:  #f6f6f8;
+  --cairn-paper-200:  #eeeef2;
+  --cairn-paper-300:  #e3e3e8;
+  --cairn-paper-400:  #c1c3c9;
+  --cairn-paper-500:  #a0a3aa;
+  --cairn-paper-600:  #7e828b;
+  --cairn-paper-700:  #5c626c;
+  --cairn-paper-800:  #393d45;
+  --cairn-paper-900:  #16181d;
+  --cairn-paper-1000: var(--cairn-ink-0);
+
+  /* Machine-content surface. Constant across modes: code carries a syntax
+     palette built for a dark ground, and pinning the ramp keeps it legible. */
+  --cairn-code-bg: var(--cairn-ink-100);
+  --cairn-code-fg: var(--cairn-ink-900);
+
+  /* Elevation. Shadows want a near-black regardless of mode, so it is a token
+     rather than a bare `black` sitting in a component stylesheet. */
+  --cairn-shadow-ink: #000000;
+  --cairn-shadow-card: 0 24px 60px -28px color-mix(in srgb, var(--cairn-shadow-ink) 70%, transparent);
+
+  /* Hero gradient midpoint. It corresponds to no category and interpolates
+     between none, so it is minted here rather than copied into the homepage.
+     8.51:1 on --cairn-ink-0; 2.31:1 on white, which is why the gradient is
+     dark-mode only. */
+  --cairn-gradient-mid: #b49bff;
+}
+
+/* ==========================================================================
+   4. Colour-mode mapping. The role tokens and Infima's own variables are
+      pointed at one ramp or the other here; everything downstream reads roles.
+   ========================================================================== */
+
+/* Light mode — secondary; the brand is dark-first. */
+:root {
+  --cairn-bg:        var(--cairn-paper-0);
+  --cairn-elevated:  var(--cairn-paper-100);
+  --cairn-surface-2: var(--cairn-paper-200);
+  --cairn-border:    var(--cairn-paper-300);
+  --cairn-text:      var(--cairn-paper-900);
+  --cairn-muted:     var(--cairn-paper-700);
+
+  --ifm-color-emphasis-0: var(--cairn-paper-0);
+  --ifm-color-emphasis-100: var(--cairn-paper-100);
+  --ifm-color-emphasis-200: var(--cairn-paper-200);
+  --ifm-color-emphasis-300: var(--cairn-paper-300);
+  --ifm-color-emphasis-400: var(--cairn-paper-400);
+  --ifm-color-emphasis-500: var(--cairn-paper-500);
+  --ifm-color-emphasis-600: var(--cairn-paper-600);
+  --ifm-color-emphasis-700: var(--cairn-paper-700);
+  --ifm-color-emphasis-800: var(--cairn-paper-800);
+  --ifm-color-emphasis-900: var(--cairn-paper-900);
+  --ifm-color-emphasis-1000: var(--cairn-paper-1000);
 
   --ifm-color-primary: #6b4ce6;
   --ifm-color-primary-dark: #5a37e3;
@@ -46,41 +187,243 @@
   --ifm-color-primary-lighter: #8a72ec;
   --ifm-color-primary-lightest: #a795f1;
 
-  --docusaurus-highlighted-code-line-bg: rgba(139, 124, 246, 0.12);
+  --ifm-heading-color: var(--cairn-paper-1000);
+  --ifm-footer-background-color: var(--cairn-paper-100);
+
+  /* A label renders at --cairn-label-size (0.74rem ≈ 11.8px) at weight 600,
+     which is small text, so it needs the full 4.5:1 and cannot borrow
+     --ifm-color-primary-light: that measures 4.24:1 on white. The base primary
+     measures 5.52:1. SPEC-0010 REQ "Contrast". */
+  --cairn-accent-label: var(--ifm-color-primary);
 }
 
-/* ---- Dark mode (the intended look) ---- */
+/* Dark mode — the intended look. */
 [data-theme='dark'] {
-  --cairn-bg: #0a0b0d;
-  --cairn-elevated: #131418;
-  --cairn-surface-2: #191b21;
-  --cairn-border: #262a31;
-  --cairn-text: #e7e8ea;
-  --cairn-muted: #9ba1a8;
+  --cairn-bg:        var(--cairn-ink-0);
+  --cairn-elevated:  var(--cairn-ink-100);
+  --cairn-surface-2: var(--cairn-ink-200);
+  --cairn-border:    var(--cairn-ink-300);
+  --cairn-text:      var(--cairn-ink-900);
+  --cairn-muted:     var(--cairn-ink-700);
+
+  --ifm-color-emphasis-0: var(--cairn-ink-0);
+  --ifm-color-emphasis-100: var(--cairn-ink-100);
+  --ifm-color-emphasis-200: var(--cairn-ink-200);
+  --ifm-color-emphasis-300: var(--cairn-ink-300);
+  --ifm-color-emphasis-400: var(--cairn-ink-400);
+  --ifm-color-emphasis-500: var(--cairn-ink-500);
+  --ifm-color-emphasis-600: var(--cairn-ink-600);
+  --ifm-color-emphasis-700: var(--cairn-ink-700);
+  --ifm-color-emphasis-800: var(--cairn-ink-800);
+  --ifm-color-emphasis-900: var(--cairn-ink-900);
+  --ifm-color-emphasis-1000: var(--cairn-ink-1000);
 
   --ifm-color-primary: #9a8cf7;
   --ifm-color-primary-dark: #7f6df4;
   --ifm-color-primary-darker: #7160f3;
   --ifm-color-primary-darkest: #4f39ef;
-  --ifm-color-primary-light: #b5abf9;
+  --ifm-color-primary-light: var(--cairn-ink-accent);
   --ifm-color-primary-lighter: #c3bbfa;
   --ifm-color-primary-lightest: #ded9fc;
 
-  --ifm-background-color: #0a0b0d;
-  --ifm-background-surface-color: #131418;
-  --ifm-navbar-background-color: rgba(10, 11, 13, 0.72);
-  --ifm-footer-background-color: #08090b;
-  --ifm-color-content: var(--cairn-text);
-  --ifm-color-content-secondary: var(--cairn-muted);
-  --ifm-heading-color: #f4f5f6;
-  --ifm-toc-border-color: var(--cairn-border);
-  --ifm-hr-border-color: var(--cairn-border);
-  --ifm-card-background-color: var(--cairn-elevated);
-  --ifm-code-background: #1a1c22;
-  --docusaurus-highlighted-code-line-bg: rgba(154, 140, 247, 0.16);
+  --ifm-heading-color: var(--cairn-ink-1000);
+  --ifm-footer-background-color: var(--cairn-ink-deep);
+
+  /* 9.52:1 on --cairn-ink-0. */
+  --cairn-accent-label: var(--cairn-ink-accent);
 }
 
+/* ==========================================================================
+   5. Infima mapping that is identical in both modes because it is expressed
+      in role tokens. SPEC-0010 REQ "Design Token Source of Truth", scenario
+      "Stock theme surface": a theme component the site does not style must
+      resolve its colours through this file.
+   ========================================================================== */
+:root {
+  --ifm-font-family-base: var(--cairn-font-sans);
+  --ifm-font-family-monospace: var(--cairn-font-mono);
+  --ifm-heading-font-weight: 600;
+  --ifm-code-font-size: var(--cairn-mono-size);
+  --ifm-global-radius: 10px;
+
+  /* Ground and content. */
+  --ifm-background-color: var(--cairn-bg);
+  --ifm-background-surface-color: var(--cairn-elevated);
+  --ifm-color-content: var(--cairn-text);
+  --ifm-color-content-secondary: var(--cairn-muted);
+  --ifm-hover-overlay: color-mix(in srgb, var(--ifm-color-primary) 14%, transparent);
+
+  /* Infima's absolute grey scale. Left un-flipped across modes (it is a
+     light-to-dark scale, not a surface ramp) but re-pointed off the stock
+     hues, because `.button--secondary` reads --ifm-color-gray-900 directly. */
+  --ifm-color-white: var(--cairn-paper-0);
+  --ifm-color-black: var(--cairn-paper-1000);
+  --ifm-color-gray-0: var(--cairn-paper-0);
+  --ifm-color-gray-100: var(--cairn-paper-100);
+  --ifm-color-gray-200: var(--cairn-paper-200);
+  --ifm-color-gray-300: var(--cairn-paper-300);
+  --ifm-color-gray-400: var(--cairn-paper-400);
+  --ifm-color-gray-500: var(--cairn-paper-500);
+  --ifm-color-gray-600: var(--cairn-paper-600);
+  --ifm-color-gray-700: var(--cairn-paper-700);
+  --ifm-color-gray-800: var(--cairn-paper-800);
+  --ifm-color-gray-900: var(--cairn-paper-900);
+  --ifm-color-gray-1000: var(--cairn-paper-1000);
+
+  /* Chrome. */
+  --ifm-navbar-background-color: color-mix(in srgb, var(--cairn-bg) 72%, transparent);
+  --ifm-navbar-search-input-background-color: var(--cairn-surface-2);
+  --ifm-navbar-search-input-color: var(--cairn-text);
+  --ifm-navbar-search-input-placeholder-color: var(--cairn-muted);
+  --ifm-dropdown-background-color: var(--cairn-elevated);
+  --ifm-card-background-color: var(--cairn-elevated);
+  --ifm-menu-color: var(--cairn-muted);
+  --ifm-menu-color-active: var(--ifm-color-primary);
+  --ifm-toc-border-color: var(--cairn-border);
+  --ifm-toc-link-color: var(--cairn-muted);
+  --ifm-footer-color: var(--cairn-muted);
+  --ifm-footer-title-color: var(--cairn-text);
+  --ifm-footer-link-color: var(--cairn-muted);
+  --ifm-scrollbar-track-background-color: var(--cairn-elevated);
+  --ifm-scrollbar-thumb-background-color: var(--cairn-border);
+  --ifm-scrollbar-thumb-hover-background-color: var(--cairn-muted);
+
+  /* Elevation. Infima's three shadow steps are stock `rgba(0, 0, 0, …)` and
+     they are what --ifm-navbar-shadow and --ifm-alert-shadow resolve to, so a
+     navbar and an admonition cast a shadow this file never named until now.
+     Mapping them onto --cairn-shadow-ink is what makes scenario "Stock theme
+     surface" true for everything that renders a shadow. */
+  --ifm-global-shadow-lw: 0 1px 2px 0 color-mix(in srgb, var(--cairn-shadow-ink) 12%, transparent);
+  --ifm-global-shadow-md: 0 5px 40px color-mix(in srgb, var(--cairn-shadow-ink) 26%, transparent);
+  --ifm-global-shadow-tl:
+    0 12px 28px 0 color-mix(in srgb, var(--cairn-shadow-ink) 30%, transparent),
+    0 2px 4px 0 color-mix(in srgb, var(--cairn-shadow-ink) 16%, transparent);
+
+  /* The desktop sidebar's collapse button. theme-classic declares both of its
+     backgrounds as stock `rgb(…)` literals — inside the docusaurus.theme-classic
+     layer, so this unlayered mapping reaches them without a specificity fight. */
+  --docusaurus-collapse-button-bg: transparent;
+  --docusaurus-collapse-button-bg-hover: color-mix(in srgb, var(--cairn-border) 55%, transparent);
+
+  /* Prose furniture. `--ifm-hr-background-color` is Infima's real variable;
+     the `--ifm-hr-border-color` shipped previously does not exist in Infima
+     and never coloured anything. */
+  --ifm-hr-background-color: var(--cairn-border);
+  --ifm-blockquote-color: var(--cairn-muted);
+  --ifm-blockquote-border-color: var(--ifm-color-primary);
+  --ifm-table-border-color: var(--cairn-border);
+  --ifm-table-head-background: var(--cairn-elevated);
+  --ifm-table-stripe-background: color-mix(in srgb, var(--cairn-border) 35%, transparent);
+
+  /* Code. `--prism-*` reaches the code block as an inline style built from
+     `themeConfig.prism.theme`, which is pointed at --cairn-code-bg/-fg rather
+     than at a hex literal, so the code surface resolves through this file.
+
+     Inline code takes the SAME pinned surface. It is machine content by this
+     file's own rule, and the fenced block cannot follow the colour mode (its
+     syntax palette is built for a dark ground and arrives as an inline style),
+     so pointing inline code at the mode's elevated surface instead would put a
+     light `code` pill and a dark fenced block in the same paragraph. One ramp
+     for machine content, in both modes. */
+  --ifm-code-background: var(--cairn-code-bg);
+  --docusaurus-highlighted-code-line-bg: color-mix(in srgb, var(--ifm-color-primary) 16%, transparent);
+
+  /* Semantic aliases for the admonition / badge / button families. These are
+     NOT new categories and must not be read as such — they point at ADR-0009
+     tokens precisely so the admonition palette owns no colour of its own to
+     drift from. The category set itself is unchanged. */
+  --cairn-accent-info: var(--cat-read);
+  --cairn-accent-success: var(--cat-exec);
+  --cairn-accent-warning: var(--cat-net);
+  --cairn-accent-danger: var(--cat-fail);
+  --cairn-accent-neutral: var(--cat-meta);
+
+  --ifm-color-primary-contrast-background: color-mix(in srgb, var(--ifm-color-primary) 12%, var(--cairn-elevated));
+  --ifm-color-primary-contrast-foreground: var(--cairn-text);
+
+  --ifm-color-info: var(--cairn-accent-info);
+  --ifm-color-info-dark: var(--cairn-accent-info);
+  --ifm-color-info-contrast-background: color-mix(in srgb, var(--cairn-accent-info) 12%, var(--cairn-elevated));
+  --ifm-color-info-contrast-foreground: var(--cairn-text);
+
+  --ifm-color-success: var(--cairn-accent-success);
+  --ifm-color-success-dark: var(--cairn-accent-success);
+  --ifm-color-success-contrast-background: color-mix(in srgb, var(--cairn-accent-success) 12%, var(--cairn-elevated));
+  --ifm-color-success-contrast-foreground: var(--cairn-text);
+
+  --ifm-color-warning: var(--cairn-accent-warning);
+  --ifm-color-warning-dark: var(--cairn-accent-warning);
+  --ifm-color-warning-contrast-background: color-mix(in srgb, var(--cairn-accent-warning) 12%, var(--cairn-elevated));
+  --ifm-color-warning-contrast-foreground: var(--cairn-text);
+
+  --ifm-color-danger: var(--cairn-accent-danger);
+  --ifm-color-danger-dark: var(--cairn-accent-danger);
+  --ifm-color-danger-contrast-background: color-mix(in srgb, var(--cairn-accent-danger) 12%, var(--cairn-elevated));
+  --ifm-color-danger-contrast-foreground: var(--cairn-text);
+
+  /* Secondary stays a light pill in both modes: Infima hardcodes
+     `.button--secondary { color: var(--ifm-color-gray-900) }`, so a dark
+     background here would make the label unreadable. */
+  --ifm-color-secondary: var(--cairn-paper-300);
+  --ifm-color-secondary-dark: var(--cairn-paper-400);
+  --ifm-color-secondary-contrast-background: color-mix(in srgb, var(--cairn-accent-neutral) 12%, var(--cairn-elevated));
+  --ifm-color-secondary-contrast-foreground: var(--cairn-text);
+}
+
+/* ==========================================================================
+   6. Type application.
+   ========================================================================== */
+
 html { -webkit-font-smoothing: antialiased; }
+
+/* Machine-emitted content. `.cairn-mono` is the hook for markup that carries an
+   id, a path, a span name, a TTL, an HTTP method or a command without being a
+   `code` element — the hero's `zsh — cairn` window title, for instance. It sets
+   the FAMILY only, so a component can take the role and still choose its own
+   size; prose never gets this treatment — SPEC-0010 REQ "Typographic Roles". */
+code,
+kbd,
+samp,
+var,
+pre,
+.cairn-mono {
+  font-family: var(--cairn-font-mono);
+}
+
+/* An uppercase mono label — an eyebrow or a kicker, never a sentence. This is
+   the single definition of that role: `.eyebrow` and `.kicker` take this class
+   and add only their colour and spacing, so the two cannot drift apart. */
+.cairn-label {
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-label-size);
+  font-weight: var(--cairn-label-weight);
+  letter-spacing: var(--cairn-label-tracking);
+  text-transform: uppercase;
+}
+
+/* Inline code sits on the pinned machine surface (see --ifm-code-background in
+   section 5), so its border and foreground come off the ink ramp too rather
+   than following the mode. --cairn-code-fg measures 15.01:1 there. */
+:not(pre) > code {
+  border-color: var(--cairn-ink-300);
+  background: var(--ifm-code-background);
+  color: var(--cairn-code-fg);
+  letter-spacing: var(--cairn-mono-tracking);
+}
+/* Infima's `a code { color: inherit }` would hand a code-only link the page's
+   link colour, which is measured against the page ground and not this one. */
+a > code { color: var(--cairn-ink-accent); }
+
+/* A column heading labels its column; it is not prose. */
+.theme-doc-markdown table th {
+  font-family: var(--cairn-font-mono);
+  font-size: 0.82em;
+  letter-spacing: 0.02em;
+}
+
+/* ==========================================================================
+   7. Chrome, and the stock surfaces the theme leaves to the token layer.
+   ========================================================================== */
 
 /* Translucent, blurred navbar to match the app-shell chrome */
 .navbar {
@@ -105,37 +448,108 @@ html { -webkit-font-smoothing: antialiased; }
 
 .button { font-weight: 600; letter-spacing: -0.01em; }
 
-:not(pre) > code { border-color: var(--cairn-border); background: var(--ifm-code-background); }
-
+/* Dark-mode only, as it shipped: on the light ramp Infima's own card shadow
+   already separates these from the page, and adding a light-mode outline is a
+   chrome decision owned by REQ "Site Chrome and Layout", not this story. */
 [data-theme='dark'] .card,
 [data-theme='dark'] .theme-doc-markdown table { border: 1px solid var(--cairn-border); }
 table { display: table; width: 100%; }
-.theme-doc-markdown table th { font-family: var(--ifm-font-family-monospace); font-size: 0.82em; letter-spacing: 0.02em; }
 
-/* Category chip helper (usable in docs via inline HTML) */
+/* The sidebar's sublist caret. Infima paints it as a background IMAGE whose
+   fill is baked into a data URI (`rgba(0,0,0,0.5)`) and flips it in dark mode
+   with an `invert()` filter, so its colour is reachable from no variable at
+   all. Repainting it as a mask over `currentColor` puts it back on the token
+   layer and lets the filter go — SPEC-0010 REQ "Design Token Source of Truth",
+   scenario "Stock theme surface". */
+.menu__link--sublist-caret::after,
+.menu__caret::before {
+  background: currentColor;
+  filter: none;
+  -webkit-mask: var(--cairn-caret-icon) center / 1.25rem 1.25rem no-repeat;
+  mask: var(--cairn-caret-icon) center / 1.25rem 1.25rem no-repeat;
+}
+
+/*
+ * `themeConfig.footer.style: 'dark'` puts `footer--dark` on the footer, and
+ * Infima sets `--ifm-footer-background-color: #303846` ON THAT ELEMENT. A
+ * value declared on the element itself beats the one it would inherit from
+ * `:root`, whatever the cascade layers say, so the mapping in section 4 cannot
+ * reach it and the override has to land on the same selector. A footer that is
+ * dark by configuration keeps the ink ramp in both colour modes.
+ */
+.footer--dark {
+  --ifm-footer-background-color: var(--cairn-ink-deep);
+  --ifm-footer-color: var(--cairn-ink-700);
+  --ifm-footer-link-color: var(--cairn-ink-700);
+  --ifm-footer-title-color: var(--cairn-ink-1000);
+  border-top: 1px solid var(--cairn-ink-300);
+}
+
+/* Inside an admonition Infima re-points --ifm-code-background at its own
+   per-variant `rgba(…)` highlight, which would take inline code back off the
+   pinned machine surface. Nothing else reads that variable. */
+.alert { --ifm-code-background: var(--cairn-code-bg); }
+
+/* Code blocks. The container and its `pre` carry an inline `--prism-*` pair
+   from `themeConfig.prism.theme`, which resolves to --cairn-code-bg/-fg. The
+   ground is pinned across colour modes, so on a light page the block no longer
+   shares the page ground and needs its own edge — and its buttons need one off
+   the ink ramp rather than off the mode-following emphasis scale. */
+.theme-code-block { border: 1px solid var(--cairn-ink-300); }
+.theme-code-block button { border-color: var(--cairn-ink-300); }
+/*
+ * The "copied" tick is `color: #00d600` on a hashed CSS-module class, so there
+ * is no variable to re-point and no stable class to name. The success icon is
+ * the second `svg` inside the copy button's icon span — the word-wrap button
+ * has no such span — which CSS can reach without a wrap or an eject. If
+ * theme-classic changes that structure the tick reverts to its stock green and
+ * nothing else breaks. 8.58:1 on the code surface, well over the 3:1 that
+ * WCAG 1.4.11 asks of a non-text indicator.
+ */
+.theme-code-block button > span > svg + svg { color: var(--cairn-accent-success); }
+
+/* ==========================================================================
+   8. Category chips.
+
+      A chip renders its accent AS TEXT, so it pins --chip-ground to the ink
+      ramp in both colour modes and composites its own tint over it. That makes
+      the background the accent is measured against deterministic rather than
+      dependent on whatever surface hosts the chip — SPEC-0010 REQ "Category
+      Accents Are Dark-Ground Text Colours", scenario "Category accent as
+      foreground". Worst case in the set is --cat-meta at 4.65:1.
+
+      The default accent is --cat-other, so a `chip-<string ADR-0009 does not
+      define>` renders in the neutral default and introduces no colour of its
+      own — SPEC-0010 REQ "Category Palette Immutability", scenario
+      "Unrecognised category class".
+   ========================================================================== */
 .chip {
+  --chip-accent: var(--cat-other);
+  --chip-ground: var(--cairn-ink-100);
   display: inline-block;
   padding: 1px 7px;
   border-radius: 6px;
-  font-family: var(--ifm-font-family-monospace);
+  font-family: var(--cairn-font-mono);
   font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.04em;
-  border: 1px solid transparent;
+  color: var(--chip-accent);
+  background: color-mix(in srgb, var(--chip-accent) 12%, var(--chip-ground));
+  border: 1px solid color-mix(in srgb, var(--chip-accent) 40%, var(--chip-ground));
 }
-.chip-reason  { color: var(--cat-reason);  border-color: color-mix(in srgb, var(--cat-reason) 40%, transparent);  background: color-mix(in srgb, var(--cat-reason) 12%, transparent); }
-.chip-exec    { color: var(--cat-exec);    border-color: color-mix(in srgb, var(--cat-exec) 40%, transparent);    background: color-mix(in srgb, var(--cat-exec) 12%, transparent); }
-.chip-read    { color: var(--cat-read);    border-color: color-mix(in srgb, var(--cat-read) 40%, transparent);    background: color-mix(in srgb, var(--cat-read) 12%, transparent); }
-.chip-net     { color: var(--cat-net);     border-color: color-mix(in srgb, var(--cat-net) 40%, transparent);     background: color-mix(in srgb, var(--cat-net) 12%, transparent); }
-.chip-write   { color: var(--cat-write);   border-color: color-mix(in srgb, var(--cat-write) 40%, transparent);   background: color-mix(in srgb, var(--cat-write) 12%, transparent); }
-.chip-search  { color: var(--cat-search);  border-color: color-mix(in srgb, var(--cat-search) 40%, transparent);  background: color-mix(in srgb, var(--cat-search) 12%, transparent); }
-.chip-plan    { color: var(--cat-plan);    border-color: color-mix(in srgb, var(--cat-plan) 40%, transparent);    background: color-mix(in srgb, var(--cat-plan) 12%, transparent); }
-.chip-tool    { color: var(--cat-tool);    border-color: color-mix(in srgb, var(--cat-tool) 40%, transparent);    background: color-mix(in srgb, var(--cat-tool) 12%, transparent); }
-.chip-analyze { color: var(--cat-analyze); border-color: color-mix(in srgb, var(--cat-analyze) 40%, transparent); background: color-mix(in srgb, var(--cat-analyze) 12%, transparent); }
-.chip-test    { color: var(--cat-test);    border-color: color-mix(in srgb, var(--cat-test) 40%, transparent);    background: color-mix(in srgb, var(--cat-test) 12%, transparent); }
-.chip-fix     { color: var(--cat-fix);     border-color: color-mix(in srgb, var(--cat-fix) 40%, transparent);     background: color-mix(in srgb, var(--cat-fix) 12%, transparent); }
-.chip-fail    { color: var(--cat-fail);    border-color: color-mix(in srgb, var(--cat-fail) 40%, transparent);    background: color-mix(in srgb, var(--cat-fail) 12%, transparent); }
-.chip-meta    { color: var(--cat-meta);    border-color: color-mix(in srgb, var(--cat-meta) 40%, transparent);    background: color-mix(in srgb, var(--cat-meta) 12%, transparent); }
-.chip-other   { color: var(--cat-other);   border-color: color-mix(in srgb, var(--cat-other) 40%, transparent);   background: color-mix(in srgb, var(--cat-other) 12%, transparent); }
+.chip-reason  { --chip-accent: var(--cat-reason); }
+.chip-exec    { --chip-accent: var(--cat-exec); }
+.chip-read    { --chip-accent: var(--cat-read); }
+.chip-net     { --chip-accent: var(--cat-net); }
+.chip-write   { --chip-accent: var(--cat-write); }
+.chip-search  { --chip-accent: var(--cat-search); }
+.chip-plan    { --chip-accent: var(--cat-plan); }
+.chip-tool    { --chip-accent: var(--cat-tool); }
+.chip-analyze { --chip-accent: var(--cat-analyze); }
+.chip-test    { --chip-accent: var(--cat-test); }
+.chip-fix     { --chip-accent: var(--cat-fix); }
+.chip-fail    { --chip-accent: var(--cat-fail); }
+.chip-meta    { --chip-accent: var(--cat-meta); }
+.chip-other   { --chip-accent: var(--cat-other); }
 
 ::selection { background: color-mix(in srgb, var(--ifm-color-primary) 40%, transparent); }
