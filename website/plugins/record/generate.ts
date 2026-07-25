@@ -32,6 +32,7 @@ import {
   parseDesignFile,
   parseRecordFile,
 } from './parse.ts';
+import {assertNoLiteralCounts} from './counts.ts';
 import {buildEdges, buildRelations} from './graph.ts';
 import {
   DOCS_ROUTE_BASE,
@@ -47,7 +48,11 @@ import {
   specHref,
   stageRecord,
 } from './stage.ts';
-import {assertStagedCoverage, validateRecord} from './validate.ts';
+import {
+  assertNoSecretsInData,
+  assertStagedCoverage,
+  validateRecord,
+} from './validate.ts';
 import type {
   DecisionEntry,
   ParsedRecord,
@@ -209,6 +214,10 @@ export async function generateRecord(
     refs,
   };
 
+  // Governing: ADR-0014, SPEC-0010 REQ "Deployment Least Privilege"
+  // Checked on the derived object, before it is written anywhere.
+  assertNoSecretsInData(data);
+
   const bodies = new Map<string, {sourcePath: string; body: string}>();
   for (const record of allRecords) {
     bodies.set(record.id, {
@@ -227,6 +236,15 @@ export async function generateRecord(
   // Coverage is asserted against the staged tree rather than against the lists
   // above, so that the check is capable of failing. See `assertStagedCoverage`.
   await assertStagedCoverage({paths, adrFiles, capabilityDirs, data});
+
+  // Governing: ADR-0014, SPEC-0010 REQ "Derived Status, Dates, and Counts"
+  //
+  // Deliberately last, and deliberately here rather than in a lint script. It
+  // needs the derived counts to explain itself ("the record has 14; read
+  // counts.decisions"), and it has to run inside the pipeline so that writing
+  // "14 decisions" into the homepage fails the dev server rather than surviving
+  // until someone reads the page. See counts.ts for why it is an AST walk.
+  await assertNoLiteralCounts({paths, counts: data.counts});
 
   return {data, paths, written};
 }

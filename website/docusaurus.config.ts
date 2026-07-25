@@ -2,6 +2,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import {assertTokens} from './scripts/check-tokens.mjs';
+import {assertFirstPartyAssets} from './scripts/check-assets.mjs';
 
 import {generateRecord} from './plugins/record/generate.ts';
 import remarkRecord from './plugins/record/remark-record.ts';
@@ -30,6 +31,19 @@ const DOCS_ROUTE_BASE = '/docs';
  */
 // eslint-disable-next-line no-console
 console.log(assertTokens().summary);
+
+/**
+ * Governing: ADR-0014, SPEC-0010 REQ "First-Party Asset Loading"
+ *
+ * Same placement, same reason. REQ "First-Party Asset Loading"'s scenario
+ * "Remote font import in source" is a check against the FILE, so it belongs
+ * beside the token guard rather than in the postBuild bundle scan, which cannot
+ * run during `docusaurus start` at all. The two families this site uses are
+ * vendored under `src/css/fonts/`; re-introducing an `@import` from a font CDN
+ * fails here, in the dev server, naming the file and the host.
+ */
+// eslint-disable-next-line no-console
+console.log(assertFirstPartyAssets().summary);
 
 /**
  * Governing: ADR-0014, SPEC-0010 REQ "Design Token Source of Truth"
@@ -100,6 +114,15 @@ const config: Config = {
     // TypeScript and would not find `index.ts` by directory resolution. jiti
     // does the transpiling once the exact path is known.
     ['./plugins/record/index.ts', {routeBase: DOCS_ROUTE_BASE}],
+
+    // Governing: ADR-0014, SPEC-0010 REQ "Security Headers"
+    // Governing: ADR-0014, SPEC-0010 REQ "Deployment Least Privilege"
+    // A `postBuild` hook and nothing else: it seals a hashed Content-Security-
+    // Policy into every emitted page, writes `_headers` for a header-capable
+    // host, and fails the build if the bundle carries a third-party subresource,
+    // a credential, or a private host name. Registered last so it runs over a
+    // finished bundle.
+    './plugins/security/index.ts',
   ],
 
   presets: [
