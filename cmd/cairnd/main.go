@@ -74,14 +74,78 @@ func run(logger *slog.Logger) error {
 		PreviewMaxBytes: cfg.PreviewMaxBytes,
 	})
 
+	// Install the staging/ debris lifecycle rule (best-effort defense-in-depth;
+	// scoped to staging/ ONLY — never the committed blobs/ prefix, issue #93 §1).
+	// A failure here is logged, not fatal: the ingest paths already reclaim their
+	// staging objects, so this rule only mops up crash debris.
+	if err := obj.EnsureStagingLifecycle(ctx, cfg.StagingLifecycleTTL); err != nil {
+		logger.Warn("could not install staging lifecycle rule (non-fatal)", "error", err)
+	}
+
+	// The background retention reaper (SPEC-0009): hard-deletes expired artifacts
+	// and reference-count-GCs their orphaned content-addressed blobs, with an
+	// object-storage orphan-scan backstop. It runs for the life of the process
+	// and stops cleanly when ctx is cancelled (graceful shutdown).
+	reaperDone := make(chan struct{})
+	go func() {
+		defer close(reaperDone)
+		svc.RunReaper(ctx, cfg.ReapInterval, store.ReaperConfig{
+			Batch:       cfg.ReapBatch,
+			ObjectGrace: cfg.ReapObjectGrace,
+		}, logger)
+	}()
+
+	// Parse the static API bearer credentials (ADR-0004 MVP token seam) at
+	// startup so a malformed CAIRN_API_TOKENS fails the process rather than
+	// silently dropping a credential. A raw bearer token is only ever trusted when
+	// it verifies against this set (or, in dev, when the insecure shortcut is on).
+	apiTokens, err := httpapi.ParseAPITokens(cfg.APITokensRaw)
+	if err != nil {
+		return err
+	}
+	if cfg.DevInsecureBearerAuth {
+		logger.Warn("CAIRN_DEV_INSECURE_BEARER_AUTH is enabled: raw bearer tokens are trusted as actor ids without verification — never enable this in production")
+	} else if len(apiTokens) == 0 && cfg.DevLoginPassword == "" && !cfg.OIDCConfigured() {
+		logger.Warn("no API tokens (CAIRN_API_TOKENS), no OIDC (CAIRN_OIDC_ISSUER), and no dev web login (CAIRN_DEV_LOGIN_PASSWORD) configured: all authenticated endpoints will reject every caller")
+	}
+	if cfg.OIDCConfigured() && cfg.DevLoginPassword != "" {
+		logger.Warn("CAIRN_OIDC_ISSUER and CAIRN_DEV_LOGIN_PASSWORD are both set: OIDC wins — the dev-password login is disabled while OIDC is configured (ADR-0013)")
+	}
+
 	// The /v1 REST/JSON adapter over the core service (ADR-0012).
 	api := httpapi.New(svc, nil, nil, httpapi.Config{
-		BaseURL:        cfg.BaseURL,
-		MaxUploadBytes: cfg.MaxUploadBytes,
-		DefaultTTL:     cfg.DefaultTTL,
-		RatePerSecond:  cfg.RatePerSecond,
-		RateBurst:      cfg.RateBurst,
+		BaseURL:               cfg.BaseURL,
+		MaxUploadBytes:        cfg.MaxUploadBytes,
+		DefaultTTL:            cfg.DefaultTTL,
+		RatePerSecond:         cfg.RatePerSecond,
+		RateBurst:             cfg.RateBurst,
+		DevLoginPassword:      cfg.DevLoginPassword,
+		SessionTTL:            cfg.SessionTTL,
+		OIDCIssuer:            cfg.OIDCIssuer,
+		OIDCClientID:          cfg.OIDCClientID,
+		OIDCClientSecret:      cfg.OIDCClientSecret,
+		APITokens:             apiTokens,
+		DevInsecureBearerAuth: cfg.DevInsecureBearerAuth,
+		AccessTokenTTL:        cfg.OAuthAccessTokenTTL,
+		RefreshTokenTTL:       cfg.OAuthRefreshTokenTTL,
+		OAuthRatePerSecond:    cfg.OAuthRatePerSecond,
+		OAuthRateBurst:        cfg.OAuthRateBurst,
+
+		HookIngressRatePerSecond:  cfg.HookIngressRatePerSecond,
+		HookIngressRateBurst:      cfg.HookIngressRateBurst,
+		HookEndpointRatePerSecond: cfg.HookEndpointRatePerSecond,
+		HookEndpointRateBurst:     cfg.HookEndpointRateBurst,
 	}, logger)
+
+	// Discover the OIDC issuer and wire the "Sign in with Pocket ID" relying
+	// party (ADR-0013). A no-op when CAIRN_OIDC_ISSUER is unset; a discovery
+	// failure is fatal — never start serving with human login silently broken.
+	if err := api.EnableOIDC(ctx); err != nil {
+		return err
+	}
+	if cfg.OIDCConfigured() {
+		logger.Info("OIDC login enabled", "issuer", cfg.OIDCIssuer, "client_id", cfg.OIDCClientID)
+	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -112,7 +176,12 @@ func run(logger *slog.Logger) error {
 		logger.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		err := srv.Shutdown(shutdownCtx)
+		// ctx is already cancelled (that is what woke us); wait for the reaper to
+		// unwind its current sweep so shutdown is clean (SPEC-0009 REQ "Concurrency
+		// Safety (Expiry Reaper)": graceful shutdown, no orphaned goroutine).
+		<-reaperDone
+		return err
 	case err := <-errCh:
 		return err
 	}

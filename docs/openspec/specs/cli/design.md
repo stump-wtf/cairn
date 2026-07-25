@@ -90,6 +90,16 @@ otherwise a `0600` file under the user config dir. Never log or print tokens.
 is the safest at-rest location; the permissioned-file fallback keeps headless Linux and
 CI usable without weakening the default.
 
+**Implementation note (cairn#21, a scoped takeover of upstream cairn#37)**: `cairn
+login`/`logout`/`whoami` first ship against the token seam described above ("Personal
+access tokens pasted into config") rather than the OAuth 2.1 + PKCE browser flow — the
+"rejected" alternative in this decision is, for v0.0.2, the interim path: the human
+mints a personal access token (issue #74) or uses a `CAIRN_API_TOKENS` entry, `cairn
+login` verifies it with a `GET /v1/whoami` round trip and stores it exactly as described
+here (OS keyring preferred, `0600` file fallback, never both). The loopback + PKCE flow
+this section otherwise describes follows in cairn#22 and on (SPEC-0007), layering onto
+the same `login`/`logout`/`whoami` command surface without changing storage semantics.
+
 ### Structured error envelope → stable exit codes
 
 **Choice**: Parse `{"error":{"code",...}}` and map each stable `code` (plus

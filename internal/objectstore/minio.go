@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/minio/minio-go/v7/pkg/lifecycle"
 )
 
 // MinIOConfig configures the S3-compatible client.
@@ -110,6 +112,54 @@ func (s *MinIO) Stat(ctx context.Context, key string) (bool, error) {
 		return false, fmt.Errorf("objectstore: stat %s: %w", key, err)
 	}
 	return true, nil
+}
+
+// List enumerates objects under prefix (ObjectStore). It streams the paginated
+// S3 listing and returns each object's key and server LastModified, the grace
+// signal the SPEC-0009 orphan-object scan uses so it never deletes a body a
+// concurrent create just promoted.
+func (s *MinIO) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	var out []ObjectInfo
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("objectstore: list %s: %w", prefix, obj.Err)
+		}
+		out = append(out, ObjectInfo{Key: obj.Key, LastModified: obj.LastModified})
+	}
+	return out, nil
+}
+
+// EnsureStagingLifecycle installs an S3 lifecycle expiration rule that reaps
+// abandoned upload debris under the staging/ prefix after ttl. This age rule is
+// deliberately scoped to staging/ ONLY: it MUST NEVER be applied to the
+// committed blobs/ prefix, because content-addressed dedup means a blob object's
+// LastModified has no relationship to its longest live reference — an age rule on
+// blobs/ would silently delete a body still referenced by a younger, longer-TTL
+// artifact (SPEC-0009 REQ "Object-Storage Lifecycle Backstop": the committed
+// blobs/ backstop is a refcount orphan scan, never an age rule; ADR-0008).
+//
+// It is best-effort defense-in-depth: the create/bundle/webhook/trajectory
+// ingest paths already remove their staging object on every path, so this only
+// mops up debris left by a process that crashed mid-upload.
+func (s *MinIO) EnsureStagingLifecycle(ctx context.Context, ttl time.Duration) error {
+	days := int(ttl.Hours() / 24)
+	if days < 1 {
+		days = 1
+	}
+	cfg := lifecycle.NewConfiguration()
+	cfg.Rules = []lifecycle.Rule{{
+		ID:         "cairn-staging-debris",
+		Status:     "Enabled",
+		RuleFilter: lifecycle.Filter{Prefix: "staging/"},
+		Expiration: lifecycle.Expiration{Days: lifecycle.ExpirationDays(days)},
+	}}
+	if err := s.client.SetBucketLifecycle(ctx, s.bucket, cfg); err != nil {
+		return fmt.Errorf("objectstore: set staging lifecycle: %w", err)
+	}
+	return nil
 }
 
 func isNotFound(err error) bool {

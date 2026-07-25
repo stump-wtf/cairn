@@ -1,0 +1,116 @@
+/* The webhook inspector viewer (SPEC-0005 REQ "Inspector Viewer", issue #86).
+   Layers on app.css tokens (ADR-0011), reusing the SAME .react-cluster/
+   .react-pill/.react-add/.react-picker/.react-error class names trajectory.css
+   defines for its "reaction-cluster" template partial — but trajectory.css is
+   not loaded on the bare shell (only on /run/{id}), so this file is where
+   those shared class names first get their look on the generic shell,
+   available to every future bare-scheme viewer, not just webhook. Dark,
+   JetBrains Mono chrome + IBM Plex Sans prose, WCAG 2.1 AA. */
+
+.body-slot-hook { padding: 0; }
+.hook-viewer { padding: 16px 20px 24px; }
+
+/* ---- Empty state (SPEC-0005 REQ "Inspector Viewer": "Empty-state for a bin
+   awaiting its first request" — minimal, non-interactive text only; see
+   hook_view.go's doc comment on why it stays this small in v1). ---- */
+.hook-empty { border: 1px dashed var(--border); border-radius: var(--radius-card);
+  background: var(--well-2); padding: 28px 20px; text-align: center; }
+.hook-empty-title { margin: 0 0 6px; color: var(--t3); font: 500 13.5px var(--sans); }
+.hook-empty-note { margin: 0; color: var(--t6); font: 400 12px var(--sans); line-height: 1.6; }
+.hook-empty-url { color: var(--green-2); font-family: var(--mono); font-size: 11.5px;
+  background: var(--well); border: 1px solid var(--border-2); border-radius: 4px; padding: 1px 6px; }
+
+/* ---- Request list (newest prepended, SPEC-0005) ---- */
+.hook-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.hook-row { background: var(--well-2); border: 1px solid var(--border-3); border-radius: 8px; }
+.hook-row-summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none;
+  padding: 9px 12px; }
+.hook-row-summary::-webkit-details-marker { display: none; }
+.hook-row-summary::before { content: "▸"; color: var(--t7); font-size: 10px; transition: transform .12s; flex: none; }
+.hook-row[open] > .hook-row-summary::before { transform: rotate(90deg); }
+
+.hook-method { font: 700 10.5px var(--mono); padding: 2px 6px; border-radius: 4px;
+  border: 1px solid var(--border); color: var(--t2); background: var(--well); flex: none; }
+.hook-method[data-method="GET"] { color: var(--blue); border-color: #2E3C52; }
+.hook-method[data-method="POST"] { color: var(--green-2); background: rgba(86,227,159,.1); border-color: #244034; }
+.hook-method[data-method="PUT"], .hook-method[data-method="PATCH"] { color: var(--yellow); border-color: #3A331E; }
+.hook-method[data-method="DELETE"] { color: var(--pink); border-color: #3A2536; }
+
+.hook-path { color: var(--t2); font: 400 12px var(--mono); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; min-width: 0; flex: 1 1 auto; }
+
+.hook-status { font: 700 10.5px var(--mono); padding: 2px 6px; border-radius: 4px; flex: none;
+  border: 1px solid var(--border); color: var(--t3); background: var(--well); }
+.hook-status[data-class="2xx"] { color: var(--green-2); background: rgba(86,227,159,.1); border-color: #244034; }
+.hook-status[data-class="3xx"] { color: var(--blue); border-color: #2E3C52; }
+.hook-status[data-class="4xx"] { color: var(--yellow); border-color: #3A331E; }
+.hook-status[data-class="5xx"] { color: var(--pink); border-color: #3A2536; }
+
+.hook-row-meta { color: var(--t7); font: 400 10.5px var(--mono); white-space: nowrap; flex: none; }
+
+.hook-row-detail { padding: 0 12px 12px 12px; }
+.hook-detail-h { margin: 10px 0 6px; color: var(--t6); font: 600 10px var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.hook-headers { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; }
+.hook-headers dt { color: var(--t6); font: 400 11px var(--mono); }
+.hook-headers dd { margin: 0; color: var(--t3); font: 400 11.5px var(--mono); word-break: break-all; }
+
+.hook-body-pre { background: var(--code, #08090C); border: 1px solid var(--border-2); border-radius: 9px;
+  padding: 10px 12px; margin: 0; overflow-x: auto; font: 400 12px var(--mono); color: var(--t3);
+  white-space: pre-wrap; word-break: break-word; }
+.hook-body-truncated { color: var(--t7); font: 400 10.5px var(--mono); text-transform: none; letter-spacing: 0; }
+.hook-body-load { background: var(--well); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--t4); font: 500 11px var(--mono); padding: 5px 10px; cursor: pointer; }
+.hook-body-load:hover { color: var(--t2); border-color: var(--t6); }
+
+.hook-row-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.hook-endpoint-react { margin-top: 2px; }
+
+/* ---- Status mix (SPEC-0005 REQ "Inspector Viewer": status mix; SPEC-0005
+   Accessibility REQ "Status is not color-only" — every segment's family and
+   count are also plain text in the legend, never color-only). Bar segment
+   widths are set via CSSOM by hook.js from data-pct (CSP style-src 'self'
+   forbids inline style="…" attributes, mirroring trajectory.js's
+   layoutCategoryBar). ---- */
+.hook-mix-h { margin-top: 14px; }
+.hook-mix-bar { display: flex; height: 6px; border-radius: 4px; overflow: hidden; background: var(--well); margin: 4px 0 8px; }
+.hook-mix-seg { display: block; height: 100%; }
+.hook-mix-seg[data-class="2xx"] { background: var(--green); }
+.hook-mix-seg[data-class="3xx"] { background: var(--blue); }
+.hook-mix-seg[data-class="4xx"] { background: var(--yellow); }
+.hook-mix-seg[data-class="5xx"] { background: var(--pink); }
+.hook-mix-seg[data-class="1xx"] { background: var(--purple); }
+.hook-mix-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.hook-mix-legend li { display: flex; align-items: center; gap: 6px; color: var(--t5); font: 400 11px var(--mono); }
+.swatch[data-class="2xx"] { background: var(--green); }
+.swatch[data-class="3xx"] { background: var(--blue); }
+.swatch[data-class="4xx"] { background: var(--yellow); }
+.swatch[data-class="5xx"] { background: var(--pink); }
+.swatch[data-class="1xx"] { background: var(--purple); }
+.hook-mix-count { color: var(--t3); margin-left: auto; }
+
+/* ---- Reactions (#66 click-time render pattern, shared class names — see
+   file header). Copied verbatim from trajectory.css so both viewers read
+   identically; not @imported (no build step, ADR-0011) so a change to one
+   must be mirrored in the other by hand, same as every other per-viewer CSS
+   file in this app (markdown.css/code.css/image.css each duplicate their own
+   prefixed copy of this same look). ---- */
+.react-cluster { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.react-pill { display: inline-flex; align-items: center; gap: 4px; background: var(--well);
+  border: 1px solid var(--border); border-radius: 999px; color: var(--t4); font: 500 11px var(--mono);
+  padding: 3px 8px; cursor: pointer; }
+.react-pill.on { border-color: #244034; background: rgba(86,227,159,.12); color: var(--green-2); }
+.react-count { color: var(--t5); }
+.react-pill.on .react-count { color: var(--green-2); }
+.react-add { width: 22px; height: 22px; border-radius: 999px; border: 1px dashed var(--border);
+  background: transparent; color: var(--t7); font-size: 13px; line-height: 1; cursor: pointer; }
+.react-add:hover { color: var(--t2); border-color: var(--t6); }
+.react-picker { position: absolute; z-index: 30; display: flex; gap: 4px; padding: 6px 8px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.react-error { display: inline-block; color: var(--red, #e05a5a); font: 500 10.5px var(--mono); }
+.react-picker button { background: transparent; border: 0; font-size: 15px; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+.react-picker button:hover { background: var(--well); }
+
+@media (max-width: 860px) {
+  .hook-row-summary { flex-wrap: wrap; }
+}

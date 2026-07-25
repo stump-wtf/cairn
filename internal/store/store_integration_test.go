@@ -36,7 +36,7 @@ func newTestStore(t *testing.T, o Options) (*Store, *pgxpool.Pool) {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE artifacts, blobs, bundle_members RESTART IDENTITY CASCADE`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE artifacts, blobs, bundle_members, retired_ids RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 

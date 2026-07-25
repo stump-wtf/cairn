@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -43,10 +44,40 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	s.createSingle(w, r, p)
 }
 
+// requestedTTL parses the optional X-Cairn-Ttl-Seconds header (SPEC-0008
+// `cairn --ttl`): a positive integer number of seconds bounded by
+// cfg.MaxRequestedTTL. An absent header is not an error — the caller falls
+// back to cfg.DefaultTTL — but a present, malformed, non-positive, or
+// over-the-cap value IS validation_failed: the CLI never silently gets a
+// different TTL than what it explicitly asked for (see Config.MaxRequestedTTL
+// docs). The server remains authoritative (ADR-0007): this only interprets an
+// explicit ask, it never computes one.
+func requestedTTL(r *http.Request, cfg Config) (time.Duration, error) {
+	raw := r.Header.Get("X-Cairn-Ttl-Seconds")
+	if raw == "" {
+		return cfg.DefaultTTL, nil
+	}
+	secs, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || secs <= 0 {
+		return 0, errs.Validationf("X-Cairn-Ttl-Seconds must be a positive integer number of seconds")
+	}
+	ttl := time.Duration(secs) * time.Second
+	if ttl > cfg.MaxRequestedTTL {
+		return 0, errs.Validationf("X-Cairn-Ttl-Seconds exceeds the maximum allowed TTL (%s)", cfg.MaxRequestedTTL)
+	}
+	return ttl, nil
+}
+
 func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Principal) {
 	shareType := artifact.ShareType(firstNonEmpty(
 		r.URL.Query().Get("type"), r.Header.Get("X-Cairn-Type"), string(artifact.TypeFile)))
 	now := s.now()
+
+	ttl, err := requestedTTL(r, s.cfg)
+	if err != nil {
+		s.writeError(w, r, err, nil)
+		return
+	}
 
 	// Guard the raw body; the store additionally enforces the limit incrementally.
 	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes+1)
@@ -58,7 +89,7 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 		ExpectedSHA256:    r.Header.Get("X-Cairn-Sha256"),
 		Provenance:        artifact.Provenance{ActorID: p.ActorID, Channel: p.Channel, CapturedAt: now},
 		Access:            artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
-		ExpiresAt:         now.Add(s.cfg.DefaultTTL),
+		ExpiresAt:         now.Add(ttl),
 	})
 	if err != nil {
 		s.writeError(w, r, mapUploadErr(err), nil)
@@ -79,6 +110,11 @@ type spooledFile struct {
 func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Principal, boundary string) {
 	if boundary == "" {
 		s.writeError(w, r, errs.Validationf("multipart: missing boundary"), nil)
+		return
+	}
+	ttl, err := requestedTTL(r, s.cfg)
+	if err != nil {
+		s.writeError(w, r, err, nil)
 		return
 	}
 	mr := multipart.NewReader(r.Body, boundary)
@@ -149,7 +185,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 	now := s.now()
 	prov := artifact.Provenance{ActorID: p.ActorID, Channel: p.Channel, CapturedAt: now}
 	access := artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink}
-	expires := now.Add(s.cfg.DefaultTTL)
+	expires := now.Add(ttl)
 
 	if len(files) == 1 {
 		f := files[0]
@@ -246,11 +282,49 @@ func (s *Server) serveBody(w http.ResponseWriter, r *http.Request, rc io.Reader,
 	}
 }
 
-// handleDelete removes an artifact, owner-only.
+// serveInlineBody streams bytes with the artifact's real Content-Type and an
+// `inline` disposition — the one deliberate exception to serveBody's
+// sniff-proof download floor, reserved for the image viewer's own `<img src>`
+// (handleWebImage, SPEC-0003 REQ "Image Viewer", #69). It is reachable only
+// through a route gated by the registry InlineViewer capability, which only
+// the image type implements, so no other body can ride this path.
+// X-Content-Type-Options: nosniff (set by the web group's security-header
+// middleware) still applies; it is a no-op here because Content-Type already
+// names the real, store-verified media type — never a client claim (an
+// artifact only ever carries share type "image" once its media type already
+// passed the isImage predicate at ingest, SPEC-0002 "Previewability Detection
+// at Ingest").
+func (s *Server) serveInlineBody(w http.ResponseWriter, r *http.Request, rc io.Reader, info store.BodyInfo, mediaType, filename string) {
+	h := w.Header()
+	h.Set("Content-Type", mediaType)
+	h.Set("Content-Disposition", "inline; filename="+strconv.Quote(filename))
+	h.Set("Content-Length", strconv.FormatInt(info.Size, 10))
+	h.Set("X-Cairn-Checksum", info.SHA256)
+	if info.SHA256 != "" {
+		h.Set("ETag", strconv.Quote(info.SHA256))
+	}
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return
+	}
+	if _, err := io.Copy(w, rc); err != nil {
+		s.log.WarnContext(r.Context(), "httpapi: inline body stream aborted", "error", err)
+	}
+}
+
+// handleDelete removes an artifact, owner-only. Deletion is a human-only
+// capability (ADR-0004 / SPEC-0004: agents receive no delete scope and cannot
+// delete on the human's behalf); the route gates this via requireHuman, and this
+// belt-and-suspenders guard refuses an agent principal even if that middleware
+// were ever unwired, so a delete is never performed as p.ActorID for an agent.
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFrom(r.Context())
 	if !ok {
 		s.writeError(w, r, errs.ErrUnauthorized, nil)
+		return
+	}
+	if p.IsAgent {
+		s.writeError(w, r, errs.ErrForbidden, nil)
 		return
 	}
 	id := chi.URLParam(r, "id")

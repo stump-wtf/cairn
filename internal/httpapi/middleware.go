@@ -13,12 +13,15 @@ import (
 
 // securityHeaders sets baseline response headers on every response: nosniff so a
 // body's declared type is honored, a strict CSP for any HTML the API might emit,
-// and HSTS over TLS (SPEC-0002 REQ "Security Headers").
+// a no-referrer Referrer-Policy so an artifact id never leaks to a third party
+// via the Referer header, and HSTS over TLS (SPEC-0002 REQ "Security Headers",
+// SPEC-0006 REQ "Security Headers").
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		h.Set("Referrer-Policy", "no-referrer")
 		if r.TLS != nil {
 			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
@@ -37,12 +40,21 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 		}
 		ok, retry := s.limiter.allow(clientIP(r))
 		if !ok {
-			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retry.Seconds()))))
-			s.writeError(w, r, errs.New(errs.CodeRateLimited, "rate limit exceeded"), nil)
+			s.writeRateLimited(w, r, retry)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// writeRateLimited renders the standard 429 envelope with a Retry-After
+// header sized from retry, shared by the general per-IP middleware above and
+// the webhook open ingress's dedicated per-IP/per-endpoint limiters
+// (hook_ingress.go), so every rate-limited surface in Cairn answers
+// identically (SPEC-0002 / SPEC-0005 REQ "Rate Limiting").
+func (s *Server) writeRateLimited(w http.ResponseWriter, r *http.Request, retry time.Duration) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retry.Seconds()))))
+	s.writeError(w, r, errs.New(errs.CodeRateLimited, "rate limit exceeded"), nil)
 }
 
 // clientIP extracts the client host for rate-limit keying. chi's RealIP

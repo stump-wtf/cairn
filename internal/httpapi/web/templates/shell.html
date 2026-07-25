@@ -1,0 +1,222 @@
+{{define "shell"}}<!doctype html>
+<html lang="en">
+<head>
+{{template "doc-head" .}}
+<title>{{.Title}} · cairn</title>
+</head>
+<body x-data="shell" data-link="{{.WebURL}}" data-mcp="{{.MCPHandle}}" data-authenticated="{{if .Authenticated}}1{{else}}0{{end}}">
+<a class="skip-link" href="#body">Skip to content</a>
+
+<header class="app-header" role="banner">
+  <a class="brand" href="/" aria-label="cairn home">{{template "stone-logo" .}}<span class="wordmark">cairn</span></a>
+  <span class="crumb-sep" aria-hidden="true">▸</span>
+  <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeLabel}}">{{.Badge}}</span>
+  <span class="artifact-title">{{.Title}}</span>
+  <span class="artifact-meta">{{.MetaLine}}</span>
+
+  <div class="header-spacer"></div>
+
+  <div class="url-control" role="group" aria-label="Artifact URL">
+    <div class="url-seg">
+      <button type="button" class="seg-btn" x-on:click="showLink" x-bind:aria-pressed="isLink" aria-label="Show web link">🔗 link</button>
+      <button type="button" class="seg-btn" x-on:click="showMcp" x-bind:aria-pressed="isMcp" aria-label="Show MCP handle">◆ mcp</button>
+    </div>
+    <code class="url-value" x-show="isLink">{{.WebURL}}</code>
+    <code class="url-value" x-show="isMcp">{{.MCPHandle}}</code>
+    <button type="button" class="copy-btn" x-on:click="copy" aria-label="Copy URL to clipboard">
+      <span x-show="notCopied">copy</span>
+      <span class="copied" x-show="copied" x-cloak>copied ✓</span>
+    </button>
+  </div>
+
+  <button type="button" class="share-btn" aria-label="Share this artifact">Share</button>
+  <button type="button" class="panel-toggle" x-on:click="togglePanel" x-bind:aria-expanded="panelExpanded" aria-label="Toggle details panel">▤</button>
+</header>
+
+{{template "share-dialog" .ShareDialog}}
+
+<main class="shell-grid" x-bind:class="panelClass">
+  <article id="body" class="body-slot{{if .Bundle}} body-slot-bundle{{end}}{{if .Hook}} body-slot-hook{{end}}" tabindex="-1">
+    {{if .Bundle}}
+    {{template "bundle-viewer" .Bundle}}
+    {{else if .Hook}}
+    {{template "hook-viewer" .Hook}}
+    {{else if .HasRichBody}}
+    {{.Body}}
+    {{else if .FileCard}}
+    {{template "file-card" .FileCard}}
+    {{end}}
+  </article>
+
+  <aside class="panel" aria-label="Details and comments" x-show="panelOpen">
+    <section class="panel-section" aria-labelledby="prov-h">
+      <h2 class="panel-h" id="prov-h">Provenance</h2>
+      <dl class="facts">
+        <dt>actor</dt><dd>{{.Provenance.Actor}}{{if .Provenance.OnBehalfOf}} <span class="obo">on behalf of {{.Provenance.OnBehalfOf}}</span>{{end}}</dd>
+        <dt>channel</dt><dd>{{.Provenance.Channel}}</dd>
+        <dt>captured</dt><dd>{{.Provenance.Captured}}</dd>
+        {{if .Provenance.Expires}}<dt>expires</dt><dd data-provenance-expires>{{.Provenance.Expires}}</dd>{{end}}
+      </dl>
+    </section>
+
+    {{if .PanelFields}}
+    <section class="panel-section" aria-labelledby="type-h">
+      <h2 class="panel-h" id="type-h">{{.TypeLabel}}</h2>
+      <dl class="facts">
+        {{range .PanelFields}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    {{if .Details}}
+    <section class="panel-section" aria-labelledby="detail-h">
+      <h2 class="panel-h" id="detail-h">Details</h2>
+      <dl class="facts">
+        {{range .Details}}<dt>{{.Label}}</dt><dd class="mono">{{.Value}}</dd>{{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    {{if .Bundle}}
+    <section class="panel-section" aria-labelledby="contains-h">
+      <h2 class="panel-h" id="contains-h">Contains <span class="count">{{.Bundle.FileCount}}</span></h2>
+      <ul class="bundle-contains">
+        {{range .Bundle.Files}}
+        <li class="contains-row">
+          <span class="bundle-file-badge" aria-hidden="true">{{.Badge}}</span>
+          <span class="contains-name">{{.Name}}</span>
+          <span class="contains-meta">{{.Size}}{{if gt .Engagement 0}} · <span title="{{.Reactions}} reactions · {{.Comments}} comments">{{.Engagement}} ✦</span>{{end}}</span>
+        </li>
+        {{end}}
+      </ul>
+    </section>
+    {{end}}
+
+    {{if .Hook}}
+    <section class="panel-section" aria-labelledby="hook-h">
+      <h2 class="panel-h" id="hook-h">Endpoint</h2>
+      <dl class="facts">
+        <dt>ingress</dt><dd class="mono" data-hook-ingress>{{.Hook.IngressURL}}</dd>
+        <dt>capacity</dt><dd><span data-hook-total>{{.Hook.TotalCount}}</span> / {{.Hook.RequestCap}} requests</dd>
+      </dl>
+      {{if .Hook.StatusMix}}
+      <h3 class="panel-h hook-mix-h" id="hook-mix-h">Status mix</h3>
+      <div class="hook-mix-bar" role="img" aria-label="Response status distribution" data-hook-mix-bar>
+        {{range .Hook.StatusMix}}<span class="hook-mix-seg" data-class="{{.Class}}" data-pct="{{.Pct}}"></span>{{end}}
+      </div>
+      <ul class="hook-mix-legend" data-hook-mix-legend>
+        {{range .Hook.StatusMix}}<li data-class="{{.Class}}"><span class="swatch" data-class="{{.Class}}" aria-hidden="true"></span>{{.Class}} <span class="hook-mix-count">{{.Count}}</span></li>{{end}}
+      </ul>
+      {{end}}
+      <div class="hook-endpoint-react">{{template "reaction-cluster" .Hook.React}}</div>
+    </section>
+    {{end}}
+
+    {{if .CommentsSupported}}
+    <section class="panel-section" aria-labelledby="comments-h">
+      <h2 class="panel-h" id="comments-h">Comments <span class="count">{{.CommentCount}}</span></h2>
+      <div class="comments">
+        <div id="comment-list" class="comment-list" aria-live="polite">
+          {{range .Comments}}{{template "comment-item" .}}{{else}}<p class="comments-empty">No comments yet.</p>{{end}}
+        </div>
+        {{if .Authenticated}}
+        <form class="comment-composer" hx-post="/{{.ID}}/comments" hx-target="#comment-list" hx-swap="beforeend">
+          {{if .Bundle}}<input type="hidden" name="file" value="{{.Bundle.Active.Name}}" data-bundle-file>{{end}}
+          <label class="sr-only" for="comment-body">Add a comment</label>
+          <textarea id="comment-body" name="body" rows="2" placeholder="Add a comment…" required></textarea>
+          <div class="composer-foot">
+            <span class="composer-actor">as {{.Actor}}</span>
+            <button type="submit" class="comment-post-btn">Post</button>
+          </div>
+        </form>
+        {{else}}
+        <p class="comments-signedout"><a href="/login">Sign in</a> to comment.</p>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+  </aside>
+</main>
+
+{{template "footer" .}}
+</body>
+</html>{{end}}
+
+{{/* The generic-file viewer — the total-resolution floor every share type falls
+back to when no rich viewer is registered (#12). It carries the type glyph +
+badge, the title, size, media type, and sha256, plus a sniff-proof download for a
+bodied artifact. The glyph is static SVG markup (no script), so it needs nothing
+the shell CSP forbids. Governing: SPEC-0001 REQ "Type-Specific Body Slot",
+ADR-0002 (registry-resolved viewer). */}}
+{{define "file-card"}}
+<div class="generic-card" role="group" aria-label="File details">
+  <div class="file-head">
+    <span class="file-glyph" aria-hidden="true">
+      <svg width="34" height="42" viewBox="0 0 34 42" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 2h16l10 10v27a1.5 1.5 0 0 1-1.5 1.5h-24A1.5 1.5 0 0 1 3 39V3.5A1.5 1.5 0 0 1 4 2z" fill="#0F1319" stroke="#23262E" stroke-width="1.5"/>
+        <path d="M20 2v10h10" stroke="#23262E" stroke-width="1.5" fill="none"/>
+      </svg>
+    </span>
+    <span class="file-badge">{{.Badge}}</span>
+  </div>
+  <h1 class="generic-title">{{.Title}}</h1>
+  <dl class="file-facts">
+    {{if .Size}}<dt>size</dt><dd>{{.Size}}</dd>{{end}}
+    {{if .MediaType}}<dt>type</dt><dd>{{.MediaType}}</dd>{{end}}
+    {{if .SHA256}}<dt>sha256</dt><dd class="mono" title="{{.SHA256Full}}">{{.SHA256}}</dd>{{end}}
+  </dl>
+  {{if .HasDownload}}
+  <a class="download-btn" href="{{.DownloadURL}}" rel="nofollow" download>Download</a>
+  <p class="generic-note">No inline preview for this type yet — a viewer arrives in a later story. The body downloads as an attachment (never rendered inline) and is verifiable against the sha256 above.</p>
+  {{else}}
+  <p class="generic-note">This share type has no single downloadable body; its rich viewer arrives in a later story.</p>
+  {{end}}
+</div>
+{{end}}
+
+{{/* The bundle viewer (SPEC-0003 REQ "Bundle Viewer", #19): a 196px file rail +
+a pane, split inside the shell's body slot. The rail is a vertical tablist whose
+items are real links to `/{id}?file=<name>` (so a no-JS reader navigates member
+to member with a full render) enhanced with HTMX to swap only the pane; bundle.js
+layers on the roving-tabindex keyboard nav and moves focus to the pane on switch.
+The pane is a tabpanel labelled by the active file, announced polite on swap.
+Governing: SPEC-0003 (Bundle Viewer, a11y), ADR-0011 (server-rendered + HTMX). */}}
+{{define "bundle-viewer"}}
+<div class="bundle-viewer" data-bundle-viewer data-bundle-id="{{.ID}}">
+  <nav class="bundle-rail" aria-label="Bundle files">
+    <p class="bundle-rail-head">{{.FileCount}} FILE{{if ne .FileCount 1}}S{{end}} · {{.TotalSize}}</p>
+    <ul class="bundle-rail-list" role="tablist" aria-orientation="vertical" aria-label="Bundle member files">
+      {{range .Files}}
+      <li role="presentation">
+        <a class="bundle-file{{if .Active}} bundle-file-active{{end}}"
+           id="{{.TabID}}" role="tab"
+           href="{{.ShellURL}}"
+           hx-get="{{.PaneURL}}" hx-target="#bundle-pane" hx-swap="innerHTML" hx-push-url="{{.ShellURL}}"
+           aria-selected="{{if .Active}}true{{else}}false{{end}}"
+           aria-controls="bundle-pane"
+           tabindex="{{if .Active}}0{{else}}-1{{end}}"
+           data-file-name="{{.Name}}" data-reactions="{{.Reactions}}" data-comments="{{.Comments}}">
+          <span class="bundle-file-badge" aria-hidden="true">{{.Badge}}</span>
+          <span class="bundle-file-name">{{.Name}}</span>
+          <span class="bundle-file-meta"><span class="sr-only">{{.Badge}} file, </span>{{.Size}}{{if gt .Engagement 0}} <span class="bundle-file-count" title="{{.Reactions}} reactions · {{.Comments}} comments" aria-label="{{.Engagement}} annotations">{{.Engagement}}</span>{{end}}</span>
+        </a>
+      </li>
+      {{end}}
+    </ul>
+  </nav>
+  <section id="bundle-pane" class="bundle-pane" role="tabpanel" tabindex="-1" aria-labelledby="{{.Active.TabID}}" aria-live="polite">
+    {{template "bundle-pane" .ActivePane}}
+  </section>
+</div>
+{{end}}
+
+{{/* One member's pane content — a delegated rich viewer fragment (markdown) or
+the generic-file card floor for a non-previewable member. Returned standalone by
+`GET /{id}/pane/<name>` for an HTMX swap and embedded on first render inside
+#bundle-pane. Governing: SPEC-0003 (delegate the member back through the
+registry; non-md members degrade to the file card). */}}
+{{define "bundle-pane"}}
+<div class="member-pane" data-member="{{.Name}}" data-member-badge="{{.Badge}}">
+  {{if .Body}}{{.Body}}{{else if .Card}}{{template "file-card" .Card}}{{end}}
+</div>
+{{end}}
