@@ -277,9 +277,11 @@ export function assertNoEditUrl(config, label = 'docusaurus.config.ts') {
  * awaits the record generator before it resolves. A CLI run without the origin
  * does not fail safe — every page carries a self-referential
  * `<link rel="canonical" href="https://…">` back to itself, so the scan would
- * report one violation per page and bury the one link that matters. (The
- * matching `og:url` is a `<meta content=…>`, which the attribute scanner below
- * does not read; canonical is the emitter that actually forces this.)
+ * report one violation per page and bury the one link that matters. The
+ * matching `og:url` is a `<meta content=…>`, and `content` IS in URL_ATTR
+ * above — a test in this file's suite asserts a forge URL cannot hide in a meta
+ * tag — so it would report one violation per page too. Both emitters force
+ * this, not canonical alone.
  *
  * `postBuild` receives `outDir` and `siteConfig` already resolved, which is why
  * the plugin in website/plugins/link-guard/ is the only caller. CI needs no

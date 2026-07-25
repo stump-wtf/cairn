@@ -524,7 +524,7 @@ table { display: table; width: 100%; }
 
 /* The breadcrumb is a route — `docs / decisions / ADR-0009` — which is machine
    content, so it is mono and quiet. --cairn-muted measures 7.55:1 on the ink
-   ground and 6.34:1 on paper, so the small size is safe (SPEC-0010 REQ
+   ground and 6.14:1 on paper, so the small size is safe (SPEC-0010 REQ
    "Contrast"); the current document takes the full text colour because it is
    the one item that is not a link. */
 .theme-doc-breadcrumbs { margin-bottom: 1.5rem; }
