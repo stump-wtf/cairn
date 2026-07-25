@@ -574,10 +574,13 @@ table { display: table; width: 100%; }
 /* -- The specs index: one card per capability directory ------------------- */
 
 /*
- * The cards are a `ul`, so the marker has to go explicitly; `list-style: none`
- * on its own strips the list semantics in Safari/VoiceOver, which is why the
- * `li` keeps a `list-item` display role rather than becoming a flex/grid item
- * of some other type.
+ * The cards are a `ul`, so the marker has to go explicitly. Two rules here
+ * cost the list its semantics in Safari/VoiceOver: `list-style: none` just
+ * below, and the flex column on `.cairn-record-card`, which takes the `li` off
+ * `display: list-item`. Both are wanted, so the semantics go back on the
+ * element rather than being worked around in CSS — `indexes.tsx` gives the
+ * `ul` an explicit `role="list"`. Nothing in this section is a mitigation for
+ * that; removing the role reintroduces the bug.
  *
  * `min(100%, 22rem)` rather than a bare `22rem`: `auto-fill` with a track
  * minimum wider than the container overflows the page on a phone, and the

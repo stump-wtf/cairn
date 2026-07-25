@@ -73,7 +73,16 @@ export function DecisionIndex(): ReactNode {
  */
 export function SpecIndex(): ReactNode {
   return (
-    <ul className="cairn-record-cards">
+    // Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics"
+    //
+    // `role="list"` on a `ul` is redundant on paper and load-bearing in
+    // practice. custom.css styles this list with `list-style: none` and lays
+    // each card out as a flex column; the first makes Safari/VoiceOver drop
+    // the list semantics, and the second takes the `li` off `display:
+    // list-item` so a marker cannot bring them back. Without the explicit
+    // role the index is announced as a run of loose blocks rather than as a
+    // list with a countable number of specifications in it.
+    <ul className="cairn-record-cards" role="list">
       {specs.map((spec) => (
         <li key={spec.id} className="cairn-record-card">
           <h3>
