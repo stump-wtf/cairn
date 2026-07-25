@@ -89,9 +89,28 @@ const NUMBER_THEN_NOUN = new RegExp(
   'gi',
 );
 
-/** `Decisions: 14`, `decisions 14`, `Requirements — 132`. */
+/**
+ * Punctuation that reads as "…and its count is": a colon, a table-cell wall, a
+ * dash of either width, a bullet. The cell wall matters more than it looks —
+ * `| Requirements | 219 |` is the `specifications.md` defect this gate exists
+ * for, written as a table instead of a sentence.
+ *
+ * The comma and the sentence enders are deliberately absent, because
+ * "…meets the requirements. 3 of them failed" is two sentences, not a claim,
+ * and a gate that fires on prose gets deleted.
+ */
+const COUNT_SEPARATOR = '[:|—–•·]';
+
+/**
+ * `Decisions: 14`, `decisions 14`, `Requirements — 132`, `| Requirements | 219 |`.
+ *
+ * The ASCII hyphen is handled apart from the rest and only with whitespace on
+ * at least one side, because it is also how the record spells an id: an
+ * unguarded `-` turns every mention of `SPEC-0010` into a claim about 10
+ * specifications.
+ */
 const NOUN_THEN_NUMBER = new RegExp(
-  `${RECORD_NOUN}\\s*[:—–-]?\\s+(\\d{1,4})(?![\\w.%-])`,
+  `${RECORD_NOUN}(?:\\s*${COUNT_SEPARATOR}\\s*|\\s+-?\\s*|\\s*-\\s+)(\\d{1,4})(?![\\w.%-])`,
   'gi',
 );
 

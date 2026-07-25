@@ -200,6 +200,39 @@ describe('narrative documentation pages', () => {
     assert.match(message!, /docs\/overview\.md:3/);
   });
 
+  it('fails on a count stated as a markdown table row, not only as a sentence', async () => {
+    // The same defect one syntax away: a cell wall between the noun and the
+    // number hides the claim from a separator class that only knows about
+    // colons and dashes.
+    const message = await check(
+      'docs/metrics.md',
+      [
+        '# Metrics',
+        '',
+        '| Metric | Count |',
+        '| --- | --- |',
+        '| Requirements | 219 |',
+        '| Scenarios | 359 |',
+        '',
+      ].join('\n'),
+    );
+    assert.ok(message, 'expected a failure');
+    assert.match(message!, /2 hardcoded record counts/);
+    assert.match(message!, /docs\/metrics\.md:5/);
+    assert.match(message!, /docs\/metrics\.md:6/);
+  });
+
+  it('passes a record id, whose hyphen is not a separator', async () => {
+    // `SPEC-0010` must not read as "10 specifications". This is the reason the
+    // hyphen is admitted only with whitespace around it, and the record's own
+    // narrative pages name ids constantly.
+    const message = await check(
+      'docs/ids.md',
+      '# Ids\n\nADR-0014 is implemented by SPEC-0010, which requires SPEC-0004.\n',
+    );
+    assert.equal(message, null);
+  });
+
   it('leaves the STAGED record alone — a decision may discuss its own numbering', async () => {
     // The staged trees are the record's own text. ADR-0014 itself says "it ends
     // at ADR-0012"; publishing that sentence is the product, not a defect.
