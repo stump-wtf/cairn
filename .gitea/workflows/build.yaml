@@ -98,7 +98,14 @@ jobs:
     env:
       ANSIBLE_FORCE_COLOR: 'true'
       DOCKER_TIMEOUT: 600
-      VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+      # AppRole rather than a static token. A static VAULT_TOKEN in a repo secret
+      # cannot re-authenticate: it dies at max-TTL and takes every subsequent
+      # deploy with it, silently — the 2026-07-01 vault-agent OMG, repeated in CI.
+      # The runner logs in per run and exports a short-lived token scoped to
+      # secret/data/cloud01/* only (policy deploy-cloud01). Requires
+      # ansible-runner >= v2.
+      VAULT_ROLE_ID: ${{ secrets.VAULT_ROLE_ID }}
+      VAULT_SECRET_ID: ${{ secrets.VAULT_SECRET_ID }}
     steps:
       - name: Checkout stumpcloud/ansible (playbooks + inventory)
         uses: actions/checkout@v4
@@ -117,7 +124,7 @@ jobs:
           username: joestump-agent
           password: ${{ secrets.GIT_AUTH_TOKEN }}
       - name: Deploy Cairn to cloud01
-        uses: https://gitea.stump.rocks/stumpcloud/ansible-runner@v1
+        uses: https://gitea.stump.rocks/stumpcloud/ansible-runner@v2
         with:
           playbook: playbooks/services/cairn.yaml
           inventory: gva.yaml
