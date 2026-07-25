@@ -7,7 +7,7 @@
     "start": "docusaurus start",
     "lint:tokens": "node scripts/check-tokens.mjs",
     "test:tokens": "node --test scripts/check-tokens.test.mjs",
-    "test": "npm run test:tokens",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"plugins/record/__tests__/*.test.ts\" \"scripts/*.test.mjs\"",
     "build": "docusaurus build",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
@@ -16,8 +16,7 @@
     "write-translations": "docusaurus write-translations",
     "write-heading-ids": "docusaurus write-heading-ids",
     "typecheck": "npm run generate && tsc",
-    "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./plugins/record/cli.ts",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"plugins/record/__tests__/*.test.ts\""
+    "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./plugins/record/cli.ts"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.1",
