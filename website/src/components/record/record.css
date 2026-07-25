@@ -122,8 +122,15 @@
 /* The row header holds a decision's TITLE, which a human wrote, so it takes the
    sans face back off the token layer's `table th` rule — that rule is there to
    set column headings, which are labels, in mono. REQ "Typographic Roles". The
-   id inside it stays machine content and stays mono, as `code`. */
-.cairn-record-index tbody th {
+   id inside it stays machine content and stays mono, as `code`.
+
+   The `table` qualifier is load-bearing and not decoration. Without it this
+   selector and `custom.css`'s `.theme-doc-markdown table th` are both (0,1,2),
+   so which one wins is decided by the order the two stylesheets happen to land
+   in the emitted bundle — and a chunking change would silently flip every
+   decision title to mono. Naming the element makes it (0,1,3) and settles it on
+   specificity, which nothing downstream can reorder. */
+table.cairn-record-index tbody th {
   font-family: var(--cairn-font-sans);
   font-size: inherit;
   font-weight: 400;
@@ -250,12 +257,21 @@
   text-decoration: none;
 }
 
-/* An inbound chip is one the pipeline computed rather than one an author wrote.
-   The direction is stated in words by the group label above it; the dashed edge
-   is a second, non-textual cue for the same fact and carries nothing on its
-   own, which is why it is allowed to be quiet. */
+/* An inbound chip points back at this record from another one. The direction is
+   stated in words by the group label above it; the dashed edge is a second,
+   non-textual cue for the same fact and carries nothing on its own, which is
+   why it is allowed to be quiet.
+
+   A `related` chip is neither: the edge is symmetric, and `graph.ts` sorts its
+   endpoints, so the bucket mixes ids this record named with ids that named it.
+   It gets its own quiet edge rather than the solid one, which would assert the
+   outbound direction — and the author-written reading — that a symmetric edge
+   does not have. */
 .cairn-record-chip[data-direction='inbound'] {
   border-style: dashed;
+}
+.cairn-record-chip[data-direction='mutual'] {
+  border-style: dotted;
 }
 
 .cairn-record-chip__id {
