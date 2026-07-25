@@ -19,11 +19,17 @@
 
 import {
   RECORD_COMPONENTS,
+  attribute,
+  jsxFlowElement,
   literaliseRawHtml,
   structureRequirements,
   wrapRfc2119Keywords,
 } from './mdast.ts';
-import {createRecordPaths, isStagedRecordFile} from './paths.ts';
+import {
+  createRecordPaths,
+  isStagedRecordFile,
+  recordDetailDocId,
+} from './paths.ts';
 
 export interface RemarkRecordOptions {
   /** The Docusaurus siteDir; the staged trees are resolved from it. */
@@ -32,6 +38,19 @@ export interface RemarkRecordOptions {
 
 /** Where the record components live. One module, one injected import. */
 export const RECORD_COMPONENTS_MODULE = '@site/src/components/record';
+
+// Governing: ADR-0014, SPEC-0010 REQ "Derived Cross-Reference Graph"
+/**
+ * The metadata bar, imported from its own module and only onto record DETAIL
+ * pages.
+ *
+ * It is kept out of `RECORD_COMPONENTS_MODULE` because that module is imported
+ * by every staged page, index pages included, and this one reaches the derived
+ * data module. Splitting them keeps the derived data on the routes that render
+ * a record and off the ones that do not.
+ */
+export const RECORD_META_MODULE = '@site/src/components/record/meta';
+export const RECORD_META_COMPONENT = 'RecordMeta';
 
 /**
  * Build the `mdxjsEsm` node that brings the record components into scope.
@@ -48,9 +67,9 @@ export const RECORD_COMPONENTS_MODULE = '@site/src/components/record';
  * (`@docusaurus/mdx-loader/lib/processor.js`), so it survives to `recmaDocument`
  * and becomes a real top-level import.
  */
-async function createComponentImport(): Promise<any> {
+async function createImport(names: readonly string[], module: string): Promise<any> {
   const {parse} = await import('acorn');
-  const value = `import {${RECORD_COMPONENTS.join(', ')}} from '${RECORD_COMPONENTS_MODULE}';`;
+  const value = `import {${names.join(', ')}} from '${module}';`;
   const estree = parse(value, {
     ecmaVersion: 'latest',
     sourceType: 'module',
@@ -79,9 +98,39 @@ export default function remarkRecord(options: RemarkRecordOptions) {
     await structureRequirements(tree);
     wrapRfc2119Keywords(tree);
 
+    // Governing: ADR-0014, SPEC-0010 REQ "Derived Cross-Reference Graph"
+    //
+    // The metadata bar goes AFTER the document's `# ` heading, and that position
+    // is load-bearing twice over. Docusaurus reads the first heading of a
+    // document as its `contentTitle` and suppresses its own `<h1>` when it finds
+    // one, so a node inserted ahead of the heading would give every record page
+    // two titles. And a bar that carries a record's status, date and graph reads
+    // as a caption on the title, not as an introduction to it.
+    const detailDocId = recordDetailDocId(paths, file?.path);
+    if (detailDocId) {
+      const heading = tree.children.findIndex(
+        (node: any) => node.type === 'heading' && node.depth === 1,
+      );
+      tree.children.splice(
+        heading === -1 ? tree.children.length : heading + 1,
+        0,
+        jsxFlowElement(
+          RECORD_META_COMPONENT,
+          [attribute('docId', detailDocId)],
+          [],
+        ),
+      );
+    }
+
     // After the front-matter node, not before it: the `yaml` node is inert by
-    // the time we see it, but keeping it first keeps the tree honest.
+    // the time we see it, but keeping it first keeps the tree honest. Both
+    // imports are spliced last, so the heading index computed above is not
+    // shifted out from under the bar.
     const insertAt = tree.children[0]?.type === 'yaml' ? 1 : 0;
-    tree.children.splice(insertAt, 0, await createComponentImport());
+    const imports = [await createImport(RECORD_COMPONENTS, RECORD_COMPONENTS_MODULE)];
+    if (detailDocId) {
+      imports.push(await createImport([RECORD_META_COMPONENT], RECORD_META_MODULE));
+    }
+    tree.children.splice(insertAt, 0, ...imports);
   };
 }

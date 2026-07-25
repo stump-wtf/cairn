@@ -1,0 +1,286 @@
+/**
+ * The record's own chrome: the generated indexes, the status badge, and the
+ * detail-page metadata bar with its traceability chips.
+ *
+ * Governing: ADR-0014 (the public site is the design record),
+ *            SPEC-0010 REQ "Generated Decisions Tree",
+ *            SPEC-0010 REQ "Derived Status, Dates, and Counts",
+ *            SPEC-0010 REQ "Derived Cross-Reference Graph"
+ *
+ * This file declares NO colour. Every value below is a token from
+ * `src/css/custom.css`, which is the only file on the site allowed to hold a
+ * colour literal; `scripts/check-tokens.mjs` fails the build at config load if
+ * that stops being true.
+ *
+ * Why a plain stylesheet rather than a CSS module: these class names are a
+ * contract. `cairn-record-*` is what the record components render, what the
+ * pipeline's `data-*` attributes are selected alongside, and what the token
+ * layer can reach if it ever needs to. A hashed module class would be private to
+ * one component and could not be styled from the token layer at all. It is
+ * imported once, from `./status`, so it loads on the routes that render record
+ * chrome and nowhere else.
+ *
+ * Typography follows the rule the record states: a human wrote the titles and
+ * the summaries, so they are sans; ids, dates, counts and labels are machine
+ * content, so they are mono.
+ */
+
+/* ==========================================================================
+   1. Status badge — REQ "Derived Status, Dates, and Counts".
+
+      The badge composites its accent at 12 % over the INK ramp in both colour
+      modes, exactly as `.chip` does in the token layer, because it renders an
+      accent as text: the accents clear 4.5:1 on that composite and none of them
+      clears it on a white ground — REQ "Category Accents Are Dark-Ground Text
+      Colours".
+
+      Colour is never the only carrier. The status is spelled out as text, and
+      `--status-mark` gives each status a distinct glyph, so the six remain
+      distinguishable in monochrome. Anything the front-matter validator does
+      not recognise falls through to the neutral default and a bare dot rather
+      than borrowing another status's colour.
+   ========================================================================== */
+.cairn-record-status {
+  --status-accent: var(--cairn-accent-neutral);
+  --status-ground: var(--cairn-ink-100);
+  --status-mark: '·';
+
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4em;
+  padding: 1px 8px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--status-accent) 40%, var(--status-ground));
+  background: color-mix(in srgb, var(--status-accent) 12%, var(--status-ground));
+  color: var(--status-accent);
+  font-family: var(--cairn-font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.cairn-record-status__mark::before {
+  content: var(--status-mark);
+}
+
+.cairn-record-status[data-status='accepted'] {
+  --status-accent: var(--cairn-accent-success);
+  --status-mark: '✓';
+}
+.cairn-record-status[data-status='proposed'] {
+  --status-accent: var(--cairn-accent-warning);
+  --status-mark: '◇';
+}
+.cairn-record-status[data-status='draft'] {
+  --status-accent: var(--cairn-accent-info);
+  --status-mark: '○';
+}
+.cairn-record-status[data-status='rejected'] {
+  --status-accent: var(--cairn-accent-danger);
+  --status-mark: '✕';
+}
+.cairn-record-status[data-status='deprecated'] {
+  --status-accent: var(--cairn-accent-warning);
+  --status-mark: '⌧';
+}
+.cairn-record-status[data-status='superseded'] {
+  --status-accent: var(--cairn-accent-neutral);
+  --status-mark: '↦';
+}
+
+/* ==========================================================================
+   2. The generated decision index — REQ "Generated Decisions Tree".
+
+      One row per `docs/adrs/ADR-*.md`, and every cell in it derived. The layout
+      gives the two machine columns exactly the width they need and lets the
+      title take the rest, so a row reads as `id · title · status · date` at any
+      width the doc column offers.
+   ========================================================================== */
+.cairn-record-index {
+  margin-bottom: 2rem;
+  font-size: 0.95rem;
+}
+
+.cairn-record-index caption {
+  caption-side: top;
+  padding: 0 0 0.6rem;
+  text-align: left;
+  color: var(--cairn-muted);
+  font-family: var(--cairn-font-mono);
+  font-size: 0.78rem;
+}
+
+/* The status and date cells are as narrow as their content; the row header —
+   the id and the title — absorbs what is left. */
+.cairn-record-index td {
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+/* The row header holds a decision's TITLE, which a human wrote, so it takes the
+   sans face back off the token layer's `table th` rule — that rule is there to
+   set column headings, which are labels, in mono. REQ "Typographic Roles". The
+   id inside it stays machine content and stays mono, as `code`.
+
+   The `table` qualifier is load-bearing and not decoration. Without it this
+   selector and `custom.css`'s `.theme-doc-markdown table th` are both (0,1,2),
+   so which one wins is decided by the order the two stylesheets happen to land
+   in the emitted bundle — and a chunking change would silently flip every
+   decision title to mono. Naming the element makes it (0,1,3) and settles it on
+   specificity, which nothing downstream can reorder. */
+table.cairn-record-index tbody th {
+  font-family: var(--cairn-font-sans);
+  font-size: inherit;
+  font-weight: 400;
+  letter-spacing: normal;
+  vertical-align: baseline;
+}
+
+.cairn-record-index tbody th a {
+  color: var(--cairn-text);
+  text-decoration: none;
+}
+.cairn-record-index tbody th a:hover {
+  color: var(--ifm-link-color);
+  text-decoration: none;
+}
+.cairn-record-index tbody th a code {
+  margin-right: 0.5em;
+}
+
+.cairn-record-index time {
+  font-family: var(--cairn-font-mono);
+  font-size: 0.78rem;
+  color: var(--cairn-muted);
+}
+
+/* ==========================================================================
+   3. The detail-page metadata bar — REQ "Derived Cross-Reference Graph".
+
+      Sits directly under the record's title and carries its status, its date,
+      its derived counts where it has them, and both directions of its graph.
+   ========================================================================== */
+.cairn-record-meta {
+  display: grid;
+  gap: 1rem;
+  margin: 0 0 2rem;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid var(--cairn-border);
+  border-radius: var(--ifm-global-radius);
+  background: var(--cairn-elevated);
+}
+
+.cairn-record-meta dl {
+  margin: 0;
+}
+
+.cairn-record-meta dd {
+  margin: 0;
+}
+
+.cairn-record-meta .cairn-label {
+  color: var(--cairn-muted);
+}
+
+/* The facts row: label above value, wrapping as a whole rather than orphaning
+   a value from its label. */
+.cairn-record-meta__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.8rem;
+}
+
+.cairn-record-fact {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.cairn-record-meta__date,
+.cairn-record-meta__count {
+  font-family: var(--cairn-font-mono);
+  font-size: 0.86rem;
+  color: var(--cairn-text);
+}
+
+/* The graph: one labelled row per relation bucket. */
+.cairn-record-meta__graph {
+  display: grid;
+  gap: 0.55rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--cairn-border);
+}
+
+.cairn-record-meta__group {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, max-content) 1fr;
+  gap: 0.3rem 1rem;
+  align-items: baseline;
+}
+
+@media (max-width: 720px) {
+  .cairn-record-meta__group {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cairn-record-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A traceability chip. Its colours are surface roles, not category accents: it
+   names a record, not a span category, and borrowing an accent here would imply
+   a category the chip does not have. */
+.cairn-record-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5em;
+  max-width: 100%;
+  padding: 2px 10px;
+  border: 1px solid var(--cairn-border);
+  border-radius: 999px;
+  background: var(--cairn-surface-2);
+  color: var(--cairn-text);
+  font-size: 0.86rem;
+  text-decoration: none;
+}
+
+.cairn-record-chip:hover {
+  border-color: var(--ifm-link-color);
+  color: var(--ifm-link-color);
+  text-decoration: none;
+}
+
+/* An inbound chip points back at this record from another one. The direction is
+   stated in words by the group label above it; the dashed edge is a second,
+   non-textual cue for the same fact and carries nothing on its own, which is
+   why it is allowed to be quiet.
+
+   A `related` chip is neither: the edge is symmetric, and `graph.ts` sorts its
+   endpoints, so the bucket mixes ids this record named with ids that named it.
+   It gets its own quiet edge rather than the solid one, which would assert the
+   outbound direction — and the author-written reading — that a symmetric edge
+   does not have. */
+.cairn-record-chip[data-direction='inbound'] {
+  border-style: dashed;
+}
+.cairn-record-chip[data-direction='mutual'] {
+  border-style: dotted;
+}
+
+.cairn-record-chip__id {
+  font-size: 0.76rem;
+  color: var(--cairn-muted);
+}
+
+.cairn-record-chip__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
