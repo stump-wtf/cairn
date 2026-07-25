@@ -65,6 +65,15 @@ console.log(assertA11y().summary);
  * by a dependency rather than part of the site palette, and they are built for
  * exactly this ground.
  */
+const cairnPrismTheme = {
+  ...prismThemes.vsDark,
+  plain: {
+    ...prismThemes.vsDark.plain,
+    color: 'var(--cairn-code-fg)',
+    backgroundColor: 'var(--cairn-code-bg)',
+  },
+};
+
 /**
  * Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics", scenario
  * "Generated page heading order".
@@ -83,7 +92,7 @@ console.log(assertA11y().summary);
  * reason the others are config-load assertions — `npx docusaurus build` routes
  * around `npm run build`, but it cannot route around a registered plugin.
  */
-function cairnRenderedA11yPlugin(): Plugin<void> {
+function cairnRenderedA11yPlugin(): Plugin {
   return {
     name: 'cairn-rendered-a11y',
     async postBuild({outDir}) {
@@ -96,15 +105,6 @@ function cairnRenderedA11yPlugin(): Plugin<void> {
     },
   };
 }
-
-const cairnPrismTheme = {
-  ...prismThemes.vsDark,
-  plain: {
-    ...prismThemes.vsDark.plain,
-    color: 'var(--cairn-code-fg)',
-    backgroundColor: 'var(--cairn-code-bg)',
-  },
-};
 
 const config: Config = {
   title: 'Cairn',
@@ -140,11 +140,13 @@ const config: Config = {
     },
   },
 
-  // Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics"
+  // Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics",
+  //            SPEC-0010 REQ "Dynamic Content Regions"
   // The on-this-page column is the one required landmark theme-classic does not
-  // render; `clientModules` gives it a `navigation` role without spending the
-  // capability's single theme-wrap budget. See the module for the trade-off.
-  clientModules: ['./src/clientModules/tocLandmark.ts'],
+  // render, and below 997px its collapse button ships no `aria-expanded`.
+  // `clientModules` fixes both without spending the capability's single
+  // theme-wrap budget. See the module for the trade-off.
+  clientModules: ['./src/clientModules/tocAccessibility.ts'],
 
   plugins: [
     // Governing: ADR-0014, SPEC-0010 REQ "Record Content Pipeline"
