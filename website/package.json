@@ -21,6 +21,7 @@
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./plugins/record/cli.ts"
   },
   "dependencies": {
+    "@babel/parser": "^8.0.4",
     "@docusaurus/core": "3.10.1",
     "@docusaurus/faster": "3.10.1",
     "@docusaurus/preset-classic": "3.10.1",
@@ -33,7 +34,6 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@babel/parser": "^8.0.4",
     "@docusaurus/module-type-aliases": "3.10.1",
     "@docusaurus/tsconfig": "3.10.1",
     "@docusaurus/types": "3.10.1",
