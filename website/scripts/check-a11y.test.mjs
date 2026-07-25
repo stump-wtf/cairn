@@ -188,10 +188,49 @@ test('a `transform: none` outside the reduced-motion block does not satisfy the 
   const {status, out} = run(root);
   assert.equal(status, 1);
   assert.match(out, /moves on hover/);
-  assert.match(out, /no `transform: none` inside its/);
+  assert.match(out, /no `transform: none` for that selector inside its/);
+});
+
+test('a second animated selector in an already-guarded file is still caught', () => {
+  /* The guard is per SELECTOR, not per file. Asking only "does some
+     `transform: none` exist under reduced motion?" passes the moment ONE
+     selector is neutralised, so every selector added afterwards rode in free
+     while the summary reported the guards all in place. */
+  const {root, tileFile} = fixture();
+  appendFileSync(tileFile, '\n.dot:hover { transform: scale(1.4); }\n');
+  const {status, out} = run(root);
+  assert.equal(status, 1);
+  assert.match(out, /`\.dot:hover` moves on hover/);
 });
 
 /* --------------------------------------------------- the documented ratios */
+
+test('an @ratio written at another precision is re-derived, not skipped', () => {
+  /* The pattern used to require exactly two decimals, and `quotedRatios`
+     counted MATCHES rather than assertions — so an assertion in any other form
+     silently became unchecked documentation while the summary still claimed
+     every one had been re-derived. */
+  const {root, tokenFile} = fixture();
+  edit(
+    tokenFile,
+    '@ratio light --ifm-color-primary on --cairn-paper-0   = 5.52:1',
+    '@ratio light --ifm-color-primary on --cairn-paper-0   = 99.999:1',
+  );
+  const {status, out} = run(root);
+  assert.equal(status, 1);
+  assert.match(out, /99\.999:1/);
+});
+
+test('a malformed hex token fails instead of being measured as another colour', () => {
+  /* `#[0-9a-f]{3,8}` accepted five- and seven-digit values and parseHex then
+     sliced them into an unrelated colour, so a dropped digit was reported as a
+     PASSING ratio for a colour that appears nowhere on the site — while the
+     browser drops the declaration entirely. */
+  const {root, tokenFile} = fixture();
+  edit(tokenFile, '#5c626c', '#5c626');
+  const {status} = run(root);
+  assert.equal(status, 1);
+});
 
 test('a quoted @ratio that no longer matches the tokens fails', () => {
   const {root, tokenFile} = fixture();

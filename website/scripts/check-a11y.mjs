@@ -86,8 +86,26 @@ const BANNED_LITERAL = '#565e6e';
 
 /* -------------------------------------------------------------- colour maths */
 
+/**
+ * The lengths CSS actually defines: #rgb, #rgba, #rrggbb, #rrggbbaa. Anything
+ * else is not a colour, and saying so is the point.
+ *
+ * A permissive `{3,8}` let a typo through as a DIFFERENT colour rather than as
+ * an error: `#5c626` (a dropped digit) sliced to '5c','62','6' → rgb(92,98,6),
+ * a dark olive that appears nowhere on the site, and the checker reported it
+ * passing at 6.55:1. The browser meanwhile treats the value as invalid at
+ * computed-value time and drops the declaration entirely, so every element
+ * using it renders an unrelated inherited colour — the guard certifying a
+ * surface it was not measuring. check-tokens.mjs already restricts its HEX_RE
+ * to these lengths for exactly this reason.
+ */
+const HEX_RE = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
 function parseHex(hex) {
   let h = hex.replace('#', '');
+  if (!HEX_RE.test(hex)) {
+    throw new Error(`${hex} is not a valid CSS hex colour`);
+  }
   if (h.length === 3 || h.length === 4) h = [...h.slice(0, 3)].map((c) => c + c).join('');
   return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
 }
@@ -143,7 +161,7 @@ function makeResolver(decls, mode) {
     seen.add(name);
     const value = vars.get(name);
     if (!value) return null;
-    if (/^#[0-9a-fA-F]{3,8}$/.test(value)) return value.toLowerCase();
+    if (HEX_RE.test(value)) return value.toLowerCase();
     const m = value.match(/^var\(\s*(--[\w-]+)\s*\)$/);
     return m ? resolve(m[1], seen) : null;
   };
@@ -364,18 +382,32 @@ export function checkA11y({root = DEFAULT_WEBSITE} = {}) {
      * declaration INSIDE the reduced-motion block? A `transform: none` sitting
      * anywhere else in the file — a reset, a base state, another media query —
      * says nothing about what happens when a reader asks for less motion.
+     *
+     * Matched PER SELECTOR, not per file. A file-level "does some `transform:
+     * none` exist under reduced motion?" test passes the moment ONE selector is
+     * guarded, so adding a second animated selector to an already-guarded
+     * stylesheet was silently accepted: `.tile:hover` neutralised, and a new
+     * `.dot:hover { transform: scale(1.4) }` still jumping 40% larger for a
+     * reader who asked for less motion, while the checker printed
+     * "reduced-motion guards … all in place".
      */
-    const neutralised = parseDeclarations(css).some(
+    const neutralisers = parseDeclarations(css).filter(
       (d) =>
         d.prop === 'transform' &&
         d.value === 'none' &&
         /prefers-reduced-motion\s*:\s*reduce/i.test(d.chain),
     );
-    if (!guard || !neutralised) {
+    for (const moving of hoverTransforms) {
+      const neutralised = neutralisers.some((d) =>
+        d.chain.includes(moving.selector),
+      );
+      if (guard && neutralised) continue;
+      // One failure per unneutralised selector: reporting only hoverTransforms[0]
+      // hid the second and third offender in the same file.
       fail(
-        `${rel(file)}:${hoverTransforms[0].line}: \`${hoverTransforms[0].selector}\` moves on ` +
-          `hover (\`transform: ${hoverTransforms[0].value}\`) but this file has ` +
-          `${guard ? 'no `transform: none` inside its' : 'no'} ` +
+        `${rel(file)}:${moving.line}: \`${moving.selector}\` moves on ` +
+          `hover (\`transform: ${moving.value}\`) but this file has ` +
+          `${guard ? `no \`transform: none\` for that selector inside its` : 'no'} ` +
           `\`prefers-reduced-motion: reduce\` guard. The global guard damps the transition ` +
           `and leaves the movement — SPEC-0010 REQ "WCAG 2.1 AA & Semantics", scenario ` +
           `"Reduced motion honoured".`,
@@ -398,8 +430,28 @@ export function checkA11y({root = DEFAULT_WEBSITE} = {}) {
    * comment. The documentation is then not a description of the token layer —
    * it is a test of it.
    */
+  /*
+   * The ratio group accepts any precision, not exactly two decimals. Requiring
+   * `\d+\.\d{2}` meant a mistyped assertion simply did not match, and since
+   * `quotedRatios` counts MATCHES rather than `@ratio` occurrences, the miss was
+   * invisible: `@ratio dark --cairn-text on --cairn-bg = 99.999:1` sat in the
+   * file as unchecked documentation while the summary still reported every
+   * assertion re-derived. A claim this mechanism cannot read is exactly the
+   * drift it exists to prevent, so it is now an error rather than a skip.
+   */
   const RATIO_RE =
-    /@ratio\s+(light|dark)\s+(--[\w-]+)\s+on\s+(--[\w-]+)\s*=\s*(\d+\.\d{2}):1/g;
+    /@ratio\s+(light|dark)\s+(--[\w-]+)\s+on\s+(--[\w-]+)\s*=\s*(\d+(?:\.\d+)?):1/g;
+
+  /*
+   * An ATTEMPTED assertion: `@ratio` opening a line and naming a real mode.
+   * Both halves matter. The section also documents its own format —
+   * `@ratio <light|dark> <foreground-token> on <background-token> = N.NN:1` —
+   * and mentions "the `@ratio` lines" in prose; a bare count of `@ratio`
+   * occurrences reads those three as unparsed assertions and fails the build on
+   * its own documentation. Requiring a bare `light`/`dark` excludes the
+   * angle-bracketed template, and requiring line-start excludes the prose.
+   */
+  const written = (tokenCss.match(/^[\s*]*@ratio\s+(?:light|dark)\b/gm) ?? []).length;
 
   let quotedRatios = 0;
   for (const m of tokenCss.matchAll(RATIO_RE)) {
@@ -417,7 +469,9 @@ export function checkA11y({root = DEFAULT_WEBSITE} = {}) {
       continue;
     }
     const derived = contrast(fg, bg).toFixed(2);
-    if (derived !== claimed) {
+    // Compare as numbers rounded to the same precision, now that the pattern
+    // accepts `6.1` and `6.100` as well as `6.10`.
+    if (derived !== Number(claimed).toFixed(2)) {
       fail(
         `src/css/custom.css:${lineOf(tokenCss, m.index)}: the comment claims ${fgToken} on ` +
           `${bgToken} measures ${claimed}:1 in ${mode} mode; ${fg} on ${bg} measures ` +
@@ -431,6 +485,16 @@ export function checkA11y({root = DEFAULT_WEBSITE} = {}) {
       `src/css/custom.css: no @ratio assertions found. The accessibility section claims its ` +
         `measurements are re-derived by this checker; with none to re-derive, that claim is ` +
         `the thing that has drifted. SPEC-0010 REQ "Contrast".`,
+    );
+  } else if (written !== quotedRatios) {
+    // An `@ratio` the pattern could not read is unchecked documentation
+    // masquerading as a checked assertion — the one outcome this must not
+    // report as success.
+    fail(
+      `src/css/custom.css: ${written} @ratio assertions are written but only ${quotedRatios} ` +
+        `could be parsed. An assertion this checker cannot read is not being re-derived, ` +
+        `while the summary counts it as though it were. Expected the form ` +
+        `\`@ratio <light|dark> --fg on --bg = N.NN:1\`. SPEC-0010 REQ "Contrast".`,
     );
   }
 
