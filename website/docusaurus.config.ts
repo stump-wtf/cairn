@@ -2,9 +2,11 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import {assertTokens} from './scripts/check-tokens.mjs';
+import {assertNoEditUrl} from './scripts/check-links.mjs';
 
 import {generateRecord} from './plugins/record/generate.ts';
 import remarkRecord from './plugins/record/remark-record.ts';
+import cairnLinkGuardPlugin from './plugins/link-guard/index.ts';
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
@@ -73,7 +75,23 @@ const config: Config = {
   organizationName: 'joestump',
   projectName: 'cairn',
 
-  onBrokenLinks: 'warn',
+  /*
+   * Governing: ADR-0014, SPEC-0010 REQ "Link and Anchor Integrity"
+   *
+   * Both of these were `warn`, which on a site whose entire subject is a
+   * cross-referenced record means the reader finds the dangling link, not the
+   * build. A record that publishes 14 decisions and 10 specifications is one
+   * renamed heading away from a broken `#anchor`, and a warning in a CI log
+   * nobody reads is indistinguishable from no check at all.
+   *
+   * Worth knowing where these do NOT fire. `handleBrokenLinks` has exactly one
+   * caller — `@docusaurus/core/lib/commands/build/buildLocale.js` — so neither
+   * setting can fail anything under `docusaurus start`. That is why SPEC-0010
+   * REQ "Build and Deployment" requires CI to run a full build on every pull
+   * request: without one, setting these to `throw` changes nothing at all.
+   */
+  onBrokenLinks: 'throw',
+  onBrokenAnchors: 'throw',
 
   i18n: {
     defaultLocale: 'en',
@@ -85,7 +103,12 @@ const config: Config = {
   markdown: {
     format: 'detect',
     hooks: {
-      onBrokenMarkdownLinks: 'warn',
+      // A `[SPEC-0004](./specs/does-not-exist/index.md)` in a narrative page is
+      // resolved here, by the MDX loader, before `onBrokenLinks` ever sees a
+      // route — so leaving this at `warn` would leave a hole in the check above.
+      // Unlike the two settings above this one does run under `docusaurus
+      // start`, which is the only broken-link feedback the dev server gives.
+      onBrokenMarkdownLinks: 'throw',
     },
   },
 
@@ -100,6 +123,11 @@ const config: Config = {
     // TypeScript and would not find `index.ts` by directory resolution. jiti
     // does the transpiling once the exact path is known.
     ['./plugins/record/index.ts', {routeBase: DOCS_ROUTE_BASE}],
+
+    // Governing: ADR-0014, SPEC-0010 REQ "No Repository Links"
+    // The rendered-output half of the link guard. `postBuild` only — there is
+    // no rendered output to scan during `docusaurus start`.
+    cairnLinkGuardPlugin,
   ],
 
   presets: [
@@ -138,12 +166,45 @@ const config: Config = {
       respectPrefersColorScheme: false,
       disableSwitch: false,
     },
+    /*
+     * Governing: ADR-0014, SPEC-0010 REQ "Site Chrome and Layout"
+     *
+     * Every value here is theme-classic's own default. They are stated anyway,
+     * because each one is load-bearing for a MUST in the spec and a default is
+     * not a decision until it is written down:
+     *
+     * - `hideable: false` — the rail is *persistent*. With `hideable: true`
+     *   theme-classic renders a collapse handle that reduces the sidebar to a
+     *   30px stub, and a reader who hits it once loses the record tree for the
+     *   rest of the session.
+     * - `autoCollapseCategories: false` — opening a decision must not close the
+     *   Specifications group. The two trees are meant to be visible from each
+     *   other; that is the whole reason the record is served from one content
+     *   instance.
+     * - `tableOfContents` 2–3 — `### Requirement:` is an h3 in every
+     *   specification, so a max of 2 would empty the on-this-page column on
+     *   exactly the pages that need it most.
+     */
+    docs: {
+      sidebar: {
+        hideable: false,
+        autoCollapseCategories: false,
+      },
+    },
+    tableOfContents: {
+      minHeadingLevel: 2,
+      maxHeadingLevel: 3,
+    },
     navbar: {
       title: 'Cairn',
       logo: {
         alt: 'Cairn',
         src: 'img/logo.svg',
       },
+      // The navbar is sticky (theme-classic always applies `navbar--fixed-top`);
+      // `hideOnScroll` would make it *not* persist, which the spec's "sticky top
+      // navigation bar" rules out.
+      hideOnScroll: false,
       items: [
         {
           type: 'docSidebar',
@@ -211,6 +272,19 @@ const config: Config = {
  * path.
  */
 export default async function createConfig(): Promise<Config> {
+  /*
+   * Governing: ADR-0014, SPEC-0010 REQ "No Repository Links"
+   *
+   * The configuration half of the link guard, run here rather than as a comment
+   * on the docs preset. A comment saying "no editUrl" is exactly as strong as
+   * the attention of the next person to edit this file; this walks the whole
+   * config object and names the key path it found, so `editUrl` cannot be
+   * reintroduced on the docs preset, on the blog, or on a plugin entry nobody
+   * thought to guard.
+   */
+  // eslint-disable-next-line no-console
+  console.log(assertNoEditUrl(config).summary);
+
   const {data} = await generateRecord({
     siteDir,
     routeBase: DOCS_ROUTE_BASE,

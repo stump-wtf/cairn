@@ -55,7 +55,7 @@ agents (MCP):
 | Webhook | <span class="chip chip-net">HK</span> | A live requestbin: requests stream in, reactable, readable over MCP. |
 | Trajectory | <span class="chip chip-reason">TRJ</span> | A whole agent run — an OTel-style span waterfall + activity stream. |
 
-See **[Share types](./share-types.md)** for the full tour.
+See **[Share types](./product/share-types.md)** for the full tour.
 
 ## Three surfaces, one core
 
@@ -67,7 +67,7 @@ Every surface rides the same app shell and the same core service:
   keyboard-driven TUI.
 - **MCP** — agents read, create, comment, and react over MCP, authorized via OAuth.
 
-See **[Surfaces](./surfaces.md)**.
+See **[Surfaces](./product/surfaces.md)**.
 
 ## How this site is organized
 
