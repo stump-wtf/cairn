@@ -22,7 +22,7 @@
  * category accent is the same value in both modes by construction and a role
  * token is deliberately not.
  *
- * Five checks:
+ * Six checks:
  *
  *   1. Text contrast. Every foreground/background pair the site composes from
  *      role tokens is re-measured, in BOTH colour modes, against 4.5:1. Values
@@ -38,8 +38,11 @@
  *      `:focus-visible` rule that uses it.
  *   5. Reduced motion. A `prefers-reduced-motion: reduce` guard in the token
  *      layer, and — because a blanket rule can damp a transition but cannot
- *      undo a transform — a matching guard in every stylesheet that moves an
- *      element on hover.
+ *      undo a transform — a `transform: none` INSIDE that guard in every
+ *      stylesheet that moves an element on hover.
+ *   6. The quoted ratios. The token definition documents its measurements as
+ *      `@ratio <mode> <fg> on <bg> = N.NN:1` assertions; each is re-derived, so
+ *      retuning a token either retunes its documentation or breaks the build.
  *
  * `assertRecordSemantics()` and `assertRenderedSemantics()` are separate
  * because they run later, and against different material.
@@ -355,8 +358,18 @@ export function checkA11y({root = DEFAULT_WEBSITE} = {}) {
     );
     if (!hoverTransforms.length) continue;
     const guard = REDUCED_MOTION_RE.test(css);
+    /*
+     * `d.chain` is the whole nesting stack, at-rule preludes included, so this
+     * asks the question the error message claims to ask: is the neutralising
+     * declaration INSIDE the reduced-motion block? A `transform: none` sitting
+     * anywhere else in the file — a reset, a base state, another media query —
+     * says nothing about what happens when a reader asks for less motion.
+     */
     const neutralised = parseDeclarations(css).some(
-      (d) => d.prop === 'transform' && d.value === 'none',
+      (d) =>
+        d.prop === 'transform' &&
+        d.value === 'none' &&
+        /prefers-reduced-motion\s*:\s*reduce/i.test(d.chain),
     );
     if (!guard || !neutralised) {
       fail(
@@ -370,13 +383,65 @@ export function checkA11y({root = DEFAULT_WEBSITE} = {}) {
     }
   }
 
+  /* ------------------------------------------------- 6. the quoted ratios */
+
+  /*
+   * The token definition documents its own contrast measurements, and a
+   * measurement in a comment is a claim that rots the moment a token is
+   * retuned: nudge --ifm-color-primary a shade and every ratio written beside
+   * it becomes fiction, silently, while the build stays green because the
+   * checker only measures the pairs IT knows about.
+   *
+   * So the claims are written in a form this can read back. Each `@ratio` line
+   * names a mode and two tokens, both are resolved exactly as the pair table
+   * above resolves them, and the derived ratio has to be the number in the
+   * comment. The documentation is then not a description of the token layer —
+   * it is a test of it.
+   */
+  const RATIO_RE =
+    /@ratio\s+(light|dark)\s+(--[\w-]+)\s+on\s+(--[\w-]+)\s*=\s*(\d+\.\d{2}):1/g;
+
+  let quotedRatios = 0;
+  for (const m of tokenCss.matchAll(RATIO_RE)) {
+    const [, mode, fgToken, bgToken, claimed] = m;
+    quotedRatios += 1;
+    const resolve = makeResolver(tokenDecls, mode);
+    const fg = resolve(fgToken);
+    const bg = resolve(bgToken);
+    if (!fg || !bg) {
+      fail(
+        `src/css/custom.css:${lineOf(tokenCss, m.index)}: the @ratio assertion names ` +
+          `${!fg ? fgToken : bgToken}, which does not resolve to a colour in ${mode} mode. ` +
+          `SPEC-0010 REQ "Contrast".`,
+      );
+      continue;
+    }
+    const derived = contrast(fg, bg).toFixed(2);
+    if (derived !== claimed) {
+      fail(
+        `src/css/custom.css:${lineOf(tokenCss, m.index)}: the comment claims ${fgToken} on ` +
+          `${bgToken} measures ${claimed}:1 in ${mode} mode; ${fg} on ${bg} measures ` +
+          `${derived}:1. Either the token moved and the comment did not, or the comment was ` +
+          `wrong to begin with. SPEC-0010 REQ "Contrast".`,
+      );
+    }
+  }
+  if (!quotedRatios) {
+    fail(
+      `src/css/custom.css: no @ratio assertions found. The accessibility section claims its ` +
+        `measurements are re-derived by this checker; with none to re-derive, that claim is ` +
+        `the thing that has drifted. SPEC-0010 REQ "Contrast".`,
+    );
+  }
+
   const worstText = Math.min(...rows.filter((r) => r.kind === 'text').map((r) => r.ratio));
   const worstNonText = Math.min(...rows.filter((r) => r.kind === 'non-text').map((r) => r.ratio));
   const summary =
     `accessibility check OK: ${rows.length} rendered colour pairs measured across both ` +
     `colour modes — worst text ${worstText.toFixed(2)}:1 (floor ${AA_TEXT}:1), worst ` +
-    `non-text ${worstNonText.toFixed(2)}:1 (floor ${AA_NON_TEXT}:1); focus indicator, ` +
-    `reduced-motion guards and the ${BANNED_LITERAL.toUpperCase()} ban all in place.`;
+    `non-text ${worstNonText.toFixed(2)}:1 (floor ${AA_NON_TEXT}:1); ${quotedRatios} @ratio ` +
+    `assertions in the token comments re-derived; focus indicator, reduced-motion guards ` +
+    `and the ${BANNED_LITERAL.toUpperCase()} ban all in place.`;
 
   return {failures, rows, summary};
 }

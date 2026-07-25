@@ -565,9 +565,19 @@ table { display: table; width: 100%; }
                  SPEC-0010 REQ "Contrast",
                  SPEC-0010 REQ "Non-Colour Encoding"
 
-      Every ratio quoted below is re-derived from this file by
-      `scripts/check-a11y.mjs`, which runs at config load next to the token
-      guard. A comment that drifts from the token it describes fails the build.
+      Measurements in this section are written as `@ratio` assertions:
+
+          @ratio <light|dark> <foreground-token> on <background-token> = N.NN:1
+
+      `scripts/check-a11y.mjs` parses every one of them, resolves both tokens
+      through their var() chains as that colour mode computes them, and fails
+      the build if the re-derived ratio is not the number written here. So
+      retuning a token retunes the documentation with it, or stops the build —
+      a comment cannot quietly drift away from the value it describes.
+
+      That guarantee covers the `@ratio` lines and nothing else. A ratio quoted
+      in ordinary prose, in this section or any other, is an unchecked human
+      claim; if a number matters, write it as an assertion.
    ========================================================================== */
 
 /* --------------------------------------------------------- focus indicator */
@@ -582,16 +592,26 @@ table { display: table; width: 100%; }
  * light mode too (sections 3 and 5), so a light-mode ring is measured against
  * the paper ramp AND against the pinned ink surfaces.
  *
- *   light  --ifm-color-primary #6b4ce6
- *          5.52:1 on --cairn-paper-0, 5.12:1 on -100, 4.77:1 on -200,
- *          3.33:1 on the pinned --cairn-code-bg, 3.61:1 on --cairn-ink-deep
- *   dark   --cairn-ink-accent  #b5abf9
- *          9.52:1 on --cairn-ink-0, 8.90:1 on -100, 8.33:1 on -200,
- *          6.97:1 on -300, 9.64:1 on --cairn-ink-deep
+ * The light ring is --ifm-color-primary:
  *
- * The dark ring is NOT --ifm-color-primary: the two modes need different rings
- * because --cairn-ink-accent measures 2.07:1 on white and the light primary is
- * the weaker of the two on the ink ramp.
+ *   @ratio light --ifm-color-primary on --cairn-paper-0   = 5.52:1
+ *   @ratio light --ifm-color-primary on --cairn-paper-100 = 5.12:1
+ *   @ratio light --ifm-color-primary on --cairn-paper-200 = 4.77:1
+ *   @ratio light --ifm-color-primary on --cairn-code-bg   = 3.33:1
+ *   @ratio light --ifm-color-primary on --cairn-ink-deep  = 3.61:1
+ *
+ * The dark ring is --cairn-ink-accent:
+ *
+ *   @ratio dark --cairn-ink-accent on --cairn-ink-0    = 9.52:1
+ *   @ratio dark --cairn-ink-accent on --cairn-ink-100  = 8.90:1
+ *   @ratio dark --cairn-ink-accent on --cairn-ink-200  = 8.33:1
+ *   @ratio dark --cairn-ink-accent on --cairn-ink-300  = 6.97:1
+ *   @ratio dark --cairn-ink-accent on --cairn-ink-deep = 9.64:1
+ *
+ * The dark ring is NOT --ifm-color-primary, and the two rings cannot be one
+ * token, because each fails on the other mode's ground:
+ *
+ *   @ratio dark --cairn-ink-accent on --cairn-paper-0 = 2.07:1
  */
 :root {
   --cairn-focus-ring: var(--ifm-color-primary);
@@ -624,9 +644,14 @@ table { display: table; width: 100%; }
  * focus to `main` programmatically rather than only setting a hash. It is not
  * restyled here: its stock rule reads --ifm-background-surface-color and
  * --ifm-color-emphasis-900, both re-pointed at Cairn tokens in section 4, so it
- * already renders --cairn-text on --cairn-elevated — 15.01:1 dark, 16.45:1
- * light. All it lacked was the ring above. SPEC-0010 REQ "Keyboard Navigation &
- * Focus Management", scenario "Skipping the navigation rail".
+ * already renders the ink-ramp text colour on the elevated surface. All it
+ * lacked was the ring above.
+ *
+ *   @ratio dark  --ifm-color-emphasis-900 on --cairn-elevated = 15.01:1
+ *   @ratio light --ifm-color-emphasis-900 on --cairn-elevated = 16.45:1
+ *
+ * SPEC-0010 REQ "Keyboard Navigation & Focus Management", scenario "Skipping
+ * the navigation rail".
  */
 
 /* --------------------------------------------------------- reduced motion */

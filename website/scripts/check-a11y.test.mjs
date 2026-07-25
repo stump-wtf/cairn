@@ -177,6 +177,63 @@ test('the tile guard is what keeps the feature tiles passing', () => {
   assert.match(out, /moves on hover/);
 });
 
+test('a `transform: none` outside the reduced-motion block does not satisfy the guard', () => {
+  /* The check has to ask what the file does WHEN reduced motion is requested.
+     A neutralising declaration anywhere else — a reset, a base state, another
+     media query — answers a different question, and accepting it would let the
+     hover lift back in under a rule that reads like a guard. */
+  const {root, tileFile} = fixture();
+  edit(tileFile, '  .tile:hover { transform: none; }', '');
+  appendFileSync(tileFile, '\n.decoy { transform: none; }\n');
+  const {status, out} = run(root);
+  assert.equal(status, 1);
+  assert.match(out, /moves on hover/);
+  assert.match(out, /no `transform: none` inside its/);
+});
+
+/* --------------------------------------------------- the documented ratios */
+
+test('a quoted @ratio that no longer matches the tokens fails', () => {
+  const {root, tokenFile} = fixture();
+  edit(
+    tokenFile,
+    '@ratio light --ifm-color-primary on --cairn-paper-0   = 5.52:1',
+    '@ratio light --ifm-color-primary on --cairn-paper-0   = 5.99:1',
+  );
+  const {status, out} = run(root);
+  assert.equal(status, 1);
+  assert.match(out, /claims --ifm-color-primary on --cairn-paper-0 measures 5\.99:1/);
+  assert.match(out, /measures 5\.52:1/);
+});
+
+test('retuning a token drifts its documentation, and that fails the build', () => {
+  /* The scenario the assertion syntax exists for: the ring still clears every
+     floor, so no measured pair complains, and every ratio written beside it in
+     the comment is now wrong. */
+  const {root, tokenFile} = fixture();
+  edit(tokenFile, '  --ifm-color-primary: #6b4ce6;', '  --ifm-color-primary: #5b3fd0;');
+  const {status, out} = run(root);
+  assert.equal(status, 1);
+  assert.match(out, /the comment claims --ifm-color-primary/);
+});
+
+test('an @ratio naming a token that does not resolve fails rather than being skipped', () => {
+  const {root, tokenFile} = fixture();
+  edit(tokenFile, 'on --cairn-paper-0   = 5.52:1', 'on --cairn-nonexistent = 5.52:1');
+  const {status, out} = run(root);
+  assert.equal(status, 1);
+  assert.match(out, /--cairn-nonexistent, which does not resolve/);
+});
+
+test('deleting every @ratio assertion fails: the section claims they are checked', () => {
+  const {root, tokenFile} = fixture();
+  const stripped = readFileSync(tokenFile, 'utf8').replaceAll('@ratio', 'ratio');
+  writeFileSync(tokenFile, stripped);
+  const {status, out} = run(root);
+  assert.equal(status, 1);
+  assert.match(out, /no @ratio assertions found/);
+});
+
 /* --------------------------------------------------------- heading order */
 
 test('a page with two h1 headings fails', () => {
