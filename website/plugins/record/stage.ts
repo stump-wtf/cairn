@@ -36,6 +36,28 @@ const GENERATED_NOTICE = (sourcePath: string): string[] => [
 export const DECISIONS_SIDEBAR_POSITION = 100;
 export const SPECS_SIDEBAR_POSITION = 110;
 
+/**
+ * The two top-level record groups render expanded; the per-capability groups
+ * nested inside Specs do not.
+ *
+ * Governing: ADR-0014, SPEC-0010 REQ "Record Navigation"
+ *
+ * The requirement is that one sidebar *lists* the decisions tree from anywhere
+ * in the record, and theme-classic's `Collapsible` renders a collapsed category
+ * lazily: its children are absent from the DOM, not merely hidden, until the
+ * reader opens it. A collapsed Decisions group therefore satisfies the scenario
+ * visually on a decision page — where the active trail is auto-expanded — and
+ * fails it on every specification page, which is exactly the page the scenario
+ * names. `collapsed: false` is what puts all 14 decisions in the served HTML.
+ *
+ * The capability groups stay collapsed: each holds a single specification's
+ * pages, expanding all ten would bury the top-level groups, and no scenario
+ * asks for a spec's own pages to be listed from outside it. `Record Navigation`
+ * asks the Specs group to list every *capability*, which it does either way.
+ */
+const RECORD_GROUP_COLLAPSED = false;
+const CAPABILITY_GROUP_COLLAPSED = true;
+
 interface StagedFile {
   absPath: string;
   contents: string;
@@ -106,7 +128,7 @@ export async function stageRecord({
       {
         label: `Decisions · ${data.counts.decisions}`,
         position: DECISIONS_SIDEBAR_POSITION,
-        collapsed: true,
+        collapsed: RECORD_GROUP_COLLAPSED,
       },
       null,
       2,
@@ -144,7 +166,7 @@ export async function stageRecord({
       {
         label: `Specifications · ${data.counts.specifications}`,
         position: SPECS_SIDEBAR_POSITION,
-        collapsed: true,
+        collapsed: RECORD_GROUP_COLLAPSED,
       },
       null,
       2,
@@ -164,7 +186,7 @@ export async function stageRecord({
         {
           label: `${spec.id} · ${spec.title}`,
           position: spec.number,
-          collapsed: true,
+          collapsed: CAPABILITY_GROUP_COLLAPSED,
         },
         null,
         2,
