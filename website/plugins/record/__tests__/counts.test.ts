@@ -137,6 +137,57 @@ describe('hardcoded counts in JSX', () => {
 });
 
 describe('what the check must NOT fire on', () => {
+  /*
+   * A claim is written on one line. These are the shapes that made the gate
+   * unpublishable when the separator was plain `\s`, which crosses newlines:
+   * every one of them hard-failed `docusaurus build` on ordinary content.
+   */
+  it('passes a heading whose following paragraph merely starts with a number', async () => {
+    const message = await check(
+      'docs/intro.md',
+      ['## Requirements', '', '3 of the surfaces are still in design.'].join('\n'),
+    );
+    assert.equal(message, null);
+  });
+
+  it('passes a sentence ending in a noun before a sentence opening with a number', async () => {
+    const message = await check(
+      'docs/intro.md',
+      ['The page lists the requirements.', '', '3 of them are new.'].join('\n'),
+    );
+    assert.equal(message, null);
+  });
+
+  /*
+   * Rule (C) must not collide with SPEC-0010's own accessibility requirements.
+   * REQ "Icon-Only Controls" mandates `aria-label` and REQ "Keyboard Navigation
+   * & Focus Management" produces `tabIndex`; the first of these is the exact
+   * markup REQ "Keyboard Navigation" asks for on a scrollable table.
+   */
+  it('passes an accessible scroll region: tabIndex beside an aria-label', async () => {
+    const message = await check(
+      'src/pages/a11y.tsx',
+      'export default () => (\n  <div role="region" tabIndex={0} aria-label="Specification endpoints">x</div>\n);',
+    );
+    assert.equal(message, null);
+  });
+
+  it('passes an icon carrying a size and a record-noun label', async () => {
+    const message = await check(
+      'src/pages/icon.tsx',
+      'export default () => <svg width="24" height="24" aria-label="Decisions" />;',
+    );
+    assert.equal(message, null);
+  });
+
+  it('passes a noun that merely appears inside a longer descriptive value', async () => {
+    const message = await check(
+      'src/pages/img.tsx',
+      'export default () => <img src="/a.png" alt="The decisions index" width="800" height="600" />;',
+    );
+    assert.equal(message, null);
+  });
+
   it('passes the correct spelling: the number comes from the data module', async () => {
     const message = await check(
       'src/pages/derived.tsx',

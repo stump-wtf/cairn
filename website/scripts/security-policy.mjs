@@ -55,9 +55,6 @@
 
 import {createHash} from 'node:crypto';
 
-/** Placeholder the injected meta tag carries until postBuild seals the hashes. */
-export const HASH_PLACEHOLDER = '__CAIRN_SCRIPT_HASHES__';
-
 /**
  * Directives common to both channels.
  *
