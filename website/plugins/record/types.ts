@@ -44,7 +44,26 @@ export interface RecordEdge {
   to: string;
 }
 
-/** Both directions of every relationship touching one record. */
+/**
+ * Both directions of every relationship touching one record.
+ *
+ * SPEC-0010 REQ "Derived Cross-Reference Graph" names five chip kinds —
+ * `extends`, `enables`, `related`, `implements`, `requires` — and the same
+ * requirement mandates de-duplication, which is only possible if `A enables B`
+ * and `B extends A` collapse into one stored fact. So `enables` has no bucket
+ * here, and the mapping a chip renderer needs is:
+ *
+ *   authored `extends`    → `extends`      · inverse rendered from `extendedBy`
+ *   authored `enables`    → `extendedBy`   · inverse rendered from `extends`
+ *   authored `related`    → `related`      · symmetric, one bucket
+ *   authored `implements` → `implements`   · inverse rendered from `implementedBy`
+ *   authored `requires`   → `requires`     · inverse rendered from `requiredBy`
+ *
+ * The consequence, stated so it is a decision rather than a discovery: which end
+ * *authored* an extends/enables relationship is not recoverable from this shape.
+ * A chip renderer therefore labels by direction ("extends" / "extended by"), not
+ * by the front-matter key the author happened to use.
+ */
 export interface RecordRelations {
   extends: string[];
   extendedBy: string[];

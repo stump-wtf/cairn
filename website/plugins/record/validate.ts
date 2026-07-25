@@ -10,9 +10,13 @@
 // everything that needs the whole record in hand: referential integrity and
 // coverage.
 
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
 import {authoredEdges} from './graph.ts';
 import {RecordError} from './parse.ts';
-import type {AuthoredEdgeKind, ParsedRecord} from './types.ts';
+import {repoRelative, type RecordPaths} from './paths.ts';
+import type {AuthoredEdgeKind, ParsedRecord, RecordData} from './types.ts';
 
 /** Which kind of record each authored edge is allowed to name. */
 export function edgeTargetKind(kind: AuthoredEdgeKind): 'ADR' | 'SPEC' {
@@ -22,19 +26,6 @@ export function edgeTargetKind(kind: AuthoredEdgeKind): 'ADR' | 'SPEC' {
 export interface ValidationInput {
   decisions: ParsedRecord[];
   specs: ParsedRecord[];
-  /**
-   * Every `docs/adrs/ADR-*.md` found on disk, repo-relative — the coverage
-   * denominator for decisions.
-   */
-  adrSourcePaths: string[];
-  /**
-   * Every capability directory found on disk, repo-relative — the coverage
-   * denominator for specifications. Keyed on the directory rather than on
-   * `spec.md`, because the requirement is one card per directory.
-   */
-  capabilityDirs: string[];
-  /** Directory of each specification that did produce a page, repo-relative. */
-  renderedCapabilityDirs: string[];
 }
 
 /**
@@ -78,19 +69,6 @@ export function validateRecord(input: ValidationInput): void {
     }
   }
 
-  // Coverage. A source file that matches the pattern but produced no page is a
-  // build failure, because a silently missing decision is exactly the defect
-  // ADR-0014 exists to abolish.
-  assertCovered(
-    input.adrSourcePaths,
-    decisions.map((record) => record.sourcePath),
-    'ADR-*.md decision pattern',
-  );
-  assertCovered(
-    input.capabilityDirs,
-    input.renderedCapabilityDirs,
-    'capability specification layout',
-  );
 }
 
 function assertUniqueIds(records: ParsedRecord[], label: string): void {
@@ -107,14 +85,81 @@ function assertUniqueIds(records: ParsedRecord[], label: string): void {
   }
 }
 
-function assertCovered(found: string[], rendered: string[], label: string): void {
-  const renderedSet = new Set(rendered);
-  for (const sourcePath of found) {
-    if (!renderedSet.has(sourcePath)) {
+export interface CoverageInput {
+  paths: RecordPaths;
+  /** Absolute path of every `docs/adrs/ADR-*.md` found on disk. */
+  adrFiles: string[];
+  /** Absolute path of every capability directory found on disk. */
+  capabilityDirs: string[];
+  data: RecordData;
+}
+
+/**
+ * Coverage, as ADR-0014's Confirmation section defines it: a source file that
+ * matches the pattern but produces no page fails the build.
+ *
+ * This runs *after* staging and stats the staged file, on purpose. Comparing the
+ * source inventory against the in-memory record list would compare a list against
+ * a mapping over itself and could never fire — the check would read as
+ * load-bearing while being a no-op. Ending at the filesystem makes it a real
+ * check: it catches a record that parsed and was counted but never reached disk,
+ * whether because staging skipped it, two records collided on one output path, or
+ * the stale-file prune removed it.
+ */
+export async function assertStagedCoverage({
+  paths,
+  adrFiles,
+  capabilityDirs,
+  data,
+}: CoverageInput): Promise<void> {
+  for (const absPath of adrFiles) {
+    const sourcePath = repoRelative(paths, absPath);
+    const decision = data.decisions.find(
+      (entry) => entry.sourcePath === sourcePath,
+    );
+    if (!decision) {
       throw new RecordError(
         sourcePath,
-        `matched the ${label} but produced no page`,
+        `matched the ADR-*.md decision pattern but produced no page`,
       );
     }
+    await assertStagedFile(
+      sourcePath,
+      path.join(paths.stagedDecisionsDir, `${decision.id}.md`),
+    );
   }
+
+  for (const dir of capabilityDirs) {
+    const sourcePath = repoRelative(paths, dir);
+    const capability = path.basename(dir);
+    const spec = data.specs.find((entry) => entry.capability === capability);
+    if (!spec) {
+      throw new RecordError(
+        sourcePath,
+        `matched the capability specification layout but produced no card`,
+      );
+    }
+    await assertStagedFile(
+      sourcePath,
+      path.join(paths.stagedSpecsDir, capability, 'index.md'),
+    );
+  }
+}
+
+async function assertStagedFile(
+  sourcePath: string,
+  stagedPath: string,
+): Promise<void> {
+  try {
+    const stat = await fs.stat(stagedPath);
+    if (stat.isFile() && stat.size > 0) {
+      return;
+    }
+  } catch {
+    // fall through to the failure below
+  }
+  throw new RecordError(
+    sourcePath,
+    `produced no page: nothing was staged at ${stagedPath}`,
+  );
 }

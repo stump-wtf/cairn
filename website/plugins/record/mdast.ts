@@ -41,8 +41,19 @@ export const RFC2119_KEYWORDS = [
 // Alternation is leftmost-first, so `MUST NOT` must precede `MUST` in the list
 // above or every negative keyword would be wrapped as its positive twin. The
 // boundary classes keep `MUSTARD`, `MAYBE` and `SHOULDER` out.
+//
+// The gap between the words of a two-word keyword is `\s+`, not a literal space,
+// and that is load-bearing rather than defensive. The record hard-wraps at about
+// 85 columns, so `MUST NOT` regularly straddles a soft line break, which
+// CommonMark keeps as a `\n` *inside a single text node*. With a literal space
+// the alternation fell through to `MUST` and the prohibition rendered as a
+// positive obligation with a bare "NOT" beside it — which inverts the meaning of
+// normative text, the one thing this renderer exists to get right. Five
+// occurrences in today's record: `annotations/spec.md` and `cli/spec.md`.
 const RFC2119_PATTERN = new RegExp(
-  `(?<![A-Za-z0-9_])(${RFC2119_KEYWORDS.join('|')})(?![A-Za-z0-9_])`,
+  `(?<![A-Za-z0-9_])(${RFC2119_KEYWORDS.map((keyword) =>
+    keyword.replace(/ /g, '\\s+'),
+  ).join('|')})(?![A-Za-z0-9_])`,
   'g',
 );
 
@@ -69,6 +80,16 @@ const HTML_COMMENT = /^<!--[\s\S]*-->$/;
 
 export const REQUIREMENT_HEADING_DEPTH = 3;
 export const SCENARIO_HEADING_DEPTH = 4;
+
+/**
+ * Docusaurus's classic explicit-heading-id syntax, copied from
+ * `@docusaurus/utils` `parseMarkdownHeadingId`.
+ *
+ * The record does not use it and `collectInventory` does not mirror it — see the
+ * note there. This pattern exists so that the day a record author writes one, the
+ * build says so instead of silently publishing an anchor that does not exist.
+ */
+const EXPLICIT_HEADING_ID = /\s*\{#(?:(?:.(?!\{#|\}))*.)\}$/;
 
 const REQUIREMENT_PREFIX = 'Requirement:';
 const SCENARIO_PREFIX = 'Scenario:';
@@ -210,15 +231,22 @@ function splitRfc2119(value: string): Node[] {
   let last = 0;
   for (const match of value.matchAll(RFC2119_PATTERN)) {
     const start = match.index!;
+    const matched = match[1]!;
     if (start > last) {
       out.push({type: 'text', value: value.slice(last, start)});
     }
+    // The child keeps the author's bytes, newline and all, so the paragraph still
+    // wraps where it was written; the attribute is normalised, because
+    // `data-keyword` is the machine-readable hook and `MUST\nNOT` is not a
+    // keyword anybody can match on.
     out.push(
-      jsxTextElement('Rfc2119', [attribute('keyword', match[1]!)], [
-        {type: 'text', value: match[1]!},
-      ]),
+      jsxTextElement(
+        'Rfc2119',
+        [attribute('keyword', matched.replace(/\s+/g, ' '))],
+        [{type: 'text', value: matched}],
+      ),
     );
-    last = start + match[1]!.length;
+    last = start + matched.length;
   }
   if (out.length === 0) {
     return [{type: 'text', value}];
@@ -405,16 +433,34 @@ function isHeadingAtMost(node: Node, depth: number): boolean {
  * Call this on the *transformed* tree — after `literaliseRawHtml` — because the
  * remark plugin runs before `headings` does and a literalised `<id>` changes the
  * text the slugger sees.
+ *
+ * Two limits on the mirror, both deliberate:
+ *
+ *   - `maintainCase: false` is hardcoded, matching what `headings` gets from
+ *     `markdown.anchors.maintainCase` (unset in `docusaurus.config.ts`, so
+ *     `false`). Setting that config key would desync this and is the one config
+ *     change that has to come here too.
+ *   - Docusaurus's explicit-id syntaxes are not mirrored, they are *rejected*.
+ *     `explicitIds` names any heading using `{#id}`, and the caller fails the
+ *     build on it, because mirroring the syntax is more code than the record
+ *     needs and a silently wrong anchor is worse than a refused one. The
+ *     comment-based forms need no handling: `literaliseRawHtml` drops HTML
+ *     comments before `headings` can read them, and an MDX expression comment is
+ *     inert text in a `format: 'md'` document, so in both cases this mirror and
+ *     `headings` see the same heading text and agree.
  */
 export async function collectInventory(tree: Node): Promise<{
   requirements: RequirementEntry[];
   scenarioCount: number;
+  /** Headings using a syntax whose anchor this mirror does not reproduce. */
+  explicitIds: string[];
 }> {
   const {toString} = await import('mdast-util-to-string');
   const {createSlugger} = await import('@docusaurus/utils');
   const slugs = createSlugger();
 
   const requirements: RequirementEntry[] = [];
+  const explicitIds: string[] = [];
   let scenarioCount = 0;
   let current: RequirementEntry | null = null;
 
@@ -425,6 +471,9 @@ export async function collectInventory(tree: Node): Promise<{
         (child: Node) => child.type !== 'html' && child.type !== 'jsx',
       );
       const text = toString(textNodes.length > 0 ? textNodes : node);
+      if (EXPLICIT_HEADING_ID.test(text)) {
+        explicitIds.push(text.trim());
+      }
       const anchor = slugs.slug(text, {maintainCase: false});
 
       const requirementName = text.trim().startsWith(REQUIREMENT_PREFIX)
@@ -452,7 +501,7 @@ export async function collectInventory(tree: Node): Promise<{
   };
 
   walk(tree);
-  return {requirements, scenarioCount};
+  return {requirements, scenarioCount, explicitIds};
 }
 
 // ---------------------------------------------------------------------------
@@ -466,6 +515,13 @@ const MAX_SUMMARY = 220;
  * Derive a page summary from the transformed tree rather than from the raw
  * source, so a tag-shaped word never truncates it. Takes whole sentences from
  * the first body paragraph until the summary is long enough to be useful.
+ *
+ * `MIN_SUMMARY` is a floor and has to be enforced after the sentence loop, not
+ * inside it. Taking whole sentences alone produced a 26-character
+ * `<meta name="description">` for ADR-0014 — "Cairn is built spec-first." — because
+ * its second sentence is 330 characters and adding it would have blown the
+ * ceiling, so the loop stopped. Correct by construction and useless to a reader.
+ * Below the floor the next sentence is taken anyway and clamped at the ceiling.
  */
 export async function deriveSummary(tree: Node): Promise<string> {
   const first = (tree.children ?? []).find(
@@ -477,12 +533,17 @@ export async function deriveSummary(tree: Node): Promise<string> {
   const text = (await nodeToString(first)).replace(/\s+/g, ' ').trim();
   const sentences = text.split(/(?<=[.!?])\s+/);
   let out = '';
+  let taken = 0;
   for (const sentence of sentences) {
     const candidate = out ? `${out} ${sentence}` : sentence;
     if (out.length >= MIN_SUMMARY || candidate.length > MAX_SUMMARY) {
       break;
     }
     out = candidate;
+    taken += 1;
+  }
+  if (out.length < MIN_SUMMARY && taken < sentences.length) {
+    out = out ? `${out} ${sentences[taken]}` : sentences[taken]!;
   }
   if (!out) {
     out = sentences[0] ?? text;

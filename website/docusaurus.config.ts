@@ -16,9 +16,142 @@ const siteDir = __dirname;
 
 const DOCS_ROUTE_BASE = '/docs';
 
+const config: Config = {
+  title: 'Cairn',
+  tagline: 'AI-native artifact sharing — pbcopy for the agent era.',
+  favicon: 'img/favicon.svg',
+
+  future: {
+    v4: true,
+  },
+
+  // GitHub Pages project site: https://joestump.github.io/cairn/
+  // (For a custom domain like cairn.sh, set url to the domain and baseUrl to '/'.)
+  url: 'https://joestump.github.io',
+  baseUrl: '/cairn/',
+  trailingSlash: false,
+
+  organizationName: 'joestump',
+  projectName: 'cairn',
+
+  onBrokenLinks: 'warn',
+
+  i18n: {
+    defaultLocale: 'en',
+    locales: ['en'],
+  },
+
+  // Treat .md as CommonMark so spec/ADR-style content (<id>, {…}, comparisons)
+  // never trips the MDX parser; .mdx still gets full MDX.
+  markdown: {
+    format: 'detect',
+    hooks: {
+      onBrokenMarkdownLinks: 'warn',
+    },
+  },
+
+  plugins: [
+    // Governing: ADR-0014, SPEC-0010 REQ "Record Content Pipeline"
+    // The record has already been staged by the factory below. This plugin
+    // exists for `getPathsToWatch()`: without it, `docusaurus start` serves a
+    // frozen snapshot of the record for the rest of the session.
+    // The `.ts` extension is required, not stylistic: Docusaurus resolves a
+    // local plugin path with Node's `require.resolve`
+    // (`core/lib/server/plugins/moduleShorthand.js`), which knows nothing about
+    // TypeScript and would not find `index.ts` by directory resolution. jiti
+    // does the transpiling once the exact path is known.
+    ['./plugins/record/index.ts', {routeBase: DOCS_ROUTE_BASE}],
+  ],
+
+  presets: [
+    [
+      'classic',
+      {
+        docs: {
+          sidebarPath: './sidebars.ts',
+          // Governing: ADR-0014, SPEC-0010 REQ "No Repository Links"
+          // No `editUrl`. The full record text renders on the site, so there
+          // is nothing an "edit this page" link could usefully point at, and
+          // the repository it pointed at is not publicly readable.
+
+          // Governing: ADR-0014, SPEC-0010 REQ "Record Prose to Structured Components"
+          // Registered *before* the default remark plugins so that the
+          // structural rewrite happens before `remark/headings` assigns
+          // anchors, before `remark/toc` collects them, and before
+          // `rehype-raw` turns a tag-shaped word like `<id>` into a real
+          // element.
+          beforeDefaultRemarkPlugins: [[remarkRecord, {siteDir}]],
+        },
+        blog: false,
+        theme: {
+          customCss: './src/css/custom.css',
+        },
+      } satisfies Preset.Options,
+    ],
+  ],
+
+  themeConfig: {
+    metadata: [
+      {name: 'description', content: 'Cairn — AI-native artifact sharing. A pastebin/gist/requestbin for the agent era: humans post from CLI/web, agents read & write over MCP.'},
+    ],
+    colorMode: {
+      defaultMode: 'dark',
+      respectPrefersColorScheme: false,
+      disableSwitch: false,
+    },
+    navbar: {
+      title: 'Cairn',
+      logo: {
+        alt: 'Cairn',
+        src: 'img/logo.svg',
+      },
+      items: [
+        {
+          type: 'docSidebar',
+          sidebarId: 'docsSidebar',
+          position: 'left',
+          label: 'Docs',
+        },
+        // Governing: ADR-0014, SPEC-0010 REQ "No Repository Links"
+        // These replace the forge link and the two hand-maintained index pages
+        // this capability deletes.
+        {to: '/docs/decisions', label: 'Decisions', position: 'left'},
+        {to: '/docs/specs', label: 'Specs', position: 'left'},
+      ],
+    },
+    footer: {
+      style: 'dark',
+      links: [
+        {
+          title: 'Docs',
+          items: [
+            {label: 'Overview', to: '/docs/intro'},
+            {label: 'Share types', to: '/docs/share-types'},
+            {label: 'Surfaces', to: '/docs/surfaces'},
+            {label: 'Annotations', to: '/docs/annotations'},
+          ],
+        },
+        {
+          title: 'Design record',
+          items: [
+            {label: 'Decisions', to: '/docs/decisions'},
+            {label: 'Specifications', to: '/docs/specs'},
+          ],
+        },
+      ],
+      copyright: `Cairn · built spec-first · © ${new Date().getFullYear()} Joe Stump`,
+    },
+    prism: {
+      theme: prismThemes.vsDark,
+      darkTheme: prismThemes.vsDark,
+      additionalLanguages: ['bash', 'go', 'json'],
+    },
+  } satisfies Preset.ThemeConfig,
+};
+
 /**
- * The config is an async factory, and that is the load-bearing part of the whole
- * pipeline.
+ * The config is exported as an async factory, and that is the load-bearing part
+ * of the whole pipeline.
  *
  * `loadSiteConfig` awaits a function config
  * (`@docusaurus/core/lib/server/config.js`) and `loadContext` completes before
@@ -28,6 +161,11 @@ const DOCS_ROUTE_BASE = '/docs';
  * directory in its own factory, and all plugin factories — and later all
  * `loadContent()` calls — run inside `Promise.all`, so the docs plugin would race
  * the generator and build N would publish what build N−1 staged.
+ *
+ * The config object itself stays a plain top-level `const`: the factory only
+ * wraps it. Re-indenting the whole object into the function body would turn a
+ * twenty-line change into a two-hundred-line diff over the `themeConfig` that
+ * concurrent work on the navbar, footer and chrome also has to touch.
  *
  * The consequence, accepted in ADR-0014: `docusaurus build` alone is no longer
  * sufficient on a clean checkout for anything that loads this config by another
@@ -47,137 +185,5 @@ export default async function createConfig(): Promise<Config> {
       `${data.counts.scenarios} scenarios staged from the design record`,
   );
 
-  return {
-    title: 'Cairn',
-    tagline: 'AI-native artifact sharing — pbcopy for the agent era.',
-    favicon: 'img/favicon.svg',
-
-    future: {
-      v4: true,
-    },
-
-    // GitHub Pages project site: https://joestump.github.io/cairn/
-    // (For a custom domain like cairn.sh, set url to the domain and baseUrl to '/'.)
-    url: 'https://joestump.github.io',
-    baseUrl: '/cairn/',
-    trailingSlash: false,
-
-    organizationName: 'joestump',
-    projectName: 'cairn',
-
-    onBrokenLinks: 'warn',
-
-    i18n: {
-      defaultLocale: 'en',
-      locales: ['en'],
-    },
-
-    // Treat .md as CommonMark so spec/ADR-style content (<id>, {…}, comparisons)
-    // never trips the MDX parser; .mdx still gets full MDX.
-    markdown: {
-      format: 'detect',
-      hooks: {
-        onBrokenMarkdownLinks: 'warn',
-      },
-    },
-
-    plugins: [
-      // Governing: ADR-0014, SPEC-0010 REQ "Record Content Pipeline"
-      // The record has already been staged by the factory above. This plugin
-      // exists for `getPathsToWatch()`: without it, `docusaurus start` serves a
-      // frozen snapshot of the record for the rest of the session.
-      // The `.ts` extension is required, not stylistic: Docusaurus resolves a
-      // local plugin path with Node's `require.resolve`
-      // (`core/lib/server/plugins/moduleShorthand.js`), which knows nothing about
-      // TypeScript and would not find `index.ts` by directory resolution. jiti
-      // does the transpiling once the exact path is known.
-      ['./plugins/record/index.ts', {routeBase: DOCS_ROUTE_BASE}],
-    ],
-
-    presets: [
-      [
-        'classic',
-        {
-          docs: {
-            sidebarPath: './sidebars.ts',
-            // Governing: ADR-0014, SPEC-0010 REQ "No Repository Links"
-            // No `editUrl`. The full record text renders on the site, so there
-            // is nothing an "edit this page" link could usefully point at, and
-            // the repository it pointed at is not publicly readable.
-
-            // Governing: ADR-0014, SPEC-0010 REQ "Record Prose to Structured Components"
-            // Registered *before* the default remark plugins so that the
-            // structural rewrite happens before `remark/headings` assigns
-            // anchors, before `remark/toc` collects them, and before
-            // `rehype-raw` turns a tag-shaped word like `<id>` into a real
-            // element.
-            beforeDefaultRemarkPlugins: [[remarkRecord, {siteDir}]],
-          },
-          blog: false,
-          theme: {
-            customCss: './src/css/custom.css',
-          },
-        } satisfies Preset.Options,
-      ],
-    ],
-
-    themeConfig: {
-      metadata: [
-        {
-          name: 'description',
-          content:
-            'Cairn — AI-native artifact sharing. A pastebin/gist/requestbin for the agent era: humans post from CLI/web, agents read & write over MCP.',
-        },
-      ],
-      colorMode: {
-        defaultMode: 'dark',
-        respectPrefersColorScheme: false,
-        disableSwitch: false,
-      },
-      navbar: {
-        title: 'Cairn',
-        logo: {
-          alt: 'Cairn',
-          src: 'img/logo.svg',
-        },
-        items: [
-          {
-            type: 'docSidebar',
-            sidebarId: 'docsSidebar',
-            position: 'left',
-            label: 'Docs',
-          },
-          {to: '/docs/decisions', label: 'Decisions', position: 'left'},
-          {to: '/docs/specs', label: 'Specs', position: 'left'},
-        ],
-      },
-      footer: {
-        style: 'dark',
-        links: [
-          {
-            title: 'Docs',
-            items: [
-              {label: 'Overview', to: '/docs/intro'},
-              {label: 'Share types', to: '/docs/share-types'},
-              {label: 'Surfaces', to: '/docs/surfaces'},
-              {label: 'Annotations', to: '/docs/annotations'},
-            ],
-          },
-          {
-            title: 'Design record',
-            items: [
-              {label: 'Decisions', to: '/docs/decisions'},
-              {label: 'Specifications', to: '/docs/specs'},
-            ],
-          },
-        ],
-        copyright: `Cairn · built spec-first · © ${new Date().getFullYear()} Joe Stump`,
-      },
-      prism: {
-        theme: prismThemes.vsDark,
-        darkTheme: prismThemes.vsDark,
-        additionalLanguages: ['bash', 'go', 'json', 'sql', 'yaml'],
-      },
-    } satisfies Preset.ThemeConfig,
-  };
+  return config;
 }

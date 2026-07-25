@@ -47,7 +47,7 @@ import {
   specHref,
   stageRecord,
 } from './stage.ts';
-import {validateRecord} from './validate.ts';
+import {assertStagedCoverage, validateRecord} from './validate.ts';
 import type {
   DecisionEntry,
   ParsedRecord,
@@ -96,7 +96,6 @@ export async function generateRecord(
     string,
     {sourcePath: string; body: string; title: string}
   >();
-  const renderedCapabilityDirs: string[] = [];
 
   for (const dir of capabilityDirs) {
     const specPath = path.join(dir, 'spec.md');
@@ -114,7 +113,6 @@ export async function generateRecord(
     }
     specRecords.push(record);
     capabilityOf.set(record.id, path.basename(dir));
-    renderedCapabilityDirs.push(repoRelative(paths, dir));
 
     const designPath = path.join(dir, 'design.md');
     try {
@@ -133,13 +131,7 @@ export async function generateRecord(
     }
   }
 
-  validateRecord({
-    decisions: decisionRecords,
-    specs: specRecords,
-    adrSourcePaths: adrFiles.map((absPath) => repoRelative(paths, absPath)),
-    capabilityDirs: capabilityDirs.map((dir) => repoRelative(paths, dir)),
-    renderedCapabilityDirs,
-  });
+  validateRecord({decisions: decisionRecords, specs: specRecords});
 
   const decisions: DecisionEntry[] = decisionRecords
     .map((record) => ({
@@ -231,6 +223,10 @@ export async function generateRecord(
     bodies,
     designBodies: designs,
   });
+
+  // Coverage is asserted against the staged tree rather than against the lists
+  // above, so that the check is capable of failing. See `assertStagedCoverage`.
+  await assertStagedCoverage({paths, adrFiles, capabilityDirs, data});
 
   return {data, paths, written};
 }

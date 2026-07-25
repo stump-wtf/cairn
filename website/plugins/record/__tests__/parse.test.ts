@@ -18,8 +18,8 @@ import {
   splitFrontMatter,
 } from '../parse.ts';
 import {createRecordPaths} from '../paths.ts';
-import {validateRecord} from '../validate.ts';
-import type {ParsedRecord} from '../types.ts';
+import {assertStagedCoverage, validateRecord} from '../validate.ts';
+import type {ParsedRecord, RecordData} from '../types.ts';
 
 describe('splitFrontMatter', () => {
   it('returns the body byte-for-byte', () => {
@@ -184,6 +184,26 @@ describe('parseRecordFile', () => {
     );
   });
 
+  it('refuses an explicit `{#id}` anchor rather than publishing one it cannot mirror', async () => {
+    // The anchors in the derived data module are computed by mirroring
+    // Docusaurus's slugger, and that mirror does not implement the classic
+    // explicit-id syntax. Failing loudly beats publishing a requirement anchor
+    // that nothing on the site resolves to.
+    const absPath = await write(
+      'ADR-0049-explicit-anchor.md',
+      '---\nstatus: accepted\ndate: 2026-07-08\n---\n\n# ADR-0049: Explicit Anchor\n\nProse.\n\n## Some Section {#custom-anchor}\n\nMore.\n',
+    );
+    await assert.rejects(
+      () => parseRecordFile({paths, absPath, kind: 'ADR'}),
+      (error: Error) => {
+        assert.ok(error instanceof RecordError);
+        assert.match(error.message, /ADR-0049-explicit-anchor\.md/);
+        assert.match(error.message, /Some Section \{#custom-anchor\}/);
+        return true;
+      },
+    );
+  });
+
   it('does not republish front-matter the renderer does not need', async () => {
     const absPath = await write(
       'ADR-0048-extras.md',
@@ -225,9 +245,6 @@ describe('validateRecord', () => {
         sourcePath: 'docs/openspec/specs/thing/spec.md',
       }),
     ],
-    adrSourcePaths: ['docs/adrs/ADR-0001.md'],
-    capabilityDirs: ['docs/openspec/specs/thing'],
-    renderedCapabilityDirs: ['docs/openspec/specs/thing'],
   };
 
   it('accepts a coherent record', () => {
@@ -283,38 +300,6 @@ describe('validateRecord', () => {
     );
   });
 
-  it('fails and names a decision file that produced no page', () => {
-    assert.throws(
-      () =>
-        validateRecord({
-          ...ok,
-          adrSourcePaths: [
-            'docs/adrs/ADR-0001.md',
-            'docs/adrs/ADR-0002-forgotten.md',
-          ],
-        }),
-      (error: Error) => {
-        assert.match(error.message, /ADR-0002-forgotten\.md/);
-        assert.match(error.message, /produced no page/);
-        return true;
-      },
-    );
-  });
-
-  it('fails and names a capability directory that produced no card', () => {
-    assert.throws(
-      () =>
-        validateRecord({
-          ...ok,
-          capabilityDirs: [
-            'docs/openspec/specs/thing',
-            'docs/openspec/specs/other',
-          ],
-        }),
-      /docs\/openspec\/specs\/other/,
-    );
-  });
-
   it('rejects a duplicate identifier and names both files', () => {
     assert.throws(
       () =>
@@ -324,13 +309,127 @@ describe('validateRecord', () => {
             stub('ADR-0001', {sourcePath: 'docs/adrs/ADR-0001-a.md'}),
             stub('ADR-0001', {sourcePath: 'docs/adrs/ADR-0001-b.md'}),
           ],
-          adrSourcePaths: ['docs/adrs/ADR-0001-a.md', 'docs/adrs/ADR-0001-b.md'],
         }),
       (error: Error) => {
         assert.match(error.message, /ADR-0001-b\.md/);
         assert.match(error.message, /already used by docs\/adrs\/ADR-0001-a\.md/);
         return true;
       },
+    );
+  });
+});
+
+// Governing: ADR-0014, SPEC-0010 REQ "Generated Decisions Tree"
+// Governing: ADR-0014, SPEC-0010 REQ "Generated Specs Tree"
+//
+// Coverage is asserted against the staged tree on disk, which is why these tests
+// build one. Asserting it against the in-memory record list instead is what made
+// the previous version of this check unable to fail: it compared a list to a
+// mapping over that same list.
+describe('assertStagedCoverage', () => {
+  let dir: string;
+  let paths: ReturnType<typeof createRecordPaths>;
+
+  before(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cairn-coverage-'));
+    paths = createRecordPaths(path.join(dir, 'repo', 'website'));
+    await fs.mkdir(paths.adrDir, {recursive: true});
+    await fs.mkdir(path.join(paths.specsDir, 'thing'), {recursive: true});
+  });
+
+  after(async () => {
+    await fs.rm(dir, {recursive: true, force: true});
+  });
+
+  const data = {
+    decisions: [
+      {
+        id: 'ADR-0001',
+        sourcePath: 'docs/adrs/ADR-0001-thing.md',
+      },
+    ],
+    specs: [{id: 'SPEC-0001', capability: 'thing'}],
+  } as unknown as RecordData;
+
+  const adrFiles = () => [path.join(paths.adrDir, 'ADR-0001-thing.md')];
+  const capabilityDirs = () => [path.join(paths.specsDir, 'thing')];
+
+  /** Stage the pages both records expect, so each test starts from coverage met. */
+  async function stageBoth(): Promise<void> {
+    await fs.mkdir(paths.stagedDecisionsDir, {recursive: true});
+    await fs.mkdir(path.join(paths.stagedSpecsDir, 'thing'), {recursive: true});
+    await fs.writeFile(
+      path.join(paths.stagedDecisionsDir, 'ADR-0001.md'),
+      'page\n',
+    );
+    await fs.writeFile(
+      path.join(paths.stagedSpecsDir, 'thing', 'index.md'),
+      'page\n',
+    );
+  }
+
+  it('passes once both records are staged', async () => {
+    await stageBoth();
+    await assert.doesNotReject(() =>
+      assertStagedCoverage({
+        paths,
+        adrFiles: adrFiles(),
+        capabilityDirs: capabilityDirs(),
+        data,
+      }),
+    );
+  });
+
+  it('fails and names the source file when its page is missing from the staged tree', async () => {
+    await stageBoth();
+    await fs.rm(path.join(paths.stagedDecisionsDir, 'ADR-0001.md'));
+    await assert.rejects(
+      () =>
+        assertStagedCoverage({
+          paths,
+          adrFiles: adrFiles(),
+          capabilityDirs: capabilityDirs(),
+          data,
+        }),
+      (error: Error) => {
+        assert.ok(error instanceof RecordError);
+        assert.match(error.message, /ADR-0001-thing\.md/);
+        assert.match(error.message, /produced no page/);
+        return true;
+      },
+    );
+  });
+
+  it('fails and names a decision source file the record never parsed', async () => {
+    await stageBoth();
+    await assert.rejects(
+      () =>
+        assertStagedCoverage({
+          paths,
+          adrFiles: [
+            ...adrFiles(),
+            path.join(paths.adrDir, 'ADR-0002-forgotten.md'),
+          ],
+          capabilityDirs: capabilityDirs(),
+          data,
+        }),
+      /ADR-0002-forgotten\.md/,
+    );
+  });
+
+  it('fails and names a capability directory that produced no card', async () => {
+    await assert.rejects(
+      () =>
+        assertStagedCoverage({
+          paths,
+          adrFiles: [],
+          capabilityDirs: [
+            ...capabilityDirs(),
+            path.join(paths.specsDir, 'other'),
+          ],
+          data,
+        }),
+      /docs\/openspec\/specs\/other/,
     );
   });
 });

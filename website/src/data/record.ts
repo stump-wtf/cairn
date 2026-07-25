@@ -9,9 +9,14 @@
 // `docusaurus build` and `docusaurus start` (both await the generator from the
 // config factory) and is what `npm run generate` exists for elsewhere.
 
+// The only import from `plugins/` is type-only and therefore erased. That is
+// deliberate: this module is client code, and a *value* import from the pipeline
+// would put generator code into the browser bundle and couple the two halves of
+// the site at runtime rather than just at the type level. The nine-line empty
+// relations literal below is cheaper than that coupling.
+
 import generated from '@site/src/generated/record.json';
 
-import {emptyRelations} from '@site/plugins/record/graph';
 import type {
   DecisionEntry,
   RecordData,
@@ -28,7 +33,24 @@ export const decisions: DecisionEntry[] = record.decisions;
 export const specs: SpecEntry[] = record.specs;
 export const counts = record.counts;
 
-/** Both directions of every relationship touching one record. */
+/** A fresh empty bucket set, so a caller can never mutate a shared fallback. */
+function emptyRelations(): RecordRelations {
+  return {
+    extends: [],
+    extendedBy: [],
+    related: [],
+    implements: [],
+    implementedBy: [],
+    requires: [],
+    requiredBy: [],
+  };
+}
+
+/**
+ * Both directions of every relationship touching one record. Every published
+ * record has an entry, so the fallback is for a caller that asks about an id the
+ * record does not contain.
+ */
 export function relationsFor(id: string): RecordRelations {
   return record.graph.relations[id] ?? emptyRelations();
 }

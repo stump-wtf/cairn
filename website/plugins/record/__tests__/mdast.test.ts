@@ -98,6 +98,35 @@ describe('wrapRfc2119Keywords', () => {
     );
   });
 
+  it('wraps a two-word keyword split across a soft line break', async () => {
+    // The record hard-wraps at ~85 columns, so `MUST NOT` regularly straddles a
+    // line ending, which CommonMark keeps as a `\n` inside one text node. With a
+    // literal space in the pattern this matched only `MUST` and the record's
+    // prohibition rendered as a positive obligation with a bare "NOT" beside it.
+    const tree = await parseRecordMarkdown(
+      'Errors MUST be wrapped with context at each layer boundary, MUST\nNOT be silently swallowed.\n',
+    );
+    const wrapped = wrapRfc2119Keywords(tree);
+    assert.equal(wrapped, 2);
+    assert.deepEqual(
+      named(tree, 'Rfc2119').map((n) => attr(n, 'keyword')),
+      ['MUST', 'MUST NOT'],
+    );
+    // The author's bytes survive in the rendered text; only the attribute is
+    // normalised, and no bare "NOT" is left outside a keyword.
+    assert.match(textOf(tree), /MUST\nNOT be silently swallowed/);
+    assert.doesNotMatch(textOf(tree), /MUST NOT be silently/);
+  });
+
+  it('wraps `NOT RECOMMENDED` split across a soft line break', async () => {
+    const tree = await parseRecordMarkdown('Doing that is NOT\nRECOMMENDED.\n');
+    assert.equal(wrapRfc2119Keywords(tree), 1);
+    assert.deepEqual(
+      named(tree, 'Rfc2119').map((n) => attr(n, 'keyword')),
+      ['NOT RECOMMENDED'],
+    );
+  });
+
   it('leaves a keyword inside a code span alone', async () => {
     const tree = await parseRecordMarkdown('Set `status: MUST` on the field.\n');
     assert.equal(wrapRfc2119Keywords(tree), 0);

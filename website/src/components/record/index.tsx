@@ -1,10 +1,15 @@
 // Governing: ADR-0014, SPEC-0010 REQ "Record Prose to Structured Components"
-// Governing: ADR-0014, SPEC-0010 REQ "Derived Data Module"
 //
-// The components a transformed record document and a generated index render
-// through. The remark transform injects one ESM import of this module into every
-// staged record page — see `plugins/record/remark-record.ts` for why the import
-// cannot be written into the record text.
+// The components a transformed record document renders through. The remark
+// transform injects one ESM import of this module into every staged record page —
+// see `plugins/record/remark-record.ts` for why the import cannot be written into
+// the record text.
+//
+// Because that import lands in every record page, this module is in the site-wide
+// entry chunk, so nothing here may reach `@site/src/data/record`: that would ship
+// the whole derived data module to every route including the homepage. The two
+// generated indexes, which genuinely need the data, live in `./indexes` and are
+// imported only by the two staged index pages.
 //
 // These are deliberately structure-only: semantic elements plus stable
 // `cairn-record-*` class hooks, no stylesheet of their own. The visual design of
@@ -16,13 +21,6 @@
 // file, `src/css/custom.css`.
 
 import React, {type ReactNode} from 'react';
-import Link from '@docusaurus/Link';
-
-import {decisions, specs} from '@site/src/data/record';
-
-// ---------------------------------------------------------------------------
-// Record prose components (bound by the remark transform)
-// ---------------------------------------------------------------------------
 
 /**
  * A `### Requirement:` section. The section's own heading is the first child, so
@@ -96,85 +94,5 @@ export function Rfc2119({
     <strong className="cairn-record-rfc2119" data-keyword={keyword}>
       {children}
     </strong>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Generated indexes (bound by the staged index pages)
-// ---------------------------------------------------------------------------
-
-/** A status, carried as text. Colour is never the only carrier of meaning. */
-export function StatusBadge({status}: {status: string}): ReactNode {
-  return (
-    <span className="cairn-record-status" data-status={status}>
-      {status.toUpperCase()}
-    </span>
-  );
-}
-
-/**
- * One row per `docs/adrs/ADR-*.md`, in number order, with every cell derived.
- * Nothing here is hand-maintained, which is the entire point of ADR-0014.
- */
-export function DecisionIndex(): ReactNode {
-  return (
-    <table className="cairn-record-index">
-      <thead>
-        <tr>
-          <th scope="col">Decision</th>
-          <th scope="col">Status</th>
-          <th scope="col">Date</th>
-        </tr>
-      </thead>
-      <tbody>
-        {decisions.map((decision) => (
-          <tr key={decision.id}>
-            <th scope="row">
-              <Link to={decision.href}>
-                <code>{decision.id}</code> {decision.title}
-              </Link>
-            </th>
-            <td>
-              <StatusBadge status={decision.status} />
-            </td>
-            <td>
-              <time dateTime={decision.date}>{decision.date}</time>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-/**
- * One card per capability directory, ordered by the number in the
- * specification's own `# SPEC-XXXX:` heading — not by directory name, which does
- * not sort into specification order.
- */
-export function SpecIndex(): ReactNode {
-  return (
-    <ul className="cairn-record-cards">
-      {specs.map((spec) => (
-        <li key={spec.id} className="cairn-record-card">
-          <h3>
-            <Link to={spec.href}>
-              <code>{spec.id}</code> {spec.title}
-            </Link>
-          </h3>
-          <p>{spec.summary}</p>
-          <p className="cairn-record-card__meta">
-            <StatusBadge status={spec.status} />{' '}
-            <span>
-              {spec.requirementCount} requirements · {spec.scenarioCount}{' '}
-              scenarios
-            </span>{' '}
-            {spec.designHref ? (
-              <Link to={spec.designHref}>Design document</Link>
-            ) : null}
-          </p>
-        </li>
-      ))}
-    </ul>
   );
 }

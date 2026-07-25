@@ -224,7 +224,18 @@ export async function parseRecordFile({
     }
   }
 
-  const {requirements, scenarioCount} = await collectInventory(tree);
+  const {requirements, scenarioCount, explicitIds} =
+    await collectInventory(tree);
+  // The requirement anchors in the derived data module are computed by mirroring
+  // Docusaurus's slugger. That mirror does not implement the explicit-id
+  // syntaxes, so a heading that uses one would be published under an anchor
+  // nothing links to. Refusing it is loud; mirroring it silently would not be.
+  if (explicitIds.length > 0) {
+    throw new RecordError(
+      sourcePath,
+      `heading '${explicitIds[0]}' sets an explicit anchor with '{#…}'; the record pipeline derives every anchor from the heading text, so remove it`,
+    );
+  }
   const summary = await deriveSummary(tree);
 
   return {

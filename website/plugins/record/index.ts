@@ -53,14 +53,20 @@ export default function cairnRecordPlugin(
       return data;
     },
 
-    contentLoaded({content, actions}) {
-      // Published as plugin global data as well as `src/generated/record.json`.
-      // The JSON module is what components import — a plain import works at
-      // module scope, on the homepage and inside MDX alike — while the global
-      // data makes the same object reachable through `usePluginData` without a
-      // path alias. Both are the same object from the same run; neither is a
-      // second source of truth.
-      actions.setGlobalData(content);
-    },
+    // Governing: ADR-0014, SPEC-0010 REQ "Derived Data Module"
+    //
+    // Deliberately no `contentLoaded`, and specifically no `setGlobalData`.
+    //
+    // Plugin global data is serialised into `globalData.json`, which the client
+    // entry imports unconditionally, so publishing the record that way puts all
+    // 49 KB of it into `main.js` — paid for on every route, including the
+    // homepage, which renders none of it. It also makes the record reachable by
+    // two different paths, and "the pipeline emits *a single* derived data
+    // module" is the requirement, not a stylistic preference.
+    //
+    // The single module is `src/generated/record.json`, imported through
+    // `@site/src/data/record`. A plain import works at module scope, in a page
+    // and inside MDX alike, and webpack keeps it in the chunks that actually
+    // reference it.
   };
 }

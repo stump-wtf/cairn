@@ -18,6 +18,51 @@ import type {RecordData} from '../types.ts';
 const siteDir = path.resolve(import.meta.dirname, '..', '..', '..');
 const paths = createRecordPaths(siteDir);
 
+const AUTHORED_EDGE_KEYS = [
+  'extends',
+  'enables',
+  'related',
+  'implements',
+  'requires',
+] as const;
+
+/**
+ * Count graph edges straight out of the record's front-matter, deliberately
+ * without importing anything from `graph.ts`. This is the denominator the
+ * de-duplication assertion needs: any figure derived from the generator's own
+ * output would make that assertion self-referential.
+ */
+async function countAuthoredEdges(): Promise<number> {
+  const yaml = await import('js-yaml');
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  const load = yaml.load ?? (yaml as any).default.load;
+
+  const sources: string[] = [];
+  for (const name of await fs.readdir(paths.adrDir)) {
+    if (/^ADR-\d{4}.*\.md$/.test(name)) {
+      sources.push(path.join(paths.adrDir, name));
+    }
+  }
+  for (const entry of await fs.readdir(paths.specsDir, {withFileTypes: true})) {
+    if (entry.isDirectory()) {
+      sources.push(path.join(paths.specsDir, entry.name, 'spec.md'));
+    }
+  }
+
+  let total = 0;
+  for (const source of sources) {
+    const {frontMatter} = splitFrontMatter(await fs.readFile(source, 'utf8'));
+    const parsed = (load(frontMatter) ?? {}) as Record<string, unknown>;
+    for (const key of AUTHORED_EDGE_KEYS) {
+      const value = parsed[key];
+      if (Array.isArray(value)) {
+        total += value.length;
+      }
+    }
+  }
+  return total;
+}
+
 describe('generateRecord over the real record', () => {
   let data: RecordData;
 
@@ -89,16 +134,36 @@ describe('generateRecord over the real record', () => {
     }
   });
 
-  it('stores fewer edges than were authored, because the record says the same thing twice', () => {
-    // ADR-0001 declares enables:[ADR-0002, ADR-0003] while both of those declare
-    // extends:[ADR-0001]. If this ever stops holding, de-duplication has silently
-    // stopped mattering and the assertion should be revisited, not deleted.
-    const authored = [...data.decisions, ...data.specs].length;
-    assert.ok(data.graph.edges.length > authored / 2);
-    const keys = new Set(
-      data.graph.edges.map((edge) => `${edge.kind} ${edge.from} ${edge.to}`),
+  it('stores fewer edges than were authored, because the record says the same thing twice', async () => {
+    // The denominator is counted out of the source front-matter by this test,
+    // with no help from graph.ts. Deriving it from anything the generator
+    // produced would be checking the de-duplicator against itself — which is
+    // what this assertion used to do: it compared the edge count to the number
+    // of *records*, and `52 > 24 / 2` says nothing about de-duplication.
+    const authored = await countAuthoredEdges();
+    assert.ok(authored > 0, 'the record authors no graph edges at all');
+    assert.ok(
+      data.graph.edges.length < authored,
+      `expected fewer stored edges than the ${authored} authored, got ${data.graph.edges.length}`,
     );
-    assert.equal(keys.size, data.graph.edges.length);
+
+    // And the specific relationship SPEC-0010 names: ADR-0001 declares
+    // `enables: [ADR-0002, ADR-0003]` while ADR-0002 and ADR-0003 each
+    // independently declare `extends: [ADR-0001]`, so that fact is authored from
+    // both ends and must be stored, and rendered, exactly once.
+    const bothEnds = data.graph.edges.filter(
+      (edge) =>
+        edge.kind === 'extends' &&
+        edge.from === 'ADR-0002' &&
+        edge.to === 'ADR-0001',
+    );
+    assert.equal(bothEnds.length, 1, 'ADR-0002 extends ADR-0001 is not stored once');
+    assert.deepEqual(
+      data.graph.relations['ADR-0001']?.extendedBy.filter(
+        (id) => id === 'ADR-0002',
+      ),
+      ['ADR-0002'],
+    );
   });
 
   it('never lists the same relationship twice on one record', () => {

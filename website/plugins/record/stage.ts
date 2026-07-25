@@ -230,7 +230,7 @@ function decisionsIndexPage(): string {
       sidebar_position: 0,
       description: `Every architecture decision record Cairn has accepted, published in full from the repository's own record.`,
     },
-  )}import {DecisionIndex} from '@site/src/components/record';
+  )}import {DecisionIndex} from '@site/src/components/record/indexes';
 
 # Decisions
 
@@ -247,7 +247,7 @@ function specsIndexPage(): string {
       sidebar_position: 0,
       description: `Every Cairn capability specification, with its requirement count derived from the specification itself.`,
     },
-  )}import {SpecIndex} from '@site/src/components/record';
+  )}import {SpecIndex} from '@site/src/components/record/indexes';
 
 # Specifications
 
