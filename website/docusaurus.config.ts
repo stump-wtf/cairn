@@ -244,7 +244,22 @@ const config: Config = {
     prism: {
       theme: cairnPrismTheme,
       darkTheme: cairnPrismTheme,
-      additionalLanguages: ['bash', 'go', 'json'],
+      // Governing: ADR-0014, SPEC-0010 REQ "Code Block Fidelity"
+      //
+      // The floor the requirement names, stated in full rather than trimmed to
+      // what is missing today. theme-classic seeds the highlighter from
+      // prism-react-renderer's bundled grammars and then `require`s
+      // `prismjs/components/prism-<lang>` for each entry here
+      // (`theme/prism-include-languages.ts`), so the covered set is the union
+      // of the two. That bundle happens to carry `go`, `json`, `sql` and
+      // `yaml` today and does not carry `bash` — but it is a dependency's
+      // internal choice, and a requirement of this site should not be
+      // satisfied by one. Naming all five makes the floor independent of it.
+      //
+      // scripts/prism-languages.test.mjs reads the floor out of the
+      // specification's own text and checks this list against it, so a
+      // language added to the requirement cannot be forgotten here.
+      additionalLanguages: ['bash', 'go', 'json', 'sql', 'yaml'],
     },
   } satisfies Preset.ThemeConfig,
 };
