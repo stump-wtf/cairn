@@ -334,10 +334,19 @@ export function buildEndpointReference(
   const coverage: EndpointSpecCoverage[] = [];
 
   for (const spec of specs) {
-    const sections = (sectionsBySpecId.get(spec.id) ?? []).filter(
-      (section) =>
-        !(spec.capability === WEBSITE_CAPABILITY && section.name === 'Web Routes'),
-    );
+    const declared = sectionsBySpecId.get(spec.id) ?? [];
+    /*
+     * The exclusion is CARRIED, not collapsed into a zero. Filtering the website
+     * capability's own `## Web Routes` out of both `rows` and `sections` left
+     * SPEC-0010 indistinguishable from a specification documenting no endpoints
+     * at all, so the page published "carrying no endpoint section" for a
+     * specification that demonstrably carries one — contradicting the record two
+     * lines under a paragraph naming `Web Routes` as an included section name.
+     */
+    const isExcluded = (section: {name: string}) =>
+      spec.capability === WEBSITE_CAPABILITY && section.name === 'Web Routes';
+    const sections = declared.filter((section) => !isExcluded(section));
+    const excluded = declared.filter(isExcluded);
     let rowCount = 0;
     for (const section of sections) {
       for (const raw of section.rows) {
@@ -360,6 +369,11 @@ export function buildEndpointReference(
       // the row list instead would collapse two same-named sections in one
       // specification onto the first one's anchor.
       sections: sections.map((section) => ({
+        name: section.name,
+        title: section.title,
+        href: `${spec.href}#${section.anchor}`,
+      })),
+      excluded: excluded.map((section) => ({
         name: section.name,
         title: section.title,
         href: `${spec.href}#${section.anchor}`,

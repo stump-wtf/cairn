@@ -12,9 +12,12 @@
 // paragraph that gave it.
 //
 // It does not claim to be complete, and it says which specifications it is
-// missing. Four of ten carry none of the enumerated section names, so a reader
-// who took this page for the whole API would be wrong — and the list of silent
-// specifications is derived too, which is the only way it can stay true.
+// missing. Some carry none of the enumerated section names, so a reader who took
+// this page for the whole API would be wrong — and the list of silent
+// specifications is derived too, which is the only way it can stay true. No
+// total appears here on purpose: this file exists to kill hand-kept counts, and
+// the one it used to carry ("four of ten") had already drifted from the two the
+// generator finds. `Scope()` derives it.
 //
 // No colour literal appears here, and none may: the palette lives in exactly one
 // file, `src/css/custom.css`.
@@ -37,9 +40,33 @@ function joinNames(items: ReactNode[]): ReactNode[] {
   });
 }
 
-function EndpointTable({rows}: {rows: EndpointRow[]}): ReactNode {
+/*
+ * Governing: ADR-0014, SPEC-0010 REQ "Keyboard Navigation & Focus Management".
+ *
+ * `label` is required, and the wrapper is a focusable named region, because the
+ * table scrolls horizontally and holds nothing focusable. `.method` and `.path`
+ * are `white-space: nowrap` and `.purpose` has an 18rem floor, so a path like
+ * `/v1/hooks/{id}/requests/{seq}/body` pushes the min-content width past 700px:
+ * on a phone, or a narrow window with the sidebar open, Purpose and Auth are off
+ * screen. With no tabIndex and no focusable descendant, a keyboard-only reader
+ * tabbed from one section heading straight to the next and could never bring
+ * those columns into view (axe `scrollable-region-focusable`, WCAG 2.1.1).
+ *
+ * Both call sites pass a distinct label so the regions are tellable apart.
+ */
+function EndpointTable({
+  rows,
+  label,
+}: {
+  rows: EndpointRow[];
+  label: string;
+}): ReactNode {
   return (
-    <div className={styles.tableScroll}>
+    <div
+      className={styles.tableScroll}
+      role="region"
+      tabIndex={0}
+      aria-label={label}>
       <table className={styles.endpoints}>
         <thead>
           <tr>
@@ -90,8 +117,20 @@ function EndpointTable({rows}: {rows: EndpointRow[]}): ReactNode {
  * here without anybody noticing it had been.
  */
 function Scope(): ReactNode {
-  const silent = endpoints.coverage.filter((spec) => spec.rowCount === 0);
   const contributing = endpoints.coverage.filter((spec) => spec.rowCount > 0);
+  /*
+   * Three groups, not two. A specification with no rows is either genuinely
+   * silent or deliberately excluded, and only the derived `excluded` list can
+   * tell them apart: keying on `rowCount === 0` alone put SPEC-0010 — which
+   * carries `## Web Routes`, one of the very section names this page enumerates
+   * — under "carrying no endpoint section", contradicting the record.
+   */
+  const silent = endpoints.coverage.filter(
+    (spec) => spec.rowCount === 0 && spec.excluded.length === 0,
+  );
+  const setAside = endpoints.coverage.filter(
+    (spec) => spec.rowCount === 0 && spec.excluded.length > 0,
+  );
   return (
     <div className={styles.scope}>
       <p>
@@ -113,6 +152,32 @@ function Scope(): ReactNode {
                 <Link to={spec.specHref}>
                   <code>{spec.specId}</code> {spec.specTitle}
                 </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {setAside.length > 0 ? (
+        <div>
+          <p>
+            Carrying an endpoint section that is deliberately out of scope — a
+            route map for this website rather than a service API:
+          </p>
+          <ul className={styles.scopeList}>
+            {setAside.map((spec) => (
+              <li key={spec.specId}>
+                <Link to={spec.specHref}>
+                  <code>{spec.specId}</code> {spec.specTitle}
+                </Link>{' '}
+                (
+                {joinNames(
+                  spec.excluded.map((section) => (
+                    <Link key={section.href} to={section.href}>
+                      <code>{section.name}</code>
+                    </Link>
+                  )),
+                )}
+                )
               </li>
             ))}
           </ul>
@@ -143,7 +208,7 @@ function Streaming(): ReactNode {
         it inherits this page's scope: a stream a specification documents outside
         an endpoint table is not here either.
       </p>
-      <EndpointTable rows={rows} />
+      <EndpointTable rows={rows} label="Streaming endpoints" />
     </section>
   );
 }
@@ -180,7 +245,10 @@ export function HttpReference(): ReactNode {
                 )),
               )}
             </p>
-            <EndpointTable rows={rows} />
+            <EndpointTable
+              rows={rows}
+              label={`${spec.specId} ${spec.specTitle} endpoints`}
+            />
           </section>
         );
       })}

@@ -197,6 +197,14 @@ export interface EndpointSpecCoverage {
   specTitle: string;
   specHref: string;
   sections: EndpointSectionRef[];
+  /**
+   * Enumerated sections deliberately left OUT of the reference — today, the
+   * website specification's own `## Web Routes`, which maps a static site rather
+   * than a service API. Kept distinct from "carries no endpoint section":
+   * collapsing the two into `rowCount === 0` made the page state the opposite of
+   * what the record says.
+   */
+  excluded: EndpointSectionRef[];
   rowCount: number;
 }
 
