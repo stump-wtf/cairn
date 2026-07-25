@@ -30,6 +30,7 @@ function record(
     authored,
     requirements: [],
     scenarioCount: 0,
+    endpointSections: [],
     absPath: `/tmp/${id}.md`,
     sourcePath: `docs/adrs/${id}.md`,
     body: '',

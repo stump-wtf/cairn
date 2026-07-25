@@ -32,6 +32,15 @@ export interface RecordPaths {
   /** The derived data module. Git-ignored; rewritten on every load. */
   generatedDir: string;
   recordJson: string;
+  /**
+   * Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+   *
+   * The token definition, and the inventory derived from it. The inventory is a
+   * second generated module rather than a field of `recordJson`, because it is
+   * derived from a stylesheet and not from the record — see `tokens.ts`.
+   */
+  tokenCss: string;
+  tokensJson: string;
 }
 
 /** Docs route base, as configured on the docs preset. */
@@ -56,6 +65,8 @@ export function createRecordPaths(siteDir: string): RecordPaths {
     stagedSpecsDir: path.join(docsDir, SPECS_SEGMENT),
     generatedDir,
     recordJson: path.join(generatedDir, 'record.json'),
+    tokenCss: path.join(resolvedSiteDir, 'src', 'css', 'custom.css'),
+    tokensJson: path.join(generatedDir, 'tokens.json'),
   };
 }
 
@@ -69,6 +80,12 @@ export function recordWatchPaths(paths: RecordPaths): string[] {
   return [
     path.join(paths.adrDir, '**', '*.md'),
     path.join(paths.specsDir, '**', '*.md'),
+    // Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+    // The token inventory is derived at generation time, so editing a token
+    // changes a JSON module rather than a stylesheet. Webpack's own watch on
+    // `src/**` would reload the CSS and leave the printed values stale, so the
+    // generator has to re-run on this file too.
+    paths.tokenCss,
   ];
 }
 

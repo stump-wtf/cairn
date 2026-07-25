@@ -132,10 +132,73 @@ export interface RecordCounts {
   scenarios: number;
 }
 
+// Governing: ADR-0014, SPEC-0010 REQ "Derived HTTP Reference Page"
+//
+// The API surface, as read out of the specifications' own endpoint tables. See
+// `endpoints.ts` for why the sections are enumerated and the columns are
+// identified by header rather than by position.
+
+/** One endpoint table row, before it knows which specification it came from. */
+export interface RawEndpointRow {
+  /** `GET`, `POST / GET (SSE)`, or null where the source states no method. */
+  method: string | null;
+  path: string;
+  /** A trailing parenthetical the author wrote beside the path: `(web)`. */
+  note: string | null;
+  purpose: string;
+  /** The auth cell verbatim: posture and the justification the record gave. */
+  auth: string | null;
+  /** The posture alone — the half a reader scans a column for. */
+  authPosture: string | null;
+  /** Derived, never listed: an SSE method, purpose, or a `/stream` path. */
+  streaming: boolean;
+}
+
+/** One enumerated `## …` section of one specification, and its rows. */
+export interface EndpointSection {
+  /** The heading text, which is one of `ENDPOINT_SECTION_NAMES`. */
+  title: string;
+  /** The anchor Docusaurus will emit for that heading. */
+  anchor: string;
+  rows: RawEndpointRow[];
+}
+
+/** A row on the reference page: what it says, and which spec owns it. */
+export interface EndpointRow extends RawEndpointRow {
+  specId: string;
+  specTitle: string;
+  specHref: string;
+  section: string;
+  /** Deep link to the owning table, not merely to the specification. */
+  sectionHref: string;
+}
+
+/**
+ * Every specification, contributing or not. A specification that carries none of
+ * the enumerated sections is not an error — it is the reason the page may not
+ * claim to be a complete API surface, so it has to be nameable.
+ */
+export interface EndpointSpecCoverage {
+  specId: string;
+  specTitle: string;
+  specHref: string;
+  sections: string[];
+  rowCount: number;
+}
+
+export interface RecordEndpoints {
+  /** The enumerated section names scanned, so the page can state its own scope. */
+  sectionNames: string[];
+  rows: EndpointRow[];
+  coverage: EndpointSpecCoverage[];
+}
+
 export interface RecordData {
   decisions: DecisionEntry[];
   specs: SpecEntry[];
   counts: RecordCounts;
+  /** The service's HTTP surface, derived from the specs' endpoint tables. */
+  endpoints: RecordEndpoints;
   graph: {
     edges: RecordEdge[];
     /** Keyed by record id; every id in `decisions`/`specs` has an entry. */
@@ -157,6 +220,12 @@ export interface ParsedRecord {
   authored: Partial<Record<AuthoredEdgeKind, string[]>>;
   requirements: RequirementEntry[];
   scenarioCount: number;
+  /**
+   * The enumerated endpoint sections this file carries, in document order.
+   * Collected for every record; which of them reach the reference page is a
+   * generator policy, not a parsing one — see `buildEndpointReference`.
+   */
+  endpointSections: EndpointSection[];
   /** Absolute path of the source file. */
   absPath: string;
   /** Repo-relative source path. */

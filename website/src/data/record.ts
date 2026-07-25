@@ -19,19 +19,41 @@ import generated from '@site/src/generated/record.json';
 
 import type {
   DecisionEntry,
+  EndpointRow,
+  EndpointSpecCoverage,
   RecordData,
+  RecordEndpoints,
   RecordRef,
   RecordRelations,
   SpecEntry,
 } from '@site/plugins/record/types';
 
-export type {DecisionEntry, RecordData, RecordRef, RecordRelations, SpecEntry};
+export type {
+  DecisionEntry,
+  EndpointRow,
+  EndpointSpecCoverage,
+  RecordData,
+  RecordEndpoints,
+  RecordRef,
+  RecordRelations,
+  SpecEntry,
+};
 
 export const record = generated as unknown as RecordData;
 
 export const decisions: DecisionEntry[] = record.decisions;
 export const specs: SpecEntry[] = record.specs;
 export const counts = record.counts;
+
+/**
+ * Governing: ADR-0014, SPEC-0010 REQ "Derived HTTP Reference Page"
+ *
+ * The service's HTTP surface, read out of the specifications' own endpoint
+ * tables. `coverage` carries every specification including the ones that carry
+ * no endpoint section, because the reference page may not claim to be complete
+ * and can only say so honestly if it knows which specs stayed silent.
+ */
+export const endpoints: RecordEndpoints = record.endpoints;
 
 /** A fresh empty bucket set, so a caller can never mutate a shared fallback. */
 function emptyRelations(): RecordRelations {

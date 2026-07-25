@@ -1,0 +1,274 @@
+/*
+ * Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+ * Governing: ADR-0014, SPEC-0010 REQ "Derived HTTP Reference Page"
+ *
+ * The two derived reference pages. A CSS module rather than global
+ * `cairn-record-*` rules on purpose: these components are not record prose and
+ * are not the structure-only components under `src/components/record/`, so they
+ * must not compete for those class names.
+ *
+ * No colour literal appears here, and none may — the palette lives in exactly
+ * one file, `src/css/custom.css`. Every colour below is a token reference, and
+ * every accent arrives as a `--swatch-accent` / `--badge-accent` custom property
+ * set from a token name the pipeline read out of that same file.
+ */
+
+.section {
+  margin-block: 2.5rem;
+}
+
+/* ---------------------------------------------------------------- swatches */
+
+/*
+ * A ramp is a strip of surfaces, so it reads as a strip: one row per token, the
+ * colour on the left at a size big enough to judge, its name and value beside
+ * it in mono because both are machine content — SPEC-0010 REQ "Typographic
+ * Roles".
+ */
+.ramp {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.swatch {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--cairn-border);
+  border-radius: var(--ifm-global-radius);
+  background: var(--cairn-elevated);
+}
+
+/*
+ * The chip itself. Its ground is pinned to the ink ramp so a light-mode reader
+ * sees the near-black end of the ink ramp as a colour rather than as the page
+ * ground it would otherwise blend into.
+ */
+.swatchColor {
+  flex: 0 0 auto;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 7px;
+  background: var(--swatch-accent);
+  border: 1px solid var(--cairn-ink-300);
+}
+
+.swatchMeta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-family: var(--cairn-font-mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.swatchToken {
+  color: var(--cairn-text);
+  overflow-wrap: anywhere;
+}
+
+.swatchValue {
+  color: var(--cairn-muted);
+  letter-spacing: var(--cairn-mono-tracking);
+}
+
+/* ---------------------------------------------------------- category chips */
+
+.categories {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/*
+ * Category rows pin the ink ramp in BOTH colour modes. A category accent is a
+ * dark-ground text colour — not one of the fourteen reaches 4.5:1 on white — so
+ * the surface that renders one AS TEXT holds the ground it was measured
+ * against. SPEC-0010 REQ "Category Accents Are Dark-Ground Text Colours".
+ */
+.category {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--ifm-global-radius);
+  background: var(--cairn-ink-100);
+  border: 1px solid var(--cairn-ink-300);
+}
+
+.categoryMeta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-family: var(--cairn-font-mono);
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--cairn-ink-700);
+}
+
+.categoryToken {
+  color: var(--cairn-ink-900);
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------ type badges */
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.8rem;
+  list-style: none;
+  border-radius: var(--ifm-global-radius);
+  background: var(--cairn-ink-100);
+  border: 1px solid var(--cairn-ink-300);
+}
+
+/*
+ * The app-shell type badge: a mono pill tinted with its accent over the pinned
+ * machine ground, with a lit dot so the badge is still distinguishable with
+ * colour removed only by its label — SPEC-0010 REQ "Non-Colour Encoding" is
+ * satisfied by the label, not by the dot.
+ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 3px 9px;
+  border-radius: 7px;
+  font-family: var(--cairn-font-mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--badge-accent);
+  background: color-mix(in srgb, var(--badge-accent) 13%, var(--cairn-ink-100));
+  border: 1px solid color-mix(in srgb, var(--badge-accent) 38%, var(--cairn-ink-100));
+}
+
+.badgeDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--badge-accent);
+}
+
+/* ------------------------------------------------------------------- type */
+
+.families {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.family {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--cairn-border);
+  border-radius: var(--ifm-global-radius);
+  background: var(--cairn-elevated);
+}
+
+.familySample {
+  margin: 0 0 0.4rem;
+  font-size: 1.35rem;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.familyStack {
+  margin: 0;
+  font-family: var(--cairn-font-mono);
+  font-size: 0.76rem;
+  color: var(--cairn-muted);
+  overflow-wrap: anywhere;
+}
+
+/* -------------------------------------------------------- HTTP reference */
+
+/* Wide content scrolls inside its own box; the page body never does. */
+.tableScroll {
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+
+.endpoints {
+  width: 100%;
+  display: table;
+}
+
+.endpoints td,
+.endpoints th {
+  vertical-align: top;
+}
+
+.method,
+.path {
+  font-family: var(--cairn-font-mono);
+  white-space: nowrap;
+}
+
+.method {
+  font-weight: 600;
+}
+
+.purpose {
+  min-width: 18rem;
+}
+
+.pathNote {
+  display: block;
+  font-family: var(--cairn-font-mono);
+  font-size: 0.72rem;
+  color: var(--cairn-muted);
+  white-space: normal;
+}
+
+.posture {
+  display: block;
+  font-family: var(--cairn-font-mono);
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--cairn-text);
+}
+
+.authNote {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--cairn-muted);
+}
+
+.sourceLine {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--cairn-muted);
+}
+
+/* An advisory block that is not an admonition, because it is derived prose. */
+.scope {
+  margin-block: 1.25rem;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid var(--cairn-border);
+  border-left: 3px solid var(--cairn-accent-warning);
+  border-radius: var(--ifm-global-radius);
+  background: var(--cairn-elevated);
+  font-size: 0.92rem;
+}
+
+.scope p:last-child {
+  margin-bottom: 0;
+}
+
+.scopeList {
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+}
