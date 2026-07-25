@@ -147,6 +147,34 @@ test('externalLinksIn ignores relative, anchor, data and mailto targets', () => 
   assert.deepEqual(found, []);
 });
 
+test('externalLinksIn reads meta content, so a forge URL cannot hide in a meta tag', () => {
+  const found = externalLinksIn(
+    '<meta property="og:see_also" content="https://github.com/joestump/cairn">',
+  );
+  assert.deepEqual(
+    found.map((link) => [link.attr, link.host]),
+    [['content', 'github.com']],
+  );
+});
+
+test('externalLinksIn splits srcset candidates off their descriptors', () => {
+  const found = externalLinksIn(
+    '<img srcset="/cairn/a.png 1x, https://raw.githubusercontent.com/o/r/b.png 2x">',
+  );
+  assert.deepEqual(
+    found.map((link) => [link.attr, link.url]),
+    [['srcset', 'https://raw.githubusercontent.com/o/r/b.png']],
+  );
+});
+
+test('externalLinksIn keeps a comma inside a single-URL attribute intact', () => {
+  const found = externalLinksIn('<a href="https://example.com/a,b">x</a>');
+  assert.deepEqual(
+    found.map((link) => link.url),
+    ['https://example.com/a,b'],
+  );
+});
+
 /* ------------------------------------------------------ the configured site */
 
 test('a config with no edit URL passes', () => {

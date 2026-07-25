@@ -75,7 +75,16 @@ const REPOSITORY_HOSTS = new Set([
  * is the conservative choice: a link the theme writes into a script string is
  * still a link the reader can follow.
  */
-const URL_ATTR = /\b(href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+const URL_ATTR = /\b(href|src|content)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+
+/**
+ * `srcset` is scanned separately because it is the one URL-bearing attribute
+ * whose value is a *list*: comma-separated candidates, each a URL followed by an
+ * optional density or width descriptor. Splitting the single-URL attributes on
+ * commas instead would corrupt any URL with a legal comma in its path, so the
+ * two shapes do not share a pattern.
+ */
+const SRCSET_ATTR = /\b(srcset)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
 
 /**
  * Absolute http(s) URLs only; everything else is same-site, an anchor, a
@@ -101,11 +110,21 @@ function absoluteUrl(value) {
 /** Every external host one rendered page links to, with the URL that did it. */
 export function externalLinksIn(html) {
   const found = [];
-  for (const match of html.matchAll(URL_ATTR)) {
-    const raw = match[2] ?? match[3] ?? match[4] ?? '';
+  const record = (attr, raw) => {
     const url = absoluteUrl(raw);
     if (url) {
-      found.push({attr: match[1].toLowerCase(), url: url.href, host: url.hostname});
+      found.push({attr: attr.toLowerCase(), url: url.href, host: url.hostname});
+    }
+  };
+
+  for (const match of html.matchAll(URL_ATTR)) {
+    record(match[1], match[2] ?? match[3] ?? match[4] ?? '');
+  }
+  for (const match of html.matchAll(SRCSET_ATTR)) {
+    const value = match[2] ?? match[3] ?? match[4] ?? '';
+    for (const candidate of value.split(',')) {
+      // Each candidate is `<url> [descriptor]`; the URL is the first token.
+      record(match[1], candidate.trim().split(/\s+/)[0] ?? '');
     }
   }
   return found;
@@ -256,8 +275,11 @@ export function assertNoEditUrl(config, label = 'docusaurus.config.ts') {
  * site from a link off it. Both are properties of the site configuration, and a
  * standalone `node scripts/check-links.mjs` cannot read a TypeScript config that
  * awaits the record generator before it resolves. A CLI run without the origin
- * does not fail safe — it reports every self-referential `og:url` on every page
- * as a violation and buries the one link that matters.
+ * does not fail safe — every page carries a self-referential
+ * `<link rel="canonical" href="https://…">` back to itself, so the scan would
+ * report one violation per page and bury the one link that matters. (The
+ * matching `og:url` is a `<meta content=…>`, which the attribute scanner below
+ * does not read; canonical is the emitter that actually forces this.)
  *
  * `postBuild` receives `outDir` and `siteConfig` already resolved, which is why
  * the plugin in website/plugins/link-guard/ is the only caller. CI needs no
