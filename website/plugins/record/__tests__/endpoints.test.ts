@@ -38,6 +38,7 @@ describe('collectEndpointSections', () => {
         '| `GET /v1/artifacts/{id}/reactions` | List reactions | Public — gated by link capability (ADR-0007) |\n',
     );
     assert.ok(section);
+    assert.equal(section.name, 'HTTP Endpoints');
     assert.equal(section.title, 'HTTP Endpoints');
     assert.equal(section.rows.length, 1);
     assert.equal(section.rows[0]!.method, 'GET');
@@ -94,6 +95,44 @@ describe('collectEndpointSections', () => {
     );
   });
 
+  it('matches an enumerated name at either section level, in either case', async () => {
+    // `trajectory-share` and `webhook-inspector` write `### HTTP endpoints`
+    // under `## Overview`. Both own an SSE endpoint, so demanding `##` and
+    // exact case silently emptied the streaming surface.
+    const sections = await sectionsOf(
+      '## Overview\n\nProse.\n\n### HTTP endpoints\n\n' +
+        '| Method & Path | Purpose | Auth |\n|---|---|---|\n' +
+        '| `GET /v1/runs/{id}/stream` | SSE: live span appends | Link-cap |\n\n' +
+        '## Requirements\n\n### Requirement: Not An Endpoint Table\n\n' +
+        '| Method & Path | Purpose | Auth |\n|---|---|---|\n' +
+        '| `GET /nope` | Not an endpoint table | Required |\n',
+    );
+    assert.equal(sections.length, 1);
+    assert.equal(sections[0]!.name, 'HTTP Endpoints');
+    // The heading is kept as the record wrote it, not canonicalised.
+    assert.equal(sections[0]!.title, 'HTTP endpoints');
+    assert.deepEqual(
+      sections[0]!.rows.map((row) => [row.path, row.streaming]),
+      [['/v1/runs/{id}/stream', true]],
+    );
+  });
+
+  it('closes a nested section at the next heading of its own level', async () => {
+    const sections = await sectionsOf(
+      '## Overview\n\n### HTTP endpoints\n\n' +
+        '| Method & Path | Purpose | Auth |\n|---|---|---|\n' +
+        '| `GET /a` | A | Required |\n\n' +
+        '### Something else\n\n' +
+        '| Method & Path | Purpose | Auth |\n|---|---|---|\n' +
+        '| `GET /b` | B | Required |\n',
+    );
+    assert.equal(sections.length, 1);
+    assert.deepEqual(
+      sections[0]!.rows.map((row) => row.path),
+      ['/a'],
+    );
+  });
+
   it('ignores a heading that is not one of the enumerated names', async () => {
     const sections = await sectionsOf(
       '## Requirements\n\n| Method & Path | Purpose | Auth |\n|---|---|---|\n' +
@@ -145,6 +184,7 @@ describe('buildEndpointReference', () => {
   it("drops the website specification's own route table", () => {
     const sections: EndpointSection[] = [
       {
+        name: 'Web Routes',
         title: 'Web Routes',
         anchor: 'web-routes',
         rows: [
@@ -189,11 +229,26 @@ describe('the derived reference surface over the real record', () => {
     for (const spec of data.endpoints.coverage) {
       for (const section of spec.sections) {
         assert.ok(
-          (ENDPOINT_SECTION_NAMES as readonly string[]).includes(section),
-          `${spec.specId} contributed an unenumerated section '${section}'`,
+          (ENDPOINT_SECTION_NAMES as readonly string[]).includes(section.name),
+          `${spec.specId} contributed an unenumerated section '${section.name}'`,
         );
+        // The as-written heading may differ in case; it must still be the name.
+        assert.equal(section.title.toLowerCase(), section.name.toLowerCase());
+        assert.ok(section.href.startsWith(`${spec.specHref}#`));
       }
     }
+  });
+
+  it('publishes the streaming endpoints the record actually owns', () => {
+    // Both live in a `### HTTP endpoints` section, which is why the enumeration
+    // matches on the section name rather than on `## ` plus exact case. A page
+    // that heads a section "Streaming" while omitting these is worse than one
+    // that omits the section.
+    const streaming = data.endpoints.rows
+      .filter((row) => row.streaming)
+      .map((row) => row.path);
+    assert.ok(streaming.includes('/v1/runs/{id}/stream'), streaming.join(', '));
+    assert.ok(streaming.includes('/v1/hooks/{id}/stream'), streaming.join(', '));
   });
 
   it('covers every specification, contributing or not', () => {

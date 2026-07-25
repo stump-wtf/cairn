@@ -154,13 +154,27 @@ export interface RawEndpointRow {
   streaming: boolean;
 }
 
-/** One enumerated `## …` section of one specification, and its rows. */
+/** One enumerated endpoint section of one specification, and its rows. */
 export interface EndpointSection {
-  /** The heading text, which is one of `ENDPOINT_SECTION_NAMES`. */
+  /** The enumerated name matched: one of `ENDPOINT_SECTION_NAMES`. */
+  name: string;
+  /**
+   * The heading exactly as the record wrote it, which is not always the
+   * canonical spelling — `trajectory-share` writes `### HTTP endpoints`. Pages
+   * quote this, so a reader searching the specification finds the heading.
+   */
   title: string;
   /** The anchor Docusaurus will emit for that heading. */
   anchor: string;
   rows: RawEndpointRow[];
+}
+
+/** One contributing section of one specification, as a page can link it. */
+export interface EndpointSectionRef {
+  name: string;
+  title: string;
+  /** Deep link to that heading, carried per section rather than re-derived. */
+  href: string;
 }
 
 /** A row on the reference page: what it says, and which spec owns it. */
@@ -182,7 +196,7 @@ export interface EndpointSpecCoverage {
   specId: string;
   specTitle: string;
   specHref: string;
-  sections: string[];
+  sections: EndpointSectionRef[];
   rowCount: number;
 }
 

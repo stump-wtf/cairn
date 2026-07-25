@@ -14,12 +14,20 @@
 //      `## REST Endpoints`, `## Endpoint Table`, `## Web Routes`. The list is
 //      ENUMERATED, not pattern-matched: a heading that merely contains the word
 //      "endpoint" is not an endpoint table, and guessing would silently publish
-//      whatever prose happened to sit under it.
+//      whatever prose happened to sit under it. What is enumerated is the
+//      section NAME, and the record does not write those names uniformly: two
+//      specifications spell theirs `### HTTP endpoints`, one level down and one
+//      letter lowercased. Demanding `##` and exact case dropped both of the SSE
+//      endpoints Cairn actually serves — `/v1/runs/{id}/stream` and
+//      `/v1/hooks/{id}/stream` — while the page went on heading a section
+//      "Streaming", so a heading matches when its text IS one of the four names,
+//      compared case-insensitively, at either level a spec uses for a section.
+//      That is still an enumeration; it is not "contains the word endpoint".
 //   2. The columns are not the same table twice. Three shapes ship today —
 //      `Method & Path | Purpose | Auth`, `Method | Path | Purpose | Auth`, and
 //      `Endpoint | Method | Purpose | Auth`. Columns are therefore identified by
 //      their HEADER, never by position.
-//   3. Six of ten specifications carry such a section and four do not, so the
+//   3. Some specifications carry such a section and some do not, so the
 //      derived page is a partial view by construction. That is reported as
 //      coverage rather than hidden: SPEC-0010 requires the page not to claim a
 //      complete API surface, and it can only avoid claiming it if it knows which
@@ -66,8 +74,25 @@ export const ENDPOINT_SECTION_NAMES = [
  */
 export const WEBSITE_CAPABILITY = 'public-website-and-design-record';
 
-/** Endpoint sections are `##`, like every other top-level section in a spec. */
-const SECTION_HEADING_DEPTH = 2;
+/**
+ * The heading levels a specification uses for a section. Most write `##`;
+ * `trajectory-share` and `webhook-inspector` nest theirs one deeper under
+ * `## Overview`. Anything below `###` is a requirement or a scenario, never a
+ * section, so the window stops there.
+ */
+const SECTION_HEADING_DEPTHS = [2, 3] as const;
+const MAX_SECTION_DEPTH = Math.max(...SECTION_HEADING_DEPTHS);
+
+/** Canonical enumerated name for a heading, or null if it names no section. */
+function canonicalSectionName(text: string, depth: number): string | null {
+  if (!(SECTION_HEADING_DEPTHS as readonly number[]).includes(depth)) {
+    return null;
+  }
+  const folded = text.toLowerCase();
+  return (
+    ENDPOINT_SECTION_NAMES.find((name) => name.toLowerCase() === folded) ?? null
+  );
+}
 
 /**
  * A path always starts with `/` in this record, which is what makes a combined
@@ -241,9 +266,9 @@ export async function collectEndpointSections(
   const {createSlugger} = await import('@docusaurus/utils');
   const slugs = createSlugger();
 
-  const names: readonly string[] = ENDPOINT_SECTION_NAMES;
   const sections: EndpointSection[] = [];
   let current: EndpointSection | null = null;
+  let currentDepth = MAX_SECTION_DEPTH;
 
   const walk = (node: Node): void => {
     if (node.type === 'heading') {
@@ -255,10 +280,15 @@ export async function collectEndpointSections(
         .replace(/\s+/g, ' ')
         .trim();
       const anchor = slugs.slug(text, {maintainCase: false});
-      if (node.depth === SECTION_HEADING_DEPTH && names.includes(text)) {
-        current = {title: text, anchor, rows: []};
+      const name = canonicalSectionName(text, node.depth);
+      if (name) {
+        current = {name, title: text, anchor, rows: []};
+        currentDepth = node.depth;
         sections.push(current);
-      } else if (node.depth <= SECTION_HEADING_DEPTH) {
+      } else if (current && node.depth <= currentDepth) {
+        // A heading at or above the open section's own level closes it. Deeper
+        // headings do not: a table under a `####` inside an endpoint section is
+        // still inside that section.
         current = null;
       }
       return;
@@ -306,7 +336,7 @@ export function buildEndpointReference(
   for (const spec of specs) {
     const sections = (sectionsBySpecId.get(spec.id) ?? []).filter(
       (section) =>
-        !(spec.capability === WEBSITE_CAPABILITY && section.title === 'Web Routes'),
+        !(spec.capability === WEBSITE_CAPABILITY && section.name === 'Web Routes'),
     );
     let rowCount = 0;
     for (const section of sections) {
@@ -326,7 +356,14 @@ export function buildEndpointReference(
       specId: spec.id,
       specTitle: spec.title,
       specHref: spec.href,
-      sections: sections.map((section) => section.title),
+      // Each section carries its own deep link. Resolving one by title against
+      // the row list instead would collapse two same-named sections in one
+      // specification onto the first one's anchor.
+      sections: sections.map((section) => ({
+        name: section.name,
+        title: section.title,
+        href: `${spec.href}#${section.anchor}`,
+      })),
       rowCount,
     });
   }

@@ -96,10 +96,9 @@ function Scope(): ReactNode {
     <div className={styles.scope}>
       <p>
         <strong>This is not the whole API.</strong> It is every row of every
-        endpoint table the specifications carry, and the specifications name those
-        sections{' '}
+        endpoint table the specifications carry under a section named{' '}
         {joinNames(
-          endpoints.sectionNames.map((name) => <code key={name}>## {name}</code>),
+          endpoints.sectionNames.map((name) => <code key={name}>{name}</code>),
         )}
         . A specification that documents its surface some other way contributes
         nothing, and {contributing.length} of {endpoints.coverage.length}{' '}
@@ -138,8 +137,11 @@ function Streaming(): ReactNode {
     <section className={styles.section}>
       <h2 id="streaming">Streaming</h2>
       <p>
-        Endpoints the specifications describe as server-sent event streams rather
-        than as request/response calls.
+        The rows above that the specifications describe as server-sent event
+        streams rather than as request/response calls — an SSE method, an SSE
+        purpose, or a <code>/stream</code> path. This is a view of this page, so
+        it inherits this page's scope: a stream a specification documents outside
+        an endpoint table is not here either.
       </p>
       <EndpointTable rows={rows} />
     </section>
@@ -168,17 +170,14 @@ export function HttpReference(): ReactNode {
             <p className={styles.sourceLine}>
               Derived from{' '}
               {joinNames(
-                spec.sections.map((section) => {
-                  const href = rows.find((row) => row.section === section)
-                    ?.sectionHref;
-                  return href ? (
-                    <Link key={section} to={href}>
-                      ## {section}
-                    </Link>
-                  ) : (
-                    <span key={section}>## {section}</span>
-                  );
-                }),
+                spec.sections.map((section) => (
+                  // The heading is quoted as the specification writes it, and
+                  // linked by the anchor that section carries — two sections of
+                  // one specification cannot collapse onto one deep link.
+                  <Link key={section.href} to={section.href}>
+                    {section.title}
+                  </Link>
+                )),
               )}
             </p>
             <EndpointTable rows={rows} />
