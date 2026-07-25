@@ -15,7 +15,7 @@ import clsx from 'clsx';
 import Link from '@docusaurus/Link';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import Heading from '@theme/Heading';
-import {refFor} from '@site/src/data/record';
+import {record, refFor} from '@site/src/data/record';
 import styles from './styles.module.css';
 
 /**
@@ -88,8 +88,31 @@ export function SectionHead({
 /**
  * A link to the specification that governs the section. Both the title and the
  * route come from the derived data module; only the id is written here.
+ *
+ * An id the record does not contain is a build failure, not a rendered
+ * placeholder. `refFor` is deliberately total — it answers for record-derived
+ * chips, whose ids the pipeline has already checked for referential integrity —
+ * so it degrades a miss to `{title: id, href: '#'}`. The ids here are the one
+ * place on the site a *human* types a record id, nothing upstream validates
+ * them, and `onBrokenLinks` cannot see a `#`. Left alone, renumbering a spec
+ * ships a reader a dead link captioned with the wrong title: exactly the drift
+ * ADR-0014's "drift must fail the build, not the reader" driver exists to kill,
+ * on the section that argues the record cannot go stale. This component renders
+ * during static generation, so throwing here fails `docusaurus build`.
  */
 export function SpecLink({id}: {id: string}): ReactNode {
+  if (!record.refs[id]) {
+    const known = Object.keys(record.refs)
+      .filter((k) => k.startsWith('SPEC-'))
+      .sort()
+      .join(', ');
+    throw new Error(
+      `SpecLink: the design record contains no "${id}". A homepage section names the ` +
+        `specification that governs it by id and the derived data module supplies its ` +
+        `title and route, so an id the record does not contain is drift — SPEC-0010 REQ ` +
+        `"Homepage". Published specifications: ${known}`,
+    );
+  }
   const ref = refFor(id);
   return (
     <Link className={styles.specLink} to={ref.href}>
