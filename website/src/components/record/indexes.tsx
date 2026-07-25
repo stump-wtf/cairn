@@ -22,14 +22,14 @@ import Link from '@docusaurus/Link';
 
 import {decisions, specs} from '@site/src/data/record';
 
-/** A status, carried as text. Colour is never the only carrier of meaning. */
-export function StatusBadge({status}: {status: string}): ReactNode {
-  return (
-    <span className="cairn-record-status" data-status={status}>
-      {status.toUpperCase()}
-    </span>
-  );
-}
+import {StatusBadge} from './status';
+
+/**
+ * Re-exported from `./status`, where the badge moved so that the metadata bar
+ * can render one without pulling the whole decision table onto every record
+ * page. Existing importers keep working.
+ */
+export {StatusBadge};
 
 /**
  * One row per `docs/adrs/ADR-*.md`, in number order, with every cell derived.
@@ -38,6 +38,10 @@ export function StatusBadge({status}: {status: string}): ReactNode {
 export function DecisionIndex(): ReactNode {
   return (
     <table className="cairn-record-index">
+      {/* The total is read from the derived data module, never written down —
+          REQ "Derived Status, Dates, and Counts" — and doubles as the table's
+          accessible description. */}
+      <caption>{decisions.length} decision records, in number order</caption>
       <thead>
         <tr>
           <th scope="col">Decision</th>
