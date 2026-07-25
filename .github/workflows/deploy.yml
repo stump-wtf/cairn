@@ -29,10 +29,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Governing: ADR-0014, SPEC-0010 REQ "Record Content Pipeline"
+      # 22 rather than 20, matching website/package.json `engines`: the record
+      # pipeline's entry points are TypeScript executed directly by `node`, and
+      # unflagged type stripping only exists from 22.18.0. `docusaurus build`
+      # itself would survive on 20, because jiti transpiles the config — but a
+      # declared engine the deploy job contradicts is a trap, not a saving.
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: website/package-lock.json
 

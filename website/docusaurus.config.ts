@@ -2,7 +2,19 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
+import {generateRecord} from './plugins/record/generate.ts';
+import remarkRecord from './plugins/record/remark-record.ts';
+
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
+
+// Governing: ADR-0014, SPEC-0010 REQ "Record Content Pipeline"
+//
+// The site directory. `__dirname` is safe here: this file is only ever loaded
+// through jiti (`@docusaurus/utils` `loadFreshModule`), which loads it as
+// CommonJS.
+const siteDir = __dirname;
+
+const DOCS_ROUTE_BASE = '/docs';
 
 const config: Config = {
   title: 'Cairn',
@@ -38,13 +50,37 @@ const config: Config = {
     },
   },
 
+  plugins: [
+    // Governing: ADR-0014, SPEC-0010 REQ "Record Content Pipeline"
+    // The record has already been staged by the factory below. This plugin
+    // exists for `getPathsToWatch()`: without it, `docusaurus start` serves a
+    // frozen snapshot of the record for the rest of the session.
+    // The `.ts` extension is required, not stylistic: Docusaurus resolves a
+    // local plugin path with Node's `require.resolve`
+    // (`core/lib/server/plugins/moduleShorthand.js`), which knows nothing about
+    // TypeScript and would not find `index.ts` by directory resolution. jiti
+    // does the transpiling once the exact path is known.
+    ['./plugins/record/index.ts', {routeBase: DOCS_ROUTE_BASE}],
+  ],
+
   presets: [
     [
       'classic',
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/joestump/cairn/tree/main/website/',
+          // Governing: ADR-0014, SPEC-0010 REQ "No Repository Links"
+          // No `editUrl`. The full record text renders on the site, so there
+          // is nothing an "edit this page" link could usefully point at, and
+          // the repository it pointed at is not publicly readable.
+
+          // Governing: ADR-0014, SPEC-0010 REQ "Record Prose to Structured Components"
+          // Registered *before* the default remark plugins so that the
+          // structural rewrite happens before `remark/headings` assigns
+          // anchors, before `remark/toc` collects them, and before
+          // `rehype-raw` turns a tag-shaped word like `<id>` into a real
+          // element.
+          beforeDefaultRemarkPlugins: [[remarkRecord, {siteDir}]],
         },
         blog: false,
         theme: {
@@ -76,15 +112,11 @@ const config: Config = {
           position: 'left',
           label: 'Docs',
         },
-        {to: '/docs/architecture', label: 'Architecture', position: 'left'},
-        {to: '/docs/specifications', label: 'Specs', position: 'left'},
-        {
-          href: 'https://github.com/joestump/cairn',
-          position: 'right',
-          className: 'navbar__item--github',
-          'aria-label': 'GitHub repository',
-          label: 'GitHub',
-        },
+        // Governing: ADR-0014, SPEC-0010 REQ "No Repository Links"
+        // These replace the forge link and the two hand-maintained index pages
+        // this capability deletes.
+        {to: '/docs/decisions', label: 'Decisions', position: 'left'},
+        {to: '/docs/specs', label: 'Specs', position: 'left'},
       ],
     },
     footer: {
@@ -100,17 +132,10 @@ const config: Config = {
           ],
         },
         {
-          title: 'Design',
+          title: 'Design record',
           items: [
-            {label: 'Architecture (ADRs)', to: '/docs/architecture'},
-            {label: 'Specifications', to: '/docs/specifications'},
-          ],
-        },
-        {
-          title: 'More',
-          items: [
-            {label: 'GitHub', href: 'https://github.com/joestump/cairn'},
-            {label: 'Issues', href: 'https://github.com/joestump/cairn/issues'},
+            {label: 'Decisions', to: '/docs/decisions'},
+            {label: 'Specifications', to: '/docs/specs'},
           ],
         },
       ],
@@ -124,4 +149,41 @@ const config: Config = {
   } satisfies Preset.ThemeConfig,
 };
 
-export default config;
+/**
+ * The config is exported as an async factory, and that is the load-bearing part
+ * of the whole pipeline.
+ *
+ * `loadSiteConfig` awaits a function config
+ * (`@docusaurus/core/lib/server/config.js`) and `loadContext` completes before
+ * `loadPlugins` (`.../server/site.js`), so awaiting the generator here is the
+ * last point that is reliably ahead of *all* plugin initialisation. Staging from
+ * a plugin instead does not work: `plugin-content-docs` stat-checks its content
+ * directory in its own factory, and all plugin factories — and later all
+ * `loadContent()` calls — run inside `Promise.all`, so the docs plugin would race
+ * the generator and build N would publish what build N−1 staged.
+ *
+ * The config object itself stays a plain top-level `const`: the factory only
+ * wraps it. Re-indenting the whole object into the function body would turn a
+ * twenty-line change into a two-hundred-line diff over the `themeConfig` that
+ * concurrent work on the navbar, footer and chrome also has to touch.
+ *
+ * The consequence, accepted in ADR-0014: `docusaurus build` alone is no longer
+ * sufficient on a clean checkout for anything that loads this config by another
+ * path.
+ */
+export default async function createConfig(): Promise<Config> {
+  const {data} = await generateRecord({
+    siteDir,
+    routeBase: DOCS_ROUTE_BASE,
+  });
+
+  // eslint-disable-next-line no-console
+  console.log(
+    `[cairn-record] ${data.counts.decisions} decisions, ` +
+      `${data.counts.specifications} specifications, ` +
+      `${data.counts.requirements} requirements, ` +
+      `${data.counts.scenarios} scenarios staged from the design record`,
+  );
+
+  return config;
+}

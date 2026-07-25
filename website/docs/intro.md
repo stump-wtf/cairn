@@ -72,11 +72,11 @@ See **[Surfaces](./surfaces.md)**.
 ## How this site is organized
 
 This documentation is generated **spec-first**. The design is captured as
-[Architecture Decision Records](./architecture.md) (the *why*) and
-[OpenSpec specifications](./specifications.md) (the *what*), and the build is tracked
-as [GitHub issues](https://github.com/joestump/cairn/issues).
+[Architecture Decision Records](./decisions/index.mdx) (the *why*) and
+[OpenSpec specifications](./specs/index.mdx) (the *what*), and both render here in
+full — index rows, status badges, requirement counts, and cross-references are
+computed from those files at build time rather than written by hand.
 
 :::tip
-Everything here is derived from the canonical design brief in the repo:
-[`docs/DESIGN.md`](https://github.com/joestump/cairn/blob/main/docs/DESIGN.md).
+There is no "view source" link to follow. The whole record is on this site.
 :::

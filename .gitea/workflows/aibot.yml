@@ -40,6 +40,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.ref || github.head_ref }}
+          # The head branch lives in the head REPO, which is not this repo when the
+          # PR comes from a fork. Without `repository:` the checkout resolves the
+          # branch name against the base repo, does not find it, and the job dies in
+          # ~6s. Required by gitea-aibot-action since 2026-07-25; this workflow was
+          # copied from the example before that and had drifted.
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
           fetch-depth: 0
 
       - name: AI bot

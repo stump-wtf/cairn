@@ -7,7 +7,7 @@ sidebar_position: 3
 
 Cairn is one core service behind three clients — **web**, **CLI**, and **MCP** —
 with parity on the core operations: create, read, list, comment, react, share
-(see [ADR-0003](https://github.com/joestump/cairn/blob/main/docs/adrs/ADR-0003-triple-surface-parity-web-cli-mcp.md)).
+(see [ADR-0003](./decisions/ADR-0003.md)).
 
 ## Web — the app shell
 
@@ -26,7 +26,7 @@ the type badge, title, provenance, and reaction/comment counts
 (`claude · via mcp · 1d · 💬 2 · 👀 3`). Same listing, whether you browse it on the
 web or in the terminal.
 
-See [SPEC-0001](https://github.com/joestump/cairn/blob/main/docs/openspec/specs/web-app-shell-and-bin/spec.md).
+See [SPEC-0001](./specs/web-app-shell-and-bin/index.md).
 
 ## CLI — `cairn`
 
@@ -59,7 +59,7 @@ cairn ls        # ↑/k up · ↓/j down · / filter · enter open · s share ·
 
 Tokens are stored securely (OS keychain, or a `0600` file as a fallback) and
 never logged. See
-[SPEC-0008](https://github.com/joestump/cairn/blob/main/docs/openspec/specs/cli/spec.md).
+[SPEC-0008](./specs/cli/index.md).
 
 ## MCP — the agent surface
 
@@ -82,5 +82,5 @@ consent screen grants exactly three scopes:
 
 Agents act as the human (subject) with a distinct model identity (actor), and never
 exceed the human's reach. See
-[ADR-0004](https://github.com/joestump/cairn/blob/main/docs/adrs/ADR-0004-mcp-first-class-surface-oauth.md)
-and [SPEC-0007](https://github.com/joestump/cairn/blob/main/docs/openspec/specs/mcp-server-and-oauth/spec.md).
+[ADR-0004](./decisions/ADR-0004.md)
+and [SPEC-0007](./specs/mcp-server-and-oauth/index.md).

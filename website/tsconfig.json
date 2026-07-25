@@ -6,7 +6,14 @@
   "compilerOptions": {
     "baseUrl": ".",
     "ignoreDeprecations": "6.0",
-    "strict": true
+    "strict": true,
+    // The record pipeline is loaded by three different runtimes — jiti
+    // (Docusaurus config and plugin loading), plain `node` (the generate script
+    // and the unit tests) and webpack (the remark transform). Only explicit
+    // `.ts` specifiers resolve in all three, and TypeScript allows them because
+    // this project never emits.
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true
   },
   "exclude": [".docusaurus", "build"]
 }

@@ -6,8 +6,8 @@ sidebar_position: 4
 # Reactions & comments
 
 One annotation subsystem serves every share type, with **type-specific anchors**
-(see [ADR-0006](https://github.com/joestump/cairn/blob/main/docs/adrs/ADR-0006-unified-annotation-layer.md)
-and [SPEC-0006](https://github.com/joestump/cairn/blob/main/docs/openspec/specs/annotations/spec.md)).
+(see [ADR-0006](./decisions/ADR-0006.md)
+and [SPEC-0006](./specs/annotations/index.md)).
 
 ## Reactions
 

@@ -39,13 +39,12 @@ function Hero(): ReactNode {
           <Link className="button button--primary button--lg" to="/docs/intro">
             Read the docs
           </Link>
-          <Link className="button button--secondary button--lg" to="/docs/architecture">
-            Architecture &amp; specs
-          </Link>
-          <Link
-            className={clsx('button button--lg', styles.ghost)}
-            href="https://github.com/joestump/cairn">
-            GitHub&nbsp;↗
+          {/* Governing: ADR-0014, SPEC-0010 REQ "No Repository Links" — the
+              hand-maintained /docs/architecture index is deleted, so this points
+              at the generated decisions tree; and there is no forge link to
+              follow, because the full record renders on the site. */}
+          <Link className="button button--secondary button--lg" to="/docs/decisions">
+            Decisions &amp; specs
           </Link>
         </div>
 

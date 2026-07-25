@@ -24,3 +24,11 @@ coverage.txt
 
 # SDD worktrees
 .claude/worktrees/
+
+# Generated design record (SPEC-0010). The pipeline stages the record into the
+# docs content root and emits the derived data module; neither is ever committed.
+# This one fact is what separates the pipeline from "copy the files in": there is
+# no tracked copy to review, to diff, or to edit by hand, so there is no copy to rot.
+/website/docs/decisions/
+/website/docs/specs/
+/website/src/generated/
