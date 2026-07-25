@@ -1,0 +1,40 @@
+# Publishes a GitHub Release when a v* tag is pushed, using the matching
+# CHANGELOG.md section as the release notes. The container image is built and
+# pushed to the private homelab registry out-of-band (the runner cannot reach
+# it); once the `cairn` CLI lands (v0.0.3) a goreleaser job builds and attaches
+# its cross-platform binaries here.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract CHANGELOG section for this tag
+        id: notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" {grab=1; next}
+            grab && /^## \[/ {exit}
+            grab {print}
+          ' CHANGELOG.md > release-notes.md
+          echo "Extracted $(wc -l < release-notes.md) lines for $version"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          name: ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-') }}

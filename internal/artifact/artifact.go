@@ -25,9 +25,11 @@ import (
 type ShareType string
 
 const (
-	TypeFile   ShareType = "file"   // generic file, non-previewable fallback
-	TypeGZ     ShareType = "gz"     // generic gzipped file
-	TypeBundle ShareType = "bundle" // manifest of ordered members (ADR-0008)
+	TypeFile       ShareType = "file"       // generic file, non-previewable fallback
+	TypeGZ         ShareType = "gz"         // generic gzipped file
+	TypeBundle     ShareType = "bundle"     // manifest of ordered members (ADR-0008)
+	TypeTrajectory ShareType = "trajectory" // agent run: span tree, no single body (ADR-0009)
+	TypeWebhook    ShareType = "webhook"    // live requestbin: capped captured-request stream, no single body (ADR-0010)
 )
 
 // Channel is the surface an artifact was created through. It is derived
@@ -80,23 +82,40 @@ type Artifact struct {
 	Previewable bool
 	Provenance  Provenance
 	Access      AccessPolicy
-	// AnnotationCount is the denormalized total of the (initially empty)
-	// annotation stream (reactions + comments), maintained by SPEC-0006.
-	AnnotationCount int
-	ExpiresAt       time.Time
-	CreatedAt       time.Time
+	// Denormalized annotation rollups, maintained by the annotation core
+	// service in the same transaction as every annotation write so the Bin
+	// (`💬 2 · 👀 3`) and artifact headers render with no per-row subquery.
+	// They are exposed separately, never summed (ADR-0006 "Count aggregation",
+	// SPEC-0006 REQ "Count Aggregation").
+	ReactionCount int
+	CommentCount  int
+	// PinCount counts image-region annotations — image-region reactions plus
+	// pinned comments (ADR-0006).
+	PinCount  int
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
+// bodyless reports whether this share type carries no single content-addressed
+// body: a bundle (its members are modeled separately), a trajectory (its
+// content is the span tree), or a webhook (its content is the captured-request
+// stream, filled by third parties after creation rather than pushed by its
+// owner — ADR-0010). Every other type MUST reference a body blob.
+func (a *Artifact) bodyless() bool {
+	return a.ShareType == TypeBundle || a.ShareType == TypeTrajectory || a.ShareType == TypeWebhook
 }
 
 // Validate enforces the creation invariants: a public id, a share type, a body
-// reference (unless a bundle), and mandatory provenance, access policy, and
-// expiry. It returns a validation-coded domain error on the first violation.
+// reference (unless the type is bodyless — a bundle or trajectory), and
+// mandatory provenance, access policy, and expiry. It returns a validation-coded
+// domain error on the first violation.
 func (a *Artifact) Validate() error {
 	switch {
 	case a.PublicID == "":
 		return errs.Validationf("artifact: missing public id")
 	case a.ShareType == "":
 		return errs.Validationf("artifact: missing share type")
-	case a.ShareType != TypeBundle && a.BodySHA256 == "":
+	case !a.bodyless() && a.BodySHA256 == "":
 		return errs.Validationf("artifact: missing body reference")
 	case a.Provenance.Channel == "":
 		return errs.Validationf("artifact: provenance channel is required")

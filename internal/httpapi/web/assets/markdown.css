@@ -1,0 +1,237 @@
+/* Markdown viewer styles (SPEC-0003 REQ "Markdown Viewer", issue #18 turn 6d).
+   Typography per the design tokens: IBM Plex Sans prose (--sans), JetBrains Mono
+   chrome/ids (--mono). Loaded for every shell page but scoped under .md-viewer,
+   so it is inert on non-markdown bodies. All colors carry sufficient contrast
+   for WCAG 2.1 AA and nothing is conveyed by color alone. */
+
+.md-viewer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 26px 30px 60px;
+}
+
+/* CONTENTS — collapsible multi-level TOC (native <details> => keyboard-operable
+   and exposes aria-expanded on the caret with no JS). */
+.md-toc {
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-card);
+  background: var(--well-2);
+  padding: 12px 16px;
+}
+.md-toc-summary {
+  cursor: pointer;
+  font: 600 11px/1.4 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--t5);
+  list-style: none;
+}
+.md-toc-summary::-webkit-details-marker { display: none; }
+.md-toc-summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--t6);
+  transition: transform 0.12s ease;
+}
+.md-toc-fold[open] > .md-toc-summary::before { transform: rotate(90deg); }
+.md-toc-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0 0 0 4px;
+}
+.md-toc-list .md-toc-list { padding-left: 16px; }
+.md-toc-item { margin: 2px 0; }
+.md-toc-link {
+  display: block;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: var(--t3);
+  text-decoration: none;
+  font-size: 13px;
+  border-left: 2px solid transparent;
+}
+.md-toc-link[data-level="1"] { font-weight: 600; color: var(--t1); }
+.md-toc-link:hover { background: var(--well); color: var(--t0); }
+/* Active-item flash when a TOC link is jumped to (md.js adds .toc-active). */
+.md-toc-link.toc-active {
+  border-left-color: var(--green);
+  background: rgba(86, 227, 159, 0.08);
+  color: var(--t0);
+}
+.md-stats {
+  margin: 10px 0 0;
+  font: 400 11px/1.5 var(--mono);
+  color: var(--t6);
+}
+
+/* PROSE */
+.md-prose { font: 400 15px/1.7 var(--sans); color: var(--t2); }
+
+.md-block { position: relative; }
+.md-block:hover > .md-react,
+.md-block:focus-within > .md-react { opacity: 1; }
+
+.md-block-body > :first-child { margin-top: 0; }
+.md-block-body > :last-child { margin-bottom: 0; }
+.md-block-body { padding: 2px 0; }
+
+.md-prose h1, .md-prose h2, .md-prose h3,
+.md-prose h4, .md-prose h5, .md-prose h6 {
+  font-family: var(--sans);
+  color: var(--t0);
+  line-height: 1.3;
+  scroll-margin-top: 74px; /* clear the sticky header on TOC jump */
+}
+.md-prose h1 { font-size: 26px; font-weight: 600; margin: 28px 0 12px; }
+.md-prose h2 { font-size: 20px; font-weight: 600; margin: 26px 0 10px; }
+.md-prose h3 { font-size: 16px; font-weight: 600; margin: 22px 0 8px; }
+.md-prose p { margin: 12px 0; }
+.md-prose a { color: var(--green); text-decoration: underline; text-underline-offset: 2px; }
+.md-prose a:hover { color: var(--green-2); }
+.md-prose ul, .md-prose ol { margin: 12px 0; padding-left: 26px; }
+.md-prose li { margin: 4px 0; }
+.md-prose strong { color: var(--t0); font-weight: 600; }
+.md-prose hr { border: none; border-top: 1px solid var(--border-2); margin: 24px 0; }
+
+/* Blockquote — a left rule in the purple accent (design token). */
+.md-prose blockquote {
+  margin: 14px 0;
+  padding: 4px 16px;
+  border-left: 3px solid var(--purple);
+  background: var(--well-2);
+  color: var(--t3);
+  border-radius: 0 6px 6px 0;
+}
+
+/* Inline code + fenced code blocks (JetBrains Mono chrome). */
+.md-prose code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--well);
+  border: 1px solid var(--border-3);
+  border-radius: var(--radius-chip);
+  padding: 1px 5px;
+}
+.md-prose pre {
+  margin: 14px 0;
+  padding: 14px 16px;
+  background: var(--well-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-card);
+  overflow-x: auto;
+}
+.md-prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--t2);
+}
+
+.md-prose table {
+  border-collapse: collapse;
+  margin: 14px 0;
+  width: 100%;
+  font-size: 14px;
+}
+.md-prose th, .md-prose td {
+  border: 1px solid var(--border-2);
+  padding: 6px 10px;
+  text-align: left;
+}
+.md-prose th { background: var(--well-2); color: var(--t1); }
+
+/* React `＋` affordance — one per block, revealed on hover/focus, always
+   keyboard-reachable. Icon-only, so it carries an aria-label (set in the
+   template). md_bullet buttons md.js injects share the .md-react look. */
+.md-react {
+  position: absolute;
+  left: -34px;
+  top: 2px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--t5);
+  font: 600 15px/1 var(--sans);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+}
+.md-react:hover, .md-react:focus-visible { color: var(--green); border-color: var(--green-3); opacity: 1; }
+.md-bullet-react {
+  position: static;
+  margin-right: 6px;
+  width: 20px;
+  height: 20px;
+  font-size: 13px;
+  vertical-align: middle;
+  opacity: 0.55;
+}
+
+/* Block/bullet reaction pills (#66) — md.js inserts one per emoji, always
+   visible (unlike the hover-revealed ＋ affordance above), matching the
+   trajectory viewer's react-pill look so a reaction reads the same across
+   surfaces. A block pill flows in the normal document flow right after the
+   prose (the ＋ trigger it sits beside is position:absolute and out of flow);
+   a bullet pill sits inline with the ＋ trigger, both position:static. */
+.md-react-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--well);
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  padding: 2px 9px;
+  margin: 6px 6px 0 0;
+  cursor: pointer;
+  color: var(--t4);
+  font: 500 11px var(--mono);
+}
+.md-react-pill.on { border-color: #244034; background: rgba(86,227,159,.12); color: var(--green-2); }
+.md-react-pill .react-count { color: var(--t3); }
+.md-react-pill.on .react-count { color: var(--green-2); }
+/* A pill beside a bullet trigger (both position:static, inserted right before
+   it) reads inline with the ＋ icon rather than dropping to a new line. */
+li > .md-react-pill { display: inline-flex; vertical-align: middle; margin: 0 4px 0 0; }
+.md-react-error {
+  display: inline-block;
+  color: var(--red, #e05a5a);
+  font: 500 10.5px var(--mono);
+  margin-left: 4px;
+}
+
+/* Selection → comment toolbar md.js floats above a text selection. */
+.md-sel-toolbar {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  background: var(--header);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+.md-sel-toolbar button {
+  font: 600 12px/1 var(--sans);
+  color: var(--t1);
+  background: var(--well);
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.md-sel-toolbar button:hover { color: var(--green); border-color: var(--green-3); }
+
+@media (max-width: 720px) {
+  .md-viewer { padding: 18px 16px 48px; }
+  .md-react { left: -6px; top: -30px; }
+}

@@ -13,6 +13,8 @@
 package store
 
 import (
+	"time"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/joestump/cairn/internal/id"
@@ -23,6 +25,18 @@ import (
 // idMaxAttempts bounds public-id collision retries; at the targeted keyspace
 // occupancy a single retry is already astronomically unlikely.
 const idMaxAttempts = 5
+
+// retiredIDGrace bounds how long a retired public id (rotated away by
+// Store.RotateID) stays excluded from re-minting (ADR-0005 "a retired id is
+// not reused within TTL-plus-grace", SPEC-0009 REQ "Id Rotation as
+// Revoke-a-Leaked-Link"). It is set generously longer than the platform's
+// maximum permitted artifact TTL (httpapi.Config.MaxRequestedTTL defaults to
+// 30 days) with margin, mirroring the same "longer than max TTL" posture the
+// object-storage lifecycle backstop uses (SPEC-0009 REQ "Object-Storage
+// Lifecycle Backstop") so a rotated id can never be re-minted while any
+// plausible artifact created before the rotation could still be alive and
+// confusable with it.
+const retiredIDGrace = 60 * 24 * time.Hour
 
 // defaultPreviewMaxBytes is the fallback preview size bound when none is
 // configured: bodies larger than this are never previewable (SPEC-0002).
@@ -81,3 +95,21 @@ func New(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *Store {
 		newID:      newID,
 	}
 }
+
+// Pool exposes the underlying Postgres pool so a peer core service that shares
+// this store's database — notably the annotation service, which the REST/MCP/CLI
+// adapters project alongside the artifact core — can be constructed over the
+// same connection pool and transaction domain (ADR-0012 one binary, one core).
+func (s *Store) Pool() *pgxpool.Pool { return s.pool }
+
+// Registry returns the share-type registry this store resolves affordances
+// through, so a co-constructed peer service gates anchors against the same
+// capability matrix (ADR-0002).
+func (s *Store) Registry() *sharetype.Registry { return s.registry }
+
+// ObjectStore exposes the content-addressed object store so a peer core service
+// that spills its own large payloads to the same blob registry — notably the
+// trajectory service, which spills oversized span outputs (SPEC-0004) — writes
+// them through the same backend the artifact bodies use (ADR-0008 one content
+// store). The REST/MCP/CLI adapters co-construct that peer over this store.
+func (s *Store) ObjectStore() objectstore.ObjectStore { return s.obj }

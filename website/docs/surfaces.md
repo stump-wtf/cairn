@@ -30,21 +30,35 @@ See [SPEC-0001](https://github.com/joestump/cairn/blob/main/docs/openspec/specs/
 
 ## CLI — `cairn`
 
-*pbcopy for cairn.* A single Go binary; the TUI is Bubble Tea.
+*pbcopy for cairn.* A single static Go binary; the TUI is Bubble Tea. No release
+binaries yet — install straight from the module:
 
 ```bash
+go install github.com/joestump/cairn/cmd/cairn@latest
+```
+
+Authenticate with a bearer token minted from your server's Settings page (the
+OAuth 2.1 + PKCE browser flow lands in a follow-up), then push:
+
+```bash
+cairn login --token <token>
+✓ authorized as sam@stump.rocks · via API
+
 # pipe anything in, get a link back
 cat checkout-web-audit.md | cairn
 
 # push many files at once as a bundle
 cairn add audit.md parse_ledger.py Movies.png dump.sql.gz
 
+# optional flags: expiry hint and a display title
+cairn --ttl 24h --title "incident notes" incident.md
+
 # browse the Bin as a keyboard-driven TUI
 cairn ls        # ↑/k up · ↓/j down · / filter · enter open · s share · q quit
 ```
 
-It authenticates through the **same OAuth flow as your agent**
-(`✓ authorized as sam@stump.rocks · via MCP OAuth`). See
+Tokens are stored securely (OS keychain, or a `0600` file as a fallback) and
+never logged. See
 [SPEC-0008](https://github.com/joestump/cairn/blob/main/docs/openspec/specs/cli/spec.md).
 
 ## MCP — the agent surface

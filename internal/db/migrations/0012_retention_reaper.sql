@@ -1,0 +1,21 @@
+-- Retention reaper support (SPEC-0009 / ADR-0007 / ADR-0008, issue #93).
+--
+-- The background reaper (cmd/cairnd) hard-deletes artifacts past expires_at in
+-- bounded batches ordered by expires_at, then reference-counts the shared,
+-- content-addressed blobs across ALL blob-bearing tables and GCs any that no
+-- live row still references. No schema change is required for correctness — the
+-- refcount reverse-lookup indexes already exist
+-- (artifacts_body_sha256_idx, bundle_members_blob_sha256_idx,
+--  spans_output_ref_idx, hook_requests_body_ref_idx) — this migration only adds
+-- the expiry scan index so the reaper's `WHERE expires_at <= now() ORDER BY
+-- expires_at LIMIT $batch FOR UPDATE SKIP LOCKED` pass is a bounded index range
+-- scan rather than a full table sort.
+--
+-- IMPORTANT (issue #93 §1): blob deletion is reference-count-only, never
+-- age-based. There is deliberately NO expiry/age column on `blobs` and NO
+-- age-based lifecycle rule on the committed blobs/ object prefix: an object's
+-- LastModified has no relationship to its longest live reference under
+-- content-addressed dedup, so an age rule would silently delete a body still
+-- referenced by a younger, longer-TTL artifact. The only object age rule allowed
+-- is on the transient staging/ prefix (upload debris), configured out-of-band.
+CREATE INDEX IF NOT EXISTS artifacts_expires_at_idx ON artifacts (expires_at);

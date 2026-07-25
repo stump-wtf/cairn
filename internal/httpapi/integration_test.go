@@ -6,45 +6,91 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/joestump/cairn/internal/db"
 	"github.com/joestump/cairn/internal/objectstore"
 	"github.com/joestump/cairn/internal/store"
 )
 
+// schemaSeq disambiguates test schemas created within the same nanosecond.
+var schemaSeq atomic.Int64
+
 // testServer stands up the /v1 adapter over a real Postgres store (env-gated on
-// CAIRN_TEST_DATABASE_URL) and an in-memory object store.
+// CAIRN_TEST_DATABASE_URL) and an in-memory object store. Each server runs in a
+// private, per-test Postgres schema — `go test ./...` runs packages in parallel
+// against the one CI database, so these tests must never touch the tables the
+// store and annotation package integration tests use concurrently (the same
+// isolation the annotation package's newTestPool relies on).
 func testServer(t *testing.T, cfg Config, opts store.Options) *httptest.Server {
+	t.Helper()
+	// The integration suite acts as arbitrary actors via `Bearer <actor>`, so it
+	// opts into the insecure dev bearer shortcut. Production leaves this off and
+	// verifies every token (see the security tests).
+	cfg.DevInsecureBearerAuth = true
+	pool := newTestPool(t)
+	st := store.New(pool, objectstore.NewMemory(), opts)
+	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// newTestPool connects to CAIRN_TEST_DATABASE_URL (skipping otherwise) and
+// applies the embedded migrations inside a private, per-test schema, dropped on
+// cleanup. A fresh schema starts empty, so no TRUNCATE of shared tables — and
+// therefore no interference with other packages' integration tests — is needed.
+func newTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("CAIRN_TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("set CAIRN_TEST_DATABASE_URL to run httpapi integration tests")
 	}
 	ctx := context.Background()
-	pool, err := db.Connect(ctx, dsn)
+	schema := fmt.Sprintf("httpapi_test_%d_%d", time.Now().UnixNano(), schemaSeq.Add(1))
+
+	admin, err := db.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
+	if _, err := admin.Exec(ctx, fmt.Sprintf(`CREATE SCHEMA %q`, schema)); err != nil {
+		admin.Close()
+		t.Fatalf("create schema: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(context.Background(), fmt.Sprintf(`DROP SCHEMA %q CASCADE`, schema)); err != nil {
+			t.Errorf("drop schema: %v", err)
+		}
+		admin.Close()
+	})
+
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE artifacts, blobs, bundle_members RESTART IDENTITY CASCADE`); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
-	st := store.New(pool, objectstore.NewMemory(), opts)
-	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
-	t.Cleanup(srv.Close)
-	t.Cleanup(pool.Close)
-	return srv
+	return pool
 }
 
 func sha256Hex(b []byte) string {
@@ -296,6 +342,68 @@ func TestIntegrationBundleCreateAndMemberRead(t *testing.T) {
 		t.Fatalf("missing member = %d, want 404", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+// TestIntegrationBundleMemberNameRoundTrip locks in the member-name URL round
+// trip for names carrying spaces and URL-reserved characters: memberPath
+// (bundle_view.go) escapes a member's stored name into a URL path segment for
+// the download link the file rail renders, and handleGetMember reads it back
+// via chi's `*` wildcard on `/artifacts/{id}/members/*`. The two must agree —
+// a name a client escaped via net/url must decode, through chi's wildcard
+// match against the net/http-parsed request path, back to the exact byte
+// sequence stored for that member (PR #40 review note: "chi wildcard decode
+// vs net/http").
+func TestIntegrationBundleMemberNameRoundTrip(t *testing.T) {
+	srv := testServer(t, noRateLimit(), store.Options{MaxUploadBytes: 1 << 20})
+
+	// mime/multipart's Part.FileName() runs the client-declared filename
+	// through filepath.Base before handlers.go ever sees it (Go stdlib, mime/
+	// multipart/formdata.go), so a member name can never legitimately contain
+	// "/" on this ingestion path — every case here is a single path segment.
+	names := []string{
+		"has space.txt",
+		"weird#hash.txt",
+		"question?mark.txt",
+		"percent%20literal.txt",
+		"plus+sign.txt",
+		"quote's.txt",
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("title", "weird member names")
+	for i, name := range names {
+		fw, err := mw.CreateFormFile("file", name)
+		if err != nil {
+			t.Fatalf("form file %q: %v", name, err)
+		}
+		fmt.Fprintf(fw, "body-%d", i)
+	}
+	mw.Close()
+
+	resp := do(t, http.MethodPost, srv.URL+"/v1/artifacts", "alice", &buf, mw.FormDataContentType())
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("bundle create = %d, want 201", resp.StatusCode)
+	}
+	art := decodeArtifact(t, resp)
+
+	for i, name := range names {
+		name, want := name, fmt.Sprintf("body-%d", i)
+		t.Run(name, func(t *testing.T) {
+			// Mirror memberPath's own escaping (bundle_view.go) — the same
+			// transform the rendered web download link applies.
+			escaped := (&url.URL{Path: name}).EscapedPath()
+			resp := do(t, http.MethodGet, srv.URL+"/v1/artifacts/"+art.ID+"/members/"+escaped, "", nil, "")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("member %q read = %d, want 200", name, resp.StatusCode)
+			}
+			got, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if string(got) != want {
+				t.Fatalf("member %q bytes = %q, want %q", name, got, want)
+			}
+		})
+	}
 }
 
 func TestIntegrationRateLimited(t *testing.T) {

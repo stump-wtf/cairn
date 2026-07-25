@@ -1,0 +1,231 @@
+{{define "trajectory"}}<!doctype html>
+<html lang="en">
+<head>
+{{template "doc-head" .}}
+<link rel="stylesheet" href="/assets/trajectory.css">
+<script defer src="/assets/trajectory.js"></script>
+<title>{{.Title}} · run · cairn</title>
+</head>
+<body x-data="shell" data-link="{{.WebURL}}" data-mcp="{{.MCPHandle}}">
+<a class="skip-link" href="#stream">Skip to activity stream</a>
+
+<header class="app-header" role="banner">
+  <a class="brand" href="/" aria-label="cairn home">{{template "stone-logo" .}}<span class="wordmark">cairn</span></a>
+  <span class="crumb-sep" aria-hidden="true">▸</span>
+  <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeLabel}}">{{.Badge}}</span>
+  <span class="artifact-title">{{.Title}}</span>
+  <span class="artifact-meta">{{.MetaLine}}</span>
+  {{if .Live}}<span class="live-badge" data-live-badge><span class="live-dot" aria-hidden="true"></span>live</span>{{end}}
+
+  <div class="header-spacer"></div>
+
+  <div class="url-control" role="group" aria-label="Run URL">
+    <div class="url-seg">
+      <button type="button" class="seg-btn" x-on:click="showLink" x-bind:aria-pressed="isLink" aria-label="Show web link">🔗 link</button>
+      <button type="button" class="seg-btn" x-on:click="showMcp" x-bind:aria-pressed="isMcp" aria-label="Show MCP handle">◆ mcp</button>
+    </div>
+    <code class="url-value" x-show="isLink">{{.WebURL}}</code>
+    <code class="url-value" x-show="isMcp">{{.MCPHandle}}</code>
+    <button type="button" class="copy-btn" x-on:click="copy" aria-label="Copy URL to clipboard">
+      <span x-show="notCopied">copy</span>
+      <span class="copied" x-show="copied" x-cloak>copied ✓</span>
+    </button>
+  </div>
+
+  <button type="button" class="share-btn" aria-label="Share this run">Share</button>
+  <button type="button" class="panel-toggle" x-on:click="togglePanel" x-bind:aria-expanded="panelExpanded" aria-label="Toggle run panel">▤</button>
+</header>
+
+{{template "share-dialog" .ShareDialog}}
+
+<main class="traj-grid" x-bind:class="panelClass">
+  <div class="traj-main">
+    {{/* SPAN WATERFALL — pinned, bespoke geometry applied by trajectory.js from
+    data-left/data-width (CSP style-src 'self' forbids inline style attributes;
+    CSSOM setters are exempt). The rows still render their labels + durations
+    with no JS, and the activity stream below carries the full content, so the
+    no-JS / screen-reader experience is complete (ADR-0011, WCAG 1.3.1). */}}
+    <section class="waterfall" aria-label="Span waterfall"
+             data-run-id="{{.ID}}" data-live="{{if .Live}}1{{else}}0{{end}}">
+      <div class="wf-head">
+        <span class="wf-trace">TRACE</span>
+        <span class="wf-legendmeta" data-model="{{.Model}}">{{.Model}} · {{.SubAgentCount}} sub-agent · {{.ToolCallCount}} tool calls</span>
+        <ul class="wf-legend" aria-label="Category legend">
+          <li data-cat="reason"><span class="swatch" aria-hidden="true"></span>reason</li>
+          <li data-cat="exec"><span class="swatch" aria-hidden="true"></span>exec</li>
+          <li data-cat="read"><span class="swatch" aria-hidden="true"></span>read</li>
+          <li data-cat="net"><span class="swatch" aria-hidden="true"></span>net</li>
+          <li data-cat="write"><span class="swatch" aria-hidden="true"></span>write</li>
+        </ul>
+      </div>
+      <div class="wf-ruler" aria-hidden="true">
+        <span class="wf-rlabel">time</span>
+        <div class="wf-ticks">{{range .Ticks}}<span class="wf-tick">{{.Label}}</span>{{end}}</div>
+      </div>
+      <ul class="wf-rows" role="list" data-wf-rows>
+        {{range .Waterfall}}{{template "waterfall-row" .}}{{end}}
+      </ul>
+      <p class="wf-hint">Click any span to jump to it in the stream ↓ · select text or use ＋ to react on a turn</p>
+    </section>
+
+    {{/* ACTIVITY STREAM — server-rendered, native <details> collapsibles so
+    expand/collapse and keyboard operation need no JS (WCAG 2.1.1). */}}
+    <section id="stream" class="stream" aria-label="Activity stream" tabindex="-1" data-webselectable data-stream>
+      <p class="sr-only" aria-live="polite" data-live-region></p>
+
+      <div class="turn turn-user" data-turnrow="__prompt__">
+        <div class="turn-rail"><span class="marker marker-user" aria-hidden="true">{{/* initials */}}❯</span></div>
+        <div class="turn-body">
+          <div class="turn-head">
+            <span class="turn-author">{{.Provenance.Actor}}</span>
+            <span class="badge badge-prompt">PROMPT</span>
+            <span class="turn-sub">· started the run</span>
+          </div>
+          {{if .Prompt}}<div class="prompt-card">{{.Prompt}}</div>{{end}}
+          {{template "reaction-cluster" .PromptReact}}
+        </div>
+      </div>
+
+      {{range .Stream}}{{template "stream-row" .}}{{end}}
+    </section>
+  </div>
+
+  <aside class="panel traj-panel" aria-label="Run details and comments" x-show="panelOpen">
+    <section class="panel-section" aria-labelledby="prov-h">
+      <h2 class="panel-h" id="prov-h">Provenance</h2>
+      <div class="prov-line">
+        <span class="prov-agent">{{.Provenance.Actor}}</span>
+        {{if .Provenance.OnBehalfOf}}<span class="obo">on behalf of {{.Provenance.OnBehalfOf}}</span>{{end}}
+        <span class="prov-model">{{.Model}}</span>
+      </div>
+      <p class="prov-captured"><span class="prov-dot" aria-hidden="true"></span>via {{.Provenance.Channel}} · captured {{.Provenance.Captured}}</p>
+      {{if .ExpiresIn}}<p class="ttl-chip-panel">⧗ expires <span data-provenance-expires>{{.ExpiresIn}}</span></p>{{end}}
+    </section>
+
+    <section class="panel-section" aria-labelledby="stats-h">
+      <h2 class="panel-h" id="stats-h">Run stats</h2>
+      <div class="stat-grid">
+        {{range .Stats}}<div class="stat-tile"><span class="stat-val">{{.Value}}{{if .Unit}}<span class="stat-unit">{{.Unit}}</span>{{end}}</span><span class="stat-label">{{.Label}}</span></div>{{end}}
+      </div>
+    </section>
+
+    {{if .Categories}}
+    <section class="panel-section" aria-labelledby="cat-h">
+      <h2 class="panel-h" id="cat-h">Time by category</h2>
+      <div class="cat-bar" role="img" aria-label="Time by category breakdown" data-cat-bar>
+        {{range .Categories}}<span class="cat-seg" data-cat="{{.Category}}" data-pct="{{.Pct}}"></span>{{end}}
+      </div>
+      <ul class="cat-legend">
+        {{range .Categories}}<li data-cat="{{.Category}}"><span class="swatch" aria-hidden="true"></span>{{.Category}} <span class="cat-dur">{{.Duration}}</span></li>{{end}}
+      </ul>
+    </section>
+    {{end}}
+
+    <section class="panel-section" aria-labelledby="comments-h">
+      <h2 class="panel-h" id="comments-h">Comments <span class="count">{{.CommentCount}}</span></h2>
+      <div class="comments">
+        <div id="comment-list" class="comment-list" aria-live="polite">
+          {{range .Comments}}{{template "comment-item" .}}{{else}}<p class="comments-empty">No comments yet.</p>{{end}}
+        </div>
+        {{if .Authenticated}}
+        {{/* Whole-run comments and the select-text-to-comment flow only — a
+        per-span "💬 comment" click no longer routes here (#58): it opens an
+        inline floating composer at the clicked line (trajectory.js
+        openCommentComposer) and posts straight to the same /{{.ID}}/comments
+        endpoint with its own span_id form field, so this composer keeps no
+        span-anchor state of its own. */}}
+        <form class="comment-composer" hx-post="/{{.ID}}/comments" hx-target="#comment-list" hx-swap="beforeend" data-comment-form>
+          <p class="composer-anchor" data-anchor-chip hidden>commenting <span data-anchor-label></span> <button type="button" class="anchor-clear" data-anchor-clear aria-label="Clear comment target">✕</button></p>
+          <input type="hidden" name="sel_start" data-f-start value="">
+          <input type="hidden" name="sel_end" data-f-end value="">
+          <input type="hidden" name="quote" data-f-quote value="">
+          <label class="sr-only" for="comment-body">Add a comment</label>
+          <textarea id="comment-body" name="body" rows="2" placeholder="comment on the run…" required></textarea>
+          <div class="composer-foot">
+            <span class="composer-actor">as {{.Actor}}</span>
+            <button type="submit" class="comment-post-btn">Post</button>
+          </div>
+        </form>
+        {{else}}
+        <p class="comments-signedout"><a href="/login">Sign in</a> to comment.</p>
+        {{end}}
+      </div>
+    </section>
+  </aside>
+</main>
+
+{{template "footer" .}}
+</body>
+</html>{{end}}
+
+{{/* One waterfall span bar. The row is a button so keyboard users can activate
+the span→stream jump (WCAG 2.1.1); its accessible name names the span, its
+category, and its duration so a screen reader conveys the same facts the bar
+shows sighted users (WCAG 1.1.1). Geometry (left/width) is applied by
+trajectory.js from data-left/data-width. */}}
+{{define "waterfall-row"}}<li>
+  <button type="button" class="wf-row{{if .IsChild}} wf-child{{end}}{{if .IsSubAgent}} wf-subagent{{end}}"
+          data-spanjump="{{.SpanID}}"
+          aria-label="{{.Name}} — {{.Category}}, {{.Duration}}">
+    <span class="wf-label">
+      <span class="swatch" data-cat="{{.Category}}" aria-hidden="true"></span>
+      {{if .IsChild}}<span class="wf-branch" aria-hidden="true">└</span>{{end}}
+      {{if .Tool}}<span class="tool-chip" data-tool="{{.Tool}}">{{.Tool}}</span>{{end}}
+      <span class="wf-name">{{.Name}}</span>
+    </span>
+    <span class="wf-track">
+      <span class="wf-bar" data-cat="{{.Category}}" data-start-ms="{{.StartMS}}" data-dur-ms="{{.DurMS}}">
+        <span class="wf-dur">{{.Duration}}</span>
+      </span>
+    </span>
+  </button>
+</li>{{end}}
+
+{{/* One activity-stream turn, recursive for a sub-agent's children. Reason /
+tool / sub-agent rows are native <details> so collapse works with no JS and is
+keyboard-operable; the summary is the clickable header. */}}
+{{define "stream-row"}}<div class="turn turn-{{.Role}}" data-turnrow="{{.SpanID}}" data-dur-ms="{{.DurMS}}" data-trajrow>
+  <div class="turn-rail"><span class="marker marker-{{.Role}}" data-cat="{{.Category}}" aria-hidden="true"></span></div>
+  <div class="turn-body">
+    <details class="turn-collapse"{{if .OpenByDefault}} open{{end}} data-trajhead>
+      <summary class="turn-summary">
+        {{if .Tool}}<span class="tool-chip" data-tool="{{.Tool}}">{{.Tool}}</span>{{else}}<span class="chip chip-reason">reason</span>{{end}}
+        <span class="turn-name">{{.Name}}</span>
+        <span class="turn-meta">{{.Meta}}</span>
+      </summary>
+      <div class="turn-detail">
+        {{if .Spilled}}
+        <div class="output-strip">stdout · truncated</div>
+        <pre class="output-pre" data-output-url="{{.OutputURL}}"><button type="button" class="output-load" data-output-load>Load output ↧</button></pre>
+        {{else if .Body}}
+        <div class="output-strip">stdout</div>
+        <pre class="output-pre">{{.Body}}</pre>
+        {{end}}
+        {{if .Artifact}}
+        <a class="artifact-card" href="{{.Artifact.URL}}">
+          <span class="artifact-chip">MD</span>
+          <span class="artifact-meta">
+            <span class="artifact-name">{{.Artifact.Filename}}</span>
+            <span class="artifact-note">artifact produced by this run — opens the markdown share ↗</span>
+          </span>
+          <span class="badge badge-shared">SHARED</span>
+        </a>
+        {{end}}
+        {{if .Children}}<div class="subagent-children">{{range .Children}}{{template "stream-row" .}}{{end}}</div>{{end}}
+      </div>
+    </details>
+    <div class="turn-actions">
+      {{template "reaction-cluster" .React}}
+      <button type="button" class="comment-anchor-btn" data-comment-span="{{.SpanID}}" data-comment-name="{{.Name}}" aria-label="Comment on {{.Name}}">💬 comment</button>
+    </div>
+  </div>
+</div>{{end}}
+
+{{/* A labeled reaction cluster. Pills are toggle buttons (aria-pressed reflects
+the viewer's own reaction); the ＋ opens the emoji picker. trajectory.js posts to
+the /v1 reactions endpoint. With no JS the counts still render (read-only). */}}
+{{define "reaction-cluster"}}<div class="react-cluster" role="group" aria-label="{{.Label}}"
+     data-react-cluster data-anchor-type="{{.AnchorType}}"{{if .SpanID}} data-span-id="{{.SpanID}}"{{end}}>
+  {{range .Pills}}<button type="button" class="react-pill{{if .Reacted}} on{{end}}" data-emoji="{{.Emoji}}" aria-pressed="{{if .Reacted}}true{{else}}false{{end}}" aria-label="React {{.Emoji}}, {{.Count}} so far"><span class="react-emoji">{{.Emoji}}</span> <span class="react-count">{{.Count}}</span></button>{{end}}
+  <button type="button" class="react-add" data-react-add aria-label="Add a reaction" aria-haspopup="true">＋</button>
+</div>{{end}}

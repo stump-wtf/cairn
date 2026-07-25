@@ -65,7 +65,7 @@ func (in CreateBundleInput) validate() error {
 type stagedMember struct {
 	ordinal int
 	name    string
-	blob    stagedBlob
+	blob    *StagedBlob
 }
 
 // CreateBundle streams every member to storage (each hashed, size-limited, and
@@ -82,41 +82,28 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 		return nil, err
 	}
 
-	// Stream every member to a staging object first. Track staging keys so we
-	// can discard them unless the metadata commits.
+	// Stream every member to a staging object first. Each member's staging object
+	// is transient on EVERY path (committed OR rolled back); reclaim each
+	// unconditionally on the way out so no staging/<rand> orphan survives.
+	// Promotion to the content-addressed key is deferred to CommitBlob, under the
+	// blob-row lock, so it serializes against the SPEC-0009 reaper (§2).
+	//
+	// Governing: SPEC-0002 REQ "Content Addressing and Blobs".
 	staged := make([]stagedMember, 0, len(in.Members))
-	committed := false
 	defer func() {
-		if !committed {
-			for _, m := range staged {
-				_ = s.obj.Remove(context.WithoutCancel(ctx), m.blob.stagingKey)
-			}
+		for _, m := range staged {
+			m.blob.Discard(ctx, s.obj)
 		}
 	}()
 
 	var totalSize int64
 	for i, m := range in.Members {
-		sb, err := streamBlob(ctx, s.obj, m.Body, s.maxBytes, m.DeclaredMediaType)
+		sb, err := StageBlob(ctx, s.obj, m.Body, s.maxBytes, m.DeclaredMediaType)
 		if err != nil {
 			return nil, fmt.Errorf("bundle: stream member %q: %w", m.Name, err)
 		}
 		staged = append(staged, stagedMember{ordinal: i, name: m.Name, blob: sb})
-		totalSize += sb.size
-	}
-
-	// Promote each distinct member blob to its content-addressed key unless the
-	// object already exists (object-level dedup).
-	for _, m := range staged {
-		finalKey := shardedKey(m.blob.sha256)
-		exists, err := s.obj.Stat(ctx, finalKey)
-		if err != nil {
-			return nil, fmt.Errorf("bundle: stat blob %s: %w", m.blob.sha256, err)
-		}
-		if !exists {
-			if err := s.obj.Copy(ctx, m.blob.stagingKey, finalKey); err != nil {
-				return nil, fmt.Errorf("bundle: promote blob %s: %w", m.blob.sha256, err)
-			}
-		}
+		totalSize += sb.Size
 	}
 
 	art := &artifact.Artifact{
@@ -137,13 +124,8 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	for _, m := range staged {
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO blobs (sha256, size_bytes, media_type, storage_key)
-			 VALUES ($1, $2, $3, $4)
-			 ON CONFLICT (sha256) DO NOTHING`,
-			m.blob.sha256, m.blob.size, m.blob.mediaType, shardedKey(m.blob.sha256),
-		); err != nil {
-			return nil, fmt.Errorf("bundle: upsert blob %s: %w", m.blob.sha256, err)
+		if err := CommitBlob(ctx, tx, s.obj, m.blob); err != nil {
+			return nil, fmt.Errorf("bundle: %w", err)
 		}
 	}
 
@@ -161,7 +143,6 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("bundle: commit: %w", err)
 	}
-	committed = true
 	return art, nil
 }
 
@@ -169,11 +150,64 @@ func insertBundleMember(ctx context.Context, tx pgx.Tx, bundleID int64, m staged
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO bundle_members (bundle_id, ordinal, name, blob_sha256, media_type, size_bytes)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		bundleID, m.ordinal, m.name, m.blob.sha256, m.blob.mediaType, m.blob.size,
+		bundleID, m.ordinal, m.name, m.blob.SHA256, m.blob.MediaType, m.blob.Size,
 	); err != nil {
 		return fmt.Errorf("bundle: insert member %q: %w", m.name, err)
 	}
 	return nil
+}
+
+// Member is one bundle member's metadata (no body), in bundle order. The bundle
+// viewer projects these into the file rail and delegates each back through the
+// registry to its own viewer (SPEC-0003 REQ "Bundle Viewer").
+type Member struct {
+	Ordinal   int
+	Name      string
+	MediaType string
+	Size      int64
+	SHA256    string
+}
+
+// ListMembers returns a bundle's members in bundle order (ordinal ASC). A
+// non-bundle artifact yields no members (empty slice, no error): the caller
+// resolves the viewer from the artifact's own type, so "not a bundle" is simply
+// "no member rail", never a failure. Unknown/expired ids surface as not-found
+// via GetByPublicID, keeping probing uniform (ADR-0007).
+//
+// Governing: SPEC-0002 REQ "Bundles with N Members" (ordered members),
+// SPEC-0003 REQ "Bundle Viewer".
+func (s *Store) ListMembers(ctx context.Context, publicID string) ([]Member, error) {
+	a, err := s.GetByPublicID(ctx, publicID)
+	if err != nil {
+		return nil, err
+	}
+	if a.ShareType != artifact.TypeBundle {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT ordinal, name, media_type, size_bytes, blob_sha256
+		 FROM bundle_members
+		 WHERE bundle_id = $1
+		 ORDER BY ordinal ASC`,
+		a.ID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list members %s: %w", publicID, err)
+	}
+	defer rows.Close()
+
+	var members []Member
+	for rows.Next() {
+		var m Member
+		if err := rows.Scan(&m.Ordinal, &m.Name, &m.MediaType, &m.Size, &m.SHA256); err != nil {
+			return nil, fmt.Errorf("scan member %s: %w", publicID, err)
+		}
+		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list members %s: %w", publicID, err)
+	}
+	return members, nil
 }
 
 // OpenMember opens a bundle member's body by <bundle public id>/<name>. Unknown

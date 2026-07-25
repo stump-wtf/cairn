@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,8 +108,8 @@ func TestURLScheme(t *testing.T) {
 	}
 }
 
-func TestBearerAuthenticator(t *testing.T) {
-	a := BearerAuthenticator{}
+func TestDevActorAuthenticator(t *testing.T) {
+	a := DevActorAuthenticator{}
 
 	// No credentials.
 	if _, err := a.Authenticate(httptest.NewRequest(http.MethodPost, "/v1/artifacts", nil)); !errors.Is(err, errs.ErrUnauthorized) {
@@ -120,7 +121,8 @@ func TestBearerAuthenticator(t *testing.T) {
 	if _, err := a.Authenticate(r); !errors.Is(err, errs.ErrUnauthorized) {
 		t.Fatalf("empty bearer should be unauthorized, got %v", err)
 	}
-	// Valid token → actor id, server-derived channel.
+	// The dev shortcut trusts the raw token AS the actor id, server-derived
+	// channel. This is the INSECURE behavior gated behind the dev flag.
 	r = httptest.NewRequest(http.MethodPost, "/v1/artifacts", nil)
 	r.Header.Set("Authorization", "Bearer alice")
 	p, err := a.Authenticate(r)
@@ -132,6 +134,9 @@ func TestBearerAuthenticator(t *testing.T) {
 	}
 	if p.Channel != artifact.ChannelAPI {
 		t.Errorf("channel = %q, want %q (server-derived)", p.Channel, artifact.ChannelAPI)
+	}
+	if p.HasScope(scopeSharingManage) {
+		t.Error("dev principal must not carry sharing:manage")
 	}
 }
 
@@ -180,5 +185,52 @@ func TestStatusFor(t *testing.T) {
 		if got := statusFor(tc.code); got != tc.want {
 			t.Errorf("statusFor(%q) = %d, want %d", tc.code, got, tc.want)
 		}
+	}
+}
+
+// TestConsentCSP pins consentCSP's origin-widening behavior, including the
+// #64 hardening: the origin is rebuilt from Scheme + Hostname() + a
+// validated port rather than the raw (unvalidated-charset) u.Host, and any
+// host that fails the hostname-charset check falls back to the strict
+// webCSP instead of emitting a malformed form-action directive.
+func TestConsentCSP(t *testing.T) {
+	tests := []struct {
+		name        string
+		redirectURI string
+		wantOrigin  string // "" means "falls back to plain webCSP"
+	}{
+		{"plain https host", "https://client.example/cb", "https://client.example"},
+		{"https host with port", "https://client.example:8443/cb", "https://client.example:8443"},
+		{"loopback with port", "http://127.0.0.1:53682/cb", "http://127.0.0.1:53682"},
+		{"ipv6 literal with port", "http://[::1]:8080/cb", "http://[::1]:8080"},
+		{"empty redirect uri", "", ""},
+		{"unparsable", "http://[::1", ""},
+		{"missing host", "file:///etc/passwd", ""},
+		// #64: a semicolon-in-host redirect_uri (which ValidateRedirectURI
+		// now rejects at registration) must never make it into a malformed
+		// CSP header — consentCSP falls back to the strict default.
+		{"semicolon in host", "https://a;b/c", ""},
+		{"angle bracket in host", "https://a<b>.example/cb", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := consentCSP(tc.redirectURI)
+			if tc.wantOrigin == "" {
+				if got != webCSP {
+					t.Errorf("consentCSP(%q) = %q, want plain webCSP fallback", tc.redirectURI, got)
+				}
+				return
+			}
+			want := strings.Replace(webCSP, "form-action 'self'", "form-action 'self' "+tc.wantOrigin, 1)
+			if got != want {
+				t.Errorf("consentCSP(%q) = %q, want %q", tc.redirectURI, got, want)
+			}
+			// The header must be well-formed: no bare ';' or unmatched quote
+			// artifacts introduced by a bad host, and no whitespace inside
+			// the injected origin token itself.
+			if strings.Contains(tc.wantOrigin, " ") {
+				t.Fatalf("test bug: wantOrigin %q contains a space", tc.wantOrigin)
+			}
+		})
 	}
 }
