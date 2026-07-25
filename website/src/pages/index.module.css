@@ -1,4 +1,10 @@
-/* Cairn homepage — hero */
+/*
+ * Cairn homepage — hero.
+ * Governing: ADR-0014, SPEC-0010 REQ "Design Token Source of Truth",
+ *            SPEC-0010 REQ "Category Accents Are Dark-Ground Text Colours"
+ * Every colour here is a token from src/css/custom.css; `npm run lint:tokens`
+ * fails the build on a literal.
+ */
 
 .hero {
   position: relative;
@@ -32,10 +38,11 @@
   text-align: center;
 }
 
+/* An uppercase mono kicker: a label, not a sentence. */
 .eyebrow {
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-label-size);
+  font-weight: var(--cairn-label-weight);
   letter-spacing: 0.18em;
   color: var(--cairn-muted);
   margin-bottom: 1.1rem;
@@ -49,8 +56,26 @@
   margin-bottom: 1.3rem;
 }
 
+/*
+ * The gradient paints two category accents as TEXT. On the dark ramp both
+ * clear the large-text floor comfortably (--cat-reason 5.92:1, --cat-write
+ * 6.03:1, --cairn-gradient-mid 8.51:1 on --cairn-ink-0); on white they measure
+ * 3.33:1, 3.26:1 and 2.31:1, so the midpoint misses even 3:1. Accents may not
+ * be recoloured, so in light mode the accent is dropped entirely and the
+ * headline takes a text token — SPEC-0010 REQ "Category Accents Are
+ * Dark-Ground Text Colours", scenario "Accent on a light surface".
+ */
 .grad {
-  background: linear-gradient(96deg, var(--cat-reason) 8%, #b49bff 40%, var(--cat-write) 96%);
+  color: var(--cairn-text);
+}
+
+[data-theme='dark'] .grad {
+  background: linear-gradient(
+    96deg,
+    var(--cat-reason) 8%,
+    var(--cairn-gradient-mid) 40%,
+    var(--cat-write) 96%
+  );
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -84,16 +109,23 @@
   border-color: var(--ifm-color-primary);
 }
 
-/* Terminal card */
+/*
+ * Terminal card — a transcript, so it is machine content end to end and it
+ * renders --cat-reason and --cat-exec AS TEXT (.prompt, .ok). It therefore
+ * pins the ink ramp in BOTH colour modes instead of following --cairn-*:
+ * on --cairn-ink-100 those accents measure 5.53:1 and 8.58:1, while on the
+ * light ramp they would be 3.33:1 and 2.14:1 and could not be recoloured to
+ * fix it — SPEC-0010 REQ "Category Accents Are Dark-Ground Text Colours".
+ */
 .terminal {
   max-width: 640px;
   margin: 0 auto;
   text-align: left;
-  background: var(--cairn-elevated);
-  border: 1px solid var(--cairn-border);
+  background: var(--cairn-ink-100);
+  border: 1px solid var(--cairn-ink-300);
   border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.7);
+  box-shadow: var(--cairn-shadow-card);
 }
 
 .termBar {
@@ -101,31 +133,32 @@
   align-items: center;
   gap: 7px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--cairn-border);
-  background: color-mix(in srgb, var(--cairn-surface-2) 70%, transparent);
+  border-bottom: 1px solid var(--cairn-ink-300);
+  background: color-mix(in srgb, var(--cairn-ink-200) 70%, transparent);
 }
 .termBar span {
   width: 11px;
   height: 11px;
   border-radius: 50%;
-  background: var(--cairn-border);
+  background: var(--cairn-ink-300);
 }
-.termBar span:nth-child(1) { background: #f0568f; }
-.termBar span:nth-child(2) { background: #e6b450; }
-.termBar span:nth-child(3) { background: #46c878; }
+.termBar span:nth-child(1) { background: var(--cat-write); }
+.termBar span:nth-child(2) { background: var(--cat-net); }
+.termBar span:nth-child(3) { background: var(--cat-exec); }
 .termBar em {
   margin-left: auto;
   font-style: normal;
-  font-family: var(--ifm-font-family-monospace);
+  font-family: var(--cairn-font-mono);
   font-size: 0.74rem;
-  color: var(--cairn-muted);
+  color: var(--cairn-ink-700);
 }
 
 .termBody {
   margin: 0;
   padding: 18px 18px 14px;
   background: transparent;
-  font-family: var(--ifm-font-family-monospace);
+  color: var(--cairn-ink-900);
+  font-family: var(--cairn-font-mono);
   font-size: 0.9rem;
   line-height: 1.7;
   white-space: pre-wrap;
@@ -133,8 +166,13 @@
 }
 .prompt { color: var(--cat-reason); font-weight: 700; }
 .ok { color: var(--cat-exec); font-weight: 700; }
-.link { color: var(--ifm-color-primary-light); text-decoration: underline; text-underline-offset: 3px; }
-.dim { color: var(--cairn-muted); }
+/*
+ * --cairn-ink-accent, not --ifm-color-primary-light: the card holds the ink
+ * ramp in light mode too, where the mode-following primary measures only
+ * 4.34:1 on --cairn-ink-100 against 8.90:1 for the pinned token.
+ */
+.link { color: var(--cairn-ink-accent); text-decoration: underline; text-underline-offset: 3px; }
+.dim { color: var(--cairn-ink-700); }
 
 .badges {
   display: flex;

@@ -16,6 +16,30 @@ const siteDir = __dirname;
 
 const DOCS_ROUTE_BASE = '/docs';
 
+/**
+ * Governing: ADR-0014, SPEC-0010 REQ "Design Token Source of Truth"
+ *
+ * Docusaurus turns `plain.color` / `plain.backgroundColor` into the inline
+ * `--prism-color` / `--prism-background-color` pair on every code block, and an
+ * inline style cannot be overridden from a stylesheet. Left alone, vsDark's
+ * #1E1E1E ground would therefore paint every code block on a #0a0b0d page and
+ * be unreachable from the token definition. Pointing the plain pair at `var()`
+ * references keeps the colour literal out of this file and makes the code
+ * surface resolve through src/css/custom.css like every other surface.
+ *
+ * The syntax token colours stay vsDark's: they are a highlighting theme shipped
+ * by a dependency rather than part of the site palette, and they are built for
+ * exactly this ground.
+ */
+const cairnPrismTheme = {
+  ...prismThemes.vsDark,
+  plain: {
+    ...prismThemes.vsDark.plain,
+    color: 'var(--cairn-code-fg)',
+    backgroundColor: 'var(--cairn-code-bg)',
+  },
+};
+
 const config: Config = {
   title: 'Cairn',
   tagline: 'AI-native artifact sharing — pbcopy for the agent era.',
@@ -142,8 +166,8 @@ const config: Config = {
       copyright: `Cairn · built spec-first · © ${new Date().getFullYear()} Joe Stump`,
     },
     prism: {
-      theme: prismThemes.vsDark,
-      darkTheme: prismThemes.vsDark,
+      theme: cairnPrismTheme,
+      darkTheme: cairnPrismTheme,
       additionalLanguages: ['bash', 'go', 'json'],
     },
   } satisfies Preset.ThemeConfig,

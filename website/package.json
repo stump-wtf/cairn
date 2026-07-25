@@ -5,7 +5,9 @@
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
-    "build": "docusaurus build",
+    "lint:tokens": "node scripts/check-tokens.mjs",
+    "test:tokens": "node --test scripts/check-tokens.test.mjs",
+    "build": "npm run lint:tokens && docusaurus build",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
     "clear": "docusaurus clear",
