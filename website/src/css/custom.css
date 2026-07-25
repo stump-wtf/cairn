@@ -552,4 +552,240 @@ table { display: table; width: 100%; }
 .chip-meta    { --chip-accent: var(--cat-meta); }
 .chip-other   { --chip-accent: var(--cat-other); }
 
+/* ==========================================================================
+   9. The record's generated surfaces.
+
+      Governing: ADR-0014, SPEC-0010 REQ "Generated Specs Tree",
+                 SPEC-0010 REQ "Derived Status, Dates, and Counts",
+                 SPEC-0010 REQ "Non-Colour Encoding"
+
+      `src/components/record/` is deliberately structure-only: semantic
+      elements plus stable `cairn-record-*` hooks, no stylesheet and no colour
+      of its own. This section is the whole visual design of those components,
+      which is why it can exist here rather than as a CSS module — the record's
+      surfaces are chrome, and chrome belongs to the token layer.
+
+      Every meaning on these surfaces is carried by text first. A status badge
+      prints its status, a scenario step prints WHEN or THEN, and an RFC 2119
+      keyword is `<strong>` before it is a colour: with colour removed the
+      whole record still reads — SPEC-0010 REQ "Non-Colour Encoding".
+   ========================================================================== */
+
+/* -- The specs index: one card per capability directory ------------------- */
+
+/*
+ * The cards are a `ul`, so the marker has to go explicitly. Two rules here
+ * cost the list its semantics in Safari/VoiceOver: `list-style: none` just
+ * below, and the flex column on `.cairn-record-card`, which takes the `li` off
+ * `display: list-item`. Both are wanted, so the semantics go back on the
+ * element rather than being worked around in CSS — `indexes.tsx` gives the
+ * `ul` an explicit `role="list"`. Nothing in this section is a mitigation for
+ * that; removing the role reintroduces the bug.
+ *
+ * `min(100%, 22rem)` rather than a bare `22rem`: `auto-fill` with a track
+ * minimum wider than the container overflows the page on a phone, and the
+ * body must never scroll horizontally.
+ */
+.cairn-record-cards {
+  list-style: none;
+  margin: 2rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: 1rem;
+}
+
+.cairn-record-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1.15rem 1.25rem 1.05rem;
+  border: 1px solid var(--cairn-border);
+  border-radius: var(--ifm-global-radius);
+  background: var(--cairn-elevated);
+}
+
+.cairn-record-card > h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.35;
+}
+/* The whole title is the link; the id inside it is a `code` element and keeps
+   the pinned machine surface it gets in section 6. */
+.cairn-record-card > h3 > a {
+  color: var(--ifm-heading-color);
+  text-decoration: none;
+}
+.cairn-record-card > h3 > a:hover {
+  color: var(--ifm-link-color);
+  text-decoration: none;
+}
+
+/* The derived one-line summary. Prose, so sans — SPEC-0010 REQ "Typographic
+   Roles".
+
+   The `:not()` is load-bearing, not defensive: the meta row below is also a `p`
+   child, and `.cairn-record-card > p` outranks a lone class selector, so
+   without it this rule would win the font-size and colour of the meta row and
+   quietly undo its mono label role. */
+.cairn-record-card > p:not(.cairn-record-card__meta) {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: var(--cairn-muted);
+}
+
+/*
+ * The meta row: status, the DERIVED requirement and scenario counts, and the
+ * link to the paired design document. Every number here is read from the data
+ * module — SPEC-0010 REQ "Derived Status, Dates, and Counts" forbids a literal
+ * count anywhere in site source — so the row is machine content and takes the
+ * mono role. The label role's own tokens are used rather than restated values,
+ * so it cannot drift from `.cairn-label`.
+ */
+.cairn-record-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  /* `auto` pushes the row to the bottom of the card, so a two-line summary and
+     a four-line one still align their meta rows across the grid. */
+  margin: auto 0 0;
+  padding-top: 0.35rem;
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-label-size);
+  letter-spacing: var(--cairn-mono-tracking);
+  color: var(--cairn-muted);
+}
+
+/* -- Status badges -------------------------------------------------------- */
+
+/*
+ * A badge renders its accent AS TEXT, so like `.chip` in section 8 it pins its
+ * ground to the ink ramp in both colour modes and composites its own 12 % tint
+ * over it. That is the same tint the token check already re-measures for all
+ * fourteen accents (worst --cat-meta at 4.65:1), so no badge can fall under
+ * 4.5:1 — SPEC-0010 REQ "Category Accents Are Dark-Ground Text Colours".
+ *
+ * The accents come from the section 5 semantic aliases, NOT from `--cat-*`
+ * directly: a status is not a span category, and routing through the aliases
+ * keeps that distinction visible. The default is the neutral alias, so a
+ * status the pipeline's enum grows later renders readably instead of
+ * unstyled.
+ *
+ * The badge prints its status. Colour is never the only carrier — SPEC-0010
+ * REQ "Derived Status, Dates, and Counts", REQ "Non-Colour Encoding".
+ */
+.cairn-record-status {
+  --status-accent: var(--cairn-accent-neutral);
+  --status-ground: var(--cairn-ink-100);
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-family: var(--cairn-font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  color: var(--status-accent);
+  background: color-mix(in srgb, var(--status-accent) 12%, var(--status-ground));
+  border: 1px solid color-mix(in srgb, var(--status-accent) 40%, var(--status-ground));
+}
+.cairn-record-status[data-status='accepted']   { --status-accent: var(--cairn-accent-success); }
+.cairn-record-status[data-status='proposed']   { --status-accent: var(--cairn-accent-info); }
+.cairn-record-status[data-status='draft']      { --status-accent: var(--cairn-accent-warning); }
+.cairn-record-status[data-status='rejected']   { --status-accent: var(--cairn-accent-danger); }
+.cairn-record-status[data-status='deprecated'] { --status-accent: var(--cairn-accent-danger); }
+.cairn-record-status[data-status='superseded'] { --status-accent: var(--cairn-accent-neutral); }
+
+/* -- Requirement blocks --------------------------------------------------- */
+
+/*
+ * A `### Requirement:` section renders as a discrete block — SPEC-0010 REQ
+ * "Record Prose to Structured Components". The heading stays the section's own
+ * first child, so the anchor and the on-this-page entry are the ones
+ * Docusaurus generated; this only gives the section an edge.
+ *
+ * A specification carries twenty-odd of these, so the treatment is a rule and
+ * a tint rather than a card: twenty stacked cards read as noise, and the
+ * scenarios nested inside need a level of their own below this one.
+ */
+.cairn-record-requirement {
+  margin: 1.75rem 0;
+  padding: 1.1rem 1.25rem 0.9rem;
+  border: 1px solid var(--cairn-border);
+  border-left: 3px solid var(--ifm-color-primary);
+  border-radius: var(--ifm-global-radius);
+  background: var(--cairn-elevated);
+}
+.cairn-record-requirement > h3 {
+  margin-top: 0;
+  margin-bottom: 0.7rem;
+  font-size: 1.15rem;
+}
+.cairn-record-requirement > :last-child {
+  margin-bottom: 0;
+}
+
+/* -- Scenario blocks ------------------------------------------------------ */
+
+.cairn-record-scenario {
+  margin: 1rem 0 0;
+  padding: 0.15rem 0 0.15rem 0.9rem;
+  border-left: 2px solid var(--cairn-border);
+}
+.cairn-record-scenario > h4 {
+  margin-bottom: 0.4rem;
+  font-size: 0.98rem;
+}
+.cairn-record-scenario > :last-child {
+  margin-bottom: 0;
+}
+
+/*
+ * The WHEN/THEN pair. The grid lives on the CONTAINER and each step is
+ * `display: contents`, so every label in a scenario shares one column and the
+ * clauses line up — a step that owned its own grid would size its label column
+ * independently and the block would ragged-edge down the page.
+ */
+.cairn-record-scenario-steps {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 0.9rem;
+  row-gap: 0.4rem;
+  align-items: baseline;
+}
+.cairn-record-scenario-step {
+  display: contents;
+}
+
+/* WHEN / THEN is a keyword, not a sentence: mono uppercase label role, its
+   four values taken from the label tokens rather than restated. */
+.cairn-record-scenario-step__label {
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-label-size);
+  font-weight: var(--cairn-label-weight);
+  letter-spacing: var(--cairn-label-tracking);
+  text-transform: uppercase;
+  color: var(--cairn-muted);
+}
+.cairn-record-scenario-step__body > :last-child {
+  margin-bottom: 0;
+}
+
+/* -- RFC 2119 keywords ---------------------------------------------------- */
+
+/*
+ * The keyword is already a `<strong>`, so it is distinguished by WEIGHT before
+ * any colour applies and stays identifiable with colour removed — SPEC-0010
+ * REQ "Non-Colour Encoding". The accent and the tracking are the second
+ * signal, not the only one. `--cairn-accent-label` is the mode-following
+ * emphasis token: 5.52:1 on the light ramp, 9.52:1 on the dark one.
+ */
+.cairn-record-rfc2119 {
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--cairn-accent-label);
+}
+
 ::selection { background: color-mix(in srgb, var(--ifm-color-primary) 40%, transparent); }
