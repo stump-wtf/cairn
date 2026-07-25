@@ -2,6 +2,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import {assertTokens} from './scripts/check-tokens.mjs';
+import {assertA11y, assertRecordSemantics} from './scripts/check-a11y.mjs';
 
 import {generateRecord} from './plugins/record/generate.ts';
 import remarkRecord from './plugins/record/remark-record.ts';
@@ -30,6 +31,20 @@ const DOCS_ROUTE_BASE = '/docs';
  */
 // eslint-disable-next-line no-console
 console.log(assertTokens().summary);
+
+/**
+ * Governing: ADR-0014, SPEC-0010 REQ "Contrast",
+ *            SPEC-0010 REQ "Keyboard Navigation & Focus Management",
+ *            SPEC-0010 REQ "WCAG 2.1 AA & Semantics"
+ *
+ * The same argument as the line above, for the same reason: an accessibility
+ * regression that only CI can see is one a developer ships and then discovers.
+ * This half re-measures every rendered colour pair in both colour modes and
+ * asserts the focus and reduced-motion machinery exists; the heading-order half
+ * needs the staged record and runs from the factory below, once it is on disk.
+ */
+// eslint-disable-next-line no-console
+console.log(assertA11y().summary);
 
 /**
  * Governing: ADR-0014, SPEC-0010 REQ "Design Token Source of Truth"
@@ -88,6 +103,12 @@ const config: Config = {
       onBrokenMarkdownLinks: 'warn',
     },
   },
+
+  // Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics"
+  // The on-this-page column is the one required landmark theme-classic does not
+  // render; `clientModules` gives it a `navigation` role without spending the
+  // capability's single theme-wrap budget. See the module for the trade-off.
+  clientModules: ['./src/clientModules/tocLandmark.ts'],
 
   plugins: [
     // Governing: ADR-0014, SPEC-0010 REQ "Record Content Pipeline"
@@ -215,6 +236,22 @@ export default async function createConfig(): Promise<Config> {
     siteDir,
     routeBase: DOCS_ROUTE_BASE,
   });
+
+  /**
+   * Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics", scenario
+   * "Generated page heading order".
+   *
+   * After staging, not before: this reads the transformed record on disk, so it
+   * checks what the docs plugin is about to serve rather than what the source
+   * tree happens to contain.
+   */
+  const semantics = assertRecordSemantics({root: siteDir});
+
+  // eslint-disable-next-line no-console
+  console.log(
+    `[cairn-a11y] ${semantics.files} documentation pages carry exactly one h1 and ` +
+      `no skipped heading level`,
+  );
 
   // eslint-disable-next-line no-console
   console.log(

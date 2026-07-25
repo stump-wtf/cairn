@@ -23,7 +23,13 @@ function Hero(): ReactNode {
         {/* `cairn-label` is the one definition of the uppercase-mono label role
             — SPEC-0010 REQ "Typographic Roles". The module class adds only
             colour and spacing. */}
-        <p className={clsx('cairn-label', styles.eyebrow)}>◇&nbsp; AI-NATIVE ARTIFACT SHARING</p>
+        {/* The lozenge is ornament: it carries no meaning the label does not
+            already carry, and a screen reader announcing "white diamond"
+            ahead of every heading is noise — SPEC-0010 REQ "WCAG 2.1 AA &
+            Semantics" ("decorative glyphs MUST be hidden"). */}
+        <p className={clsx('cairn-label', styles.eyebrow)}>
+          <span aria-hidden="true">◇&nbsp;</span> AI-NATIVE ARTIFACT SHARING
+        </p>
 
         <Heading as="h1" className={styles.title}>
           Share anything.
@@ -88,8 +94,21 @@ export default function Home(): ReactNode {
     <Layout
       title="Cairn — AI-native artifact sharing"
       description="A pastebin, gist, and requestbin for the agent era. Humans post from the CLI and web; agents read, create, comment, and react over MCP.">
-      <Hero />
+      {/*
+        Governing: ADR-0014, SPEC-0010 REQ "Keyboard Navigation & Focus
+        Management", scenario "Skipping the navigation rail", and REQ "WCAG 2.1
+        AA & Semantics" (landmark regions).
+
+        The hero is INSIDE `main`, and that is the whole point. theme-classic's
+        skip link resolves its target with `document.querySelector('main')`, so
+        with the hero outside it "skip to main content" jumped the h1, the
+        product claim and both calls to action — it skipped the content. Being
+        inside `main` also stops the hero's `header` element from registering as
+        a second `banner` landmark: a `header` scoped to `main` is a section
+        header, not a page banner.
+      */}
       <main>
+        <Hero />
         <HomepageFeatures />
       </main>
     </Layout>

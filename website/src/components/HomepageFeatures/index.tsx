@@ -117,9 +117,20 @@ const FEATURES: Feature[] = [
 function Tile({code, cat, title, body}: Feature): ReactNode {
   return (
     <div className={clsx(styles.tile, styles[`cat_${cat}`])}>
-      <div className={styles.tileTop}>
+      {/*
+        Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics" —
+        "decorative glyphs MUST be hidden from assistive technology".
+
+        The badge is decoration, including the ones that happen to contain
+        letters: `✦`, `▤`, `◈`, `⧗` announce as "sparkle", "black rectangle"
+        and so on, and `$_` announces as "dollar underscore". None of them adds
+        anything to the tile's heading and body, which carry the whole meaning,
+        so the pair is hidden rather than labelled — a made-up alt text here
+        would be a second, drifting copy of the title.
+      */}
+      <div className={styles.tileTop} aria-hidden="true">
         <span className={styles.code}>{code}</span>
-        <span className={styles.dot} aria-hidden="true" />
+        <span className={styles.dot} />
       </div>
       <Heading as="h3" className={styles.tileTitle}>
         {title}
