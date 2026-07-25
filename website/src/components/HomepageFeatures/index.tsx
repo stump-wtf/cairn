@@ -121,12 +121,22 @@ function Tile({code, cat, title, body}: Feature): ReactNode {
         Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics" —
         "decorative glyphs MUST be hidden from assistive technology".
 
-        The badge is decoration, including the ones that happen to contain
-        letters: `✦`, `▤`, `◈`, `⧗` announce as "sparkle", "black rectangle"
-        and so on, and `$_` announces as "dollar underscore". None of them adds
-        anything to the tile's heading and body, which carry the whole meaning,
-        so the pair is hidden rather than labelled — a made-up alt text here
-        would be a second, drifting copy of the title.
+        The whole badge is hidden, and it is worth being exact about why,
+        because five of the nine codes are glyphs and four are not. `✦`, `▤`,
+        `◈`, `⧗` and `$_` announce as "sparkle", "black rectangle", "dollar
+        underscore" and so on — noise under any reading.
+
+        `TRJ`, `HK`, `MD·PY·IMG` and `◆ mcp` are text, and they are hidden on
+        the other ground the requirement gives: they are not informative. Each
+        is a compression of the tile it sits on — `TRJ` of "Trajectories", `HK`
+        of "Live webhooks", `◆ mcp` of "MCP-native", `MD·PY·IMG` of a body that
+        already spells out "Markdown, code, images, generic files, and
+        multi-file bundles". Announced, they would read every tile's subject
+        twice, the second time in initials.
+
+        So no badge carries meaning its heading and body do not, which is also
+        why the pair is hidden rather than labelled: an alt text here would be
+        a second copy of the title, free to drift from the first.
       */}
       <div className={styles.tileTop} aria-hidden="true">
         <span className={styles.code}>{code}</span>
