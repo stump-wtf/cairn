@@ -28,9 +28,12 @@
  *      directives a meta-delivered policy actually enforces. That is a real
  *      restriction: it is what stops a dependency loading a script or a font
  *      from a third-party host in a reader's browser.
- *   2. `static/_headers` — the Netlify/Cloudflare Pages format — carrying the
- *      full set including `frame-ancestors`, `nosniff`, `Referrer-Policy` and
- *      HSTS. Inert on GitHub Pages; correct the moment the host can read it.
+ *   2. `_headers` at the root of the built bundle — the Netlify/Cloudflare
+ *      Pages format — carrying the full set including `frame-ancestors`,
+ *      `nosniff`, `Referrer-Policy` and HSTS. It is written by the security
+ *      plugin's `postBuild`, not copied from `static/`, because it names the
+ *      hashes of the inline scripts that build actually emitted. Inert on
+ *      GitHub Pages; correct the moment the host can read it.
  *   3. A build-time scan of the emitted bundle (`scan-bundle.mjs`), which is
  *      host-independent and is the check the requirement calls out separately:
  *      "the policy MUST additionally be verified against the built bundle".
