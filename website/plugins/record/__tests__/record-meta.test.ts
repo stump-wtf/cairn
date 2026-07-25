@@ -77,6 +77,20 @@ describe('chipGroups', () => {
     assert.deepEqual(groups[0]!.ids, ['ADR-0002', 'ADR-0003']);
   });
 
+  it('calls a symmetric edge mutual, because either end may have authored it', () => {
+    // ADR-0009 authors `related: [ADR-0006, ADR-0008]`; ADR-0014 authors
+    // `related: [ADR-0009, ADR-0011]`. graph.ts sorts a symmetric edge's
+    // endpoints and pushes it both ways, so ADR-0009's bucket holds all three
+    // and which end typed which is gone. Calling the group outbound would claim
+    // a direction none of them has — and would hand every chip the cue that
+    // marks an author-written edge.
+    const [group] = chipGroups({
+      ...emptyRelations(),
+      related: ['ADR-0006', 'ADR-0008', 'ADR-0014'],
+    });
+    assert.equal(group!.direction, 'mutual');
+  });
+
   it('puts what a record claims before what claims it, and related last', () => {
     const groups = chipGroups({
       extends: ['ADR-0001'],

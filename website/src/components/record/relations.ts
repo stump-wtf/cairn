@@ -19,13 +19,23 @@ import type {RecordRelations} from '@site/plugins/record/types';
  * about it — the direction the record's forward-only authoring convention means
  * nobody writes by hand, and which the pipeline computes.
  *
+ * `mutual` is the third case and it is not a hedge. `related` is a *symmetric*
+ * edge: `graph.ts` normalises its endpoints into sorted order and pushes each
+ * record into the other's `related` bucket, so a record's bucket mixes the ids
+ * it named with the ids that named it and the two are indistinguishable
+ * afterwards. `ADR-0009` authors `related: [ADR-0006, ADR-0008]` and `ADR-0014`
+ * authors `related: [ADR-0009, …]`, which puts `ADR-0014` in ADR-0009's bucket
+ * from the far end. Calling that group `outbound` would claim a direction the
+ * edge does not have and would hand every one of those chips the cue that marks
+ * an author-written edge, so it gets its own value instead.
+ *
  * Deliberately *not* called "authored" and "derived". A record's `extendedBy`
  * bucket can be filled either by another record's `extends:` or by this record's
  * own `enables:`, and normalisation collapses the two, so which end typed it is
  * not recoverable — see the note on `RecordRelations`. Direction is recoverable,
  * so direction is what the reader is told.
  */
-export type ChipDirection = 'outbound' | 'inbound';
+export type ChipDirection = 'outbound' | 'inbound' | 'mutual';
 
 export interface ChipGroup {
   /** The relation bucket, also the group's React key and its data attribute. */
@@ -48,7 +58,7 @@ const GROUPS: {kind: keyof RecordRelations; label: string; direction: ChipDirect
   {kind: 'implementedBy', label: 'Implemented by', direction: 'inbound'},
   {kind: 'requires', label: 'Requires', direction: 'outbound'},
   {kind: 'requiredBy', label: 'Required by', direction: 'inbound'},
-  {kind: 'related', label: 'Related', direction: 'outbound'},
+  {kind: 'related', label: 'Related', direction: 'mutual'},
 ];
 
 /**
