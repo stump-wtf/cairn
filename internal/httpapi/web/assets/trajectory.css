@@ -121,7 +121,13 @@
 .marker { display: inline-flex; align-items: center; justify-content: center; }
 .marker-user { width: 22px; height: 22px; border-radius: 6px; background: #4A5FE0; color: #fff; font: 600 11px var(--mono); }
 .marker-assistant { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, #E85D3B, #D8843E); }
-.marker-reason { width: 12px; height: 12px; margin-top: 4px; border-radius: 999px; background: var(--page); border: 2px solid var(--purple); }
+/* A toolless span is laid out as a reasoning turn, but its CATEGORY need not be
+   `reason` once the set is open (ADR-0009) — so the marker paints from `--cat`
+   like every other category-bearing element. `[data-cat="reason"]` resolves
+   `--cat` to `--purple`, so an actual reason span is unchanged; a toolless
+   `vibes` span now agrees with the neutral swatch its legend entry carries
+   instead of borrowing reason's purple. */
+.marker-reason { width: 12px; height: 12px; margin-top: 4px; border-radius: 999px; background: var(--page); border: 2px solid var(--cat, var(--purple)); }
 .marker-tool { width: 12px; height: 12px; margin-top: 4px; border-radius: 999px; background: var(--page); border: 2px solid var(--cat, var(--t6)); }
 .marker-sub-agent { width: 12px; height: 12px; margin-top: 4px; border-radius: 3px; background: var(--page); border: 2px solid var(--purple); }
 
@@ -137,6 +143,14 @@
 
 .chip { font: 600 9px var(--mono); padding: 2px 6px; border-radius: 4px; }
 .chip-reason { color: var(--purple-2); background: rgba(125,86,244,.12); }
+/* The chip on a toolless span whose category is not `reason`. It carries the
+   category NAME as text and a `--cat` swatch rather than tinting the text
+   itself: an open set means the color is arbitrary agent-driven text, and there
+   is no way to guarantee AA contrast against the well for a value we have never
+   seen. The neutral foreground is fixed and legible; the color rides in the
+   swatch, exactly as it does in the legend. */
+.chip-cat { display: inline-flex; align-items: center; gap: 5px;
+  color: var(--t4); background: rgba(255,255,255,.05); }
 
 .turn-collapse { border-radius: 8px; }
 .turn-summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none;

@@ -190,7 +190,12 @@ keyboard-operable; the summary is the clickable header. */}}
   <div class="turn-body">
     <details class="turn-collapse"{{if .OpenByDefault}} open{{end}} data-trajhead>
       <summary class="turn-summary">
-        {{if .Tool}}<span class="tool-chip" data-tool="{{.Tool}}">{{.Tool}}</span>{{else}}<span class="chip chip-reason">reason</span>{{end}}
+        {{/* A toolless span is laid out as a reasoning turn, but its category is
+        not necessarily `reason` once the set is open (ADR-0009). Labelling every
+        toolless span "reason" would have the chip contradict the waterfall bar
+        and legend entry for the same span, so a non-`reason` category names
+        itself. */}}
+        {{if .Tool}}<span class="tool-chip" data-tool="{{.Tool}}">{{.Tool}}</span>{{else if eq .Category "reason"}}<span class="chip chip-reason">reason</span>{{else}}<span class="chip chip-cat" data-cat="{{.Category}}"><span class="swatch" aria-hidden="true"></span>{{.Category}}</span>{{end}}
         <span class="turn-name">{{.Name}}</span>
         <span class="turn-meta">{{.Meta}}</span>
       </summary>

@@ -91,9 +91,12 @@ assigned, because it is the anchor target for ADR-0006 annotations.
 #### Scenario: Waterfall legend covers the categories a run used
 
 - **WHEN** a run's spans use categories outside the recommended set
-- **THEN** the waterfall's category legend and the time-by-category breakdown MUST both list
-  every category the run actually used — recommended ones first in their fixed order, the
-  rest in a deterministic order — and MUST NOT list recommended categories the run never used
+- **THEN** the waterfall's category legend MUST list every category the run actually used —
+  recommended ones first in their fixed order, the rest in a deterministic order — and MUST
+  NOT list recommended categories the run never used. The time-by-category breakdown MUST
+  cover every category that accumulated a non-zero duration, in that same order; a category
+  whose spans all measured 0ms is omitted there, because a 0% segment renders as nothing and
+  would only make the percentages read as though they did not sum.
 
 #### Scenario: Stable span identity
 

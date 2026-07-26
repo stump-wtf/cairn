@@ -709,9 +709,21 @@
     if (span.tool) {
       var chip = document.createElement('span'); chip.className = 'tool-chip'; chip.dataset.tool = span.tool; chip.textContent = span.tool;
       summary.appendChild(chip);
-    } else {
+    } else if (span.category === 'reason') {
       var reasonChip = document.createElement('span'); reasonChip.className = 'chip chip-reason'; reasonChip.textContent = 'reason';
       summary.appendChild(reasonChip);
+    } else {
+      // Toolless, but not category `reason` — possible only because the set is
+      // open (ADR-0009). Name the actual category, or the chip contradicts the
+      // waterfall bar and legend entry for this same span. `span.category` is
+      // untrusted agent content, so it goes in by textContent/dataset.
+      var catChip = document.createElement('span'); catChip.className = 'chip chip-cat';
+      catChip.dataset.cat = span.category || '';
+      var catSwatch = document.createElement('span'); catSwatch.className = 'swatch';
+      catSwatch.setAttribute('aria-hidden', 'true');
+      catChip.appendChild(catSwatch);
+      catChip.appendChild(document.createTextNode(span.category || ''));
+      summary.appendChild(catChip);
     }
     var nameEl = document.createElement('span'); nameEl.className = 'turn-name'; nameEl.textContent = span.name || span.span_id;
     summary.appendChild(nameEl);

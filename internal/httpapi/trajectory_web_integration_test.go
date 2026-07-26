@@ -223,6 +223,19 @@ func TestIntegrationTrajectoryViewerRendersOpenCategorySet(t *testing.T) {
 			t.Errorf("time-by-category breakdown missing %q", frag)
 		}
 	}
+
+	// Span `d` is toolless and category `vibes`. The activity stream lays a
+	// toolless span out as a reasoning turn, which under the CLOSED set was the
+	// same statement as "its category is reason" — it no longer is. The chip must
+	// name the span's own category, or one span is simultaneously labelled
+	// "reason" in the stream and "vibes" in the legend it colour-matches.
+	if !strings.Contains(html, `<span class="chip chip-cat" data-cat="vibes">`) {
+		t.Error("a toolless non-reason span must chip its own category, not the reason chip")
+	}
+	if strings.Count(html, `<span class="chip chip-reason">reason</span>`) != 1 {
+		t.Errorf("chip-reason should appear exactly once — for span `a`, the only genuine reason span; got %d",
+			strings.Count(html, `<span class="chip chip-reason">reason</span>`))
+	}
 }
 
 // TestIntegrationTrajectoryReactionsRender asserts reactions on a turn

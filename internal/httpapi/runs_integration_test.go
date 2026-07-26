@@ -336,6 +336,29 @@ func TestIntegrationRunOrderedTreeValidity(t *testing.T) {
 		t.Fatalf("64-character multibyte category = %d, want 2xx (the bound counts characters)", resp.StatusCode)
 	}
 	resp.Body.Close()
+
+	// The other side of that bound, through the same boundary: one character
+	// over is a 400 from the service. This has to be asserted end-to-end and not
+	// only in the trajectory unit test, because a 400 here is what proves the
+	// service refuses FIRST — if validation ever regressed, the request would
+	// reach 0013's CHECK and surface as a 500 instead, and only an HTTP-level
+	// test can tell those two apart.
+	resp = do(t, http.MethodPost, srv.URL+"/v1/runs/"+open.ID+"/spans", "joe",
+		jsonReader(t, appendSpansRequest{Spans: []spanRequest{{SpanID: "n", Category: strings.Repeat("x", 65), StartOffsetMS: 2, DurationMS: 1}}}),
+		"application/json")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("65-character category = %d, want 400 (open is not unbounded)", resp.StatusCode)
+	}
+	if env := decodeError(t, resp); env.Error.Code != "validation_failed" {
+		t.Fatalf("over-long category code = %q, want validation_failed", env.Error.Code)
+	}
+
+	// Rejected atomically, like every other validation failure: the two spans
+	// that were accepted are still all that is persisted.
+	got = decodeRun(t, do(t, http.MethodGet, srv.URL+"/v1/runs/"+open.ID, "", nil, ""))
+	if got.Stats.SpanCount != 2 {
+		t.Fatalf("span count after rejected over-long append = %d, want 2", got.Stats.SpanCount)
+	}
 }
 
 // TestIntegrationRunClosedConflict proves an append to a closed run (a batch run

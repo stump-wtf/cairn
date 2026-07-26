@@ -124,13 +124,24 @@ func TestPrepareSpansUnrecommendedCategoryAccepted(t *testing.T) {
 // Open does not mean unvalidated: empty, whitespace-only, and over-long
 // categories are still refused (SPEC-0004 "Empty or missing category rejected",
 // "Category length bounded").
+//
+// The U+00A0 cases pin the one place the two enforcement layers deliberately
+// disagree. Go's unicode.IsSpace treats a non-breaking space as whitespace, so
+// TrimSpace reduces these to "" and the service refuses them; Postgres' POSIX
+// `\S` does not, so 0013's CHECK would accept the same value. That asymmetry is
+// safe in exactly one direction — the service must be the STRICTER layer, with
+// the CHECK as a backstop that never sees the value. If validation is ever
+// loosened to a bare `!= ""`, these cases fail and say so, rather than letting
+// an invisible-only category reach a legend that renders as blank.
 func TestPrepareSpansEmptyOrOverLongCategoryRejected(t *testing.T) {
 	for name, cat := range map[string]Category{
-		"empty":          "",
-		"whitespace":     "   ",
-		"tab and nbsp":   "\t\n ",
-		"over max len":   Category(strings.Repeat("x", MaxCategoryLen+1)),
-		"padded to over": Category(" " + strings.Repeat("x", MaxCategoryLen) + " "),
+		"empty":            "",
+		"whitespace":       "   ",
+		"tab and newline":  "\t\n ",
+		"over max len":     Category(strings.Repeat("x", MaxCategoryLen+1)),
+		"padded to over":   Category(" " + strings.Repeat("x", MaxCategoryLen) + " "),
+		"non-breaking sp":  " ",
+		"nbsp and newline": " \n",
 	} {
 		_, err := prepareSpans(map[string]int{}, map[string]int{}, map[string]bool{},
 			[]SpanInput{{SpanID: "s1", Category: cat}})
