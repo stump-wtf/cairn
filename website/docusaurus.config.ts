@@ -155,7 +155,25 @@ const config: Config = {
    */
   url: process.env.DOCS_URL || 'https://stump-wtf.pages.stump.rocks',
   baseUrl: '/cairn/',
-  trailingSlash: false,
+
+  /*
+   * `true`, because Garage serves this bundle, and Garage resolves a directory
+   * request to `index.html` and does nothing else. It has no extensionless
+   * fallback — there is no `try_files $uri.html` anywhere in the path.
+   *
+   * With `false`, the build emitted flat `docs/intro.html` while every internal
+   * link pointed at extensionless `/cairn/docs/intro`. The homepage loaded
+   * (`cairn/index.html` is a directory index and resolves) and every single
+   * documentation link 404'd — the site was live and unnavigable at the same
+   * time, which is worse than being down, because it looks fine from the front
+   * page.
+   *
+   * `true` emits `docs/intro/index.html` and links `/cairn/docs/intro/`, which
+   * is exactly the shape S3-style website hosting resolves. Do not set this back
+   * to `false` without putting an extensionless rewrite in front of Garage
+   * first.
+   */
+  trailingSlash: true,
 
   organizationName: 'stump.wtf',
   projectName: 'cairn',
