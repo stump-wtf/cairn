@@ -108,8 +108,10 @@ the agent. Each **span** carries:
   `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`.
   The recommended categories are color-mapped in the waterfall legend; any other
   non-empty string is accepted and rendered with a neutral default color, so agents
-  are never forced to remap their natural vocabulary. An empty or missing `category`
-  is rejected at ingest. The recommended set covers the categories agents most
+  are never forced to remap their natural vocabulary. An empty, whitespace-only, or
+  missing `category` is rejected at ingest, as is one longer than 64 characters — open
+  is not the same as unbounded, and the value is agent-supplied text that lands in a
+  column rendered in every legend. The recommended set covers the categories agents most
   commonly produce — thinking/reasoning (`reason`), command execution (`exec`),
   reading files/data (`read`), network calls (`net`), writing files/data (`write`),
   searching/looking things up (`search`), planning/decomposing (`plan`), generic tool
@@ -121,7 +123,9 @@ the agent. Each **span** carries:
 * **`start_offset_ms`** and **`duration_ms`** — start is relative to the run's
   `started_at`, keeping the time ruler (`0s … 34.2s`) independent of wall-clock skew.
 * **`tool`** (optional) — the tool name for tool-category spans (`bash`, `grep`,
-  `read`, `web_fetch`, `write`); null for `reason` spans.
+  `read`, `web_fetch`, `write`); null for `reason` spans. `reason` is the only category
+  that refuses a tool: once the set is open, the server cannot know which of an agent's
+  own categories are tool-shaped, so every other value may carry one.
 * **`args`** (optional) — structured tool arguments, shown expandable in the stream.
 * **`output`** — the tool result. Small outputs (below a fixed byte threshold, e.g.
   ≤ 16 KB) are inlined on the span row; larger outputs are stored as a content-addressed

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -78,6 +79,12 @@ type trajectoryView struct {
 	Stats      []statTile
 	Categories []categorySeg
 	TokenCount string
+
+	// Legend is the waterfall's category legend: the categories this run used,
+	// in orderCategories order. Derived per-run rather than fixed, because the
+	// category set is open (ADR-0009) — a hard-coded legend would omit an
+	// agent's own categories and advertise colors the run never uses.
+	Legend []string
 
 	// Comments + composer gating.
 	Comments      []commentLine
@@ -190,6 +197,33 @@ type categorySeg struct {
 	Category string
 	Pct      string
 	Duration string
+}
+
+// orderCategories puts the categories a run used into a stable render order:
+// the recommended, color-mapped ones first in trajectory.RecommendedCategories
+// order (so the legend reads the same across runs), then everything the agent
+// invented, sorted alphabetically so the render is deterministic rather than
+// map-iteration order. Categories absent from the run are dropped.
+//
+// Governing: ADR-0009 (open category set), SPEC-0004 REQ "Non-recommended
+// category accepted"
+func orderCategories(byCat map[trajectory.Category]int64) []trajectory.Category {
+	out := make([]trajectory.Category, 0, len(byCat))
+	recommended := make(map[trajectory.Category]bool, len(trajectory.RecommendedCategories))
+	for _, cat := range trajectory.RecommendedCategories {
+		recommended[cat] = true
+		if _, used := byCat[cat]; used {
+			out = append(out, cat)
+		}
+	}
+	rest := make([]trajectory.Category, 0, len(byCat))
+	for cat := range byCat {
+		if !recommended[cat] {
+			rest = append(rest, cat)
+		}
+	}
+	sort.Slice(rest, func(i, j int) bool { return rest[i] < rest[j] })
+	return append(out, rest...)
 }
 
 // handleRunShell renders the trajectory viewer at GET /run/{id} (SPEC-0004,
@@ -341,14 +375,20 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 		{Value: formatTokens(run.Stats.TokenCount), Label: "tokens"},
 	}
 
-	// TIME BY CATEGORY stacked bar, in the legend's fixed order.
-	for _, cat := range []string{"reason", "net", "exec", "read", "write"} {
-		ms := run.Stats.TimeByCategoryMS[trajectory.Category(cat)]
+	// TIME BY CATEGORY stacked bar + waterfall legend, both over the categories
+	// this run actually used.
+	for _, cat := range orderCategories(run.Stats.TimeByCategoryMS) {
+		// The legend names every category the run used, even one whose spans all
+		// measured 0ms — the waterfall still draws them, so the legend must still
+		// explain their color. The stacked bar skips them: a 0% segment is
+		// invisible and would only confuse the percentages.
+		vm.Legend = append(vm.Legend, string(cat))
+		ms := run.Stats.TimeByCategoryMS[cat]
 		if ms == 0 {
 			continue
 		}
 		vm.Categories = append(vm.Categories, categorySeg{
-			Category: cat,
+			Category: string(cat),
 			Pct:      formatPct(ratioPct(int(ms), wall)),
 			Duration: formatSeconds(ms),
 		})

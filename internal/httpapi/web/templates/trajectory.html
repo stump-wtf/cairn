@@ -50,12 +50,13 @@
       <div class="wf-head">
         <span class="wf-trace">TRACE</span>
         <span class="wf-legendmeta" data-model="{{.Model}}">{{.Model}} · {{.SubAgentCount}} sub-agent · {{.ToolCallCount}} tool calls</span>
-        <ul class="wf-legend" aria-label="Category legend">
-          <li data-cat="reason"><span class="swatch" aria-hidden="true"></span>reason</li>
-          <li data-cat="exec"><span class="swatch" aria-hidden="true"></span>exec</li>
-          <li data-cat="read"><span class="swatch" aria-hidden="true"></span>read</li>
-          <li data-cat="net"><span class="swatch" aria-hidden="true"></span>net</li>
-          <li data-cat="write"><span class="swatch" aria-hidden="true"></span>write</li>
+        {{/* Derived from the run's own categories, not a fixed five: the set is
+        open (ADR-0009), so a hard-coded legend would omit whatever the agent
+        invented and advertise colors this run never uses. Each entry carries its
+        name as text, so the category is never conveyed by color alone (WCAG
+        1.4.1, SPEC-0004 "Category is not color-only"). */}}
+        <ul class="wf-legend" aria-label="Category legend" data-wf-legend>
+          {{range .Legend}}<li data-cat="{{.}}"><span class="swatch" aria-hidden="true"></span>{{.}}</li>{{end}}
         </ul>
       </div>
       <div class="wf-ruler" aria-hidden="true">
