@@ -1,0 +1,667 @@
+/*
+ * Cairn homepage — the sections below the hero.
+ *
+ * Governing: ADR-0014, SPEC-0010 REQ "Homepage",
+ *            SPEC-0010 REQ "Design Token Source of Truth",
+ *            SPEC-0010 REQ "Category Palette Immutability",
+ *            SPEC-0010 REQ "Typographic Roles",
+ *            SPEC-0010 REQ "Category Accents Are Dark-Ground Text Colours"
+ *
+ * One stylesheet for every section rather than one per component: the sections
+ * share a section header, a card, a screenshot frame and a spec link, and
+ * splitting them into six files would mean six copies of those four rules and
+ * six chances for them to drift — which is the same failure the hero's
+ * `.eyebrow` and the tiles' `.kicker` already had before both were pulled onto
+ * the global `.cairn-label` role.
+ *
+ * Every colour here is a token from src/css/custom.css; `npm run lint:tokens`
+ * fails the build on a literal.
+ */
+
+/* ==========================================================================
+   Shared section furniture
+   ========================================================================== */
+
+.section {
+  padding: 5rem 0;
+  background: var(--cairn-bg);
+}
+
+/*
+ * Alternating band. Mixed rather than set to --cairn-elevated outright: the
+ * cards inside a band are themselves --cairn-elevated, and an identical ground
+ * would erase the card edge entirely in dark mode.
+ */
+.band {
+  background: color-mix(in srgb, var(--cairn-elevated) 60%, var(--cairn-bg));
+  border-top: 1px solid var(--cairn-border);
+  border-bottom: 1px solid var(--cairn-border);
+}
+
+.head {
+  max-width: 720px;
+  margin: 0 0 2.8rem;
+}
+.headCenter {
+  margin-left: auto;
+  margin-right: auto;
+  text-align: center;
+}
+
+/* The uppercase mono kicker is the global `.cairn-label` role (custom.css
+   section 6), applied by the markup; only colour and spacing are local. See
+   HomepageFeatures/styles.module.css for why the label token, not
+   --ifm-color-primary-light. */
+.kicker {
+  color: var(--cairn-accent-label);
+  margin-bottom: 0.7rem;
+}
+
+.headline {
+  font-size: clamp(1.75rem, 3.4vw, 2.5rem);
+  letter-spacing: -0.025em;
+  margin-bottom: 0.85rem;
+}
+
+.sub {
+  color: var(--cairn-muted);
+  font-size: 1.05rem;
+  line-height: 1.6;
+  margin: 0;
+}
+.sub strong { color: var(--cairn-text); font-weight: 600; }
+
+/*
+ * A link to the specification that owns the section. The id and the title are
+ * both read from the derived data module — SPEC-0010 REQ "Homepage" — so this
+ * rule styles a shape, never a fact.
+ */
+.specLink {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-top: 1.1rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ifm-color-primary);
+  text-decoration: none;
+}
+.specLink:hover { color: var(--ifm-color-primary); text-decoration: underline; }
+.specLink .specId {
+  font-family: var(--cairn-font-mono);
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+}
+
+/*
+ * A product screenshot. It sits on the pinned ink ramp in both colour modes,
+ * because every shot is of the dark app shell and a light frame around a dark
+ * image reads as a rendering fault.
+ */
+.shot {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  border: 1px solid var(--cairn-ink-300);
+  background: var(--cairn-ink-100);
+}
+
+/* ==========================================================================
+   The core loop
+   ========================================================================== */
+
+/* An ordered list, because the three steps happen in that order — but the
+   ordinal is rendered as `.stepNo` inside each card, so the marker goes. */
+.loop {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+@media (max-width: 900px) {
+  .loop { grid-template-columns: 1fr; }
+}
+
+.step {
+  --accent: var(--cat-other);
+  position: relative;
+  padding: 1.6rem 1.5rem;
+  background: var(--cairn-elevated);
+  border: 1px solid var(--cairn-border);
+  border-radius: 14px;
+}
+.step::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  border-radius: 14px 0 0 14px;
+  background: linear-gradient(180deg, var(--accent), transparent 82%);
+}
+
+.stepTop {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.9rem;
+}
+/* An ordinal is machine content, not a sentence. */
+.stepNo {
+  font-family: var(--cairn-font-mono);
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  /* Mode-following, not a pinned ink step: the ordinal sits on
+     --cairn-elevated, which follows the mode, so its foreground has to as
+     well. --cairn-muted measures 7.06:1 there in dark and 5.69:1 in light. */
+  color: var(--cairn-muted);
+}
+.stepTitle {
+  font-size: 1.15rem;
+  letter-spacing: -0.015em;
+  margin: 0 0 0.5rem;
+}
+.stepBody {
+  color: var(--cairn-muted);
+  font-size: 0.97rem;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.loopFoot {
+  margin: 1.4rem 0 0;
+  text-align: center;
+  color: var(--cairn-muted);
+  font-size: 0.95rem;
+}
+/* The operation chain is a machine sequence, so it takes the mono role. */
+.loopChain {
+  font-family: var(--cairn-font-mono);
+  font-size: 0.86rem;
+  color: var(--cairn-text);
+}
+
+/* ==========================================================================
+   The share-type registry
+   ========================================================================== */
+
+.registry {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+@media (max-width: 996px) {
+  .registry { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  .registry { grid-template-columns: 1fr; }
+}
+
+.typeCard {
+  --accent: var(--cat-other);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.35rem 1.35rem 1.5rem;
+  background: var(--cairn-elevated);
+  border: 1px solid var(--cairn-border);
+  border-radius: 14px;
+  transition: border-color 0.16s ease, transform 0.16s ease;
+}
+.typeCard:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--cairn-border));
+}
+/*
+ * Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics", scenario
+ * "Reduced motion honoured".
+ *
+ * The blanket guard in the token layer damps transition DURATION, which cannot
+ * undo a transform — damped, the card jumps 2px instead of gliding 2px. So the
+ * movement is dropped here, in the stylesheet that introduces it, the same way
+ * HomepageFeatures drops its tile lift. The hover keeps every non-motion
+ * affordance: the accent border still changes.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .typeCard { transition: none; }
+  .typeCard:hover { transform: none; }
+}
+/* The trajectory card is the flagship type and spans two columns where there
+   are two to span. */
+.typeCardWide { grid-column: span 2; }
+@media (max-width: 640px) {
+  .typeCardWide { grid-column: auto; }
+}
+
+.typeTop {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.typeName {
+  font-size: 1.1rem;
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+.typeBody {
+  color: var(--cairn-muted);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  margin: 0;
+}
+.typeBody strong { color: var(--cairn-text); font-weight: 600; }
+
+/*
+ * The webhook card's live indicator. It is a `.chip` from the token layer
+ * rather than a local rule, and that is a contrast decision, not a shortcut: a
+ * chip composites its accent over the pinned --cairn-ink-100 ground in both
+ * colour modes, where --cat-exec measures 8.58:1. Painted as text on the
+ * mode-following --cairn-elevated it would measure 2.14:1 in light mode and
+ * could not be recoloured to fix it — SPEC-0010 REQ "Category Accents Are
+ * Dark-Ground Text Colours". The state is spelled out in the chip's own text,
+ * so the dot beside it is decoration — SPEC-0010 REQ "Non-Colour Encoding".
+ */
+.live { margin-left: auto; }
+
+/* A captured request line: machine content end to end, so it pins the ink ramp
+   in both colour modes like the hero's terminal does. */
+.hookStream {
+  margin-top: auto;
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  background: var(--cairn-ink-100);
+  border: 1px solid var(--cairn-ink-300);
+  font-family: var(--cairn-font-mono);
+  font-size: 0.76rem;
+  line-height: 1.8;
+  color: var(--cairn-ink-700);
+  overflow-x: auto;
+}
+.hookMethod { color: var(--cat-net); font-weight: 700; }
+.hookPath { color: var(--cairn-ink-900); }
+.hookKey { color: var(--cat-read); }
+.hookVal { color: var(--cat-exec); }
+
+/* ==========================================================================
+   Trajectory + span waterfall
+   ========================================================================== */
+
+.trajectory {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+@media (max-width: 996px) {
+  .trajectory { grid-template-columns: 1fr; }
+}
+
+/*
+ * The waterfall renders five category accents AS TEXT and as bars, so the whole
+ * panel pins the ink ramp in both colour modes rather than following the mode —
+ * SPEC-0010 REQ "Category Accents Are Dark-Ground Text Colours". On
+ * --cairn-ink-100 the five run 5.53:1 (--cat-reason) to 8.58:1 (--cat-exec);
+ * on the light ramp --cat-exec would be 2.14:1 and could not be recoloured to
+ * fix it.
+ */
+.panel {
+  padding: 1.1rem 1.2rem 1.3rem;
+  border-radius: 14px;
+  background: var(--cairn-ink-100);
+  border: 1px solid var(--cairn-ink-300);
+  box-shadow: var(--cairn-shadow-card);
+  color: var(--cairn-ink-900);
+}
+
+.panelBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding-bottom: 0.85rem;
+  margin-bottom: 0.95rem;
+  border-bottom: 1px solid var(--cairn-ink-300);
+  font-family: var(--cairn-font-mono);
+  font-size: 0.78rem;
+  color: var(--cairn-ink-700);
+}
+.panelTitle { color: var(--cairn-ink-900); font-weight: 600; }
+.panelLink { margin-left: auto; color: var(--cairn-ink-accent); }
+
+/* Body text inside a pinned-ink panel: it cannot take --cairn-muted, which
+   follows the colour mode and would land a light-mode grey on the dark panel. */
+.panelText {
+  font-size: 0.82rem;
+  line-height: 1.7;
+  color: var(--cairn-ink-700);
+  margin: 0 0 1.1rem;
+}
+
+.panelLabel {
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-label-size);
+  font-weight: var(--cairn-label-weight);
+  letter-spacing: var(--cairn-label-tracking);
+  text-transform: uppercase;
+  color: var(--cairn-ink-700);
+  margin: 0 0 0.7rem;
+}
+
+/* The legend names every category it paints, in text, so the waterfall is
+   readable with colour removed — SPEC-0010 REQ "Non-Colour Encoding". */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.9rem;
+}
+
+/* Ordered, because span order is the whole point of a waterfall; the marker is
+   dropped because the bar's position already carries it. */
+.waterfall {
+  display: grid;
+  gap: 0.28rem;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+/*
+ * Three real columns — name, track, duration. The duration used to be absolutely
+ * positioned at the end of its bar, which reads well until a bar runs to the
+ * right edge: the label then sits outside the track, and because absolutely
+ * positioned boxes still contribute scrollable overflow, a 390px viewport got a
+ * horizontally scrolling page. A column cannot overflow.
+ *
+ * Every flexible track is `minmax(0, …)`, not `1fr`: a grid item's automatic
+ * minimum size is its content, so a `1fr` track holding `white-space: nowrap`
+ * span names is floored at the longest name and the ellipsis never fires.
+ */
+.span {
+  --accent: var(--cat-other);
+  display: grid;
+  grid-template-columns: minmax(0, 15rem) minmax(0, 1fr) 3.2rem;
+  align-items: center;
+  gap: 0.7rem;
+}
+@media (max-width: 640px) {
+  .span {
+    grid-template-columns: minmax(0, 1fr) 3.2rem;
+    grid-template-areas: 'name dur' 'track track';
+    gap: 0.15rem 0.5rem;
+  }
+  .spanName { grid-area: name; }
+  .spanDur { grid-area: dur; }
+  .spanTrack { grid-area: track; }
+}
+
+.spanName {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+  font-family: var(--cairn-font-mono);
+  font-size: 0.76rem;
+  color: var(--cairn-ink-900);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.spanChild { padding-left: 0.9rem; }
+.spanCat {
+  color: var(--accent);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+}
+
+.spanTrack {
+  position: relative;
+  height: 1.1rem;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--cairn-ink-300) 45%, transparent);
+}
+.spanBar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 78%, transparent);
+  min-width: 3px;
+}
+.spanDur {
+  font-family: var(--cairn-font-mono);
+  font-size: 0.7rem;
+  color: var(--cairn-ink-700);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.55rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--cairn-ink-300);
+  font-family: var(--cairn-font-mono);
+  font-size: 0.68rem;
+  color: var(--cairn-ink-700);
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.6rem;
+  margin-bottom: 1.1rem;
+}
+.stat {
+  padding: 0.6rem 0.75rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cairn-ink-300) 40%, transparent);
+}
+.statValue {
+  display: block;
+  font-family: var(--cairn-font-mono);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--cairn-ink-1000);
+}
+.statLabel {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--cairn-ink-700);
+}
+
+.byCat {
+  display: grid;
+  gap: 0.35rem;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.byCatRow {
+  --accent: var(--cat-other);
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr) 3.2rem;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--cairn-font-mono);
+  font-size: 0.74rem;
+}
+.byCatName { color: var(--accent); }
+.byCatValue { color: var(--cairn-ink-700); text-align: right; }
+
+/* ==========================================================================
+   Surface parity.
+
+   The tab list is the only stateful thing on the page. Every panel is in the
+   DOM on every render, and the no-JS stylesheet in SurfaceParity.tsx shows all
+   of them and hides the tab list — SPEC-0010 REQ "Homepage", scenario
+   "Homepage without JavaScript".
+   ========================================================================== */
+
+.tablist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1.4rem;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--cairn-border);
+  background: var(--cairn-elevated);
+  color: var(--cairn-muted);
+  font-family: var(--cairn-font-sans);
+  font-size: 0.94rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tab:hover { color: var(--cairn-text); }
+/*
+ * The selected tab's dot is filled where every other tab's is a ring — a shape
+ * difference that survives a monochrome rendering — alongside the border and
+ * ground change, so selection never rests on colour alone. SPEC-0010 REQ
+ * "Non-Colour Encoding". `aria-selected` carries it for assistive technology.
+ */
+.tab[aria-selected='true'] {
+  color: var(--cairn-text);
+  border-color: var(--ifm-color-primary);
+  background: var(--ifm-color-primary-contrast-background);
+}
+.tabDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+}
+.tab[aria-selected='true'] .tabDot { background: var(--ifm-color-primary); border-color: var(--ifm-color-primary); }
+
+.panelHidden { display: none; }
+
+.surface {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: 1.6rem;
+  align-items: center;
+}
+@media (max-width: 900px) {
+  .surface { grid-template-columns: 1fr; }
+}
+
+.surfaceTitle {
+  font-size: 1.3rem;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.7rem;
+}
+.surfaceBody {
+  color: var(--cairn-muted);
+  font-size: 1rem;
+  line-height: 1.65;
+  margin: 0 0 0.9rem;
+}
+.surfaceBody strong { color: var(--cairn-text); font-weight: 600; }
+
+.surfaceList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+.surfaceList li {
+  display: flex;
+  gap: 0.55rem;
+  align-items: baseline;
+  color: var(--cairn-muted);
+  font-size: 0.94rem;
+}
+/* A command is machine content. */
+.surfaceList code { font-size: 0.82rem; }
+
+/*
+ * The panel wrapper. It carries no layout of its own — it exists so the no-JS
+ * stylesheet in SurfaceParity.tsx has a stable hashed class to separate the
+ * stacked panels with. That rule lives there and not here on purpose: applied
+ * unconditionally, an adjacent-sibling margin would also fire between a
+ * display:none panel and the visible one, putting a phantom gap above tabs two
+ * and three.
+ */
+.surfacePanel { position: relative; }
+
+/* ==========================================================================
+   The design record
+   ========================================================================== */
+
+.recordGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+@media (max-width: 900px) {
+  .recordGrid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.recordStat {
+  padding: 1.4rem 1.2rem;
+  text-align: center;
+  background: var(--cairn-elevated);
+  border: 1px solid var(--cairn-border);
+  border-radius: 14px;
+}
+/* A count is machine-emitted, and it is read from the derived data module —
+   nothing on this page types a number the record owns. */
+.recordCount {
+  display: block;
+  font-family: var(--cairn-font-mono);
+  font-size: clamp(1.9rem, 4vw, 2.6rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: var(--ifm-heading-color);
+}
+.recordCountLabel {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.9rem;
+  color: var(--cairn-muted);
+}
+
+.recordCtas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  justify-content: center;
+}
+
+/* ==========================================================================
+   Category accents.
+
+   One rule per ADR-0009 category plus the neutral default, so a section that
+   is handed a category string ADR-0009 does not define matches nothing here
+   and keeps the `--accent: var(--cat-other)` initial value rather than
+   carrying a colour of its own — SPEC-0010 REQ "Category Palette
+   Immutability", scenario "Unrecognised category class".
+   ========================================================================== */
+.cat_reason  { --accent: var(--cat-reason); }
+.cat_exec    { --accent: var(--cat-exec); }
+.cat_read    { --accent: var(--cat-read); }
+.cat_net     { --accent: var(--cat-net); }
+.cat_write   { --accent: var(--cat-write); }
+.cat_search  { --accent: var(--cat-search); }
+.cat_plan    { --accent: var(--cat-plan); }
+.cat_tool    { --accent: var(--cat-tool); }
+.cat_analyze { --accent: var(--cat-analyze); }
+.cat_test    { --accent: var(--cat-test); }
+.cat_fix     { --accent: var(--cat-fix); }
+.cat_fail    { --accent: var(--cat-fail); }
+.cat_meta    { --accent: var(--cat-meta); }
+.cat_other   { --accent: var(--cat-other); }

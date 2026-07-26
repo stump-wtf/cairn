@@ -112,3 +112,39 @@ export function isStagedRecordFile(
     resolved.startsWith(paths.stagedSpecsDir + path.sep)
   );
 }
+
+// Governing: ADR-0014, SPEC-0010 REQ "Derived Cross-Reference Graph"
+/**
+ * The Docusaurus doc id of a staged record DETAIL page, or null for anything
+ * else under the staged trees.
+ *
+ * This is how the metadata bar learns which record it is on. The doc id is the
+ * staged path with its extension dropped — the same identity `DecisionEntry.docId`
+ * and `SpecEntry.docId` carry — so the bar is bound to its record by construction
+ * and no record id is written down a second time to make the binding work.
+ *
+ * Three staged shapes are deliberately NOT detail pages and return null: the two
+ * generated index pages, which are lists rather than records, and a capability's
+ * paired `design.md`, which has no status, date or graph edges of its own.
+ */
+export function recordDetailDocId(
+  paths: RecordPaths,
+  filePath: string | undefined,
+): string | null {
+  if (!filePath || !isStagedRecordFile(paths, filePath)) {
+    return null;
+  }
+  const docId = path
+    .relative(paths.docsDir, path.resolve(filePath))
+    .split(path.sep)
+    .join('/')
+    .replace(/\.mdx?$/, '');
+  const segments = docId.split('/');
+  if (segments[0] === DECISIONS_SEGMENT) {
+    return segments.length === 2 && segments[1] !== 'index' ? docId : null;
+  }
+  if (segments[0] === SPECS_SEGMENT) {
+    return segments.length === 3 && segments[2] === 'index' ? docId : null;
+  }
+  return null;
+}
