@@ -154,7 +154,29 @@ const config: Config = {
    * site gets a vhost of its own.
    */
   url: process.env.DOCS_URL || 'https://stump-wtf.pages.stump.rocks',
-  baseUrl: '/cairn/',
+
+  /*
+   * baseUrl is env-driven for the same reason `url` is: this record now has a
+   * SECOND deployment target. The canonical Pages bundle serves from
+   * https://stump-wtf.pages.stump.rocks/cairn/ (DOCS_BASE_URL unset — the
+   * /cairn/ default below), and the cairn-docs container serves the same
+   * record on the product domain at https://cairn.stump.wtf/docs/
+   * (DOCS_URL=https://cairn.stump.wtf DOCS_BASE_URL=/docs/, set by the
+   * docs-image job in pipeline.yaml).
+   *
+   * THE /docs SEGMENT COMES FROM EXACTLY ONE PLACE PER TARGET — routeBasePath
+   * on Pages, baseUrl on the app domain — never both. See the preset's
+   * routeBasePath comment for why that is load-bearing and not a styling
+   * choice: a baseUrl of `/docs/` combined with a route base of `docs` makes
+   * every `to="/docs/…"` link in the tree ambiguous to Docusaurus's
+   * already-has-baseUrl heuristic, and the build fails with dozens of broken
+   * links.
+   *
+   * Same `||`-not-`??` rule as DOCS_URL above: CI env plumbing can hand this
+   * through as an empty string, and an empty baseUrl is a valid-looking wrong
+   * answer.
+   */
+  baseUrl: process.env.DOCS_BASE_URL || '/cairn/',
 
   /*
    * `true`, because Garage serves this bundle, and Garage resolves a directory
@@ -256,6 +278,35 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
+
+          /*
+           * Where the /docs URL segment comes from depends on the deployment
+           * target, and it must come from exactly one place:
+           *
+           *   Pages  — baseUrl /cairn/, routeBasePath 'docs'
+           *            → https://…/cairn/docs/intro/
+           *   app    — baseUrl /docs/,  routeBasePath '/'
+           *            → https://cairn.stump.wtf/docs/intro/
+           *
+           * The tempting alternative — keep routeBasePath 'docs' and only set
+           * baseUrl to /docs/ — does not merely produce ugly /docs/docs/…
+           * URLs; it BREAKS THE BUILD. Docusaurus's Link/broken-link
+           * machinery treats a path that already starts with baseUrl as
+           * already-prefixed, so every `to="/docs/…"` link in the homepage,
+           * the navbar and the generated record is kept as-is and points at
+           * routes that now live under /docs/docs/…. With the segment owned
+           * by baseUrl alone, those same links resolve identically on both
+           * targets: on Pages the heuristic prepends /cairn/, on the app
+           * domain the link already IS the full path.
+           *
+           * This is also why the record plugin's routeBase stays '/docs' for
+           * both targets (DOCS_ROUTE_BASE above) even though it no longer
+           * literally equals this routeBasePath on the app target — its
+           * generated hrefs are /docs/decisions/ADR-XXXX, which the same
+           * heuristic resolves correctly under either base.
+           */
+          routeBasePath: process.env.DOCS_BASE_URL === '/docs/' ? '/' : 'docs',
+
           // Governing: ADR-0014, SPEC-0010 REQ "No Repository Links"
           // No `editUrl`. The full record text renders on the site, so there
           // is nothing an "edit this page" link could usefully point at, and
