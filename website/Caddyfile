@@ -1,0 +1,19 @@
+# In-container static file server for the compiled record site.
+#
+# The edge Caddy on cloud01 routes cairn.stump.wtf/docs/* here with the /docs
+# prefix STRIPPED (handle_path), so this server sees paths rooted at the site
+# root and serves the flat build/ output directly.
+#
+# try_files resolves directory URLs (e.g. /docs/intro/) straight to their
+# index.html WITHOUT emitting file_server's canonical 308. That redirect is
+# why the implicit directory handling cannot be used here: the outer proxy
+# stripped /docs, so a 308 to the "canonical" path would drop the prefix and
+# send the client to cairn.stump.wtf/<path>/ — the app, not the docs. Unknown
+# paths fall through to the Docusaurus 404 page. Same reasoning as
+# stump.wtf/switchboard's docs.Caddyfile.
+:80 {
+	root * /srv
+	encode gzip zstd
+	try_files {path} {path}/index.html /404.html
+	file_server
+}
