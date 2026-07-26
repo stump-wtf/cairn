@@ -1,3 +1,21 @@
+// Governing: ADR-0014, SPEC-0010 REQ "Homepage"
+//
+// The product promises — the four things true of every artifact, whatever its
+// type and whichever surface made it.
+//
+// WHY THIS FILE IS STILL CALLED HomepageFeatures. Before SPEC-0010 this was a
+// nine-tile grid that argued the whole product at once; the sections this story
+// adds now make seven of those nine arguments in their own right, and repeating
+// them here would have been the homepage disagreeing with itself. What survives
+// is the four promises, in the tile visual language that was already here.
+//
+// The DIRECTORY NAME is load-bearing and is deliberately not being tidied up:
+// scripts/check-tokens.mjs names `src/components/HomepageFeatures/styles.module.css`
+// as one of the two category-derived class sets whose coverage it verifies
+// against ADR-0009. Renaming the directory would make that check silently skip
+// (it is guarded by `existsSync`) rather than fail, which is the worst of the
+// available outcomes.
+
 import type {ReactNode} from 'react';
 import clsx from 'clsx';
 import Heading from '@theme/Heading';
@@ -5,116 +23,61 @@ import styles from './styles.module.css';
 
 type Cat = 'reason' | 'exec' | 'read' | 'net' | 'write' | 'search' | 'plan' | 'tool' | 'analyze' | 'test' | 'fix' | 'fail' | 'meta' | 'mono' | 'other';
 
-type Feature = {
+type Guarantee = {
   code: string;
   cat: Cat;
   title: string;
   body: ReactNode;
 };
 
-const FEATURES: Feature[] = [
-  {
-    code: 'TRJ',
-    cat: 'reason',
-    title: 'Trajectories',
-    body: (
-      <>
-        A whole agent run, shared. An OTel-style <strong>span waterfall</strong> pinned up top and a
-        readable activity stream below — react and comment on any turn, tool call, or span.
-      </>
-    ),
-  },
-  {
-    code: 'HK',
-    cat: 'net',
-    title: 'Live webhooks',
-    body: (
-      <>
-        A requestbin agents can point at. Requests stream into a live inspector <em>and</em> over
-        MCP — inspect the JSON, react on any single request.
-      </>
-    ),
-  },
-  {
-    code: 'MD·PY·IMG',
-    cat: 'read',
-    title: 'Every artifact type',
-    body: (
-      <>
-        Markdown, code, images, generic files, and multi-file bundles — each with a viewer built for
-        it, all inside one consistent app shell.
-      </>
-    ),
-  },
-  {
-    code: '✦',
-    cat: 'write',
-    title: 'React & comment',
-    body: (
-      <>
-        Emoji reactions and threaded comments, anchored to a block, a bullet, a code line, an image
-        region, a span, or a whole artifact.
-      </>
-    ),
-  },
-  {
-    code: '◆ mcp',
-    cat: 'exec',
-    title: 'MCP-native',
-    body: (
-      <>
-        Agents read, create, comment, and react over <strong>MCP</strong> — authorized through
-        OAuth with scoped, revocable consent. Same auth as your CLI.
-      </>
-    ),
-  },
-  {
-    code: '$_',
-    cat: 'mono',
-    title: 'CLI & the Bin',
-    body: (
-      <>
-        <em>pbcopy for cairn</em>: pipe or add files from the shell, then browse your bin in a
-        keyboard-driven TUI.
-      </>
-    ),
-  },
-  {
-    code: '▤',
-    cat: 'reason',
-    title: 'One app shell',
-    body: (
-      <>
-        The same chrome for every type — logo, type badge, <strong>one URL control</strong>, and a
-        collapsible metadata &amp; comments panel.
-      </>
-    ),
-  },
+const PROMISES: Guarantee[] = [
   {
     code: '◈',
     cat: 'read',
-    title: 'Provenance',
+    title: 'Who made this, and how',
     body: (
       <>
-        Every artifact records <strong>who</strong> made it — human or model — through which
-        channel, and when it was captured.
+        Every artifact records its origin — human or model, through which channel, and when it was
+        captured: <em>claude · sonnet-4.6 · via MCP · captured 2h ago</em>.
       </>
     ),
   },
   {
     code: '⧗',
     cat: 'net',
-    title: 'Ephemeral & private',
+    title: 'Ephemeral by default',
     body: (
       <>
-        Ephemeral by default: a visible TTL and link-based access —{' '}
-        <em>🔒 you + anyone with link</em>.
+        A visible TTL on every share — <em>expires in 5d</em> — and a hard delete when it runs out.
+        Nothing lingers because someone forgot it existed.
+      </>
+    ),
+  },
+  {
+    code: '🔒',
+    cat: 'write',
+    title: 'Link-based access',
+    body: (
+      <>
+        Capability URLs, with the policy on screen rather than buried in a menu:{' '}
+        <em>you + anyone with link</em>.
+      </>
+    ),
+  },
+  {
+    code: '✦',
+    cat: 'reason',
+    title: 'One annotation layer',
+    body: (
+      <>
+        Reactions and threads with type-specific anchors — a block, a code line, an image region, a
+        captured request, a span — and the same layer over MCP.
       </>
     ),
   },
 ];
 
-function Tile({code, cat, title, body}: Feature): ReactNode {
+function Tile({code, cat, title, body}: Guarantee): ReactNode {
   return (
     <div className={clsx(styles.tile, styles[`cat_${cat}`])}>
       <div className={styles.tileTop}>
@@ -137,19 +100,19 @@ export default function HomepageFeatures(): ReactNode {
           {/* The same label role as the hero's eyebrow, from one definition —
               SPEC-0010 REQ "Typographic Roles". */}
           <p className={clsx('cairn-label', styles.kicker)}>
-            ONE SERVICE · EVERY ARTIFACT · TWO AUDIENCES
+            ◇&nbsp; THE PROMISES · TRUE OF EVERY ARTIFACT
           </p>
           <Heading as="h2" className={styles.headline}>
-            Built for humans and agents alike
+            The same four guarantees, whatever you dropped
           </Heading>
           <p className={styles.sub}>
-            Every share type rides the same app shell — one URL control, one collapsible metadata
-            &amp; comments panel — and every artifact is readable and writable over MCP.
+            Provenance, a visible expiry, an access policy you can read, and one annotation layer —
+            on every share type and on every surface.
           </p>
         </div>
         <div className={styles.grid}>
-          {FEATURES.map((f) => (
-            <Tile key={f.title} {...f} />
+          {PROMISES.map((p) => (
+            <Tile key={p.title} {...p} />
           ))}
         </div>
       </div>
