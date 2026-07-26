@@ -14,3 +14,15 @@ paths = [
   '''docs/.*\.md$''',
   '''website/.*\.(md|mdx)$''',
 ]
+# The website's own credential scanners have to be tested against something
+# credential-shaped, so their fixtures trip the scanner that scans them:
+# `assertNoSecretsInData` and the bundle scan both assert they CATCH a GitHub
+# token, using this obviously-sequential placeholder.
+#
+# Allowlisted by VALUE, not by path. The paths above are whole trees, and
+# adding `website/.*\.test\.(ts|mjs)$` to them would blind the scan to a real
+# credential pasted into any website test. One dummy string cannot hide
+# anything else.
+regexes = [
+  '''ghp_0123456789abcdef0123456789abcdef0123''',
+]

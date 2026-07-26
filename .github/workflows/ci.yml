@@ -88,17 +88,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 22 rather than 20, matching website/package.json `engines` and the deploy
+      # workflow. The record pipeline's entry points are TypeScript executed
+      # directly by `node` (`npm run generate`, and the plugin's own test files),
+      # and unflagged type stripping only exists from 22.18.0. On 20 both the
+      # typecheck step and the suite below die with ERR_UNKNOWN_FILE_EXTENSION.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: website/package-lock.json
 
       - name: install
         run: npm ci
 
-      - name: token-layer tests
-        run: npm run test:tokens
+      # The whole suite, not just the token guard. The link guards are the
+      # enforcement mechanism behind SPEC-0010 REQ "No Repository Links" and REQ
+      # "Link and Anchor Integrity", and a guard whose own tests never run in CI
+      # can start passing vacuously — break the attribute scanner and the build
+      # still goes green while no longer looking at anything.
+      - name: tests
+        run: npm test
 
       - name: typecheck
         run: npm run typecheck

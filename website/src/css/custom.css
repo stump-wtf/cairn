@@ -434,17 +434,12 @@ a > code { color: var(--cairn-ink-accent); }
 .navbar__title { font-weight: 600; letter-spacing: -0.01em; }
 .navbar__link, .menu__link { font-size: 0.94rem; }
 
-/* GitHub icon in the navbar */
-.navbar__item--github span { display: none; }
-.navbar__item--github::before {
-  content: '';
-  width: 20px;
-  height: 20px;
-  display: inline-block;
-  background-color: currentColor;
-  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 .5C5.7.5.5 5.7.5 12a11.5 11.5 0 0 0 7.9 10.9c.6.1.8-.2.8-.5v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7 0-.7 0-.7 1.2 0 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5A11.5 11.5 0 0 0 23.5 12C23.5 5.7 18.3.5 12 .5Z'/></svg>") center/contain no-repeat;
-  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 .5C5.7.5.5 5.7.5 12a11.5 11.5 0 0 0 7.9 10.9c.6.1.8-.2.8-.5v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7 0-.7 0-.7 1.2 0 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5A11.5 11.5 0 0 0 23.5 12C23.5 5.7 18.3.5 12 .5Z'/></svg>") center/contain no-repeat;
-}
+/* The GitHub icon that used to hang off `.navbar__item--github` is gone, and so
+   is the rule that painted it — SPEC-0010 REQ "No Repository Links". There is no
+   navbar item for it to style, because there is no forge link on this site: the
+   full record renders on the page, so there is nothing a "view source" would
+   usefully point at. Left as dead CSS it would be a standing invitation to put
+   the item back. */
 
 .button { font-weight: 600; letter-spacing: -0.01em; }
 
@@ -468,6 +463,128 @@ table { display: table; width: 100%; }
   -webkit-mask: var(--cairn-caret-icon) center / 1.25rem 1.25rem no-repeat;
   mask: var(--cairn-caret-icon) center / 1.25rem 1.25rem no-repeat;
 }
+
+/* --------------------------------------------------------------------------
+   7a. Doc-page chrome — SPEC-0010 REQ "Site Chrome and Layout".
+
+   The four surfaces the requirement names — the sticky navbar, the persistent
+   left rail, the on-this-page column, the breadcrumb and prev/next footer —
+   are all stock theme-classic and all present without a single swizzle. That
+   is the point: `Navbar`, `DocSidebarItem`, `TOC` and `DocItem/Footer` are
+   `wrap: unsafe` AND `eject: unsafe`, so a breaking change to any of them can
+   land in a MINOR Docusaurus release. Everything below is therefore surface,
+   rhythm and state over markup the theme keeps owning, and the theme-override
+   budget ADR-0014 sets — at most one wrap, no ejects — is spent at ZERO.
+
+   Two structural facts this leans on rather than re-implements: the navbar is
+   sticky because theme-classic always gives it `navbar--fixed-top`, and the
+   rail is sticky because `DocRoot/Layout/Sidebar` puts `position: sticky` on
+   its viewport. Neither is restated here; restating them is how a stylesheet
+   comes to own a behaviour it did not write.
+   -------------------------------------------------------------------------- */
+
+/* The rail reads as chrome rather than as page, so it takes the elevated
+   surface and lets the content column keep the page ground. Desktop only —
+   below 997px theme-classic replaces it with the navbar's mobile drawer. */
+@media (min-width: 997px) {
+  .theme-doc-sidebar-container {
+    background: var(--cairn-elevated);
+  }
+}
+
+/* A top-level group label — "Product", "Decisions · 14", "Specifications · 10" —
+   names a section of the record. It is a label, not a sentence, so it takes the
+   uppercase-mono label role (SPEC-0010 REQ "Typographic Roles"). Scoped to
+   level 1 deliberately: a level-2 category label is a specification's own title
+   ("SPEC-0004 · Trajectory Share"), which is prose and stays in the sans face.
+
+   The count in a record group's label is written into the staged
+   `_category_.json` by the pipeline. Nothing here counts anything, and nothing
+   here may: a number typed into a stylesheet is the same defect as a number
+   typed into an index table. */
+.theme-doc-sidebar-item-category-level-1 > .menu__list-item-collapsible > .menu__link {
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-label-size);
+  font-weight: var(--cairn-label-weight);
+  letter-spacing: var(--cairn-label-tracking);
+  text-transform: uppercase;
+  color: var(--cairn-muted);
+}
+
+/* Current-page state, keyed off `aria-current` rather than off the theme's
+   `menu__link--active` class. Both are emitted by `DocSidebarItem/Link`, but
+   `--active` is also set on an EXPANDED category, so keying on it would light
+   up two rows. Binding the visual state to the accessible state also means the
+   two cannot drift: if `aria-current` ever stops being emitted, the highlight
+   disappears with it rather than silently outliving it. */
+.menu__link[aria-current='page'] {
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 0 var(--ifm-color-primary);
+}
+
+/* The breadcrumb is a route — `docs / decisions / ADR-0009` — which is machine
+   content, so it is mono and quiet. --cairn-muted measures 7.55:1 on the ink
+   ground and 6.14:1 on paper, so the small size is safe (SPEC-0010 REQ
+   "Contrast"); the current document takes the full text colour because it is
+   the one item that is not a link. */
+.theme-doc-breadcrumbs { margin-bottom: 1.5rem; }
+.breadcrumbs__link {
+  font-family: var(--cairn-font-mono);
+  font-size: 0.78rem;
+  letter-spacing: var(--cairn-mono-tracking);
+  color: var(--cairn-muted);
+  background: transparent;
+}
+.breadcrumbs__item:not(.breadcrumbs__item--active) > .breadcrumbs__link:hover {
+  background: var(--cairn-surface-2);
+  color: var(--cairn-text);
+}
+.breadcrumbs__item--active > .breadcrumbs__link {
+  background: transparent;
+  color: var(--cairn-text);
+}
+
+/* The on-this-page column. theme-classic renders the desktop TOC as a bare
+   list with no heading of its own — the "On this page" string only exists in
+   the mobile collapsible — so the label is supplied here. Generated content
+   rather than a wrap: `TOC` is `wrap: unsafe`, and a heading is not worth
+   signing up for a breaking change in a minor release. */
+.theme-doc-toc-desktop::before {
+  content: 'On this page';
+  display: block;
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-label-size);
+  font-weight: var(--cairn-label-weight);
+  letter-spacing: var(--cairn-label-tracking);
+  text-transform: uppercase;
+  color: var(--cairn-muted);
+  padding: 0 0 0.6rem var(--ifm-spacing-horizontal);
+  margin-bottom: 0.4rem;
+  border-bottom: 1px solid var(--cairn-border);
+}
+.table-of-contents__link--active {
+  font-weight: 600;
+}
+
+/* Prev/next. Infima gives these a bordered card and reads its edge off
+   --ifm-color-emphasis-300, which section 4 already points at the ramp; what is
+   missing is the surface, and a sublabel that reads as the label it is. */
+.pagination-nav__link {
+  background: var(--cairn-elevated);
+  border-color: var(--cairn-border);
+}
+.pagination-nav__link:hover {
+  border-color: var(--ifm-color-primary);
+}
+.pagination-nav__sublabel {
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-label-size);
+  font-weight: var(--cairn-label-weight);
+  letter-spacing: var(--cairn-label-tracking);
+  text-transform: uppercase;
+  color: var(--cairn-muted);
+}
+.pagination-nav__label { font-weight: 600; }
 
 /*
  * `themeConfig.footer.style: 'dark'` puts `footer--dark` on the footer, and
