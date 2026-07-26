@@ -1,12 +1,17 @@
-# AI code review on every PR push (Crush + Z.ai GLM), plus the on-demand
-# author-self-reference modes (review / address / merge). Secrets/vars come from
-# the stump.wtf org (AIBOT_ZAI_*, AIBOT_BOT_LOGIN). To enable auto-merge on a
-# clean review, set org/repo var AIBOT_AUTOMERGE=1 and secret AIBOT_MERGE_TOKEN.
+# The on-demand author-self-reference modes (review / address / merge) — the
+# CONVERSATION half of the bot. Secrets/vars come from the stump.wtf org
+# (AIBOT_ZAI_*, AIBOT_BOT_LOGIN). To enable auto-merge on a clean review, set
+# org/repo var AIBOT_AUTOMERGE=1 and secret AIBOT_MERGE_TOKEN.
+#
+# `pull_request` is deliberately NOT a trigger here. Opening or pushing to a PR
+# is reviewed by the `review` job in pipeline.yaml, which sits behind
+# `needs: [build]`; as its own workflow this one fired the instant a PR opened
+# and spent tokens reviewing code that had not been shown to compile. Keeping
+# both triggers would double-review every push, so the split is by EVENT: the
+# pipeline owns PR pushes, this file owns the replies to them.
 name: aibot
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
   issue_comment:
     types: [created]
   pull_request_review_comment:
@@ -23,9 +28,6 @@ jobs:
   aibot:
     runs-on: ubuntu-latest
     if: >
-      (github.event_name == 'pull_request'
-        && github.event.pull_request.draft == false)
-      ||
       (github.event_name == 'issue_comment'
         && github.event.issue.pull_request != null
         && github.event.comment.user.login == github.event.issue.user.login)
