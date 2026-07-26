@@ -131,13 +131,33 @@ const config: Config = {
     v4: true,
   },
 
-  // GitHub Pages project site: https://joestump.github.io/cairn/
-  // (For a custom domain like cairn.sh, set url to the domain and baseUrl to '/'.)
-  url: 'https://joestump.github.io',
+  /*
+   * Governing: ADR-0014, SPEC-0010 REQ "Build and Deployment" — "The public base
+   * URL MUST be configured in exactly one place."
+   *
+   * That place is here. `url` still said `https://joestump.github.io` long after
+   * the site stopped being published to GitHub Pages: since the stump.wtf
+   * convergence it deploys to Gitea Pages (Garage) through
+   * stumpcloud/garage-pages-deploy, which lands a repo at
+   * `https://<owner>.pages.stump.rocks/<repo>/` with the owner SLUGIFIED — dots
+   * become dashes, so `stump.wtf` is served as `stump-wtf`. Every absolute URL
+   * the build bakes — canonical links, og:url, the sitemap — was therefore
+   * advertising a host that does not serve this site.
+   *
+   * DOCS_URL is the deploy-time override, exported by stump.wtf/ci's
+   * static-site.yaml from its `site_url` input. Read with `||` and not `??`,
+   * because that workflow exports an empty string when the input is unset and
+   * an empty string is a valid-looking but wrong `url`.
+   *
+   * baseUrl stays `/cairn/`: the bundle is served from a path under the owner's
+   * Pages host, not from a domain root. The two move together on the day this
+   * site gets a vhost of its own.
+   */
+  url: process.env.DOCS_URL || 'https://stump-wtf.pages.stump.rocks',
   baseUrl: '/cairn/',
   trailingSlash: false,
 
-  organizationName: 'joestump',
+  organizationName: 'stump.wtf',
   projectName: 'cairn',
 
   /*
