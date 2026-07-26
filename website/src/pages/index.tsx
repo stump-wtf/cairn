@@ -4,6 +4,11 @@ import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import HomepageFeatures from '@site/src/components/HomepageFeatures';
+import CoreLoop from '@site/src/components/homepage/CoreLoop';
+import TypeRegistry from '@site/src/components/homepage/TypeRegistry';
+import Trajectory from '@site/src/components/homepage/Trajectory';
+import SurfaceParity from '@site/src/components/homepage/SurfaceParity';
+import DesignRecord from '@site/src/components/homepage/DesignRecord';
 import styles from './index.module.css';
 
 const TYPE_BADGES: {label: string; cat: string}[] = [
@@ -89,6 +94,21 @@ function Hero(): ReactNode {
   );
 }
 
+/*
+ * Governing: ADR-0014, SPEC-0010 REQ "Homepage"
+ *
+ * The section order is normative, not editorial. REQ "Homepage" requires, in
+ * order: the hero with its pipe-in/link-back terminal, the core loop, the
+ * share-type registry, the trajectory section with its span waterfall, surface
+ * parity across web/CLI/MCP, the promises, and an entry point into the design
+ * record. Reordering these is a specification change.
+ *
+ * Every section's prose is the homepage's own. The only facts the record owns —
+ * the decision, specification, requirement and scenario totals, and every
+ * specification title and route behind a "SPEC-XXXX …" link — are read from the
+ * derived data module, so this page cannot go stale the way the deleted
+ * hand-typed docs/specifications.md did.
+ */
 export default function Home(): ReactNode {
   return (
     <Layout
@@ -109,7 +129,12 @@ export default function Home(): ReactNode {
       */}
       <main>
         <Hero />
+        <CoreLoop />
+        <TypeRegistry />
+        <Trajectory />
+        <SurfaceParity />
         <HomepageFeatures />
+        <DesignRecord />
       </main>
     </Layout>
   );

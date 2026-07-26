@@ -32,6 +32,15 @@ export interface RecordPaths {
   /** The derived data module. Git-ignored; rewritten on every load. */
   generatedDir: string;
   recordJson: string;
+  /**
+   * Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+   *
+   * The token definition, and the inventory derived from it. The inventory is a
+   * second generated module rather than a field of `recordJson`, because it is
+   * derived from a stylesheet and not from the record — see `tokens.ts`.
+   */
+  tokenCss: string;
+  tokensJson: string;
 }
 
 /** Docs route base, as configured on the docs preset. */
@@ -56,6 +65,8 @@ export function createRecordPaths(siteDir: string): RecordPaths {
     stagedSpecsDir: path.join(docsDir, SPECS_SEGMENT),
     generatedDir,
     recordJson: path.join(generatedDir, 'record.json'),
+    tokenCss: path.join(resolvedSiteDir, 'src', 'css', 'custom.css'),
+    tokensJson: path.join(generatedDir, 'tokens.json'),
   };
 }
 
@@ -69,6 +80,12 @@ export function recordWatchPaths(paths: RecordPaths): string[] {
   return [
     path.join(paths.adrDir, '**', '*.md'),
     path.join(paths.specsDir, '**', '*.md'),
+    // Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+    // The token inventory is derived at generation time, so editing a token
+    // changes a JSON module rather than a stylesheet. Webpack's own watch on
+    // `src/**` would reload the CSS and leave the printed values stale, so the
+    // generator has to re-run on this file too.
+    paths.tokenCss,
   ];
 }
 
@@ -94,4 +111,40 @@ export function isStagedRecordFile(
     resolved.startsWith(paths.stagedDecisionsDir + path.sep) ||
     resolved.startsWith(paths.stagedSpecsDir + path.sep)
   );
+}
+
+// Governing: ADR-0014, SPEC-0010 REQ "Derived Cross-Reference Graph"
+/**
+ * The Docusaurus doc id of a staged record DETAIL page, or null for anything
+ * else under the staged trees.
+ *
+ * This is how the metadata bar learns which record it is on. The doc id is the
+ * staged path with its extension dropped — the same identity `DecisionEntry.docId`
+ * and `SpecEntry.docId` carry — so the bar is bound to its record by construction
+ * and no record id is written down a second time to make the binding work.
+ *
+ * Three staged shapes are deliberately NOT detail pages and return null: the two
+ * generated index pages, which are lists rather than records, and a capability's
+ * paired `design.md`, which has no status, date or graph edges of its own.
+ */
+export function recordDetailDocId(
+  paths: RecordPaths,
+  filePath: string | undefined,
+): string | null {
+  if (!filePath || !isStagedRecordFile(paths, filePath)) {
+    return null;
+  }
+  const docId = path
+    .relative(paths.docsDir, path.resolve(filePath))
+    .split(path.sep)
+    .join('/')
+    .replace(/\.mdx?$/, '');
+  const segments = docId.split('/');
+  if (segments[0] === DECISIONS_SEGMENT) {
+    return segments.length === 2 && segments[1] !== 'index' ? docId : null;
+  }
+  if (segments[0] === SPECS_SEGMENT) {
+    return segments.length === 3 && segments[2] === 'index' ? docId : null;
+  }
+  return null;
 }

@@ -229,6 +229,8 @@ function stub(
     authored: {},
     requirements: [],
     scenarioCount: 0,
+    endpointSections: [],
+    badgeCodes: [],
     absPath: `/tmp/${id}.md`,
     sourcePath: `docs/adrs/${id}.md`,
     body: '',

@@ -556,6 +556,12 @@ export function checkTokens({root = DEFAULT_WEBSITE, repo = REPO} = {}) {
       prop: '--accent',
       what: 'tile',
     },
+    {
+      file: join(SRC, 'components', 'homepage', 'styles.module.css'),
+      re: /^\.cat_([\w-]+)$/,
+      prop: '--accent',
+      what: 'section',
+    },
   ];
   for (const set of classSets) {
     if (!existsSync(set.file)) continue;

@@ -32,7 +32,11 @@ import {
   parseDesignFile,
   parseRecordFile,
 } from './parse.ts';
+import {buildBadgeSet} from './badges.ts';
+import {assertNoLiteralCounts} from './counts.ts';
 import {buildEdges, buildRelations} from './graph.ts';
+import {buildEndpointReference} from './endpoints.ts';
+import {collectDesignTokens, stageDesignTokens} from './tokens.ts';
 import {
   DOCS_ROUTE_BASE,
   createRecordPaths,
@@ -47,9 +51,14 @@ import {
   specHref,
   stageRecord,
 } from './stage.ts';
-import {assertStagedCoverage, validateRecord} from './validate.ts';
+import {
+  assertNoSecretsInData,
+  assertStagedCoverage,
+  validateRecord,
+} from './validate.ts';
 import type {
   DecisionEntry,
+  EndpointSection,
   ParsedRecord,
   RecordData,
   RecordRef,
@@ -193,9 +202,29 @@ export async function generateRecord(
     refs[spec.id] = {id: spec.id, title: spec.title, href: spec.href};
   }
 
+  // Governing: ADR-0014, SPEC-0010 REQ "Derived HTTP Reference Page"
+  // The reference page's rows are flattened here rather than in the parser,
+  // because which sections reach the page is a policy about the site (the
+  // website specification's own route table is not a service API) and parsing
+  // has no business knowing about it.
+  const endpointSections = new Map<string, EndpointSection[]>(
+    specRecords.map((record) => [record.id, record.endpointSections]),
+  );
+  const endpoints = buildEndpointReference(specs, endpointSections);
+
+  // Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+  // The badge set is record-derived, not stylesheet-derived, so it belongs to
+  // the record's module rather than to the token inventory — the requirement
+  // that names the derived data module names "badge" among the things that must
+  // read from it. Decisions come first so the set reads in the order ADR-0002
+  // wrote it.
+  const badges = buildBadgeSet(allRecords, refs);
+
   const data: RecordData = {
     decisions,
     specs,
+    badges,
+    endpoints,
     counts: {
       decisions: decisions.length,
       specifications: specs.length,
@@ -208,6 +237,10 @@ export async function generateRecord(
     graph: {edges, relations},
     refs,
   };
+
+  // Governing: ADR-0014, SPEC-0010 REQ "Deployment Least Privilege"
+  // Checked on the derived object, before it is written anywhere.
+  assertNoSecretsInData(data);
 
   const bodies = new Map<string, {sourcePath: string; body: string}>();
   for (const record of allRecords) {
@@ -224,9 +257,26 @@ export async function generateRecord(
     designBodies: designs,
   });
 
+  // Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+  // Read from `src/css/custom.css`, not from the record, and emitted beside the
+  // record's module rather than inside it — see `tokens.ts` for why the two are
+  // kept apart.
+  written.push(
+    await stageDesignTokens(paths, await collectDesignTokens(paths)),
+  );
+
   // Coverage is asserted against the staged tree rather than against the lists
   // above, so that the check is capable of failing. See `assertStagedCoverage`.
   await assertStagedCoverage({paths, adrFiles, capabilityDirs, data});
+
+  // Governing: ADR-0014, SPEC-0010 REQ "Derived Status, Dates, and Counts"
+  //
+  // Deliberately last, and deliberately here rather than in a lint script. It
+  // needs the derived counts to explain itself ("the record has 14; read
+  // counts.decisions"), and it has to run inside the pipeline so that writing
+  // "14 decisions" into the homepage fails the dev server rather than surviving
+  // until someone reads the page. See counts.ts for why it is an AST walk.
+  await assertNoLiteralCounts({paths, counts: data.counts});
 
   return {data, paths, written};
 }

@@ -6,8 +6,11 @@
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
     "lint:tokens": "node scripts/check-tokens.mjs",
+    "lint:assets": "node scripts/check-assets.mjs",
     "lint:a11y": "node scripts/check-a11y.mjs",
+    "scan:bundle": "node scripts/scan-bundle.mjs",
     "test:tokens": "node --test scripts/check-tokens.test.mjs",
+    "test:links": "node --test scripts/check-links.test.mjs",
     "test:a11y": "node --test scripts/check-a11y.test.mjs",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"plugins/record/__tests__/*.test.ts\" \"scripts/*.test.mjs\"",
     "build": "docusaurus build",
@@ -21,6 +24,7 @@
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./plugins/record/cli.ts"
   },
   "dependencies": {
+    "@babel/parser": "^8.0.4",
     "@docusaurus/core": "3.10.1",
     "@docusaurus/faster": "3.10.1",
     "@docusaurus/preset-classic": "3.10.1",
