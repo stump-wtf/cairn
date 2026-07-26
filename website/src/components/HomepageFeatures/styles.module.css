@@ -154,3 +154,20 @@
 .cat_meta    { --accent: var(--cat-meta); }
 .cat_mono    { --accent: var(--cat-other); }
 .cat_other   { --accent: var(--cat-other); }
+
+/*
+ * Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics", scenario
+ * "Reduced motion honoured".
+ *
+ * The global guard in src/css/custom.css collapses transition and animation
+ * DURATIONS, which is everything a blanket rule can reach. It cannot undo the
+ * hover TRANSFORM above — that is a property value, not a duration, so with the
+ * transition damped the tile would simply jump 3px instead of gliding 3px. The
+ * scenario names hover elevation on cards and tiles explicitly, so the elevation
+ * is dropped here and the hover keeps its non-motion affordances: the accent
+ * border and the lift shadow both still change.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .tile { transition: none; }
+  .tile:hover { transform: none; }
+}

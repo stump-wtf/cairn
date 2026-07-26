@@ -80,9 +80,30 @@ const PROMISES: Guarantee[] = [
 function Tile({code, cat, title, body}: Guarantee): ReactNode {
   return (
     <div className={clsx(styles.tile, styles[`cat_${cat}`])}>
-      <div className={styles.tileTop}>
+      {/*
+        Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics" —
+        "decorative glyphs MUST be hidden from assistive technology".
+
+        The whole badge is hidden, and it is worth being exact about why,
+        because five of the nine codes are glyphs and four are not. `✦`, `▤`,
+        `◈`, `⧗` and `$_` announce as "sparkle", "black rectangle", "dollar
+        underscore" and so on — noise under any reading.
+
+        `TRJ`, `HK`, `MD·PY·IMG` and `◆ mcp` are text, and they are hidden on
+        the other ground the requirement gives: they are not informative. Each
+        is a compression of the tile it sits on — `TRJ` of "Trajectories", `HK`
+        of "Live webhooks", `◆ mcp` of "MCP-native", `MD·PY·IMG` of a body that
+        already spells out "Markdown, code, images, generic files, and
+        multi-file bundles". Announced, they would read every tile's subject
+        twice, the second time in initials.
+
+        So no badge carries meaning its heading and body do not, which is also
+        why the pair is hidden rather than labelled: an alt text here would be
+        a second copy of the title, free to drift from the first.
+      */}
+      <div className={styles.tileTop} aria-hidden="true">
         <span className={styles.code}>{code}</span>
-        <span className={styles.dot} aria-hidden="true" />
+        <span className={styles.dot} />
       </div>
       <Heading as="h3" className={styles.tileTitle}>
         {title}

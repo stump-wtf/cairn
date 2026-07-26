@@ -22,9 +22,9 @@
  * this site reaches a third-party host at page load: SPEC-0010 REQ "First-Party
  * Asset Loading".
  *
- * NOT done here, deliberately: there is no `prefers-reduced-motion` guard and no
- * focus styling in this file — those are SPEC-0010's Accessibility requirements
- * and are owned elsewhere.
+ * Section 9 carries the accessibility layer — the focus indicator, the
+ * reduced-motion guard, and the non-colour current-item markers. Its ratios are
+ * re-derived by `npm run lint:a11y`, which also runs at config load.
  */
 
 /* ==========================================================================
@@ -993,3 +993,168 @@ table { display: table; width: 100%; }
 }
 
 ::selection { background: color-mix(in srgb, var(--ifm-color-primary) 40%, transparent); }
+
+/* ==========================================================================
+   9. Accessibility.
+
+      Governing: ADR-0014,
+                 SPEC-0010 REQ "Keyboard Navigation & Focus Management",
+                 SPEC-0010 REQ "WCAG 2.1 AA & Semantics",
+                 SPEC-0010 REQ "Contrast",
+                 SPEC-0010 REQ "Non-Colour Encoding"
+
+      Measurements in this section are written as `@ratio` assertions:
+
+          @ratio <light|dark> <foreground-token> on <background-token> = N.NN:1
+
+      `scripts/check-a11y.mjs` parses every one of them, resolves both tokens
+      through their var() chains as that colour mode computes them, and fails
+      the build if the re-derived ratio is not the number written here. So
+      retuning a token retunes the documentation with it, or stops the build —
+      a comment cannot quietly drift away from the value it describes.
+
+      That guarantee covers the `@ratio` lines and nothing else. A ratio quoted
+      in ordinary prose, in this section or any other, is an unchecked human
+      claim; if a number matters, write it as an assertion.
+   ========================================================================== */
+
+/* --------------------------------------------------------- focus indicator */
+
+/*
+ * A focus ring is a NON-TEXT indicator, so WCAG 1.4.11 asks 3:1 against the
+ * adjacent colour — and "adjacent" here is the surface BEHIND the control, not
+ * the control's own fill, because the offset separates the ring from the fill
+ * by a gap of that surface. The ring therefore has to clear 3:1 on every
+ * surface a focusable control can land on, and this site presents more than one
+ * ramp per colour mode: the footer and the code blocks pin the ink ramp in
+ * light mode too (sections 3 and 5), so a light-mode ring is measured against
+ * the paper ramp AND against the pinned ink surfaces.
+ *
+ * The light ring is --ifm-color-primary:
+ *
+ *   @ratio light --ifm-color-primary on --cairn-paper-0   = 5.52:1
+ *   @ratio light --ifm-color-primary on --cairn-paper-100 = 5.12:1
+ *   @ratio light --ifm-color-primary on --cairn-paper-200 = 4.77:1
+ *   @ratio light --ifm-color-primary on --cairn-code-bg   = 3.33:1
+ *   @ratio light --ifm-color-primary on --cairn-ink-deep  = 3.61:1
+ *
+ * The dark ring is --cairn-ink-accent:
+ *
+ *   @ratio dark --cairn-ink-accent on --cairn-ink-0    = 9.52:1
+ *   @ratio dark --cairn-ink-accent on --cairn-ink-100  = 8.90:1
+ *   @ratio dark --cairn-ink-accent on --cairn-ink-200  = 8.33:1
+ *   @ratio dark --cairn-ink-accent on --cairn-ink-300  = 6.97:1
+ *   @ratio dark --cairn-ink-accent on --cairn-ink-deep = 9.64:1
+ *
+ * The dark ring is NOT --ifm-color-primary, and the two rings cannot be one
+ * token, because each fails on the other mode's ground:
+ *
+ *   @ratio dark --cairn-ink-accent on --cairn-paper-0 = 2.07:1
+ */
+:root {
+  --cairn-focus-ring: var(--ifm-color-primary);
+  --cairn-focus-ring-width: 2px;
+  --cairn-focus-ring-offset: 2px;
+}
+[data-theme='dark'] {
+  --cairn-focus-ring: var(--cairn-ink-accent);
+}
+
+/*
+ * `:focus-visible` rather than `:focus`: a pointer click on a button must not
+ * paint a ring, or authors start removing it. Nothing in Infima or
+ * theme-classic sets `outline: none`, so a bare `:focus-visible` selector
+ * (specificity 0,1,0) is enough and no `!important` is needed.
+ *
+ * This is deliberately not scoped to a list of elements. Anything focusable —
+ * the theme's icon buttons, the skip link, a `summary`, a `tabindex=-1`
+ * container the skip link focuses programmatically — gets the same indicator,
+ * so a control added later cannot be reachable-but-invisible.
+ */
+:focus-visible {
+  outline: var(--cairn-focus-ring-width) solid var(--cairn-focus-ring);
+  outline-offset: var(--cairn-focus-ring-offset);
+}
+
+/*
+ * The skip link is the FIRST focusable node on every page (theme-classic's
+ * `SkipToContent`, rendered ahead of the navbar in `Layout`), and it moves
+ * focus to `main` programmatically rather than only setting a hash. It is not
+ * restyled here: its stock rule reads --ifm-background-surface-color and
+ * --ifm-color-emphasis-900, both re-pointed at Cairn tokens in section 4, so it
+ * already renders the ink-ramp text colour on the elevated surface. All it
+ * lacked was the ring above.
+ *
+ *   @ratio dark  --ifm-color-emphasis-900 on --cairn-elevated = 15.01:1
+ *   @ratio light --ifm-color-emphasis-900 on --cairn-elevated = 16.45:1
+ *
+ * SPEC-0010 REQ "Keyboard Navigation & Focus Management", scenario "Skipping
+ * the navigation rail".
+ */
+
+/* --------------------------------------------------------- reduced motion */
+
+/*
+ * SPEC-0010 REQ "WCAG 2.1 AA & Semantics", scenario "Reduced motion honoured".
+ *
+ * Durations are collapsed rather than set to `none` so that `transitionend`
+ * still fires: theme-classic's collapsible sidebar categories drive their
+ * height animation from that event, and killing the transition outright leaves
+ * a collapsed group stuck at `height: 0` with `aria-expanded="true"` — which
+ * would break REQ "Dynamic Content Regions" in the act of satisfying this one.
+ *
+ * A blanket rule cannot undo a hover TRANSFORM, only the transition to it, so
+ * each surface that elevates on hover suppresses its own transform alongside
+ * this (see HomepageFeatures/styles.module.css).
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  html { scroll-behavior: auto !important; }
+}
+
+/* ------------------------------------------------- current item, not colour */
+
+/*
+ * SPEC-0010 REQ "Non-Colour Encoding", scenario "Status without colour".
+ *
+ * Infima marks the current page in the rail with `color:
+ * var(--ifm-menu-color-active)` and nothing else, so with colour removed a
+ * reader cannot tell which of forty record documents they are on. The marker is
+ * therefore weight plus a bar: both survive greyscale, and the bar is a
+ * presence/absence difference rather than a hue.
+ *
+ * Keyed on `aria-current="page"`, not on `.menu__link--active`: the theme puts
+ * that class on an ancestor category header too, so it marks a whole branch,
+ * while `aria-current` is on exactly the document being read — and it keeps the
+ * visible marker and the accessible one from drifting apart.
+ */
+.menu__link[aria-current='page'] {
+  position: relative;
+  font-weight: 700;
+}
+.menu__link[aria-current='page']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.35em;
+  bottom: 0.35em;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: currentColor;
+}
+
+/* The on-this-page column and the navbar mark their current item the same way
+   and get the same treatment. Weight alone here: neither sits in a list long
+   enough for a reader to lose their place, and a bar would fight the TOC's own
+   left border. */
+.table-of-contents__link--active,
+.navbar__link--active {
+  font-weight: 700;
+}

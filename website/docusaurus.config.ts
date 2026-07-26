@@ -1,9 +1,14 @@
 import {themes as prismThemes} from 'prism-react-renderer';
-import type {Config} from '@docusaurus/types';
+import type {Config, Plugin} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import {assertTokens} from './scripts/check-tokens.mjs';
 import {assertNoEditUrl} from './scripts/check-links.mjs';
 import {assertFirstPartyAssets} from './scripts/check-assets.mjs';
+import {
+  assertA11y,
+  assertRecordSemantics,
+  assertRenderedSemantics,
+} from './scripts/check-a11y.mjs';
 
 import {generateRecord} from './plugins/record/generate.ts';
 import remarkRecord from './plugins/record/remark-record.ts';
@@ -48,6 +53,20 @@ console.log(assertTokens().summary);
 console.log(assertFirstPartyAssets().summary);
 
 /**
+ * Governing: ADR-0014, SPEC-0010 REQ "Contrast",
+ *            SPEC-0010 REQ "Keyboard Navigation & Focus Management",
+ *            SPEC-0010 REQ "WCAG 2.1 AA & Semantics"
+ *
+ * The same argument as the line above, for the same reason: an accessibility
+ * regression that only CI can see is one a developer ships and then discovers.
+ * This half re-measures every rendered colour pair in both colour modes and
+ * asserts the focus and reduced-motion machinery exists; the heading-order half
+ * needs the staged record and runs from the factory below, once it is on disk.
+ */
+// eslint-disable-next-line no-console
+console.log(assertA11y().summary);
+
+/**
  * Governing: ADR-0014, SPEC-0010 REQ "Design Token Source of Truth"
  *
  * Docusaurus turns `plain.color` / `plain.backgroundColor` into the inline
@@ -70,6 +89,38 @@ const cairnPrismTheme = {
     backgroundColor: 'var(--cairn-code-bg)',
   },
 };
+
+/**
+ * Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics", scenario
+ * "Generated page heading order".
+ *
+ * The last of the three heading-order passes, and the only one that reads the
+ * page as a browser receives it. The two above it read markdown — the source
+ * tree and then the staged record — and markdown is where *authors* put
+ * headings. A generated index page is one authored `#` heading plus a React
+ * component, and every other heading on `/docs/specs` is emitted from `.tsx`;
+ * no markdown check can see those, and one of them shipped an h1 → h3 jump.
+ *
+ * `postBuild` is the earliest hook where the HTML exists, so this cannot run in
+ * the dev server. That is the correct division: the source-level passes are
+ * fast and fire on `docusaurus start`, and this one gates the artifact that
+ * actually deploys. It is a plugin rather than an npm script for the same
+ * reason the others are config-load assertions — `npx docusaurus build` routes
+ * around `npm run build`, but it cannot route around a registered plugin.
+ */
+function cairnRenderedA11yPlugin(): Plugin {
+  return {
+    name: 'cairn-rendered-a11y',
+    async postBuild({outDir}) {
+      const rendered = assertRenderedSemantics({outDir});
+      // eslint-disable-next-line no-console
+      console.log(
+        `[cairn-a11y] ${rendered.files} rendered pages carry exactly one h1 and no ` +
+          `skipped heading level`,
+      );
+    },
+  };
+}
 
 const config: Config = {
   title: 'Cairn',
@@ -126,6 +177,14 @@ const config: Config = {
     },
   },
 
+  // Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics",
+  //            SPEC-0010 REQ "Dynamic Content Regions"
+  // The on-this-page column is the one required landmark theme-classic does not
+  // render, and below 997px its collapse button ships no `aria-expanded`.
+  // `clientModules` fixes both without spending the capability's single
+  // theme-wrap budget. See the module for the trade-off.
+  clientModules: ['./src/clientModules/tocAccessibility.ts'],
+
   plugins: [
     // Governing: ADR-0014, SPEC-0010 REQ "Record Content Pipeline"
     // The record has already been staged by the factory below. This plugin
@@ -149,6 +208,7 @@ const config: Config = {
     // host, and fails the build if the bundle carries a third-party subresource,
     // a credential, or a private host name. Registered last so it runs over a
     // finished bundle.
+    cairnRenderedA11yPlugin,
     './plugins/security/index.ts',
   ],
 
@@ -326,6 +386,22 @@ export default async function createConfig(): Promise<Config> {
     siteDir,
     routeBase: DOCS_ROUTE_BASE,
   });
+
+  /**
+   * Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics", scenario
+   * "Generated page heading order".
+   *
+   * After staging, not before: this reads the transformed record on disk, so it
+   * checks what the docs plugin is about to serve rather than what the source
+   * tree happens to contain.
+   */
+  const semantics = assertRecordSemantics({root: siteDir});
+
+  // eslint-disable-next-line no-console
+  console.log(
+    `[cairn-a11y] ${semantics.files} documentation pages carry exactly one h1 and ` +
+      `no skipped heading level`,
+  );
 
   // eslint-disable-next-line no-console
   console.log(
