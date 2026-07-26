@@ -1,0 +1,21 @@
+---
+title: Design language
+sidebar_label: Design language
+sidebar_position: 5
+description: Cairn's surface ramps, span-category accents, type badges and type families, rendered from the token definition itself.
+---
+
+{/*
+  Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+
+  A shell, not a page. It carries a title and one component and holds no fact of
+  its own — no token name, no value, no count — because SPEC-0010 requires that
+  changing a token change this page with no page file edited. Everything below
+  the heading is read out of `website/src/css/custom.css` at build time.
+*/}
+
+import {DesignLanguage} from '@site/src/components/reference/DesignLanguage';
+
+# Design language
+
+<DesignLanguage />

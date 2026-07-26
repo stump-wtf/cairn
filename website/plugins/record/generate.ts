@@ -32,7 +32,10 @@ import {
   parseDesignFile,
   parseRecordFile,
 } from './parse.ts';
+import {buildBadgeSet} from './badges.ts';
 import {buildEdges, buildRelations} from './graph.ts';
+import {buildEndpointReference} from './endpoints.ts';
+import {collectDesignTokens, stageDesignTokens} from './tokens.ts';
 import {
   DOCS_ROUTE_BASE,
   createRecordPaths,
@@ -50,6 +53,7 @@ import {
 import {assertStagedCoverage, validateRecord} from './validate.ts';
 import type {
   DecisionEntry,
+  EndpointSection,
   ParsedRecord,
   RecordData,
   RecordRef,
@@ -193,9 +197,29 @@ export async function generateRecord(
     refs[spec.id] = {id: spec.id, title: spec.title, href: spec.href};
   }
 
+  // Governing: ADR-0014, SPEC-0010 REQ "Derived HTTP Reference Page"
+  // The reference page's rows are flattened here rather than in the parser,
+  // because which sections reach the page is a policy about the site (the
+  // website specification's own route table is not a service API) and parsing
+  // has no business knowing about it.
+  const endpointSections = new Map<string, EndpointSection[]>(
+    specRecords.map((record) => [record.id, record.endpointSections]),
+  );
+  const endpoints = buildEndpointReference(specs, endpointSections);
+
+  // Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+  // The badge set is record-derived, not stylesheet-derived, so it belongs to
+  // the record's module rather than to the token inventory — the requirement
+  // that names the derived data module names "badge" among the things that must
+  // read from it. Decisions come first so the set reads in the order ADR-0002
+  // wrote it.
+  const badges = buildBadgeSet(allRecords, refs);
+
   const data: RecordData = {
     decisions,
     specs,
+    badges,
+    endpoints,
     counts: {
       decisions: decisions.length,
       specifications: specs.length,
@@ -223,6 +247,14 @@ export async function generateRecord(
     bodies,
     designBodies: designs,
   });
+
+  // Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+  // Read from `src/css/custom.css`, not from the record, and emitted beside the
+  // record's module rather than inside it — see `tokens.ts` for why the two are
+  // kept apart.
+  written.push(
+    await stageDesignTokens(paths, await collectDesignTokens(paths)),
+  );
 
   // Coverage is asserted against the staged tree rather than against the lists
   // above, so that the check is capable of failing. See `assertStagedCoverage`.
