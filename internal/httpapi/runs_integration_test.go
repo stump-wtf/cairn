@@ -288,14 +288,77 @@ func TestIntegrationRunOrderedTreeValidity(t *testing.T) {
 		t.Fatalf("span count after atomic-rejected append = %d, want 0", got.Stats.SpanCount)
 	}
 
-	// An unknown category is likewise a validation failure.
+	// An EMPTY category is a validation failure (SPEC-0004 "Empty or missing
+	// category rejected") …
+	resp = do(t, http.MethodPost, srv.URL+"/v1/runs/"+open.ID+"/spans", "joe",
+		jsonReader(t, appendSpansRequest{Spans: []spanRequest{{SpanID: "z", Category: "  ", StartOffsetMS: 0, DurationMS: 1}}}),
+		"application/json")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty-category append = %d, want 400", resp.StatusCode)
+	}
+	if env := decodeError(t, resp); env.Error.Code != "validation_failed" {
+		t.Fatalf("code = %q, want validation_failed", env.Error.Code)
+	}
+
+	// … but a category outside the recommended set is NOT: the set is open, and
+	// the DB CHECK must agree with the service or this 201 comes back a 500
+	// (issue #5 — the closed CHECK in 0004, dropped by 0013). Reading the run
+	// back proves the value round-trips verbatim rather than being coerced.
 	resp = do(t, http.MethodPost, srv.URL+"/v1/runs/"+open.ID+"/spans", "joe",
 		jsonReader(t, appendSpansRequest{Spans: []spanRequest{{SpanID: "z", Category: "teleport", StartOffsetMS: 0, DurationMS: 1}}}),
 		"application/json")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("unknown-category append = %d, want 400", resp.StatusCode)
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		t.Fatalf("unrecommended-category append = %d, want 2xx (the category set is open)", resp.StatusCode)
 	}
 	resp.Body.Close()
+
+	got = decodeRun(t, do(t, http.MethodGet, srv.URL+"/v1/runs/"+open.ID, "", nil, ""))
+	if got.Stats.SpanCount != 1 {
+		t.Fatalf("span count after accepted append = %d, want 1", got.Stats.SpanCount)
+	}
+	sp, ok := flattenSpans(got.Spans)["z"]
+	if !ok {
+		t.Fatal("span z is absent from the run after a 2xx append")
+	}
+	if sp.Category != "teleport" {
+		t.Fatalf("category round-tripped as %q, want %q", sp.Category, "teleport")
+	}
+
+	// The service bounds the category in runes and the schema in characters, so a
+	// 64-character multibyte value must satisfy BOTH. A byte-counting service (or
+	// a byte-counting CHECK) makes this a 400 or a 500 respectively — the two
+	// layers disagreeing about one value, which is the shape of bug #5 itself.
+	multibyte := strings.Repeat("調", 64)
+	resp = do(t, http.MethodPost, srv.URL+"/v1/runs/"+open.ID+"/spans", "joe",
+		jsonReader(t, appendSpansRequest{Spans: []spanRequest{{SpanID: "m", Category: multibyte, StartOffsetMS: 1, DurationMS: 1}}}),
+		"application/json")
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		t.Fatalf("64-character multibyte category = %d, want 2xx (the bound counts characters)", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// The other side of that bound, through the same boundary: one character
+	// over is a 400 from the service. This has to be asserted end-to-end and not
+	// only in the trajectory unit test, because a 400 here is what proves the
+	// service refuses FIRST — if validation ever regressed, the request would
+	// reach 0013's CHECK and surface as a 500 instead, and only an HTTP-level
+	// test can tell those two apart.
+	resp = do(t, http.MethodPost, srv.URL+"/v1/runs/"+open.ID+"/spans", "joe",
+		jsonReader(t, appendSpansRequest{Spans: []spanRequest{{SpanID: "n", Category: strings.Repeat("x", 65), StartOffsetMS: 2, DurationMS: 1}}}),
+		"application/json")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("65-character category = %d, want 400 (open is not unbounded)", resp.StatusCode)
+	}
+	if env := decodeError(t, resp); env.Error.Code != "validation_failed" {
+		t.Fatalf("over-long category code = %q, want validation_failed", env.Error.Code)
+	}
+
+	// Rejected atomically, like every other validation failure: the two spans
+	// that were accepted are still all that is persisted.
+	got = decodeRun(t, do(t, http.MethodGet, srv.URL+"/v1/runs/"+open.ID, "", nil, ""))
+	if got.Stats.SpanCount != 2 {
+		t.Fatalf("span count after rejected over-long append = %d, want 2", got.Stats.SpanCount)
+	}
 }
 
 // TestIntegrationRunClosedConflict proves an append to a closed run (a batch run

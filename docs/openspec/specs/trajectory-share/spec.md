@@ -54,10 +54,12 @@ A trajectory MUST store its run as an ordered tree of spans in PostgreSQL keyed 
 `parent_span_id` (null for top-level spans); a derived `depth` and a monotonic sibling
 `seq`; a `category` string drawn from the recommended set
 `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`
-(any non-empty string is accepted; values outside the recommended set are rendered with
-a neutral default color); a
+(any non-empty string of at most 64 characters is accepted; values outside the recommended
+set are rendered with a neutral default color); a
 human-readable `name`; a `start_offset_ms` relative to the run's `started_at` and a
-`duration_ms`; an optional `tool` name (non-null only for tool-category spans);
+`duration_ms`; an optional `tool` name (null on a `reason` span, permitted on any other
+category — with an open set the server cannot know which of an agent's own categories are
+tool-shaped);
 optional structured `args`; and an `output` (inline or by reference, per the Span Output
 Storage requirement). A **sub-agent** MUST be represented as an ordinary span whose
 children are its own tool spans — no separate entity. `span_id` MUST NOT be reissued once
@@ -77,6 +79,24 @@ assigned, because it is the anchor target for ADR-0006 annotations.
 
 - **WHEN** an ingested span declares a `category` not in the recommended set (e.g. `investigation`, `review`, `deploy`)
 - **THEN** the server MUST accept the span and persist it; the waterfall MUST render it with a neutral default color and a text label carrying the category name
+
+#### Scenario: Category length bounded
+
+- **WHEN** an ingested span declares a `category` longer than 64 characters
+- **THEN** the server MUST reject the ingest with `validation_failed`, because the value is
+  unbounded agent-supplied text persisted in a column rendered in every legend. Both the
+  service and the schema MUST enforce the same ceiling, so neither accepts what the other
+  refuses.
+
+#### Scenario: Waterfall legend covers the categories a run used
+
+- **WHEN** a run's spans use categories outside the recommended set
+- **THEN** the waterfall's category legend MUST list every category the run actually used —
+  recommended ones first in their fixed order, the rest in a deterministic order — and MUST
+  NOT list recommended categories the run never used. The time-by-category breakdown MUST
+  cover every category that accumulated a non-zero duration, in that same order; a category
+  whose spans all measured 0ms is omitted there, because a 0% segment renders as nothing and
+  would only make the percentages read as though they did not sum.
 
 #### Scenario: Stable span identity
 

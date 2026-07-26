@@ -13,6 +13,7 @@ import (
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/errs"
 	"github.com/joestump/cairn/internal/sharetype"
+	"github.com/joestump/cairn/internal/trajectory"
 )
 
 func TestRateLimiterTokenBucket(t *testing.T) {
@@ -232,5 +233,44 @@ func TestConsentCSP(t *testing.T) {
 				t.Fatalf("test bug: wantOrigin %q contains a space", tc.wantOrigin)
 			}
 		})
+	}
+}
+
+// TestOrderCategories pins the render order the legend and the time-by-category
+// breakdown share: the recommended categories first in their fixed order (so a
+// legend reads the same across runs), then whatever the agent invented, sorted
+// so the output is deterministic rather than Go map-iteration order. Categories
+// the run never used are dropped — a legend that lists unused colors is noise.
+//
+// Governing: ADR-0009 (open category set), SPEC-0004 REQ "Waterfall legend
+// covers the categories a run used"
+func TestOrderCategories(t *testing.T) {
+	got := orderCategories(map[trajectory.Category]int64{
+		"vibes": 5, "write": 4, "reason": 3, "deploy": 2, "search": 1, "audit": 0,
+	})
+	want := []trajectory.Category{
+		// recommended, in RecommendedCategories order (reason … write, search …)
+		"reason", "write", "search",
+		// the rest, alphabetically
+		"audit", "deploy", "vibes",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("orderCategories = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("orderCategories = %v, want %v", got, want)
+		}
+	}
+
+	// A zero-duration category is still returned: the waterfall draws its spans,
+	// so the legend must still explain its color. (The caller drops it from the
+	// stacked bar, where a 0% segment would be invisible.)
+	if got[3] != "audit" {
+		t.Errorf("a 0ms category must survive ordering for the legend; got %v", got)
+	}
+
+	if len(orderCategories(map[trajectory.Category]int64{})) != 0 {
+		t.Error("an empty run should produce an empty category order, not a default list")
 	}
 }

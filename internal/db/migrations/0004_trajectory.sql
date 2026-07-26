@@ -35,6 +35,11 @@ CREATE TABLE runs (
 -- color legend stays total. There is deliberately NO per-span error/status
 -- field in v1 (SPEC-0004 "v1 Non-Goals Are Absent From the Schema").
 --
+-- SUPERSEDED (issue #5): the closed category enum below is replaced by 0013 with
+-- an open set — non-empty and length-bounded, but otherwise unconstrained. The
+-- DDL here is left as-is because it is the historical schema; read 0013 for the
+-- current constraint.
+--
 -- Output split (SPEC-0004 "Span Output Storage and Content Addressing"):
 --   * small output  -> output_inline holds the text, output_ref_sha256 NULL
 --   * large output  -> output_ref_sha256 references a content-addressed blob,

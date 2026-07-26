@@ -20,46 +20,76 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/errs"
 )
 
-// Category is the closed set of span categories. Keeping it closed keeps the
-// waterfall's color legend and the time-by-category breakdown total
-// (SPEC-0004 "Span Model and Ordered Tree").
+// Category is an OPEN set of span categories: any non-empty string is accepted
+// so agents are never forced to remap their natural vocabulary onto ours
+// (ADR-0009, SPEC-0004 "Non-recommended category accepted"). RecommendedCategories
+// is the subset the waterfall color-maps; everything else renders with a neutral
+// default color and its own text label, so the legend and the time-by-category
+// breakdown still total correctly over whatever an agent actually sent.
 type Category string
 
 const (
-	CategoryReason Category = "reason"
-	CategoryExec   Category = "exec"
-	CategoryRead   Category = "read"
-	CategoryNet    Category = "net"
-	CategoryWrite  Category = "write"
+	CategoryReason  Category = "reason"
+	CategoryExec    Category = "exec"
+	CategoryRead    Category = "read"
+	CategoryNet     Category = "net"
+	CategoryWrite   Category = "write"
+	CategorySearch  Category = "search"
+	CategoryPlan    Category = "plan"
+	CategoryTool    Category = "tool"
+	CategoryAnalyze Category = "analyze"
+	CategoryTest    Category = "test"
+	CategoryFix     Category = "fix"
+	CategoryFail    Category = "fail"
+	CategoryMeta    Category = "meta"
 )
 
-// valid reports whether c is one of the five allowed categories.
-func (c Category) valid() bool {
-	switch c {
-	case CategoryReason, CategoryExec, CategoryRead, CategoryNet, CategoryWrite:
-		return true
-	default:
-		return false
-	}
+// RecommendedCategories is the color-mapped set, in the fixed order the legend
+// and the time-by-category breakdown render them. It is presentation order, not
+// a validation whitelist — prepareSpans accepts categories outside it. The
+// viewer derives its ordering from this one slice so the legend can never drift
+// from the palette (SPEC-0004 "Span Model and Ordered Tree").
+var RecommendedCategories = []Category{
+	CategoryReason, CategoryNet, CategoryExec, CategoryRead, CategoryWrite,
+	CategorySearch, CategoryPlan, CategoryTool, CategoryAnalyze,
+	CategoryTest, CategoryFix, CategoryFail, CategoryMeta,
 }
 
-// toolCapable reports whether a span of this category may carry a tool name. A
-// reasoning turn runs no tool; exec/read/net/write spans do (SPEC-0004: tool is
-// "non-null only for exec/read/net/write spans"). A sub-agent is an ordinary
-// span — typically net-categorized — whose tool is `sub-agent`.
+// MaxCategoryLen bounds an accepted category. The set is open, but the value is
+// unbounded agent-supplied text that lands in a TEXT column and is rendered in
+// every legend, so it needs *some* ceiling; 64 is far above any real vocabulary
+// (SPEC-0004 "Category length bounded").
+const MaxCategoryLen = 64
+
+// valid reports whether c is an acceptable category: any non-empty,
+// non-whitespace-only string within MaxCategoryLen.
+//
+// The ceiling counts RUNES, not bytes, to mean the same thing as the schema's
+// `length(category) <= 64` — Postgres length() counts characters, so a byte
+// count here would reject a 40-character Japanese category the database would
+// happily store. Where the two layers cannot align exactly (Go trims by
+// unicode.IsSpace, the schema by a POSIX \S class), this one is deliberately the
+// stricter: the service refuses first, and the CHECK is only ever a backstop.
+func (c Category) valid() bool {
+	return strings.TrimSpace(string(c)) != "" && utf8.RuneCountInString(string(c)) <= MaxCategoryLen
+}
+
+// toolCapable reports whether a span of this category may carry a tool name.
+// With an open category set the only rule the record still states is that a
+// reasoning turn runs no tool (ADR-0009: `tool` is "null for `reason` spans") —
+// every other category, recommended or not, may carry one, because we cannot
+// know which of an agent's own categories are tool-shaped. A sub-agent is an
+// ordinary span — typically net-categorized — whose tool is `sub-agent`.
 func (c Category) toolCapable() bool {
-	switch c {
-	case CategoryExec, CategoryRead, CategoryNet, CategoryWrite:
-		return true
-	default:
-		return false
-	}
+	return c != CategoryReason
 }
 
 // Status is a run's lifecycle state.
@@ -83,8 +113,10 @@ var (
 	// ErrUnknownParent rejects a span whose parent_span_id is absent from the
 	// run (missing or cyclic), atomically persisting none of the payload.
 	ErrUnknownParent = errs.New(errs.CodeValidation, "trajectory span references an unknown parent span")
-	// ErrUnknownCategory rejects a span whose category is outside the closed set.
-	ErrUnknownCategory = errs.New(errs.CodeValidation, "trajectory span has an unknown category")
+	// ErrEmptyCategory rejects a span whose category is empty, whitespace-only,
+	// or longer than MaxCategoryLen. The set is otherwise open: an unrecognised
+	// category is accepted and rendered neutrally, never rejected.
+	ErrEmptyCategory = errs.New(errs.CodeValidation, "trajectory span has an empty or over-long category")
 	// ErrNotOwner rejects an append or close by a non-owning principal (403).
 	ErrNotOwner = errs.New(errs.CodeForbidden, "only the run owner may modify the run")
 )
@@ -106,7 +138,7 @@ type SpanInput struct {
 	ParentSpanID    string // "" => top-level
 	Category        Category
 	Name            string
-	Tool            string // "" => none; non-empty only for exec/read/net/write
+	Tool            string // "" => none; non-empty on any category except reason
 	Args            json.RawMessage
 	Output          []byte
 	OutputTruncated bool
@@ -217,7 +249,8 @@ type preparedSpan struct {
 //     number of already-persisted children, so appended siblings continue the seq.
 //   - existingIDs is the set of persisted span_ids, for duplicate detection.
 //
-// Categories outside the closed set fail with ErrUnknownCategory; a parent that
+// An empty, whitespace-only, or over-long category fails with ErrEmptyCategory
+// (any other non-empty string is accepted, recommended or not); a parent that
 // resolves to neither a persisted nor a same-batch span (missing or cyclic)
 // fails with ErrUnknownParent. On any error nothing is prepared, so the caller's
 // transaction persists none of the payload (SPEC-0004 "Malformed tree rejected
@@ -236,7 +269,7 @@ func prepareSpans(existingDepth map[string]int, existingChildCount map[string]in
 		}
 		byID[s.SpanID] = s
 		if !s.Category.valid() {
-			return nil, fmt.Errorf("trajectory: span %q category %q: %w", s.SpanID, s.Category, ErrUnknownCategory)
+			return nil, fmt.Errorf("trajectory: span %q category %q: %w", s.SpanID, s.Category, ErrEmptyCategory)
 		}
 		if s.Tool != "" && !s.Category.toolCapable() {
 			return nil, errs.Validationf("trajectory: span %q carries tool %q but category %q takes no tool", s.SpanID, s.Tool, s.Category)
@@ -352,7 +385,7 @@ func computeStats(flat []*Span, tokenCount, wallMS int64) Stats {
 		WallTimeMS:       wallMS,
 		SpanCount:        len(flat),
 		TokenCount:       tokenCount,
-		TimeByCategoryMS: make(map[Category]int64, 5),
+		TimeByCategoryMS: make(map[Category]int64, len(RecommendedCategories)),
 	}
 	for _, s := range flat {
 		if s.Tool != "" {

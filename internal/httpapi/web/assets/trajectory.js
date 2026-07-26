@@ -647,13 +647,21 @@
     // in trajectory.html). A run that opens with literally zero elapsed time
     // won't have the section to update into until the next full page load —
     // an edge case left undone rather than growing the DOM shape live.
+    // Drive the update off the categories the server actually reported, not a
+    // fixed list: the category set is open (ADR-0009), so a hard-coded five
+    // would freeze an agent's own categories at their first-render width for
+    // the rest of a live run. `cat` is untrusted agent content, so it is matched
+    // by walking existing elements' datasets rather than interpolated into a
+    // selector (stream.go "Active content in a span output").
     var catBar = root.querySelector('[data-cat-bar]');
     if (catBar) {
-      ['reason', 'net', 'exec', 'read', 'write'].forEach(function (cat) {
-        var ms = catMs[cat] || 0;
-        var seg = catBar.querySelector('.cat-seg[data-cat="' + cat + '"]');
-        if (seg) seg.dataset.pct = String(clamp(wall > 0 ? (ms / wall * 100) : 0));
-        var legendDur = root.querySelector('.cat-legend li[data-cat="' + cat + '"] .cat-dur');
+      catBar.querySelectorAll('.cat-seg').forEach(function (seg) {
+        var ms = catMs[seg.dataset.cat] || 0;
+        seg.dataset.pct = String(clamp(wall > 0 ? (ms / wall * 100) : 0));
+      });
+      root.querySelectorAll('.cat-legend li').forEach(function (li) {
+        var ms = catMs[li.dataset.cat] || 0;
+        var legendDur = li.querySelector('.cat-dur');
         if (legendDur && ms > 0) legendDur.textContent = secs(ms) + 's';
       });
       layoutCategoryBar(root);
@@ -701,9 +709,21 @@
     if (span.tool) {
       var chip = document.createElement('span'); chip.className = 'tool-chip'; chip.dataset.tool = span.tool; chip.textContent = span.tool;
       summary.appendChild(chip);
-    } else {
+    } else if (span.category === 'reason') {
       var reasonChip = document.createElement('span'); reasonChip.className = 'chip chip-reason'; reasonChip.textContent = 'reason';
       summary.appendChild(reasonChip);
+    } else {
+      // Toolless, but not category `reason` — possible only because the set is
+      // open (ADR-0009). Name the actual category, or the chip contradicts the
+      // waterfall bar and legend entry for this same span. `span.category` is
+      // untrusted agent content, so it goes in by textContent/dataset.
+      var catChip = document.createElement('span'); catChip.className = 'chip chip-cat';
+      catChip.dataset.cat = span.category || '';
+      var catSwatch = document.createElement('span'); catSwatch.className = 'swatch';
+      catSwatch.setAttribute('aria-hidden', 'true');
+      catChip.appendChild(catSwatch);
+      catChip.appendChild(document.createTextNode(span.category || ''));
+      summary.appendChild(catChip);
     }
     var nameEl = document.createElement('span'); nameEl.className = 'turn-name'; nameEl.textContent = span.name || span.span_id;
     summary.appendChild(nameEl);
@@ -852,6 +872,30 @@
     btn.appendChild(label); btn.appendChild(track); li.appendChild(btn);
     btn.addEventListener('click', function () { jumpToSpan(span.span_id, document); });
     wfRows.appendChild(li);
+    ensureLegendEntry(span.category);
+  }
+
+  // The waterfall legend is server-rendered from the categories the run had at
+  // page load. The category set is open (ADR-0009), so a live run can introduce
+  // one the legend has never seen — add it here, or its bar would be the only
+  // colored thing on the page with nothing explaining it (SPEC-0004 "Category is
+  // not color-only"). `cat` is untrusted agent content: it goes in via
+  // textContent/dataset, never innerHTML or a selector string.
+  function ensureLegendEntry(cat) {
+    if (!cat) return;
+    var legend = document.querySelector('[data-wf-legend]');
+    if (!legend) return;
+    var present = false;
+    legend.querySelectorAll('li').forEach(function (li) { if (li.dataset.cat === cat) present = true; });
+    if (present) return;
+    var li = document.createElement('li');
+    li.dataset.cat = cat;
+    var sw = document.createElement('span');
+    sw.className = 'swatch';
+    sw.setAttribute('aria-hidden', 'true');
+    li.appendChild(sw);
+    li.appendChild(document.createTextNode(cat));
+    legend.appendChild(li);
   }
 
   function secs(ms) { return (Math.round((ms || 0) / 100) / 10).toFixed(1); }

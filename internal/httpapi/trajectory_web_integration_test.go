@@ -155,6 +155,89 @@ func TestIntegrationTrajectoryViewerRendersAuditRun(t *testing.T) {
 	}
 }
 
+// TestIntegrationTrajectoryViewerRendersOpenCategorySet is the viewer half of
+// issue #5: the category set is open (ADR-0009), so the waterfall and the RUN
+// panel must render categories nobody designed a color for, and must derive the
+// legend from the run rather than from a fixed list.
+//
+// The neutral color itself lives in CSS (`[data-cat] { --cat: var(--cat-other) }`
+// resolves anything unrecognised), so what is asserted here is the contract the
+// CSS depends on: the category reaches the markup as `data-cat`, its name is
+// present as text so the color is never the only signal, and the legend covers
+// exactly the categories this run used.
+//
+// Governing: ADR-0009 (open category set), SPEC-0004 REQ "Non-recommended
+// category accepted", "Waterfall legend covers the categories a run used"
+func TestIntegrationTrajectoryViewerRendersOpenCategorySet(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+
+	// `search` is recommended-but-new (added by PR #2); `deploy` and `vibes` are
+	// outside the recommended set entirely — the neutral-color path.
+	resp := do(t, http.MethodPost, srv.URL+"/v1/runs", "joe",
+		jsonReader(t, runRequest{Mode: "batch", Title: "open-categories", Prompt: "Ship it.",
+			Model: "claude-sonnet-4.6", StartedAt: fixedRunStart, Spans: []spanRequest{
+				{SpanID: "a", Category: "reason", Name: "thought about it", StartOffsetMS: 0, DurationMS: 1000},
+				{SpanID: "b", Category: "search", Tool: "grep", Name: "looked for callers", StartOffsetMS: 1000, DurationMS: 2000},
+				{SpanID: "c", Category: "deploy", Tool: "kubectl", Name: "rolled it out", StartOffsetMS: 3000, DurationMS: 3000},
+				{SpanID: "d", Category: "vibes", Name: "felt good about it", StartOffsetMS: 6000, DurationMS: 4000},
+			}}), "application/json")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed open-category run = %d, want 201 (the category set is open)", resp.StatusCode)
+	}
+	runID := decodeRun(t, resp).ID
+
+	status, html := getHTML(t, srv.URL+"/run/"+runID)
+	if status != http.StatusOK {
+		t.Fatalf("GET /run/%s = %d, want 200", runID, status)
+	}
+
+	for _, cat := range []string{"reason", "search", "deploy", "vibes"} {
+		if !strings.Contains(html, `data-cat="`+cat+`"`) {
+			t.Errorf("viewer never exposes data-cat=%q, so the CSS cannot color it at all", cat)
+		}
+		// The legend entry carries the name as text (WCAG 1.4.1) — without it an
+		// unrecognised category is a neutral bar with nothing explaining it.
+		if !strings.Contains(html, `<li data-cat="`+cat+`"><span class="swatch" aria-hidden="true"></span>`+cat+`</li>`) {
+			t.Errorf("waterfall legend has no text-labelled entry for %q", cat)
+		}
+	}
+
+	// The legend is derived, not fixed: categories this run never used must not
+	// appear in it, or it advertises colors nothing on the page carries.
+	for _, unused := range []string{"exec", "read", "net", "write"} {
+		if strings.Contains(html, `<li data-cat="`+unused+`">`) {
+			t.Errorf("legend lists %q, a category this run never used", unused)
+		}
+	}
+
+	// A tool on a non-recommended category is accepted and rendered — with an
+	// open set only `reason` refuses one (ADR-0009).
+	if !strings.Contains(html, `data-tool="kubectl"`) {
+		t.Error("a tool on an unrecommended category should still render its chip")
+	}
+
+	// Time-by-category sums over every category, including the invented ones, or
+	// the breakdown silently disagrees with the waterfall it is derived from.
+	for _, frag := range []string{`Time by category`, `data-cat="deploy"`, `data-cat="vibes"`} {
+		if !strings.Contains(html, frag) {
+			t.Errorf("time-by-category breakdown missing %q", frag)
+		}
+	}
+
+	// Span `d` is toolless and category `vibes`. The activity stream lays a
+	// toolless span out as a reasoning turn, which under the CLOSED set was the
+	// same statement as "its category is reason" — it no longer is. The chip must
+	// name the span's own category, or one span is simultaneously labelled
+	// "reason" in the stream and "vibes" in the legend it colour-matches.
+	if !strings.Contains(html, `<span class="chip chip-cat" data-cat="vibes">`) {
+		t.Error("a toolless non-reason span must chip its own category, not the reason chip")
+	}
+	if strings.Count(html, `<span class="chip chip-reason">reason</span>`) != 1 {
+		t.Errorf("chip-reason should appear exactly once — for span `a`, the only genuine reason span; got %d",
+			strings.Count(html, `<span class="chip chip-reason">reason</span>`))
+	}
+}
+
 // TestIntegrationTrajectoryReactionsRender asserts reactions on a turn
 // (trajectory_turn) and a tool call (trajectory_toolcall) — the SPEC-0006
 // trajectory reaction anchors — render as pills with their counts on the

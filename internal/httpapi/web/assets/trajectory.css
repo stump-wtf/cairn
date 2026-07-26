@@ -4,13 +4,51 @@
    pick up the same palette from one place. Dark, JetBrains Mono chrome + IBM
    Plex Sans prose, WCAG 2.1 AA. */
 
-/* ---- Category palette (single source for swatches/bars/markers/legend) ---- */
-.swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--t7); }
-[data-cat="reason"] > .swatch, .swatch[data-cat="reason"] { background: var(--purple); }
-[data-cat="exec"]   > .swatch, .swatch[data-cat="exec"]   { background: var(--green); }
-[data-cat="read"]   > .swatch, .swatch[data-cat="read"]   { background: var(--blue); }
-[data-cat="net"]    > .swatch, .swatch[data-cat="net"]    { background: var(--yellow); }
-[data-cat="write"]  > .swatch, .swatch[data-cat="write"]  { background: var(--pink); }
+/* ---- Category palette (single source for swatches/bars/markers/legend) ----
+   The category set is OPEN (ADR-0009, SPEC-0004 "Non-recommended category
+   accepted"): the thirteen recommended values are color-mapped, and anything an
+   agent invents must still render. So resolution happens exactly once — every
+   [data-cat] element sets a `--cat` custom property, and swatches, waterfall
+   bars, stream markers and the stacked breakdown all paint from `var(--cat)`.
+   Adding a category is one line here, not four scattered rules, and an
+   unrecognised one inherits the neutral default from the bare [data-cat] rule.
+
+   That bare rule is listed FIRST deliberately: `[data-cat]` and
+   `[data-cat="exec"]` have identical specificity, so the named values only win
+   on source order. Do not reorder.
+
+   Color is never the only signal — the legend, the breakdown, the waterfall row
+   labels and the stream rows all carry the category name as text (WCAG 1.4.1,
+   SPEC-0004 "Category is not color-only"), so the neutral default costs a
+   reader nothing but the color cue. */
+:root {
+  --cat-search:  #4FD6E8;  /* cyan     */
+  --cat-plan:    #A98BFF;  /* violet   */
+  --cat-tool:    #3ECFB0;  /* teal     */
+  --cat-analyze: #E37BE3;  /* magenta  */
+  --cat-test:    #A8D65C;  /* lime     */
+  --cat-fix:     #F2914B;  /* orange   */
+  --cat-fail:    #F2647A;  /* coral    */
+  --cat-meta:    #7E8CA0;  /* slate    */
+  --cat-other:   #A0A6AE;  /* neutral default for anything unrecognised */
+}
+[data-cat]            { --cat: var(--cat-other); }
+[data-cat="reason"]   { --cat: var(--purple); }
+[data-cat="net"]      { --cat: var(--yellow); }
+[data-cat="exec"]     { --cat: var(--green); }
+[data-cat="read"]     { --cat: var(--blue); }
+[data-cat="write"]    { --cat: var(--pink); }
+[data-cat="search"]   { --cat: var(--cat-search); }
+[data-cat="plan"]     { --cat: var(--cat-plan); }
+[data-cat="tool"]     { --cat: var(--cat-tool); }
+[data-cat="analyze"]  { --cat: var(--cat-analyze); }
+[data-cat="test"]     { --cat: var(--cat-test); }
+[data-cat="fix"]      { --cat: var(--cat-fix); }
+[data-cat="fail"]     { --cat: var(--cat-fail); }
+[data-cat="meta"]     { --cat: var(--cat-meta); }
+
+.swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px;
+  background: var(--cat, var(--t7)); }
 
 /* ---- Live badge ---- */
 .live-badge { display: inline-flex; align-items: center; gap: 6px; color: var(--green-2);
@@ -66,12 +104,7 @@
 .wf-track { position: relative; height: 15px; border-radius: 3px;
   background-image: repeating-linear-gradient(90deg, transparent 0, transparent calc(25% - 1px), var(--border-3) calc(25% - 1px), var(--border-3) 25%); }
 .wf-bar { position: absolute; top: 2px; height: 11px; border-radius: 3px; left: 0; width: 0;
-  display: inline-flex; align-items: center; }
-.wf-bar[data-cat="reason"] { background: var(--purple); }
-.wf-bar[data-cat="exec"]   { background: var(--green); }
-.wf-bar[data-cat="read"]   { background: var(--blue); }
-.wf-bar[data-cat="net"]    { background: var(--yellow); }
-.wf-bar[data-cat="write"]  { background: var(--pink); }
+  display: inline-flex; align-items: center; background: var(--cat, var(--t7)); }
 .wf-subagent .wf-bar { background: rgba(125,86,244,.22); border: 1px solid var(--purple); }
 .wf-dur { position: absolute; left: calc(100% + 6px); color: var(--t7); font: 400 9px var(--mono); white-space: nowrap; }
 .wf-bar-rt .wf-dur { left: auto; right: calc(100% + 6px); }
@@ -88,12 +121,14 @@
 .marker { display: inline-flex; align-items: center; justify-content: center; }
 .marker-user { width: 22px; height: 22px; border-radius: 6px; background: #4A5FE0; color: #fff; font: 600 11px var(--mono); }
 .marker-assistant { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, #E85D3B, #D8843E); }
-.marker-reason { width: 12px; height: 12px; margin-top: 4px; border-radius: 999px; background: var(--page); border: 2px solid var(--purple); }
-.marker-tool { width: 12px; height: 12px; margin-top: 4px; border-radius: 999px; background: var(--page); border: 2px solid var(--t6); }
-.marker-tool[data-cat="exec"] { border-color: var(--green); }
-.marker-tool[data-cat="read"] { border-color: var(--blue); }
-.marker-tool[data-cat="net"]  { border-color: var(--yellow); }
-.marker-tool[data-cat="write"]{ border-color: var(--pink); }
+/* A toolless span is laid out as a reasoning turn, but its CATEGORY need not be
+   `reason` once the set is open (ADR-0009) — so the marker paints from `--cat`
+   like every other category-bearing element. `[data-cat="reason"]` resolves
+   `--cat` to `--purple`, so an actual reason span is unchanged; a toolless
+   `vibes` span now agrees with the neutral swatch its legend entry carries
+   instead of borrowing reason's purple. */
+.marker-reason { width: 12px; height: 12px; margin-top: 4px; border-radius: 999px; background: var(--page); border: 2px solid var(--cat, var(--purple)); }
+.marker-tool { width: 12px; height: 12px; margin-top: 4px; border-radius: 999px; background: var(--page); border: 2px solid var(--cat, var(--t6)); }
 .marker-sub-agent { width: 12px; height: 12px; margin-top: 4px; border-radius: 3px; background: var(--page); border: 2px solid var(--purple); }
 
 .turn-body { min-width: 0; }
@@ -108,6 +143,14 @@
 
 .chip { font: 600 9px var(--mono); padding: 2px 6px; border-radius: 4px; }
 .chip-reason { color: var(--purple-2); background: rgba(125,86,244,.12); }
+/* The chip on a toolless span whose category is not `reason`. It carries the
+   category NAME as text and a `--cat` swatch rather than tinting the text
+   itself: an open set means the color is arbitrary agent-driven text, and there
+   is no way to guarantee AA contrast against the well for a value we have never
+   seen. The neutral foreground is fixed and legible; the color rides in the
+   swatch, exactly as it does in the legend. */
+.chip-cat { display: inline-flex; align-items: center; gap: 5px;
+  color: var(--t4); background: rgba(255,255,255,.05); }
 
 .turn-collapse { border-radius: 8px; }
 .turn-summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none;
@@ -213,12 +256,7 @@
 .stat-label { color: var(--t7); font: 400 9.5px var(--mono); }
 
 .cat-bar { display: flex; height: 8px; border-radius: 5px; overflow: hidden; background: var(--well-2); }
-.cat-seg { height: 100%; width: 0; }
-.cat-seg[data-cat="reason"] { background: var(--purple); }
-.cat-seg[data-cat="exec"]   { background: var(--green); }
-.cat-seg[data-cat="read"]   { background: var(--blue); }
-.cat-seg[data-cat="net"]    { background: var(--yellow); }
-.cat-seg[data-cat="write"]  { background: var(--pink); }
+.cat-seg { height: 100%; width: 0; background: var(--cat, var(--t7)); }
 .cat-legend { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .cat-legend li { display: flex; align-items: center; gap: 8px; color: var(--t4); font: 400 11px var(--mono); }
 .cat-legend .cat-dur { margin-left: auto; color: var(--t6); }
