@@ -439,7 +439,7 @@ func TestHumanizeHelpers(t *testing.T) {
 		in   time.Duration
 		want string
 	}{
-		{30 * time.Second, "just now ago"},
+		{30 * time.Second, "just now"}, // never "just now ago"
 		{5 * time.Minute, "5m ago"},
 		{3 * time.Hour, "3h ago"},
 		{50 * time.Hour, "2d ago"},
@@ -454,6 +454,25 @@ func TestHumanizeHelpers(t *testing.T) {
 	}
 	if got := humanizeBytes(512); got != "512 B" {
 		t.Errorf("humanizeBytes(512) = %q, want 512 B", got)
+	}
+
+	// humanizeUntil frames the same magnitudes in the future tense. The
+	// sub-minute case is the one humanizeDuration used to hand back as the
+	// past-tense "just now", rendering the nonsense "in just now".
+	untilCases := []struct {
+		in   time.Duration
+		want string
+	}{
+		{30 * time.Second, "in <1m"},
+		{5 * time.Minute, "in 5m"},
+		{50 * time.Hour, "in 2d"},
+	}
+	for _, c := range untilCases {
+		// Add a beat so truncation does not drop the value into the bucket
+		// below while the test is running.
+		if got := humanizeUntil(now.Add(c.in + time.Second)); got != c.want {
+			t.Errorf("humanizeUntil(+%v) = %q, want %q", c.in, got, c.want)
+		}
 	}
 	if got := humanizeUntil(now.Add(-time.Hour)); got != "expired" {
 		t.Errorf("humanizeUntil(past) = %q, want expired", got)

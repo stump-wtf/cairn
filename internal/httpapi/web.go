@@ -772,13 +772,19 @@ type errPageView struct {
 // --- humanize helpers ------------------------------------------------------
 
 // humanizeSince renders a past time as a compact relative age ("just now",
-// "2h ago", "3d ago"), matching the design's provenance line.
+// "2h ago", "3d ago"), matching the design's provenance line. The " ago" suffix
+// belongs to this helper — templates render the value verbatim — and the
+// sub-minute bucket becomes "just now", which already reads as past tense and
+// so is returned bare rather than as the ungrammatical "just now ago".
 func humanizeSince(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	d := time.Since(t)
-	return humanizeDuration(d) + " ago"
+	rel := humanizeDuration(time.Since(t))
+	if rel == subMinute {
+		return "just now"
+	}
+	return rel + " ago"
 }
 
 // humanizeUntil renders a future time as "in Nd"; a past/zero time renders
@@ -809,10 +815,20 @@ func secondsUntil(t time.Time) int64 {
 	return int64(d.Seconds())
 }
 
+// subMinute is the bucket humanizeDuration returns below one minute. It is a
+// magnitude, not a phrase, so both callers can frame it in their own tense —
+// humanizeSince swaps it for "just now", humanizeUntil renders "in <1m".
+const subMinute = "<1m"
+
+// humanizeDuration renders a duration as a compact magnitude and nothing else:
+// no tense, no framing. The words around it belong to the caller (humanizeSince
+// appends " ago", humanizeUntil prepends "in "), which is why the sub-minute
+// bucket is "<1m" rather than a past-tense phrase that only ever fit one of
+// them and left the other rendering "in just now".
 func humanizeDuration(d time.Duration) string {
 	switch {
 	case d < time.Minute:
-		return "just now"
+		return subMinute
 	case d < time.Hour:
 		return itoa(int(d.Minutes())) + "m"
 	case d < 24*time.Hour:

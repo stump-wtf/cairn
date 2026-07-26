@@ -99,7 +99,7 @@
         {{if .Provenance.OnBehalfOf}}<span class="obo">on behalf of {{.Provenance.OnBehalfOf}}</span>{{end}}
         <span class="prov-model">{{.Model}}</span>
       </div>
-      <p class="prov-captured"><span class="prov-dot" aria-hidden="true"></span>via {{.Provenance.Channel}} · captured {{.Provenance.Captured}}</p>
+      <p class="prov-captured"><span class="prov-dot" aria-hidden="true"></span>{{.Provenance.Channel}} · captured {{.Provenance.Captured}}</p>
       {{if .ExpiresIn}}<p class="ttl-chip-panel">⧗ expires <span data-provenance-expires>{{.ExpiresIn}}</span></p>{{end}}
     </section>
 
