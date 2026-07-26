@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sync"
 )
 
@@ -35,23 +34,23 @@ type FileProgress struct {
 // to call from any goroutine and is the intended receiver.
 type ProgressFunc func(FileProgress)
 
-// dedupPaths resolves each path to an absolute form and drops later
-// duplicates, preserving first-seen order and the caller's original
-// (possibly relative) string — the same de-duplication contract as
-// OpenBundleFiles (SPEC-0008 "Oversize and Duplicate File Handling": "cairn
-// add a.log a.log ... MUST NOT upload a.log twice").
+// dedupPaths drops later paths that name a file an earlier path already
+// named, preserving first-seen order and the caller's original (possibly
+// relative) string — the same de-duplication contract as OpenBundleFiles
+// (SPEC-0008 "Oversize and Duplicate File Handling": "cairn add a.log a.log
+// ... MUST NOT upload a.log twice"). Identity, not the path string, is what
+// makes two arguments duplicates; see seenFiles.
 func dedupPaths(paths []string) ([]string, error) {
-	seen := make(map[string]bool, len(paths))
+	var seen seenFiles
 	out := make([]string, 0, len(paths))
 	for _, p := range paths {
-		abs, err := filepath.Abs(p)
+		fresh, err := seen.add(p)
 		if err != nil {
-			return nil, fmt.Errorf("resolve %s: %w", p, err)
+			return nil, err
 		}
-		if seen[abs] {
+		if !fresh {
 			continue
 		}
-		seen[abs] = true
 		out = append(out, p)
 	}
 	return out, nil

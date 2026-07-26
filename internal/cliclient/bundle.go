@@ -92,6 +92,9 @@ func (c *Client) CreateBundle(ctx context.Context, files []BundleFile, opts Crea
 // a directory, or a duplicate path is a client-side usage error — the CLI
 // checks these locally before ever contacting the server (SPEC-0008
 // "Oversize and Duplicate File Handling").
+//
+// Duplicates are judged on file identity, not on the path string — see
+// seenFiles for why the two are not the same question.
 func OpenBundleFiles(paths []string) (files []BundleFile, closeAll func(), err error) {
 	opened := make([]*os.File, 0, len(paths))
 	closeAll = func() {
@@ -100,17 +103,16 @@ func OpenBundleFiles(paths []string) (files []BundleFile, closeAll func(), err e
 		}
 	}
 
-	seen := make(map[string]bool, len(paths))
+	var seen seenFiles
 	for _, p := range paths {
-		abs, err := filepath.Abs(p)
+		fresh, err := seen.add(p)
 		if err != nil {
 			closeAll()
-			return nil, nil, fmt.Errorf("resolve %s: %w", p, err)
+			return nil, nil, err
 		}
-		if seen[abs] {
+		if !fresh {
 			continue // de-duplicated, not uploaded twice
 		}
-		seen[abs] = true
 
 		f, err := os.Open(p)
 		if err != nil {
