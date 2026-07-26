@@ -1,0 +1,252 @@
+---
+# The single end-to-end pipeline. One run, one dependency graph:
+#
+#   secret scan → lint → test → build → ai review
+#                                 │       (PRs only)
+#                                 └─ main only ─→ image → deploy
+#                                                       ↘ Gitea Pages
+#
+# Replaces four workflows that raced each other — .gitea/workflows/{ci.yml,
+# build.yaml,gitleaks.yaml} plus aibot.yml's PR-open path. Each fired
+# independently on `pull_request`, so a PR started an AI review, a secret scan
+# and a test run at the same instant, and nothing could depend on anything else.
+# The .github/ copies stay for the GitHub mirror; Gitea reads only this file and
+# the narrowed aibot.yml beside it.
+#
+# Ordering is deliberate, not cosmetic:
+#   * Secrets first — a leaked credential is the one finding that must not wait
+#     behind a compile.
+#   * AI review LAST, behind the build. As its own workflow it fired the moment
+#     a PR opened and spent tokens reviewing code that had not been shown to
+#     compile or pass tests. Now it only runs on a green build.
+#   * Everything after `main-only` is fenced to a push on the default branch, so
+#     a PR (including from a fork) can build the image and the docs site but can
+#     never publish or deploy one.
+#
+# The lint/test/build and secret-scan stages live in stump.wtf/ci and are shared,
+# not copied. See https://gitea.stump.rocks/stump.wtf/ci for why they are
+# reusable rather than scoped, and stump.wtf/msgbrowse's pipeline.yaml for the
+# same graph in another repo.
+#
+# WHAT IS DELIBERATELY *NOT* SHARED: the image job below. stump.wtf/ci's
+# go-service.yaml can publish an image, but its publish path is the simple one —
+# single-arch, no vulnerability scan. cairn's own job carries a Trivy scan that
+# fails closed on HIGH/CRITICAL, docker/metadata-action tagging and a registry
+# build cache. Adopting the shared publish would trade a security gate for
+# uniformity, so `publish_image` stays false and this job is kept, exactly as
+# stump.wtf/reduit keeps its own richer publish job for the same reason.
+name: pipeline
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ${{ gitea.workflow }}-${{ gitea.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---- 1. secret scan ------------------------------------------------------
+  secrets:
+    uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/gitleaks.yaml@main
+    secrets: inherit
+
+  # ---- 2-4. lint + test + build -------------------------------------------
+  build:
+    needs: [secrets]
+    uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/go-service.yaml@main
+    with:
+      # cairn's gate is `make ci` (fmt-check + vet + build + test-race), not the
+      # `make check` these repos usually use. The integration tests self-skip
+      # when CAIRN_TEST_DATABASE_URL is unset, so this passes without standing
+      # up Postgres/MinIO on the runner. This is strictly stronger than the
+      # `go test ./...` the old ci.yml ran: that one never enabled the race
+      # detector, on a codebase whose streaming ingest is concurrency-sensitive.
+      lint_cmd: make ci
+      # `make ci` already runs `go build ./...`; a second build_cmd would only
+      # recompile the same packages.
+      build_cmd: ""
+      # REQUIRED: `make ci` runs `go test -race`, and the race detector needs
+      # cgo. The shared workflow pins CGO_ENABLED=0 by default, which would fail
+      # this repo's gate outright.
+      cgo_enabled: "1"
+      # False on purpose — see the header. The image job below is cairn's own.
+      publish_image: false
+    secrets: inherit
+
+  # ---- 5. ai review (PRs only, and only once the build is green) -----------
+  # aibot.yml still exists beside this file, narrowed to the conversation
+  # events (issue_comment, review, review_comment) so a maintainer can keep
+  # talking to the bot on a PR. Opening a PR is handled here instead, so the
+  # review waits for a build rather than racing it, and the two triggers cannot
+  # both fire on the same event.
+  review:
+    needs: [build]
+    if: ${{ github.event_name == 'pull_request' }}
+    uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/aibot.yaml@main
+    secrets: inherit
+
+  # ---- 6. merge-to-main gate ----------------------------------------------
+  # A single explicit gate rather than repeating the same `if:` on three jobs.
+  # Downstream stages just `needs: [main-only]`, so the fence is stated once and
+  # cannot drift between them.
+  main-only:
+    needs: [build]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate
+        run: echo "on main with a green build — publishing" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---- 7. container image --------------------------------------------------
+  # Moved verbatim from build.yaml, with its `on: push` replaced by the gate
+  # above. `gitea.stump.rocks/stump.wtf/cairn:latest` is the tag cloud01's
+  # ansible service config pulls, so this job is the thing that actually moves
+  # production.
+  #
+  # Every step is still guarded on REGISTRY_TOKEN being set rather than the job
+  # being guarded as a whole: secrets are not available in a job-level `if:`, so
+  # the env-var indirection is the only way to make an unconfigured repo skip
+  # quietly instead of failing red.
+  image:
+    name: build + scan + push
+    needs: [main-only]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REG: ${{ secrets.REGISTRY_TOKEN }}
+    steps:
+      - if: ${{ env.REG != '' }}
+        uses: actions/checkout@v4
+
+      - if: ${{ env.REG != '' }}
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - if: ${{ env.REG != '' }}
+        name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: gitea.stump.rocks/stump.wtf/cairn
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
+
+      - if: ${{ env.REG != '' }}
+        name: Log in to Gitea container registry
+        uses: docker/login-action@v3
+        with:
+          registry: gitea.stump.rocks
+          username: joestump-agent
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - if: ${{ env.REG != '' }}
+        name: Build amd64 image for Trivy scan
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: gitea.stump.rocks/stump.wtf/cairn:scan-${{ gitea.run_id }}
+          cache-from: type=registry,ref=gitea.stump.rocks/stump.wtf/cairn:buildcache
+
+      - if: ${{ env.REG != '' }}
+        name: Trivy image scan
+        uses: docker://aquasec/trivy:latest
+        with:
+          args: image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --format table gitea.stump.rocks/stump.wtf/cairn:scan-${{ gitea.run_id }}
+
+      - if: ${{ env.REG != '' }}
+        name: Build and push (amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=gitea.stump.rocks/stump.wtf/cairn:buildcache
+          cache-to: type=registry,ref=gitea.stump.rocks/stump.wtf/cairn:buildcache,mode=max
+
+  # ---- 8. deploy -----------------------------------------------------------
+  # Moved verbatim from build.yaml. Note this is the ONE place cairn departs
+  # from ADR-0002's ansible-pull model, and it is opt-in: inert until the repo
+  # variable DEPLOY_ON_MERGE is set to true.
+  deploy:
+    name: deploy to cloud01 (ansible)
+    needs: [image]
+    if: ${{ vars.DEPLOY_ON_MERGE == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      ANSIBLE_FORCE_COLOR: 'true'
+      DOCKER_TIMEOUT: 600
+      # AppRole rather than a static token. A static VAULT_TOKEN in a repo secret
+      # cannot re-authenticate: it dies at max-TTL and takes every subsequent
+      # deploy with it, silently — the 2026-07-01 vault-agent OMG, repeated in CI.
+      # The runner logs in per run and exports a short-lived token scoped to
+      # secret/data/cloud01/* only (policy deploy-cloud01). Requires
+      # ansible-runner >= v2.
+      VAULT_ROLE_ID: ${{ secrets.VAULT_ROLE_ID }}
+      VAULT_SECRET_ID: ${{ secrets.VAULT_SECRET_ID }}
+    steps:
+      - name: Checkout stumpcloud/ansible (playbooks + inventory)
+        uses: actions/checkout@v4
+        with:
+          repository: stumpcloud/ansible
+          ref: main
+          token: ${{ secrets.GIT_AUTH_TOKEN }}
+
+      - name: Set up SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Log in to Gitea (pull the ansible-runner action image)
+        uses: docker/login-action@v3
+        with:
+          registry: gitea.stump.rocks
+          username: joestump-agent
+          password: ${{ secrets.GIT_AUTH_TOKEN }}
+
+      - name: Deploy Cairn to cloud01
+        uses: https://gitea.stump.rocks/stumpcloud/ansible-runner@v2
+        with:
+          playbook: playbooks/services/cairn.yaml
+          inventory: gva.yaml
+          ssh_hosts: cloud01.stump.rocks
+          ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+  # ---- 9. Gitea Pages ------------------------------------------------------
+  # The Docusaurus site under website/, published to
+  # https://stump.wtf.pages.stump.rocks/cairn/. New here: the .github/ copy uses
+  # actions/deploy-pages, which has no Gitea equivalent, so the site has only
+  # ever been published to GitHub Pages. Publishing goes through
+  # stumpcloud/garage-pages-deploy instead.
+  #
+  # Inert until the repo variable PUBLISH_PAGES is set to true, following the
+  # DEPLOY_ON_MERGE idiom above: the deploy needs PAGES_ACCESS_KEY_ID /
+  # PAGES_SECRET_ACCESS_KEY, and a job that goes red on a repo that has not been
+  # given them would make every merge to main look broken.
+  pages:
+    needs: [main-only]
+    if: ${{ vars.PUBLISH_PAGES == 'true' }}
+    uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/static-site.yaml@main
+    with:
+      working_directory: website
+      source_dir: website/build
+    secrets: inherit

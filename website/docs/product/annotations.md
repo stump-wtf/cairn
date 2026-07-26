@@ -1,13 +1,14 @@
 ---
 title: Annotations
-sidebar_position: 4
+sidebar_position: 3
+slug: /annotations
 ---
 
 # Reactions & comments
 
 One annotation subsystem serves every share type, with **type-specific anchors**
-(see [ADR-0006](./decisions/ADR-0006.md)
-and [SPEC-0006](./specs/annotations/index.md)).
+(see [ADR-0006](../decisions/ADR-0006.md)
+and [SPEC-0006](../specs/annotations/index.md)).
 
 ## Reactions
 

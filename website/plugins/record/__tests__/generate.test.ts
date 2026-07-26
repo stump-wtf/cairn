@@ -215,6 +215,21 @@ describe('generateRecord over the real record', () => {
     assert.equal(category.label, `Decisions · ${data.counts.decisions}`);
   });
 
+  // Governing: ADR-0014, SPEC-0010 REQ "Record Navigation"
+  // "One sidebar spans the record" is a claim about what a reader on a
+  // specification page can see, and theme-classic omits a collapsed category's
+  // children from the DOM entirely rather than hiding them. If either top-level
+  // group is ever staged collapsed the scenario silently stops holding, so
+  // assert the flag here rather than trust the rendered output to be spot-checked.
+  it('stages the two record groups expanded, so each lists its children everywhere', async () => {
+    for (const dir of [paths.stagedDecisionsDir, paths.stagedSpecsDir]) {
+      const category = JSON.parse(
+        await fs.readFile(path.join(dir, '_category_.json'), 'utf8'),
+      );
+      assert.equal(category.collapsed, false);
+    }
+  });
+
   it('is idempotent: a second run emits identical bytes', async () => {
     const first = await fs.readFile(paths.recordJson, 'utf8');
     await generateRecord({siteDir});

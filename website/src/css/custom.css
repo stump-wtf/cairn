@@ -521,17 +521,12 @@ a > code { color: var(--cairn-ink-accent); }
 .navbar__title { font-weight: 600; letter-spacing: -0.01em; }
 .navbar__link, .menu__link { font-size: 0.94rem; }
 
-/* GitHub icon in the navbar */
-.navbar__item--github span { display: none; }
-.navbar__item--github::before {
-  content: '';
-  width: 20px;
-  height: 20px;
-  display: inline-block;
-  background-color: currentColor;
-  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 .5C5.7.5.5 5.7.5 12a11.5 11.5 0 0 0 7.9 10.9c.6.1.8-.2.8-.5v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7 0-.7 0-.7 1.2 0 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5A11.5 11.5 0 0 0 23.5 12C23.5 5.7 18.3.5 12 .5Z'/></svg>") center/contain no-repeat;
-  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 .5C5.7.5.5 5.7.5 12a11.5 11.5 0 0 0 7.9 10.9c.6.1.8-.2.8-.5v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7 0-.7 0-.7 1.2 0 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5A11.5 11.5 0 0 0 23.5 12C23.5 5.7 18.3.5 12 .5Z'/></svg>") center/contain no-repeat;
-}
+/* The GitHub icon that used to hang off `.navbar__item--github` is gone, and so
+   is the rule that painted it — SPEC-0010 REQ "No Repository Links". There is no
+   navbar item for it to style, because there is no forge link on this site: the
+   full record renders on the page, so there is nothing a "view source" would
+   usefully point at. Left as dead CSS it would be a standing invitation to put
+   the item back. */
 
 .button { font-weight: 600; letter-spacing: -0.01em; }
 
@@ -555,6 +550,128 @@ table { display: table; width: 100%; }
   -webkit-mask: var(--cairn-caret-icon) center / 1.25rem 1.25rem no-repeat;
   mask: var(--cairn-caret-icon) center / 1.25rem 1.25rem no-repeat;
 }
+
+/* --------------------------------------------------------------------------
+   7a. Doc-page chrome — SPEC-0010 REQ "Site Chrome and Layout".
+
+   The four surfaces the requirement names — the sticky navbar, the persistent
+   left rail, the on-this-page column, the breadcrumb and prev/next footer —
+   are all stock theme-classic and all present without a single swizzle. That
+   is the point: `Navbar`, `DocSidebarItem`, `TOC` and `DocItem/Footer` are
+   `wrap: unsafe` AND `eject: unsafe`, so a breaking change to any of them can
+   land in a MINOR Docusaurus release. Everything below is therefore surface,
+   rhythm and state over markup the theme keeps owning, and the theme-override
+   budget ADR-0014 sets — at most one wrap, no ejects — is spent at ZERO.
+
+   Two structural facts this leans on rather than re-implements: the navbar is
+   sticky because theme-classic always gives it `navbar--fixed-top`, and the
+   rail is sticky because `DocRoot/Layout/Sidebar` puts `position: sticky` on
+   its viewport. Neither is restated here; restating them is how a stylesheet
+   comes to own a behaviour it did not write.
+   -------------------------------------------------------------------------- */
+
+/* The rail reads as chrome rather than as page, so it takes the elevated
+   surface and lets the content column keep the page ground. Desktop only —
+   below 997px theme-classic replaces it with the navbar's mobile drawer. */
+@media (min-width: 997px) {
+  .theme-doc-sidebar-container {
+    background: var(--cairn-elevated);
+  }
+}
+
+/* A top-level group label — "Product", "Decisions · 14", "Specifications · 10" —
+   names a section of the record. It is a label, not a sentence, so it takes the
+   uppercase-mono label role (SPEC-0010 REQ "Typographic Roles"). Scoped to
+   level 1 deliberately: a level-2 category label is a specification's own title
+   ("SPEC-0004 · Trajectory Share"), which is prose and stays in the sans face.
+
+   The count in a record group's label is written into the staged
+   `_category_.json` by the pipeline. Nothing here counts anything, and nothing
+   here may: a number typed into a stylesheet is the same defect as a number
+   typed into an index table. */
+.theme-doc-sidebar-item-category-level-1 > .menu__list-item-collapsible > .menu__link {
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-label-size);
+  font-weight: var(--cairn-label-weight);
+  letter-spacing: var(--cairn-label-tracking);
+  text-transform: uppercase;
+  color: var(--cairn-muted);
+}
+
+/* Current-page state, keyed off `aria-current` rather than off the theme's
+   `menu__link--active` class. Both are emitted by `DocSidebarItem/Link`, but
+   `--active` is also set on an EXPANDED category, so keying on it would light
+   up two rows. Binding the visual state to the accessible state also means the
+   two cannot drift: if `aria-current` ever stops being emitted, the highlight
+   disappears with it rather than silently outliving it. */
+.menu__link[aria-current='page'] {
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 0 var(--ifm-color-primary);
+}
+
+/* The breadcrumb is a route — `docs / decisions / ADR-0009` — which is machine
+   content, so it is mono and quiet. --cairn-muted measures 7.55:1 on the ink
+   ground and 6.14:1 on paper, so the small size is safe (SPEC-0010 REQ
+   "Contrast"); the current document takes the full text colour because it is
+   the one item that is not a link. */
+.theme-doc-breadcrumbs { margin-bottom: 1.5rem; }
+.breadcrumbs__link {
+  font-family: var(--cairn-font-mono);
+  font-size: 0.78rem;
+  letter-spacing: var(--cairn-mono-tracking);
+  color: var(--cairn-muted);
+  background: transparent;
+}
+.breadcrumbs__item:not(.breadcrumbs__item--active) > .breadcrumbs__link:hover {
+  background: var(--cairn-surface-2);
+  color: var(--cairn-text);
+}
+.breadcrumbs__item--active > .breadcrumbs__link {
+  background: transparent;
+  color: var(--cairn-text);
+}
+
+/* The on-this-page column. theme-classic renders the desktop TOC as a bare
+   list with no heading of its own — the "On this page" string only exists in
+   the mobile collapsible — so the label is supplied here. Generated content
+   rather than a wrap: `TOC` is `wrap: unsafe`, and a heading is not worth
+   signing up for a breaking change in a minor release. */
+.theme-doc-toc-desktop::before {
+  content: 'On this page';
+  display: block;
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-label-size);
+  font-weight: var(--cairn-label-weight);
+  letter-spacing: var(--cairn-label-tracking);
+  text-transform: uppercase;
+  color: var(--cairn-muted);
+  padding: 0 0 0.6rem var(--ifm-spacing-horizontal);
+  margin-bottom: 0.4rem;
+  border-bottom: 1px solid var(--cairn-border);
+}
+.table-of-contents__link--active {
+  font-weight: 600;
+}
+
+/* Prev/next. Infima gives these a bordered card and reads its edge off
+   --ifm-color-emphasis-300, which section 4 already points at the ramp; what is
+   missing is the surface, and a sublabel that reads as the label it is. */
+.pagination-nav__link {
+  background: var(--cairn-elevated);
+  border-color: var(--cairn-border);
+}
+.pagination-nav__link:hover {
+  border-color: var(--ifm-color-primary);
+}
+.pagination-nav__sublabel {
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-label-size);
+  font-weight: var(--cairn-label-weight);
+  letter-spacing: var(--cairn-label-tracking);
+  text-transform: uppercase;
+  color: var(--cairn-muted);
+}
+.pagination-nav__label { font-weight: 600; }
 
 /*
  * `themeConfig.footer.style: 'dark'` puts `footer--dark` on the footer, and
@@ -638,5 +755,241 @@ table { display: table; width: 100%; }
 .chip-fail    { --chip-accent: var(--cat-fail); }
 .chip-meta    { --chip-accent: var(--cat-meta); }
 .chip-other   { --chip-accent: var(--cat-other); }
+
+/* ==========================================================================
+   9. The record's generated surfaces.
+
+      Governing: ADR-0014, SPEC-0010 REQ "Generated Specs Tree",
+                 SPEC-0010 REQ "Derived Status, Dates, and Counts",
+                 SPEC-0010 REQ "Non-Colour Encoding"
+
+      `src/components/record/` is deliberately structure-only: semantic
+      elements plus stable `cairn-record-*` hooks, no stylesheet and no colour
+      of its own. This section is the whole visual design of those components,
+      which is why it can exist here rather than as a CSS module — the record's
+      surfaces are chrome, and chrome belongs to the token layer.
+
+      Every meaning on these surfaces is carried by text first. A status badge
+      prints its status, a scenario step prints WHEN or THEN, and an RFC 2119
+      keyword is `<strong>` before it is a colour: with colour removed the
+      whole record still reads — SPEC-0010 REQ "Non-Colour Encoding".
+   ========================================================================== */
+
+/* -- The specs index: one card per capability directory ------------------- */
+
+/*
+ * The cards are a `ul`, so the marker has to go explicitly. Two rules here
+ * cost the list its semantics in Safari/VoiceOver: `list-style: none` just
+ * below, and the flex column on `.cairn-record-card`, which takes the `li` off
+ * `display: list-item`. Both are wanted, so the semantics go back on the
+ * element rather than being worked around in CSS — `indexes.tsx` gives the
+ * `ul` an explicit `role="list"`. Nothing in this section is a mitigation for
+ * that; removing the role reintroduces the bug.
+ *
+ * `min(100%, 22rem)` rather than a bare `22rem`: `auto-fill` with a track
+ * minimum wider than the container overflows the page on a phone, and the
+ * body must never scroll horizontally.
+ */
+.cairn-record-cards {
+  list-style: none;
+  margin: 2rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: 1rem;
+}
+
+.cairn-record-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1.15rem 1.25rem 1.05rem;
+  border: 1px solid var(--cairn-border);
+  border-radius: var(--ifm-global-radius);
+  background: var(--cairn-elevated);
+}
+
+.cairn-record-card > h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.35;
+}
+/* The whole title is the link; the id inside it is a `code` element and keeps
+   the pinned machine surface it gets in section 6. */
+.cairn-record-card > h3 > a {
+  color: var(--ifm-heading-color);
+  text-decoration: none;
+}
+.cairn-record-card > h3 > a:hover {
+  color: var(--ifm-link-color);
+  text-decoration: none;
+}
+
+/* The derived one-line summary. Prose, so sans — SPEC-0010 REQ "Typographic
+   Roles".
+
+   The `:not()` is load-bearing, not defensive: the meta row below is also a `p`
+   child, and `.cairn-record-card > p` outranks a lone class selector, so
+   without it this rule would win the font-size and colour of the meta row and
+   quietly undo its mono label role. */
+.cairn-record-card > p:not(.cairn-record-card__meta) {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: var(--cairn-muted);
+}
+
+/*
+ * The meta row: status, the DERIVED requirement and scenario counts, and the
+ * link to the paired design document. Every number here is read from the data
+ * module — SPEC-0010 REQ "Derived Status, Dates, and Counts" forbids a literal
+ * count anywhere in site source — so the row is machine content and takes the
+ * mono role. The label role's own tokens are used rather than restated values,
+ * so it cannot drift from `.cairn-label`.
+ */
+.cairn-record-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  /* `auto` pushes the row to the bottom of the card, so a two-line summary and
+     a four-line one still align their meta rows across the grid. */
+  margin: auto 0 0;
+  padding-top: 0.35rem;
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-label-size);
+  letter-spacing: var(--cairn-mono-tracking);
+  color: var(--cairn-muted);
+}
+
+/* -- Status badges -------------------------------------------------------- */
+
+/*
+ * A badge renders its accent AS TEXT, so like `.chip` in section 8 it pins its
+ * ground to the ink ramp in both colour modes and composites its own 12 % tint
+ * over it. That is the same tint the token check already re-measures for all
+ * fourteen accents (worst --cat-meta at 4.65:1), so no badge can fall under
+ * 4.5:1 — SPEC-0010 REQ "Category Accents Are Dark-Ground Text Colours".
+ *
+ * The accents come from the section 5 semantic aliases, NOT from `--cat-*`
+ * directly: a status is not a span category, and routing through the aliases
+ * keeps that distinction visible. The default is the neutral alias, so a
+ * status the pipeline's enum grows later renders readably instead of
+ * unstyled.
+ *
+ * The badge prints its status. Colour is never the only carrier — SPEC-0010
+ * REQ "Derived Status, Dates, and Counts", REQ "Non-Colour Encoding".
+ */
+.cairn-record-status {
+  --status-accent: var(--cairn-accent-neutral);
+  --status-ground: var(--cairn-ink-100);
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-family: var(--cairn-font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  color: var(--status-accent);
+  background: color-mix(in srgb, var(--status-accent) 12%, var(--status-ground));
+  border: 1px solid color-mix(in srgb, var(--status-accent) 40%, var(--status-ground));
+}
+.cairn-record-status[data-status='accepted']   { --status-accent: var(--cairn-accent-success); }
+.cairn-record-status[data-status='proposed']   { --status-accent: var(--cairn-accent-info); }
+.cairn-record-status[data-status='draft']      { --status-accent: var(--cairn-accent-warning); }
+.cairn-record-status[data-status='rejected']   { --status-accent: var(--cairn-accent-danger); }
+.cairn-record-status[data-status='deprecated'] { --status-accent: var(--cairn-accent-danger); }
+.cairn-record-status[data-status='superseded'] { --status-accent: var(--cairn-accent-neutral); }
+
+/* -- Requirement blocks --------------------------------------------------- */
+
+/*
+ * A `### Requirement:` section renders as a discrete block — SPEC-0010 REQ
+ * "Record Prose to Structured Components". The heading stays the section's own
+ * first child, so the anchor and the on-this-page entry are the ones
+ * Docusaurus generated; this only gives the section an edge.
+ *
+ * A specification carries twenty-odd of these, so the treatment is a rule and
+ * a tint rather than a card: twenty stacked cards read as noise, and the
+ * scenarios nested inside need a level of their own below this one.
+ */
+.cairn-record-requirement {
+  margin: 1.75rem 0;
+  padding: 1.1rem 1.25rem 0.9rem;
+  border: 1px solid var(--cairn-border);
+  border-left: 3px solid var(--ifm-color-primary);
+  border-radius: var(--ifm-global-radius);
+  background: var(--cairn-elevated);
+}
+.cairn-record-requirement > h3 {
+  margin-top: 0;
+  margin-bottom: 0.7rem;
+  font-size: 1.15rem;
+}
+.cairn-record-requirement > :last-child {
+  margin-bottom: 0;
+}
+
+/* -- Scenario blocks ------------------------------------------------------ */
+
+.cairn-record-scenario {
+  margin: 1rem 0 0;
+  padding: 0.15rem 0 0.15rem 0.9rem;
+  border-left: 2px solid var(--cairn-border);
+}
+.cairn-record-scenario > h4 {
+  margin-bottom: 0.4rem;
+  font-size: 0.98rem;
+}
+.cairn-record-scenario > :last-child {
+  margin-bottom: 0;
+}
+
+/*
+ * The WHEN/THEN pair. The grid lives on the CONTAINER and each step is
+ * `display: contents`, so every label in a scenario shares one column and the
+ * clauses line up — a step that owned its own grid would size its label column
+ * independently and the block would ragged-edge down the page.
+ */
+.cairn-record-scenario-steps {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 0.9rem;
+  row-gap: 0.4rem;
+  align-items: baseline;
+}
+.cairn-record-scenario-step {
+  display: contents;
+}
+
+/* WHEN / THEN is a keyword, not a sentence: mono uppercase label role, its
+   four values taken from the label tokens rather than restated. */
+.cairn-record-scenario-step__label {
+  font-family: var(--cairn-font-mono);
+  font-size: var(--cairn-label-size);
+  font-weight: var(--cairn-label-weight);
+  letter-spacing: var(--cairn-label-tracking);
+  text-transform: uppercase;
+  color: var(--cairn-muted);
+}
+.cairn-record-scenario-step__body > :last-child {
+  margin-bottom: 0;
+}
+
+/* -- RFC 2119 keywords ---------------------------------------------------- */
+
+/*
+ * The keyword is already a `<strong>`, so it is distinguished by WEIGHT before
+ * any colour applies and stays identifiable with colour removed — SPEC-0010
+ * REQ "Non-Colour Encoding". The accent and the tracking are the second
+ * signal, not the only one. `--cairn-accent-label` is the mode-following
+ * emphasis token: 5.52:1 on the light ramp, 9.52:1 on the dark one.
+ */
+.cairn-record-rfc2119 {
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--cairn-accent-label);
+}
 
 ::selection { background: color-mix(in srgb, var(--ifm-color-primary) 40%, transparent); }

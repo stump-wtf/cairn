@@ -1,0 +1,21 @@
+---
+title: HTTP reference
+sidebar_label: HTTP reference
+sidebar_position: 6
+description: Cairn's HTTP and streaming surface, derived row by row from the endpoint tables the capability specifications already carry.
+---
+
+{/*
+  Governing: ADR-0014, SPEC-0010 REQ "Derived HTTP Reference Page"
+
+  A shell, not a page. It names no endpoint, no method and no auth posture: a
+  hand-maintained copy of the API surface is the exact defect ADR-0014 exists to
+  kill, and SPEC-0010 says to drop this page rather than keep one. Every row
+  below is read out of a specification's own endpoint table at build time.
+*/}
+
+import {HttpReference} from '@site/src/components/reference/HttpReference';
+
+# HTTP reference
+
+<HttpReference />

@@ -99,11 +99,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 22, not 20, and this job did not previously build on 20 at all: the
-      # record pipeline's entry points are TypeScript run directly by `node`
-      # (`npm run generate`, and the test files), and unflagged type stripping
-      # only exists from Node 22.18. website/package.json `engines` has said
-      # `^22.18.0 || >=24` since the pipeline landed; this job contradicted it.
+      # 22 rather than 20, matching website/package.json `engines` and the deploy
+      # workflow. The record pipeline's entry points are TypeScript executed
+      # directly by `node` (`npm run generate`, and the plugin's own test files),
+      # and unflagged type stripping only exists from 22.18.0. On 20 both the
+      # typecheck step and the suite below die with ERR_UNKNOWN_FILE_EXTENSION.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -113,7 +113,12 @@ jobs:
       - name: install
         run: npm ci
 
-      - name: unit tests
+      # The whole suite, not just the token guard. The link guards are the
+      # enforcement mechanism behind SPEC-0010 REQ "No Repository Links" and REQ
+      # "Link and Anchor Integrity", and a guard whose own tests never run in CI
+      # can start passing vacuously — break the attribute scanner and the build
+      # still goes green while no longer looking at anything.
+      - name: tests
         run: npm test
 
       - name: typecheck

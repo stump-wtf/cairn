@@ -18,6 +18,8 @@ import {
   literaliseRawHtml,
   parseRecordMarkdown,
 } from './mdast.ts';
+import {collectBadgeCodes} from './badges.ts';
+import {collectEndpointSections} from './endpoints.ts';
 import type {AuthoredEdgeKind, ParsedRecord, RecordStatus} from './types.ts';
 import {ADR_STATUSES} from './types.ts';
 import {repoRelative, type RecordPaths} from './paths.ts';
@@ -237,6 +239,11 @@ export async function parseRecordFile({
     );
   }
   const summary = await deriveSummary(tree);
+  // Read from the same transformed tree the anchors came from, so an endpoint
+  // section's deep link and the heading Docusaurus emits cannot disagree.
+  const endpointSections = await collectEndpointSections(tree);
+  // Governing: ADR-0014, SPEC-0010 REQ "Derived Design-Language Page"
+  const badgeCodes = await collectBadgeCodes(tree);
 
   return {
     id,
@@ -248,6 +255,8 @@ export async function parseRecordFile({
     authored,
     requirements,
     scenarioCount,
+    endpointSections,
+    badgeCodes,
     absPath,
     sourcePath,
     body,
