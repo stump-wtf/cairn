@@ -1,6 +1,7 @@
 ---
 title: Share types
-sidebar_position: 2
+sidebar_position: 1
+slug: /share-types
 ---
 
 # Share types
@@ -9,7 +10,7 @@ A share type is the *kind* of artifact. It decides three things: the **viewer** 
 renders the body, the **metadata panel** on the right, and the **annotation anchors**
 you can react to or comment on. The set is **extensible** — trajectories were added
 as a new type without disturbing the others (see
-[ADR-0002](./decisions/ADR-0002.md)).
+[ADR-0002](../decisions/ADR-0002.md)).
 
 ## <span class="chip chip-read">MD</span> Markdown
 
@@ -50,7 +51,7 @@ A **live** requestbin. Point an endpoint (an HTTP ingress URL plus
 highlighted JSON and a status mix, and to agents over MCP as the same stream.
 Requests are **reactable but not comment-threaded** — discussion moves to the
 artifacts they produce. See
-[ADR-0010](./decisions/ADR-0010.md).
+[ADR-0010](../decisions/ADR-0010.md).
 
 ## <span class="chip chip-reason">TRJ</span> Trajectory
 
@@ -73,8 +74,8 @@ artifacts they produce. See
   and a **time-by-category** breakdown.
 - React on any turn or tool call; select text or use the `＋` picker to comment.
 
-See [ADR-0009](./decisions/ADR-0009.md)
-and [SPEC-0004](./specs/trajectory-share/index.md).
+See [ADR-0009](../decisions/ADR-0009.md)
+and [SPEC-0004](../specs/trajectory-share/index.md).
 
 :::note Not in v1
 Token-cost lane on the waterfall, run-vs-run diff, and errored-run rendering are
