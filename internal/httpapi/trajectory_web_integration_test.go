@@ -238,6 +238,27 @@ func TestIntegrationTrajectoryViewerRendersOpenCategorySet(t *testing.T) {
 	}
 }
 
+// TestIntegrationTrajectoryProvenanceLineReadsCleanly pins the PROVENANCE
+// panel's captured line against two doubled-word regressions: the "via" prefix
+// belongs to the artifact.Channel value ("via API"), never to the template, and
+// the " ago" suffix belongs to humanizeSince, which suppresses it for the
+// already-past-tense "just now". A freshly ingested run therefore reads
+// "via API · captured just now".
+func TestIntegrationTrajectoryProvenanceLineReadsCleanly(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+	runID := seedAuditRun(t, srv.URL)
+
+	_, html := getHTML(t, srv.URL+"/run/"+runID)
+	if !strings.Contains(html, "via API · captured just now") {
+		t.Error("provenance line should read `via API · captured just now`")
+	}
+	for _, bad := range []string{"via via", "just now ago"} {
+		if strings.Contains(html, bad) {
+			t.Errorf("provenance line should not contain %q", bad)
+		}
+	}
+}
+
 // TestIntegrationTrajectoryReactionsRender asserts reactions on a turn
 // (trajectory_turn) and a tool call (trajectory_toolcall) — the SPEC-0006
 // trajectory reaction anchors — render as pills with their counts on the

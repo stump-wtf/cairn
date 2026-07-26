@@ -772,13 +772,19 @@ type errPageView struct {
 // --- humanize helpers ------------------------------------------------------
 
 // humanizeSince renders a past time as a compact relative age ("just now",
-// "2h ago", "3d ago"), matching the design's provenance line.
+// "2h ago", "3d ago"), matching the design's provenance line. The " ago" suffix
+// belongs to this helper — templates render the value verbatim — and "just now"
+// already reads as past tense, so it is returned bare rather than as the
+// ungrammatical "just now ago".
 func humanizeSince(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	d := time.Since(t)
-	return humanizeDuration(d) + " ago"
+	rel := humanizeDuration(time.Since(t))
+	if rel == justNow {
+		return rel
+	}
+	return rel + " ago"
 }
 
 // humanizeUntil renders a future time as "in Nd"; a past/zero time renders
@@ -809,10 +815,14 @@ func secondsUntil(t time.Time) int64 {
 	return int64(d.Seconds())
 }
 
+// justNow is the sub-minute bucket humanizeDuration returns; humanizeSince
+// keys on it to suppress its " ago" suffix.
+const justNow = "just now"
+
 func humanizeDuration(d time.Duration) string {
 	switch {
 	case d < time.Minute:
-		return "just now"
+		return justNow
 	case d < time.Hour:
 		return itoa(int(d.Minutes())) + "m"
 	case d < 24*time.Hour:

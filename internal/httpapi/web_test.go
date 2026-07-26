@@ -439,7 +439,7 @@ func TestHumanizeHelpers(t *testing.T) {
 		in   time.Duration
 		want string
 	}{
-		{30 * time.Second, "just now ago"},
+		{30 * time.Second, "just now"}, // never "just now ago"
 		{5 * time.Minute, "5m ago"},
 		{3 * time.Hour, "3h ago"},
 		{50 * time.Hour, "2d ago"},
