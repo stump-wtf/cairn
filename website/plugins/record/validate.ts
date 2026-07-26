@@ -13,6 +13,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import {findSecrets} from '../../scripts/scan-bundle.mjs';
 import {authoredEdges} from './graph.ts';
 import {RecordError} from './parse.ts';
 import {repoRelative, type RecordPaths} from './paths.ts';
@@ -144,6 +145,37 @@ export async function assertStagedCoverage({
       path.join(paths.stagedSpecsDir, capability, 'index.md'),
     );
   }
+}
+
+/**
+ * Governing: ADR-0014, SPEC-0010 REQ "Deployment Least Privilege"
+ *
+ * *"No credential, token, or private host name MAY appear in the built bundle or
+ * IN THE DERIVED DATA MODULE."* The bundle half is a `postBuild` scan; this is
+ * the other half, and it lives here because the data module is derived from
+ * front-matter and headings the record's authors control, so the moment to catch
+ * something leaking into it is while deriving it — in the dev server, naming the
+ * record it came from — and not after a build.
+ *
+ * The patterns are the deploy scan's, imported rather than restated: two lists
+ * of what counts as a secret would drift, and the one that drifted would be the
+ * one that mattered.
+ */
+export function assertNoSecretsInData(data: RecordData): void {
+  const serialised = JSON.stringify(data, null, 2);
+  const hits = findSecrets(serialised);
+  if (hits.length === 0) {
+    return;
+  }
+  throw new RecordError(
+    'derived record data module',
+    `${hits.length} value${hits.length === 1 ? '' : 's'} that must not be published: ` +
+      hits
+        .map((hit) => `${hit.label} \`${hit.match.slice(0, 48)}\``)
+        .join(', ') +
+      `. The data module carries only what the site renders — SPEC-0010 REQ ` +
+      `"Deployment Least Privilege".`,
+  );
 }
 
 async function assertStagedFile(

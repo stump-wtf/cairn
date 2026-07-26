@@ -74,11 +74,22 @@ jobs:
       - name: test (race)
         run: go test -race ./...
 
-  # The token-layer guard is a source-level check that runs at Docusaurus config
-  # load, so building the site here is what makes it fire BEFORE merge rather
-  # than after. SPEC-0010 REQ "Build and Deployment" owns the full trigger shape
-  # (record paths, deploy-on-record-change); this is the minimum that stops a
-  # pull request from landing a hardcoded colour or a recoloured category.
+  # Governing: ADR-0014, SPEC-0010 REQ "Build and Deployment"
+  #
+  # This job is what makes the pipeline's guards fire BEFORE merge. The token
+  # guard, the front-matter and referential-integrity checks, the hardcoded-count
+  # check and the first-party asset check all throw at Docusaurus config load, so
+  # they fire on any command that loads the config; the bundle scan and the CSP
+  # seal are postBuild, so only a FULL BUILD exercises them. Hence `npm run
+  # build` rather than a lint.
+  #
+  # It has no `paths:` filter, and that is deliberate rather than an omission.
+  # The site is generated from `docs/adrs/` and `docs/openspec/specs/`, so a pull
+  # request that touches only a record file can break the site build; REQ "Build
+  # and Deployment" requires CI to fail on that pull request rather than after
+  # merge. The workflow-level `on:` above already covers every pull request and
+  # every push to main, which is a superset of the three paths the requirement
+  # names.
   website:
     name: Website
     runs-on: ubuntu-latest
@@ -113,6 +124,8 @@ jobs:
       - name: typecheck
         run: npm run typecheck
 
-      # Fails on any token-layer violation: the check throws at config load.
+      # Fails on a token-layer violation, a broken record, a hardcoded count, a
+      # third-party asset, or a credential in the bundle. Every one of those
+      # throws out of the build rather than warning.
       - name: build
         run: npm run build

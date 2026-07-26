@@ -18,14 +18,101 @@
  * styles (admonitions, pagination, tables, blockquotes, code blocks, the
  * navbar search input) resolve through this file instead of Infima's defaults.
  *
- * NOT done here, deliberately: the two families below are still fetched from
- * fonts.googleapis.com at page load. Self-hosting them is SPEC-0010 REQ
- * "First-Party Asset Loading" and belongs to its own change. Likewise there is
- * no `prefers-reduced-motion` guard and no focus styling in this file — those
- * are SPEC-0010's Accessibility requirements and are owned elsewhere.
+ * The two families are SELF-HOSTED — see the @font-face block below. Nothing on
+ * this site reaches a third-party host at page load: SPEC-0010 REQ "First-Party
+ * Asset Loading".
+ *
+ * NOT done here, deliberately: there is no `prefers-reduced-motion` guard and no
+ * focus styling in this file — those are SPEC-0010's Accessibility requirements
+ * and are owned elsewhere.
  */
 
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+/* ==========================================================================
+   0. Web fonts — first-party, subset, self-hosted.
+      Governing: ADR-0014, SPEC-0010 REQ "First-Party Asset Loading"
+
+      These six faces replace a single `@import url(fonts.googleapis.com…)`.
+      That import cost every reader a DNS lookup, a TLS handshake and an IP +
+      user-agent disclosure to a third party before the first paint of every
+      page, and it made the site's typography unavailable whenever that host
+      was.
+
+      The binaries are the ones Google Fonts was already serving to that import,
+      committed under `src/css/fonts/`. Both families ship as VARIABLE fonts —
+      one file per family per subset, carrying an `fvar` weight axis — which is
+      why four requested weights arrived as four identical files and why the
+      roman faces below declare a `400 700` RANGE rather than four fixed weights
+      over four copies of the same bytes. The italic is static: Google has no
+      variable italic for this family, so it is declared at 400 and heavier
+      italic synthesises, exactly as it did before this change. Six files, 172 KB
+      on disk; a typical English page fetches two of them.
+
+      Referenced through a RELATIVE url() rather than an absolute `/fonts/…`
+      path, so the bundler emits and content-hashes them and the site's `baseUrl`
+      (`/cairn/`) is applied for us — a root-absolute path would 404 under a
+      project-site base path.
+
+      `unicode-range` is kept exactly as Google served it, so a browser fetches
+      the `latin-ext` face only for a page that actually contains one of its
+      characters, and `font-display: swap` keeps first paint on the fallback
+      stack declared in `--cairn-font-sans` / `--cairn-font-mono` rather than on
+      invisible text.
+
+      This block lives in the token definition rather than in a `fonts.css`
+      beside it because `scripts/check-tokens.mjs` forbids any file under `src/`
+      OTHER than this one from naming a font family directly. Splitting it out
+      would need that guard loosened, and a guard with a hole in it is worse than
+      a long file.
+   ========================================================================== */
+
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('./fonts/ibm-plex-sans-variable-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('./fonts/ibm-plex-sans-variable-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/ibm-plex-sans-italic-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/ibm-plex-sans-italic-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('./fonts/jetbrains-mono-variable-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('./fonts/jetbrains-mono-variable-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
 
 /* ==========================================================================
    1. Category accent tokens — ADR-0009's recommended set plus the neutral
