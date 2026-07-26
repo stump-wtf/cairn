@@ -157,7 +157,7 @@
   letter-spacing: -0.02em;
   /* Mode-following, not a pinned ink step: the ordinal sits on
      --cairn-elevated, which follows the mode, so its foreground has to as
-     well. --cairn-muted measures 7.06:1 there in dark and 7.55:1 in light. */
+     well. --cairn-muted measures 7.06:1 there in dark and 5.69:1 in light. */
   color: var(--cairn-muted);
 }
 .stepTitle {
@@ -215,6 +215,20 @@
 .typeCard:hover {
   transform: translateY(-2px);
   border-color: color-mix(in srgb, var(--accent) 55%, var(--cairn-border));
+}
+/*
+ * Governing: ADR-0014, SPEC-0010 REQ "WCAG 2.1 AA & Semantics", scenario
+ * "Reduced motion honoured".
+ *
+ * The blanket guard in the token layer damps transition DURATION, which cannot
+ * undo a transform — damped, the card jumps 2px instead of gliding 2px. So the
+ * movement is dropped here, in the stylesheet that introduces it, the same way
+ * HomepageFeatures drops its tile lift. The hover keeps every non-motion
+ * affordance: the accent border still changes.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .typeCard { transition: none; }
+  .typeCard:hover { transform: none; }
 }
 /* The trajectory card is the flagship type and spans two columns where there
    are two to span. */
