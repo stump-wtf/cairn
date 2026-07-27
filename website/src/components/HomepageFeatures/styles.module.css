@@ -152,6 +152,18 @@
 .cat_fix     { --accent: var(--cat-fix); }
 .cat_fail    { --accent: var(--cat-fail); }
 .cat_meta    { --accent: var(--cat-meta); }
+/* Workflow-phase categories (ADR-0009). */
+.cat_research       { --accent: var(--cat-research); }
+.cat_implementation { --accent: var(--cat-implementation); }
+.cat_review         { --accent: var(--cat-review); }
+.cat_testing        { --accent: var(--cat-testing); }
+.cat_debug          { --accent: var(--cat-debug); }
+.cat_build          { --accent: var(--cat-build); }
+.cat_docs           { --accent: var(--cat-docs); }
+.cat_delivery       { --accent: var(--cat-delivery); }
+.cat_deploy         { --accent: var(--cat-deploy); }
+.cat_wait           { --accent: var(--cat-wait); }
+
 .cat_mono    { --accent: var(--cat-other); }
 .cat_other   { --accent: var(--cat-other); }
 

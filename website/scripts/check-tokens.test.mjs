@@ -15,15 +15,17 @@
 
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {cpSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync} from 'node:fs';
+import {cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {adr0009Categories} from './check-tokens.mjs';
 
 const SCRIPTS = fileURLToPath(new URL('.', import.meta.url));
 const WEBSITE = join(SCRIPTS, '..');
 const CHECKER = join(SCRIPTS, 'check-tokens.mjs');
+const REPO_ROOT = join(WEBSITE, '..');
 
 /** Copy the real src/ tree into a scratch website root and hand back its paths. */
 function fixture() {
@@ -321,4 +323,59 @@ test('--root without a directory reports an error rather than crashing', () => {
   assert.equal(r.status, 2);
   assert.match(r.stdout + r.stderr, /--root needs a directory/);
   assert.doesNotMatch(r.stdout + r.stderr, /TypeError/);
+});
+
+/* ------------------------------------------------- ADR-0009 category parsing */
+
+/** Write a throwaway repo holding just an ADR-0009 with the given body. */
+function adrRepo(body) {
+  const repo = mkdtempSync(join(tmpdir(), 'cairn-adr-'));
+  mkdirSync(join(repo, 'docs', 'adrs'), {recursive: true});
+  writeFileSync(join(repo, 'docs', 'adrs', 'ADR-0009-span-model.md'), body);
+  return repo;
+}
+
+const OPS = '`reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`';
+const PHASES = '`research · implementation · review · testing · debug · build · docs · delivery · deploy · wait`';
+
+test('ADR-0009 parsing returns the union of both recommended vocabularies', () => {
+  const names = adr0009Categories(adrRepo(`# ADR-0009\n\nBy operation kind, ${OPS}, or by workflow\nphase, ${PHASES}.\n`));
+  // Neither vocabulary is a subset of the other, so both must survive: taking
+  // only the longest list is what broke the build when phases were added.
+  assert.ok(names.includes('reason'), 'operation-kind names missing');
+  assert.ok(names.includes('research'), 'workflow-phase names missing');
+  assert.equal(names.length, 23);
+  assert.equal(new Set(names).size, names.length, 'names must be de-duplicated');
+});
+
+test('ADR-0009 parsing ignores a quoted subset of a vocabulary', () => {
+  // The ADR quotes the original five in its consequences. That list adds no
+  // name and must not be mistaken for a third vocabulary.
+  const withSubset = adr0009Categories(
+    adrRepo(`# ADR-0009\n\n${OPS} and ${PHASES}.\n\nThe original five were \`reason · exec · read · net · write\`.\n`),
+  );
+  const without = adr0009Categories(adrRepo(`# ADR-0009\n\n${OPS} and ${PHASES}.\n`));
+  assert.deepEqual(withSubset.sort(), without.sort());
+});
+
+test('ADR-0009 parsing tolerates the same vocabulary stated twice', () => {
+  // The real ADR states the operation-kind set in both its decision drivers
+  // and its span-schema section. Equal-length lists are both maximal, so the
+  // union must still de-duplicate rather than double-count.
+  const names = adr0009Categories(adrRepo(`# ADR-0009\n\n${OPS}\n\nrestated: ${OPS}\n`));
+  assert.equal(names.length, 13);
+});
+
+test('an ADR with no category list fails loudly rather than yielding nothing', () => {
+  assert.throws(() => adr0009Categories(adrRepo('# ADR-0009\n\nNo lists here.\n')), /drifted/);
+});
+
+test('every category the real ADR-0009 names has a shipped accent', () => {
+  // The cross-check that replaced the old subset rule: this is what now catches
+  // a mistyped category name, so it gets a test of its own.
+  const names = adr0009Categories(REPO_ROOT);
+  const css = readFileSync(join(WEBSITE, 'src', 'css', 'custom.css'), 'utf8');
+  for (const name of names) {
+    assert.match(css, new RegExp(`--cat-${name}\\s*:`), `no --cat-${name} token for ADR-0009 category "${name}"`);
+  }
 });
