@@ -108,6 +108,35 @@ land). The MCP surface MUST provide **no** write path into a stream in v1.
 - **WHEN** an agent attempts to push data into a webhook or trajectory stream over MCP
 - **THEN** the server MUST reject it — streams are read-only to agents in v1
 
+### Requirement: MCP Prompt Surface
+
+Every write tool's input schema MUST describe each field, not merely type it: an agent
+sees the schema and nothing else, so a bare field is one it must guess at. Where a field
+has a recommended vocabulary, the schema MUST name that vocabulary; where a field drives
+what a human ultimately sees, the schema MUST say so.
+
+Beyond per-field description, the MCP server MUST expose at least one **prompt** carrying
+the workflow-level guidance a schema structurally cannot: how to decompose work into
+spans, which of several vocabularies to commit to, and which fields make the resulting
+artifact legible rather than merely valid. The trajectory surface MUST expose `run_capture`
+for this purpose. Prompt guidance MUST be derived from the same source of truth the
+server enforces, so it cannot drift from the implementation it describes.
+
+#### Scenario: Agent discovers capture guidance
+
+- **WHEN** an MCP client lists prompts
+- **THEN** `run_capture` MUST be present with a description, and fetching it MUST return guidance naming both category vocabularies and stating that a span's `output` is what a reader sees on expand
+
+#### Scenario: Span schema names the category vocabulary
+
+- **WHEN** an agent inspects the `run_create` input schema
+- **THEN** the `category` field's description MUST enumerate every recommended category, so an agent never has to invent a vocabulary to fill the field
+
+#### Scenario: Guidance cannot drift from the palette
+
+- **WHEN** a category is added to or removed from the recommended set
+- **THEN** the advertised vocabulary MUST change with it, rather than silently continuing to advertise a stale list
+
 ### Requirement: OAuth 2.1 Authorization-Code + PKCE
 
 Authorization MUST use the OAuth 2.1 authorization-code grant with **PKCE

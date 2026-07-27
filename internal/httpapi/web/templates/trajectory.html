@@ -200,6 +200,13 @@ keyboard-operable; the summary is the clickable header. */}}
         <span class="turn-meta">{{.Meta}}</span>
       </summary>
       <div class="turn-detail">
+        {{/* args before output, the order SPEC-0004 REQ "Activity Stream" names
+        them in and the order they happened: what the span was called with, then
+        what it produced. */}}
+        {{if .Args}}
+        <div class="output-strip">args</div>
+        <pre class="args-pre">{{.Args}}</pre>
+        {{end}}
         {{if .Spilled}}
         <div class="output-strip">stdout · truncated</div>
         <pre class="output-pre" data-output-url="{{.OutputURL}}"><button type="button" class="output-load" data-output-load>Load output ↧</button></pre>
@@ -207,6 +214,10 @@ keyboard-operable; the summary is the clickable header. */}}
         <div class="output-strip">stdout</div>
         <pre class="output-pre">{{.Body}}</pre>
         {{end}}
+        {{/* Nothing to reveal at all: say so, rather than opening onto blank
+        space. The cause is always a thin capture upstream — the span arrived
+        with no args and no output — so the copy points at the ingest. */}}
+        {{if .Empty}}<p class="detail-empty">No output captured for this span — the run sent a name and a duration only. Populate <code>output</code> when ingesting to show the turn's reasoning or stdout here.</p>{{end}}
         {{if .Artifact}}
         <a class="artifact-card" href="{{.Artifact.URL}}">
           <span class="artifact-chip">MD</span>

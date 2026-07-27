@@ -52,10 +52,13 @@ by the trajectory registry entry (below).
 A trajectory MUST store its run as an ordered tree of spans in PostgreSQL keyed by
 `(run_id, span_id)`. Each span MUST carry: a `span_id` stable for the life of the run; a
 `parent_span_id` (null for top-level spans); a derived `depth` and a monotonic sibling
-`seq`; a `category` string drawn from the recommended set
-`reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`
-(any non-empty string of at most 64 characters is accepted; values outside the recommended
-set are rendered with a neutral default color); a
+`seq`; a `category` string drawn from either recommended vocabulary — by operation kind,
+`reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`,
+or by workflow phase,
+`research · implementation · review · testing · debug · build · docs · delivery · deploy · wait`
+(any non-empty string of at most 64 characters is accepted; a value outside both
+vocabularies MUST still render, in a color derived deterministically from the category
+name so one agent's own vocabulary reads as a palette rather than a single flat color); a
 human-readable `name`; a `start_offset_ms` relative to the run's `started_at` and a
 `duration_ms`; an optional `tool` name (null on a `reason` span, permitted on any other
 category — with an open set the server cannot know which of an agent's own categories are
@@ -77,8 +80,14 @@ assigned, because it is the anchor target for ADR-0006 annotations.
 
 #### Scenario: Non-recommended category accepted
 
-- **WHEN** an ingested span declares a `category` not in the recommended set (e.g. `investigation`, `review`, `deploy`)
-- **THEN** the server MUST accept the span and persist it; the waterfall MUST render it with a neutral default color and a text label carrying the category name
+- **WHEN** an ingested span declares a `category` in neither recommended vocabulary (e.g. `investigation`, `yak-shaving`)
+- **THEN** the server MUST accept the span and persist it; the waterfall MUST render it with a text label carrying the category name, and a color derived from that name
+
+#### Scenario: Two unrecognised categories are told apart
+
+- **WHEN** one run uses two distinct categories that are in neither recommended vocabulary
+- **THEN** each MUST render in a color derived from its own name, and the two MUST be either clearly distinct or identical — never merely similar, which would read as a meaningful difference that is not there
+- **AND** the same category MUST resolve to the same color on every render of every run, so a reader learns it once
 
 #### Scenario: Category length bounded
 
@@ -233,6 +242,17 @@ link to the artifact it produced. Large outputs MUST load lazily on expand.
 
 - **WHEN** a user expands a `bash npm ls --all` tool call
 - **THEN** the stream MUST show its `args` and (lazily loading if referenced) its `output`, e.g. `exit 0`
+
+#### Scenario: Span carrying args but no output
+
+- **WHEN** a span was ingested with structured `args` and no `output`
+- **THEN** expanding it MUST still show those `args` — a span's `args` are rendered whenever present, not only alongside an `output`
+- **AND** an `args` value that is absent, null, or an empty object/array MUST render nothing at all, rather than an empty labelled block
+
+#### Scenario: Span with nothing to reveal
+
+- **WHEN** a span was ingested with no `args`, no `output`, no produced artifact, and no children
+- **THEN** expanding it MUST show an explicit statement that no output was captured for it, naming `output` as the field to populate — never an empty expanded region, which reads as a broken viewer rather than as a thin capture
 
 ### Requirement: Trajectory Annotation Anchors
 

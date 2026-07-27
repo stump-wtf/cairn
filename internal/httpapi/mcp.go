@@ -266,6 +266,23 @@ func (s *Server) newMCPServer() *mcp.Server {
 				"state. Requires artifacts:write.",
 		}, s.mcpAppendRunSpans)
 
+		// The run_capture prompt (SPEC-0007 REQ "MCP Prompt Surface"). Tool
+		// schemas can describe a field but not a workflow: they cannot say
+		// "one span per turn", "don't collapse the whole run into five spans",
+		// or "pick one category vocabulary and stay in it". Those are the
+		// judgments that separate a legible trajectory from a grey bar chart,
+		// and prompts are the surface MCP gives us to state them.
+		srv.AddPrompt(&mcp.Prompt{
+			Name:        "run_capture",
+			Title:       "Capture a trajectory run",
+			Description: "How to record an agent run as a Cairn trajectory that reads well: span granularity, the category vocabulary, and what to put in each span's output.",
+			Arguments: []*mcp.PromptArgument{{
+				Name:        "task",
+				Title:       "Task",
+				Description: "What the run was about, woven into the guidance. Optional.",
+			}},
+		}, s.mcpRunCapturePrompt)
+
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
 			URITemplate: "mcp://cairn/run/{id}",
 			Name:        "trajectory-run",
@@ -789,6 +806,77 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 	return nil, out, nil
 }
 
+// --- run_capture prompt -------------------------------------------------------
+
+// catList renders a category vocabulary as a comma-separated list for the
+// prompt text, derived from the trajectory package's own slices so the prompt
+// can never advertise a vocabulary the palette and the schema don't share.
+func catList(cats []trajectory.Category) string {
+	names := make([]string, 0, len(cats))
+	for _, c := range cats {
+		names = append(names, string(c))
+	}
+	return strings.Join(names, ", ")
+}
+
+// mcpRunCapturePrompt serves the `run_capture` prompt: the workflow-level
+// guidance a per-field schema cannot carry.
+//
+// It exists because of a real failure. A client ingested a twelve-span run with
+// invented categories and no `output` on any span, and the viewer rendered it
+// exactly as ingested: a uniformly grey waterfall of rows that expanded onto
+// nothing. Every individual field had been filled in plausibly. What was
+// missing was the shape of a good capture, which is what this prompt states.
+//
+// The text is deliberately prescriptive and ordered by how badly each mistake
+// degrades the render — output first, since omitting it is both the most common
+// error and the one that empties the page.
+//
+// Governing: ADR-0004 (MCP as a first-class surface), ADR-0009 (open category
+// set), SPEC-0004 (Trajectory Share), SPEC-0007 REQ "MCP Prompt Surface".
+func (s *Server) mcpRunCapturePrompt(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	task := ""
+	if req != nil && req.Params != nil {
+		task = req.Params.Arguments["task"]
+	}
+	intro := "You are recording an agent run to Cairn as a trajectory, using the run_create tool (or run_create followed by run_append_spans for a run you capture as it happens)."
+	if strings.TrimSpace(task) != "" {
+		intro += " The run to capture is: " + task
+	}
+
+	body := intro + `
+
+A trajectory is read by a human scrubbing a waterfall and expanding the turns that look interesting. Optimize for that reader.
+
+**Put the content in ` + "`output`" + `.** This is the single most important thing, and the most commonly skipped. Every span's ` + "`output`" + ` is what a reader sees when they expand it. For a toolless turn, that is the reasoning/thinking text for that step. For a tool call, it is the stdout or the result. A span sent with only a name and a duration renders as an empty row — the viewer says so explicitly, because there is nothing else it can show. Never pre-truncate: large outputs are stored as blobs and fetched lazily.
+
+**One span per turn, not per phase.** Aim for the granularity you actually worked at — a span for each reasoning turn and each tool call. Collapsing an hour of work into five summary spans throws away exactly the detail the viewer exists to show. A long run with a hundred spans reads fine; a five-span run reads like a summary someone already wrote.
+
+**Pick one category vocabulary and stay in it for the whole run.** Mixing the two reads as noise, because they answer different questions.
+  - Operation kind — what you did in the span: ` + catList(trajectory.OperationCategories) + `
+  - Workflow phase — where in the job the span sat: ` + catList(trajectory.PhaseCategories) + `
+
+A category outside both is accepted and rendered with a color hashed from its name, so your own vocabulary works. Prefer the lists above when they fit: they are hand-colored, and phases that mean the same thing as an operation share its hue.
+
+**Set ` + "`tool`" + ` on tool calls, and leave it off reasoning turns.** A ` + "`reason`" + ` span must not carry a tool. Use the literal ` + "`sub-agent`" + ` for a nested agent excursion, and give its children that span's ` + "`span_id`" + ` as their ` + "`parent_span_id`" + ` — they then render nested under it.
+
+**Send ` + "`args`" + ` on tool calls.** They render above the output on expand, and they are usually what makes a tool call legible ("which file?", "which command?"). Omit them on spans that take no arguments.
+
+**Get the timing right.** ` + "`start_offset_ms`" + ` is measured from the run's ` + "`started_at`" + `, and ` + "`duration_ms`" + ` is real elapsed time. The waterfall lays spans out on these, not on arrival order, so approximating them flattens the shape of the run — the parallelism, the long poll, the slow build. If a step waited on something external, give it a span (` + "`wait`" + `) rather than folding the delay into its neighbour.
+
+**Fill in the run header.** ` + "`title`" + ` (short and specific), ` + "`prompt`" + ` (the human's originating request — it becomes the opening turn), ` + "`model`" + `, and ` + "`token_count`" + `, which cannot be derived from the spans.
+
+Send spans as a flat list; nesting is expressed through ` + "`parent_span_id`" + `, never by nesting the JSON.`
+
+	return &mcp.GetPromptResult{
+		Description: "Guidance for capturing an agent run as a well-formed Cairn trajectory.",
+		Messages: []*mcp.PromptMessage{{
+			Role:    "user",
+			Content: &mcp.TextContent{Text: body},
+		}},
+	}, nil
+}
+
 // --- run_create / run_append_spans ------------------------------------------------
 
 // mcpRunSpanInput mirrors [spanRequest] with one deliberate difference: Args
@@ -799,18 +887,29 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 // []byte: it genuinely is raw bytes (base64 on the wire), the same shape
 // POST /v1/runs and /v1/runs/{id}/spans take, so both REST and MCP ingest
 // spans through the identical wire contract.
+//
+// Every field carries a `jsonschema` description. That is not decoration: an
+// agent only ever sees this schema, and with bare types it has no way to know
+// that `category` has a recommended vocabulary or that `output` is the thing the
+// viewer reveals on expand. Runs ingested before these descriptions existed
+// arrived with invented categories and no output at all, and rendered as a grey
+// timeline of rows that expanded onto nothing. mcpRunSpanSchemaDoc pins the
+// category list to trajectory.RecommendedCategories so the two cannot drift.
 type mcpRunSpanInput struct {
-	SpanID             string `json:"span_id"`
-	ParentSpanID       string `json:"parent_span_id,omitempty"`
-	Category           string `json:"category"`
-	Name               string `json:"name,omitempty"`
-	Tool               string `json:"tool,omitempty"`
-	Args               any    `json:"args,omitempty"`
-	Output             []byte `json:"output,omitempty"`
-	OutputTruncated    bool   `json:"output_truncated,omitempty"`
-	StartOffsetMS      int    `json:"start_offset_ms"`
-	DurationMS         int    `json:"duration_ms"`
-	ProducedArtifactID string `json:"produced_artifact_id,omitempty"`
+	SpanID       string `json:"span_id" jsonschema:"Stable identifier for this span, unique within the run. Re-posting an existing span_id to run_append_spans is an idempotent no-op."`
+	ParentSpanID string `json:"parent_span_id,omitempty" jsonschema:"span_id of the enclosing span, for a child of a sub-agent excursion. Omit for a top-level span. Naming a span that is not in the run rejects the whole batch."`
+	Category     string `json:"category" jsonschema:"What this span was doing. Sets the waterfall color and the time-by-category breakdown. Any non-empty string is accepted, but pick ONE vocabulary and use it for the whole run. Operation kind: reason, net, exec, read, write, search, plan, tool, analyze, test, fix, fail, meta. Workflow phase: research, implementation, review, testing, debug, build, docs, delivery, deploy, wait. A category outside both still renders, colored from a hash of its name."`
+	Name         string `json:"name,omitempty" jsonschema:"Short human label for the span, shown in the waterfall row and the stream header, e.g. 'Explore templates and CSS' or 'go test ./internal/httpapi'."`
+	Tool         string `json:"tool,omitempty" jsonschema:"Name of the tool this span invoked, e.g. 'bash', 'read_file', 'web_fetch'. Omit for a pure reasoning turn; a 'reason' span must not carry one. Use the literal 'sub-agent' for a nested agent excursion, whose children reference this span's span_id as their parent_span_id."`
+	Args         any    `json:"args,omitempty" jsonschema:"The structured arguments this span was invoked with, as a JSON object. Rendered above the output when a reader expands the span. Omit for a span that takes no arguments — an empty object renders as nothing."`
+	// Output is the single most consequential field on this struct and the one
+	// agents most often omit, so its description says outright what happens when
+	// it is missing.
+	Output             []byte `json:"output,omitempty" jsonschema:"The span's content: the reasoning/thinking text for a toolless turn, or the stdout/result for a tool call. THIS IS WHAT A READER SEES WHEN THEY EXPAND THE SPAN — a span sent without output renders as an empty row. Raw bytes, base64-encoded on the wire. Do not pre-truncate: oversized outputs are stored as blobs and fetched lazily by the viewer."`
+	OutputTruncated    bool   `json:"output_truncated,omitempty" jsonschema:"Set when output is already a truncated prefix of a larger result, so the viewer labels it truncated rather than implying it is complete."`
+	StartOffsetMS      int    `json:"start_offset_ms" jsonschema:"Milliseconds from the run's started_at to when this span began. The waterfall lays spans out on this, not on arrival order."`
+	DurationMS         int    `json:"duration_ms" jsonschema:"How long this span took, in milliseconds. Sets the bar width and feeds the time-by-category totals."`
+	ProducedArtifactID string `json:"produced_artifact_id,omitempty" jsonschema:"Public id of a Cairn artifact this span produced. Renders the span as a link to that artifact."`
 }
 
 // toRunSpanInputs converts the MCP wire spans to the trajectory service's
@@ -912,12 +1011,12 @@ func toMCPRunOutput(r runResponse) (mcpRunOutput, error) {
 // identity via [mcpModelActor], the same MCP-native provenance source every
 // other write tool uses — never a client-supplied claim over this transport).
 type mcpRunCreateInput struct {
-	Title      string            `json:"title,omitempty"`
-	Prompt     string            `json:"prompt,omitempty"`
-	Model      string            `json:"model,omitempty"`
-	TokenCount int64             `json:"token_count,omitempty"`
-	StartedAt  time.Time         `json:"started_at,omitempty"`
-	Spans      []mcpRunSpanInput `json:"spans,omitempty"`
+	Title      string            `json:"title,omitempty" jsonschema:"Short title for the run, shown in the page header and any listing, e.g. 'msgbrowse #227: semantic status-banner component'."`
+	Prompt     string            `json:"prompt,omitempty" jsonschema:"The human's originating request, rendered as the opening turn of the activity stream."`
+	Model      string            `json:"model,omitempty" jsonschema:"Model identifier that produced the run, e.g. 'claude-opus-5'. Shown in the trace header."`
+	TokenCount int64             `json:"token_count,omitempty" jsonschema:"Total tokens the run consumed. Shown as a run stat; it cannot be derived from the spans."`
+	StartedAt  time.Time         `json:"started_at,omitempty" jsonschema:"RFC 3339 timestamp for the start of the run. Every span's start_offset_ms is measured from here. Defaults to now."`
+	Spans      []mcpRunSpanInput `json:"spans,omitempty" jsonschema:"The run's spans, as a flat list; nesting is expressed through parent_span_id, not by nesting the JSON. Order does not matter — the viewer orders by start_offset_ms."`
 }
 
 // mcpCreateRun is the run_create tool handler (SPEC-0007 REQ "Create & Push",
@@ -976,8 +1075,8 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 // call needs (the REST shape carries the id in the URL path instead).
 type mcpRunAppendInput struct {
 	// ID is the run's public id, or an mcp://cairn/run/<id> handle.
-	ID    string            `json:"id"`
-	Spans []mcpRunSpanInput `json:"spans"`
+	ID    string            `json:"id" jsonschema:"The run's public id, or its mcp://cairn/run/<id> handle."`
+	Spans []mcpRunSpanInput `json:"spans" jsonschema:"Spans to append. Re-posting a span_id already in the run is an idempotent no-op, so a retry after a failed call is safe."`
 }
 
 // mcpAppendRunSpans is the run_append_spans tool handler (SPEC-0007 REQ

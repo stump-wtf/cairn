@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -40,10 +42,11 @@ import (
 // read, uniform 404), SPEC-0004 (Trajectory Share), SPEC-0001 (app shell,
 // a11y), SPEC-0006 (registry-gated anchors).
 
-// The five category swatch colors (reason #7D56F4 · exec #56E39F · read #6AA9FF
-// · net #E3B341 · write #FF75B7, SPEC-0004 / design t7a legend) live in
-// trajectory.css keyed on [data-cat], so both the server-rendered rows and the
-// JS-appended live spans read one palette and Go never owns a rendered color.
+// Every category swatch color lives in trajectory.css keyed on [data-cat], so
+// the server-rendered rows and the JS-appended live spans read one palette and
+// Go never owns a rendered color. A category in neither recommended vocabulary
+// is colored by trajectory.js from a hash of its name (ADR-0009) — also outside
+// Go, for the same reason.
 
 // trajectoryView is the fully server-computed view model the trajectory template
 // renders. Every field is derived from the run tree + the annotation service, so
@@ -142,6 +145,17 @@ type streamRow struct {
 	// (#38 review note 2).
 	DurMS int
 	Body  string // inline output / reasoning prose (escaped by the template)
+	// Args is the span's structured arguments, pretty-printed for display and
+	// empty when the span carried none (or carried only an empty object).
+	// SPEC-0004 REQ "Activity Stream" requires the stream to show a span's args
+	// alongside its output; they were previously ingested, stored, and returned
+	// by the API but silently dropped by the viewer.
+	Args string
+	// Empty reports that this row has nothing at all to reveal — no args, no
+	// body, no spilled output, no produced artifact, no children. The template
+	// renders an explicit empty state rather than a collapsible that opens onto
+	// blank space, which reads as a broken page instead of a thin capture.
+	Empty bool
 	// Spilled reports the body lives in a content-addressed blob fetched lazily
 	// on expand (SPEC-0004 "Large outputs MUST be fetched lazily"); OutputURL is
 	// where trajectory.js fetches it.
@@ -438,6 +452,8 @@ func (s *Server) streamRowFor(publicID string, sp *trajectory.Span, tallies map[
 		row.OutputURL = "/v1/runs/" + publicID + "/spans/" + sp.SpanID + "/output"
 	}
 
+	row.Args = formatSpanArgs(sp.Args)
+
 	// Reaction anchor + tallies.
 	anchorType := string(sharetype.AnchorTrajectoryTurn)
 	if sp.Tool != "" {
@@ -464,7 +480,39 @@ func (s *Server) streamRowFor(publicID string, sp *trajectory.Span, tallies map[
 	for _, child := range sp.Children {
 		row.Children = append(row.Children, s.streamRowFor(publicID, child, tallies))
 	}
+
+	// Computed last: Children is only populated above, and a sub-agent whose
+	// children are its entire content is not an empty row.
+	row.Empty = row.Args == "" && row.Body == "" && !row.Spilled &&
+		row.Artifact == nil && len(row.Children) == 0
 	return row
+}
+
+// formatSpanArgs pretty-prints a span's structured args for display, returning
+// "" when there is nothing worth showing.
+//
+// An absent, null, or *empty* object/array is treated as nothing: agents
+// routinely send `{}` as a placeholder on spans that take no arguments (the
+// run that prompted this did so on eleven of twelve spans), and rendering an
+// empty object would add a labelled, bordered block of pure noise to every one
+// of them.
+//
+// Args is unbounded, untrusted agent content. It is only ever emitted through
+// html/template's escaping into a <pre> (never innerHTML, never a style or URL
+// context), matching how span output is already handled — SPEC-0004 "Active
+// content in a span output". Malformed JSON is passed through verbatim rather
+// than dropped: the service stored it, so the viewer shows it.
+func formatSpanArgs(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	switch trimmed {
+	case "", "null", "{}", "[]":
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, []byte(trimmed), "", "  "); err != nil {
+		return trimmed
+	}
+	return buf.String()
 }
 
 // reactionIndex loads the run's reaction tallies and buckets them by

@@ -1,14 +1,18 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/errs"
@@ -246,13 +250,13 @@ func TestConsentCSP(t *testing.T) {
 // covers the categories a run used"
 func TestOrderCategories(t *testing.T) {
 	got := orderCategories(map[trajectory.Category]int64{
-		"vibes": 5, "write": 4, "reason": 3, "deploy": 2, "search": 1, "audit": 0,
+		"vibes": 5, "write": 4, "reason": 3, "bikeshed": 2, "search": 1, "audit": 0,
 	})
 	want := []trajectory.Category{
 		// recommended, in RecommendedCategories order (reason … write, search …)
 		"reason", "write", "search",
 		// the rest, alphabetically
-		"audit", "deploy", "vibes",
+		"audit", "bikeshed", "vibes",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("orderCategories = %v, want %v", got, want)
@@ -272,5 +276,133 @@ func TestOrderCategories(t *testing.T) {
 
 	if len(orderCategories(map[trajectory.Category]int64{})) != 0 {
 		t.Error("an empty run should produce an empty category order, not a default list")
+	}
+
+	// The workflow-phase vocabulary orders as recommended, not as invented: a
+	// run labelled entirely in SDLC phases (the shape a client left to its own
+	// devices actually produces) must render in workflow order ahead of
+	// anything genuinely unrecognised, not alphabetically among it.
+	phases := orderCategories(map[trajectory.Category]int64{
+		"delivery": 1, "research": 2, "implementation": 3, "zzz-invented": 4,
+	})
+	wantPhases := []trajectory.Category{"research", "implementation", "delivery", "zzz-invented"}
+	for i := range wantPhases {
+		if i >= len(phases) || phases[i] != wantPhases[i] {
+			t.Fatalf("phase ordering = %v, want %v", phases, wantPhases)
+		}
+	}
+}
+
+// TestFormatSpanArgs pins the args-rendering rules the activity stream depends
+// on (SPEC-0004 REQ "Activity Stream": the stream MUST show a span's `args`).
+// Args were previously ingested, stored, and returned by the API, then dropped
+// by the viewer — a span arrived carrying {"repo":"…","issue":"227"} and the
+// page showed none of it.
+//
+// The empty-object case is the one that matters in practice: agents routinely
+// send `{}` on spans that take no arguments, and a labelled, bordered block of
+// `{}` on every such span is pure noise.
+func TestFormatSpanArgs(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in   string
+		want string
+	}{
+		"absent":       {"", ""},
+		"null":         {"null", ""},
+		"empty object": {"{}", ""},
+		"empty array":  {"[]", ""},
+		"whitespaced":  {"  {}  ", ""},
+		"object":       {`{"issue":"227"}`, "{\n  \"issue\": \"227\"\n}"},
+		"indents":      {`{"a":{"b":1}}`, "{\n  \"a\": {\n    \"b\": 1\n  }\n}"},
+		"malformed":    {`{not json`, `{not json`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := formatSpanArgs(json.RawMessage(tc.in)); got != tc.want {
+				t.Errorf("formatSpanArgs(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunSpanSchemaAdvertisesEveryCategory is a drift guard between three
+// places that must agree on the category vocabulary: trajectory.go (the Go
+// constants), trajectory.css (the palette), and the `category` jsonschema tag
+// on mcpRunSpanInput (the only one of the three an ingesting agent ever sees).
+//
+// The tag has to be a literal — struct tags cannot be computed — so nothing but
+// a test stops someone adding a category and leaving agents unable to discover
+// it. That is exactly the failure this whole change exists to fix, so it gets a
+// test rather than a comment asking people to remember.
+func TestRunSpanSchemaAdvertisesEveryCategory(t *testing.T) {
+	field, ok := reflect.TypeOf(mcpRunSpanInput{}).FieldByName("Category")
+	if !ok {
+		t.Fatal("mcpRunSpanInput has no Category field")
+	}
+	desc := field.Tag.Get("jsonschema")
+	if desc == "" {
+		t.Fatal("Category needs a jsonschema description — it is the only category guidance an agent gets")
+	}
+	for _, cat := range trajectory.RecommendedCategories {
+		if !strings.Contains(desc, string(cat)) {
+			t.Errorf("category %q is recommended but absent from the run_create schema description", cat)
+		}
+	}
+}
+
+// TestRunSpanSchemaDescribesEveryField pins that no span field ships bare. A
+// field with no description is one an agent has to guess at, and the run that
+// prompted this change was produced entirely by plausible guessing.
+func TestRunSpanSchemaDescribesEveryField(t *testing.T) {
+	typ := reflect.TypeOf(mcpRunSpanInput{})
+	for i := 0; i < typ.NumField(); i++ {
+		if typ.Field(i).Tag.Get("jsonschema") == "" {
+			t.Errorf("mcpRunSpanInput.%s has no jsonschema description", typ.Field(i).Name)
+		}
+	}
+}
+
+// TestRunCapturePrompt covers the `run_capture` prompt handler: it must serve
+// the full vocabulary (both lists, derived from the trajectory package rather
+// than retyped), must state the output rule that the schema alone kept failing
+// to convey, and must survive being called with no arguments at all.
+func TestRunCapturePrompt(t *testing.T) {
+	s := New(nil, nil, nil, Config{}, slog.Default())
+
+	res, err := s.mcpRunCapturePrompt(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("prompt with nil request: %v", err)
+	}
+	if len(res.Messages) == 0 {
+		t.Fatal("prompt returned no messages")
+	}
+	text, ok := res.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("prompt content = %T, want *mcp.TextContent", res.Messages[0].Content)
+	}
+	body := text.Text
+
+	for _, cat := range trajectory.RecommendedCategories {
+		if !strings.Contains(body, string(cat)) {
+			t.Errorf("run_capture prompt omits the recommended category %q", cat)
+		}
+	}
+	// The two failures that produced an unreadable run in the first place.
+	if !strings.Contains(body, "output") {
+		t.Error("run_capture prompt must tell the agent to populate output")
+	}
+	if !strings.Contains(body, "One span per turn") {
+		t.Error("run_capture prompt must state the span-granularity rule")
+	}
+
+	// The optional `task` argument is woven in when supplied.
+	withTask, err := s.mcpRunCapturePrompt(context.Background(), &mcp.GetPromptRequest{
+		Params: &mcp.GetPromptParams{Name: "run_capture", Arguments: map[string]string{"task": "port the CSS"}},
+	})
+	if err != nil {
+		t.Fatalf("prompt with task: %v", err)
+	}
+	got := withTask.Messages[0].Content.(*mcp.TextContent).Text
+	if !strings.Contains(got, "port the CSS") {
+		t.Error("run_capture prompt should weave in the task argument when given")
 	}
 }

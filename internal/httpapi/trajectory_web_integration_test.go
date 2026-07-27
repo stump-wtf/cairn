@@ -362,3 +362,91 @@ func TestIntegrationTrajectoryLiveRunStreams(t *testing.T) {
 		t.Errorf("stream should replay a span event, got %q", frame)
 	}
 }
+
+// TestIntegrationTrajectoryRendersArgsAndEmptySpans is the regression fixture
+// for the run that exposed all of this: a client captured twelve spans using
+// SDLC-phase categories, put its structured context in `args`, and sent no
+// `output` on any span. The viewer rendered a uniformly neutral waterfall of
+// rows that expanded onto blank space — the args were ingested, stored, and
+// returned by the API, then silently dropped by the template.
+//
+// This pins all three halves of the fix at once, because they only fail
+// together in a real render: the phase vocabulary is recognised (so the
+// stylesheet, not the JS hash fallback, colors it), `args` reach the page, and
+// a span with genuinely nothing to show says so instead of opening onto
+// nothing.
+//
+// Governing: SPEC-0004 REQ "Activity Stream" (args and output are shown),
+// ADR-0009 (open category set)
+func TestIntegrationTrajectoryRendersArgsAndEmptySpans(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+
+	resp := do(t, http.MethodPost, srv.URL+"/v1/runs", "joe",
+		jsonReader(t, runRequest{Mode: "batch", Title: "msgbrowse #227", Prompt: "Add a status-banner component.",
+			Model: "glm-5.2", TokenCount: 45000, StartedAt: fixedRunStart, Spans: []spanRequest{
+				// Carries args, no output: args must render, and the row is NOT empty.
+				{SpanID: "p1", Category: "research", Name: "Load issue context",
+					Args:          json.RawMessage(`{"repo":"stump.wtf/msgbrowse","issue":"227"}`),
+					StartOffsetMS: 0, DurationMS: 120000},
+				// The `{}` placeholder agents habitually send: renders as nothing,
+				// so this row IS empty and must say so.
+				{SpanID: "p2", Category: "implementation", Name: "Add status_banner partial",
+					Args: json.RawMessage(`{}`), StartOffsetMS: 120000, DurationMS: 60000},
+				// Neither args nor output at all — the plainest empty row.
+				{SpanID: "p3", Category: "delivery", Name: "Open PR #229",
+					StartOffsetMS: 180000, DurationMS: 30000},
+				// A span WITH output must not get the empty state.
+				{SpanID: "p4", Category: "testing", Tool: "bash", Name: "go test ./...",
+					Args:   json.RawMessage(`{"command":"go test ./..."}`),
+					Output: []byte("ok  	msgbrowse	0.4s"), StartOffsetMS: 210000, DurationMS: 90000},
+			}}),
+		"application/json")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed phase run = %d, want 201", resp.StatusCode)
+	}
+	runID := decodeRun(t, resp).ID
+
+	status, html := getHTML(t, srv.URL+"/run/"+runID)
+	if status != http.StatusOK {
+		t.Fatalf("GET /run/%s = %d, want 200", runID, status)
+	}
+
+	// The phase vocabulary reaches the page as real categories, so trajectory.css
+	// colors them and the JS hash fallback never engages.
+	for _, cat := range []string{"research", "implementation", "delivery", "testing"} {
+		if !strings.Contains(html, `data-cat="`+cat+`"`) {
+			t.Errorf("phase category %q missing from the render", cat)
+		}
+	}
+
+	// args render, pretty-printed and HTML-escaped into the <pre>.
+	for _, frag := range []string{
+		`class="args-pre"`,
+		`&#34;repo&#34;: &#34;stump.wtf/msgbrowse&#34;`,
+		`&#34;issue&#34;: &#34;227&#34;`,
+		`&#34;command&#34;: &#34;go test ./...&#34;`,
+	} {
+		if !strings.Contains(html, frag) {
+			t.Errorf("args fragment %q missing from the render", frag)
+		}
+	}
+
+	// An empty `{}` contributes no args block of its own.
+	if strings.Contains(html, `<pre class="args-pre">{}</pre>`) {
+		t.Error("an empty args object should render nothing, not an empty block")
+	}
+
+	// Exactly the two genuinely-empty spans (p2, p3) carry the empty state;
+	// p1 has args and p4 has output, so neither may.
+	if got := strings.Count(html, `class="detail-empty"`); got != 2 {
+		t.Errorf("empty-state count = %d, want 2 (only the spans with no args and no output)", got)
+	}
+	if !strings.Contains(html, "No output captured for this span") {
+		t.Error("a span with nothing to reveal must explain itself, not expand onto blank space")
+	}
+
+	// The span that does have output still renders it, and is not called empty.
+	if !strings.Contains(html, `ok  	msgbrowse	0.4s`) {
+		t.Error("a span's output must still render")
+	}
+}

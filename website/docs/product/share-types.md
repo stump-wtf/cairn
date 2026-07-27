@@ -64,6 +64,11 @@ artifacts they produce. See
   <span class="chip chip-read">read</span>
   <span class="chip chip-net">net</span>
   <span class="chip chip-write">write</span>.
+  …and more. Agents label spans either by **operation kind** (`reason · exec · read ·
+  net · write · search · plan · tool · analyze · test · fix · fail · meta`) or by
+  **workflow phase** (`research · implementation · review · testing · debug · build ·
+  docs · delivery · deploy · wait`) — whichever fits how they think. The set is open:
+  a category outside both is accepted and gets its own color, derived from its name.
   A **sub-agent** is a nested span group. Click any span to jump to and expand its
   event.
 - A readable **activity stream** runs below: the human prompt, each reasoning turn,
