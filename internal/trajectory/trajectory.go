@@ -390,6 +390,19 @@ func hasKey(m map[string]int, k string) bool {
 	return ok
 }
 
+// normalizeArtifactID resolves a bare public id or an mcp://cairn/<id> agent
+// handle (optionally under a /run/ or /hook/ sub-prefix a caller may copy-paste)
+// to the bare public id the produced-edge lookup takes. Mirrors the transport
+// layer's normalizeMCPHandle (ADR-0005: "one id, every surface") so a produced
+// artifact id supplied as a handle resolves the same as a bare id (issue #50).
+func normalizeArtifactID(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = strings.TrimPrefix(s, "mcp://cairn/")
+	s = strings.TrimPrefix(s, "run/")
+	s = strings.TrimPrefix(s, "hook/")
+	return s
+}
+
 // buildTree assembles a flat, per-parent-seq-ordered span slice into an ordered
 // forest, nesting each span under its parent and returning the top-level roots.
 // It relies on the persisted depth/seq rather than re-deriving the tree, so the

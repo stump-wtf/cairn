@@ -214,6 +214,25 @@ func TestPrepareSpansProducedOnNonWriteRejected(t *testing.T) {
 	}
 }
 
+// TestNormalizeArtifactID pins the handle-form resolution added for issue #50:
+// a produced_artifact_id supplied as an mcp://cairn/<id> handle (optionally
+// under a /run/ or /hook/ sub-prefix a caller may copy-paste) must normalize to
+// the bare public id the produced-edge lookup takes, identical to a bare id.
+func TestNormalizeArtifactID(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"TE4Fb89R", "TE4Fb89R"},
+		{" mcp://cairn/TE4Fb89R ", "TE4Fb89R"},
+		{"mcp://cairn/run/TE4Fb89R", "TE4Fb89R"},
+		{"mcp://cairn/hook/TE4Fb89R", "TE4Fb89R"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := normalizeArtifactID(c.in); got != c.want {
+			t.Errorf("normalizeArtifactID(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestPrepareSpansDuplicateID(t *testing.T) {
 	_, err := prepareSpans(map[string]int{}, map[string]int{}, map[string]bool{},
 		[]SpanInput{
