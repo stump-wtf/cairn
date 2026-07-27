@@ -132,19 +132,26 @@ func toolText(t *testing.T, res *mcp.CallToolResult) string {
 	return b.String()
 }
 
-// mcpSpanList type-asserts a [mcpRunOutput].Spans `any` value (or a nested
-// span's "children" field, same shape) down to the list of span objects it
-// holds on the wire, for tests that need to walk the tree without a typed
-// Go struct (mcpRunOutput.Spans is `any` — see its doc for why).
+// mcpSpanList normalizes a span list to []map[string]any for tests that walk
+// the tree without a typed Go struct. It accepts both shapes that occur: the
+// typed []map[string]any of [mcpRunOutput].Spans, and the []any a nested span's
+// "children" field decodes to (children live inside an untyped map, so they
+// stay `any` however Spans itself is typed).
 func mcpSpanList(v any) []map[string]any {
-	arr, _ := v.([]any)
-	out := make([]map[string]any, 0, len(arr))
-	for _, e := range arr {
-		if m, ok := e.(map[string]any); ok {
-			out = append(out, m)
+	switch arr := v.(type) {
+	case []map[string]any:
+		return arr
+	case []any:
+		out := make([]map[string]any, 0, len(arr))
+		for _, e := range arr {
+			if m, ok := e.(map[string]any); ok {
+				out = append(out, m)
+			}
 		}
+		return out
+	default:
+		return nil
 	}
-	return out
 }
 
 // decodeToolJSON decodes a successful tool result's JSON text content into v.
@@ -1031,12 +1038,67 @@ func TestIntegrationMCPSpanOutputIsPlainText(t *testing.T) {
 	var out mcpRunOutput
 	decodeToolJSON(t, res, &out)
 
-	spans, _ := out.Spans.([]any)
-	if len(spans) != 1 {
-		t.Fatalf("got %d spans, want 1", len(spans))
+	if len(out.Spans) != 1 {
+		t.Fatalf("got %d spans, want 1", len(out.Spans))
 	}
-	got, _ := spans[0].(map[string]any)["output"].(string)
+	got, _ := out.Spans[0]["output"].(string)
 	if got != body {
 		t.Errorf("output round-tripped as %q, want %q (stored verbatim, not re-encoded)", got, body)
+	}
+}
+
+// TestIntegrationMCPSchemasHaveNoBooleanProperties pins every advertised tool
+// schema to object-shaped properties.
+//
+// A Go field typed `any` infers as the JSON Schema boolean `true`. Draft
+// 2020-12 permits a boolean as a `properties` value, but strict clients require
+// a schema *object* there — and because tools/list is validated as a whole, a
+// single such property rejects the entire list ("Invalid input at
+// tools.N.inputSchema.properties.X"), taking every other tool down with it.
+// Claude Code dropped all Cairn tools for exactly this reason: five `any`
+// fields (anchor_ref on the comment/react input and both outputs, span args,
+// and the run span tree) each emitted `true`.
+//
+// Governing: ADR-0004 (MCP as a first-class surface), SPEC-0007 REQ
+// "Agent-Shaped Tool Schemas"
+func TestIntegrationMCPSchemasHaveNoBooleanProperties(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks",
+		[]string{oauth.ScopeArtifactsRead, oauth.ScopeArtifactsWrite, oauth.ScopeAnnotationsWrite})
+	sess := mcpClient(t, srv, token, nil, "crush")
+
+	tools, err := sess.ListTools(context.Background(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	if len(tools.Tools) == 0 {
+		t.Fatal("no tools advertised; the walk below would vacuously pass")
+	}
+	for _, tl := range tools.Tools {
+		assertNoBooleanSchema(t, tl.Name+".inputSchema", tl.InputSchema)
+		assertNoBooleanSchema(t, tl.Name+".outputSchema", tl.OutputSchema)
+	}
+}
+
+// assertNoBooleanSchema walks a decoded JSON Schema and fails on any
+// `properties` entry that is a bare boolean rather than a schema object,
+// recursing through nested properties and array items.
+func assertNoBooleanSchema(t *testing.T, path string, node any) {
+	t.Helper()
+	n, ok := node.(map[string]any)
+	if !ok {
+		return
+	}
+	if props, ok := n["properties"].(map[string]any); ok {
+		for name, sub := range props {
+			if b, isBool := sub.(bool); isBool {
+				t.Errorf("%s.properties.%s is the boolean schema %v; a strict client rejects a non-object property and drops the whole tool list", path, name, b)
+				continue
+			}
+			assertNoBooleanSchema(t, path+".properties."+name, sub)
+		}
+	}
+	if items, ok := n["items"]; ok {
+		assertNoBooleanSchema(t, path+".items", items)
 	}
 }
