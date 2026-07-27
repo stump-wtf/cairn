@@ -179,3 +179,24 @@ func TestRenderNoHeadingsNoTOC(t *testing.T) {
 		t.Error("fragment should omit the TOC nav when there are no headings")
 	}
 }
+
+// TestListBlocksCarryNoBlockLevelReact pins the fix for two ＋ controls landing
+// on the first item of every list. markdown.js gives each list item its own
+// md_bullet affordance, so rendering the block-level md_block control too put
+// two triggers a few pixels apart, and the block one read as a duplicate.
+// Bullet-level is the finer anchor, so lists keep only that; every other block
+// keeps its block-level control.
+func TestListBlocksCarryNoBlockLevelReact(t *testing.T) {
+	html, err := RenderFragment([]byte("A paragraph.\n\n- one\n- two\n"))
+	if err != nil {
+		t.Fatalf("RenderFragment: %v", err)
+	}
+	s := string(html)
+	if !strings.Contains(s, `data-md-list="true"`) {
+		t.Fatal("fixture did not produce a list block")
+	}
+	// Exactly one md_block trigger survives: the paragraph's.
+	if got := strings.Count(s, `data-anchor-type="md_block"`); got != 1 {
+		t.Errorf("md_block trigger count = %d, want 1 (the paragraph only; the list has per-item triggers)", got)
+	}
+}

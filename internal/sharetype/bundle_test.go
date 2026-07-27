@@ -42,7 +42,16 @@ func TestClassifyMember(t *testing.T) {
 		{"data.bin", "application/octet-stream", artifact.TypeFile},
 		{"dump.sql.gz", "application/gzip", artifact.TypeGZ},
 		{"photo.png", "image/png", artifact.TypeFile}, // no image member viewer yet in 0.0.2
-		{"script.go", "text/plain", artifact.TypeFile},
+		// A source member now resolves to the code viewer rather than a download
+		// card — a bundle of source files is the main reason to make a bundle, and
+		// it used to render as nothing but download buttons.
+		{"script.go", "text/plain", KeyCode},
+		{"main.py", "text/plain", KeyCode},
+		{"styles.css", "text/css", KeyCode},
+		// Media type alone is enough when the name carries no extension.
+		{"handler", "text/x-go", KeyCode},
+		// Nothing chroma can highlight still degrades to the file card.
+		{"notes.zzzzz", "application/octet-stream", artifact.TypeFile},
 	}
 	for _, tc := range cases {
 		if got := r.ClassifyMember(tc.name, tc.media); got != tc.want {
