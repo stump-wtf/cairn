@@ -848,6 +848,16 @@ func (s *Server) mcpRunCapturePrompt(_ context.Context, req *mcp.GetPromptReques
 
 A trajectory is read by a human scrubbing a waterfall and expanding the turns that look interesting. Optimize for that reader.
 
+**First: find your own transcript and capture from THAT, not from memory.** You are almost certainly running inside a harness that already keeps a high-fidelity local record of this session — per-turn timestamps, every tool call with its arguments, every result, and token usage. That record IS the trajectory; your job is mostly to reshape it. Reconstructing from what you remember yields round-numbered guesses and a waterfall whose shape is fiction, and it is not obvious to the reader that it is fiction. Parsing the transcript costs one read and a little scripting.
+
+Go and look before you write a single span. Two confirmed shapes, as worked examples:
+  - Claude Code — ` + "`~/.claude/projects/<cwd-slug>/<session-id>.jsonl`" + `, one JSON object per line, each carrying a ` + "`timestamp`" + ` and a ` + "`message`" + ` whose ` + "`content`" + ` holds ` + "`text`" + ` / ` + "`tool_use`" + ` / ` + "`tool_result`" + ` blocks, plus ` + "`usage`" + ` for tokens.
+  - Crush — a SQLite database at ` + "`~/.crush/crush.db`" + `: table ` + "`messages`" + ` with ` + "`role`" + `, millisecond ` + "`created_at`" + ` / ` + "`finished_at`" + `, and a JSON ` + "`parts`" + ` column holding ` + "`reasoning`" + ` and ` + "`tool_call`" + ` parts (each with ` + "`name`" + ` and ` + "`input`" + `).
+
+If yours is neither, it still almost certainly exists — find it rather than assuming it does not. Look under the harness's data or state directory (` + "`~/.<harness>/`" + `, ` + "`~/.local/share/<harness>/`" + `, ` + "`~/Library/Application Support/<harness>/`" + `, or a ` + "`.<harness>/`" + ` folder in the project), and prefer the newest file, or the one whose name carries the current session id. A JSONL of turns and a SQLite database are the two common shapes; both are readable with tools you already have.
+
+From whatever you find, derive each span's ` + "`start_offset_ms`" + ` and ` + "`duration_ms`" + ` from real timestamps (a tool call runs from its invocation to its matching result), the ` + "`tool`" + ` name and ` + "`args`" + ` from the call itself, the ` + "`output`" + ` from the result, and ` + "`token_count`" + ` by summing usage. If you truly cannot find a transcript, say so plainly in your reply to the human and label the run's timings as estimated — a trajectory that looks measured but is not is worse than one that admits it is approximate.
+
 **Put the content in ` + "`output`" + `.** This is the single most important thing, and the most commonly skipped. Every span's ` + "`output`" + ` is what a reader sees when they expand it. For a toolless turn, that is the reasoning/thinking text for that step. For a tool call, it is the stdout or the result. A span sent with only a name and a duration renders as an empty row — the viewer says so explicitly, because there is nothing else it can show. Never pre-truncate: large outputs are stored as blobs and fetched lazily.
 
 **One span per turn, not per phase.** Aim for the granularity you actually worked at — a span for each reasoning turn and each tool call. Collapsing an hour of work into five summary spans throws away exactly the detail the viewer exists to show. A long run with a hundred spans reads fine; a five-span run reads like a summary someone already wrote.
@@ -862,7 +872,7 @@ A category outside both is accepted and rendered with a color hashed from its na
 
 **Send ` + "`args`" + ` on tool calls.** They render above the output on expand, and they are usually what makes a tool call legible ("which file?", "which command?"). Omit them on spans that take no arguments.
 
-**Get the timing right.** ` + "`start_offset_ms`" + ` is measured from the run's ` + "`started_at`" + `, and ` + "`duration_ms`" + ` is real elapsed time. The waterfall lays spans out on these, not on arrival order, so approximating them flattens the shape of the run — the parallelism, the long poll, the slow build. If a step waited on something external, give it a span (` + "`wait`" + `) rather than folding the delay into its neighbour.
+**Get the timing right.** ` + "`start_offset_ms`" + ` is measured from the run's ` + "`started_at`" + `, and ` + "`duration_ms`" + ` is real elapsed time — read both from the transcript rather than estimating. The waterfall lays spans out on these, not on arrival order, so approximating them flattens the shape of the run — the parallelism, the long poll, the slow build. Time spent waiting on a human is real elapsed time too: give it a ` + "`wait`" + ` span rather than folding it into the neighbouring turn, and the same for a step blocked on CI or a rate limit.
 
 **Fill in the run header.** ` + "`title`" + ` (short and specific), ` + "`prompt`" + ` (the human's originating request — it becomes the opening turn), ` + "`model`" + `, and ` + "`token_count`" + `, which cannot be derived from the spans.
 
@@ -879,14 +889,33 @@ Send spans as a flat list; nesting is expressed through ` + "`parent_span_id`" +
 
 // --- run_create / run_append_spans ------------------------------------------------
 
-// mcpRunSpanInput mirrors [spanRequest] with one deliberate difference: Args
-// is `any` (not json.RawMessage), the same substitution [mcpAnchorInput]
-// makes for its anchor_ref and for the identical reason — a []byte-backed
-// type infers as a JSON *array* (byte-string) schema, which is wrong for a
-// field that actually carries an arbitrary JSON args object. Output stays
-// []byte: it genuinely is raw bytes (base64 on the wire), the same shape
-// POST /v1/runs and /v1/runs/{id}/spans take, so both REST and MCP ingest
-// spans through the identical wire contract.
+// mcpRunSpanInput mirrors [spanRequest], but is shaped for the AGENT rather
+// than for wire-symmetry with REST. Two fields differ, both because a
+// []byte-backed Go type infers as a JSON *array of 0-255 integers*:
+//
+//   - Args is `any` (not json.RawMessage), the same substitution
+//     [mcpAnchorInput] makes for its anchor_ref, so it surfaces as an embedded
+//     JSON object rather than a byte array.
+//   - Output is `string` (not []byte), carrying the span's content as PLAIN
+//     UTF-8 TEXT.
+//
+// Output was []byte until it was tested end-to-end over a real MCP session,
+// which showed the field was effectively unusable. The inferred schema was
+// `{"type":["null","array"],"items":{"type":"integer","minimum":0,"maximum":255}}`,
+// so the base64 string REST accepts was REJECTED by schema validation, and the
+// only accepted encoding was a JSON array of byte integers — roughly 4-6x the
+// bytes, for text an agent already holds as a string. Any agent reading that
+// schema would reasonably skip the field, which is part of why runs arrived
+// with no output at all. The comment this replaces claimed REST and MCP shared
+// "the identical wire contract"; they did not.
+//
+// This deliberately breaks wire symmetry with REST, and that is the point: MCP
+// is the surface agents write to and must be shaped for them, while REST serves
+// humans and deterministic clients and keeps []byte/base64. ADR-0003's parity
+// is about CAPABILITY — every surface can do the same things — not about
+// byte-identical encodings (SPEC-0007 REQ "Agent-Shaped Tool Schemas").
+// Non-UTF-8 output is the one thing this cannot carry; a span whose output is
+// genuinely binary belongs on the REST ingest.
 //
 // Every field carries a `jsonschema` description. That is not decoration: an
 // agent only ever sees this schema, and with bare types it has no way to know
@@ -905,7 +934,7 @@ type mcpRunSpanInput struct {
 	// Output is the single most consequential field on this struct and the one
 	// agents most often omit, so its description says outright what happens when
 	// it is missing.
-	Output             []byte `json:"output,omitempty" jsonschema:"The span's content: the reasoning/thinking text for a toolless turn, or the stdout/result for a tool call. THIS IS WHAT A READER SEES WHEN THEY EXPAND THE SPAN — a span sent without output renders as an empty row. Raw bytes, base64-encoded on the wire. Do not pre-truncate: oversized outputs are stored as blobs and fetched lazily by the viewer."`
+	Output             string `json:"output,omitempty" jsonschema:"The span's content as plain text: the reasoning/thinking text for a toolless turn, or the stdout/result for a tool call. THIS IS WHAT A READER SEES WHEN THEY EXPAND THE SPAN — a span sent without output renders as an empty row. Send it verbatim; do not base64-encode it and do not pre-truncate, since oversized outputs are stored as blobs and fetched lazily by the viewer. If you did truncate, set output_truncated."`
 	OutputTruncated    bool   `json:"output_truncated,omitempty" jsonschema:"Set when output is already a truncated prefix of a larger result, so the viewer labels it truncated rather than implying it is complete."`
 	StartOffsetMS      int    `json:"start_offset_ms" jsonschema:"Milliseconds from the run's started_at to when this span began. The waterfall lays spans out on this, not on arrival order."`
 	DurationMS         int    `json:"duration_ms" jsonschema:"How long this span took, in milliseconds. Sets the bar width and feeds the time-by-category totals."`
@@ -931,13 +960,16 @@ func toRunSpanInputs(tool string, spans []mcpRunSpanInput) ([]trajectory.SpanInp
 			args = b
 		}
 		out = append(out, trajectory.SpanInput{
-			SpanID:             sp.SpanID,
-			ParentSpanID:       sp.ParentSpanID,
-			Category:           trajectory.Category(sp.Category),
-			Name:               sp.Name,
-			Tool:               sp.Tool,
-			Args:               args,
-			Output:             sp.Output,
+			SpanID:       sp.SpanID,
+			ParentSpanID: sp.ParentSpanID,
+			Category:     trajectory.Category(sp.Category),
+			Name:         sp.Name,
+			Tool:         sp.Tool,
+			Args:         args,
+			// The agent sends text; the service stores bytes. Converting here
+			// keeps the MCP schema agent-shaped without the trajectory service
+			// growing a second, string-flavoured ingest path.
+			Output:             []byte(sp.Output),
 			OutputTruncated:    sp.OutputTruncated,
 			StartOffsetMS:      sp.StartOffsetMS,
 			DurationMS:         sp.DurationMS,
