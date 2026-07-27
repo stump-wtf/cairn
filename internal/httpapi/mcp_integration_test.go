@@ -770,6 +770,32 @@ func TestIntegrationMCPRunCreateOpenThenAppend(t *testing.T) {
 	}
 }
 
+// TestIntegrationMCPRunCreateRejectsUnknownMode pins the third arm of the mode
+// switch: an unrecognized mode is a validation failure, not a silent fallback to
+// batch. Without this an agent that typo'd "live" would get a closed run back and
+// every subsequent run_append_spans would conflict — the exact failure issue #51
+// was filed for. Mirrors the REST rejection in POST /v1/runs (ADR-0003 parity).
+func TestIntegrationMCPRunCreateRejectsUnknownMode(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "claude-code")
+
+	res := callTool(t, sess, "run_create", map[string]any{
+		"mode":  "live",
+		"title": "typo'd mode",
+		"spans": []map[string]any{
+			{"span_id": "root", "category": "reason", "name": "step", "start_offset_ms": 0, "duration_ms": 1},
+		},
+	})
+	// The text is the uniform validation_failed envelope, not the internal
+	// "mode must be ..." detail — mcpToolErr deliberately does not leak core
+	// error strings over the transport; the valid values live in the field's
+	// schema description instead.
+	if !res.IsError || !strings.HasPrefix(toolText(t, res), "validation_failed:") {
+		t.Fatalf("run_create with mode=live: IsError=%v text=%q, want a validation failure", res.IsError, toolText(t, res))
+	}
+}
+
 // TestIntegrationMCPRunAppendSpans covers the "optional but nice"
 // run_append_spans tool (issue #65): a run opened live (over REST, mirroring
 // a CLI-opened run an agent then appends to) accepts an appended span over
