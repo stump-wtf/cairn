@@ -10,6 +10,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -950,5 +951,92 @@ func TestIntegrationMCPRunCapturePromptIsDiscoverable(t *testing.T) {
 		if !strings.Contains(text.Text, want) {
 			t.Errorf("run_capture guidance missing %q", want)
 		}
+	}
+}
+
+// TestIntegrationMCPSpanOutputIsPlainText pins the wire encoding of a span's
+// output over MCP, which no test covered before and which was silently broken.
+//
+// Output was []byte, so the SDK inferred an ARRAY-OF-BYTES schema: the base64
+// string REST accepts was rejected by schema validation, and the only encoding
+// that worked was a JSON array of 0-255 integers — several times the size, for
+// text the agent already holds as a string. An agent reading that schema would
+// reasonably skip the field, which is a large part of why runs arrived with no
+// output at all and rendered as empty rows.
+//
+// So this asserts the AGENT-FACING contract in both directions: the declared
+// schema is a string, plain text round-trips through the viewer's data, and the
+// text is stored verbatim rather than being base64-decoded on the way in.
+//
+// Governing: ADR-0004 (MCP as a first-class surface), SPEC-0007 REQ
+// "Agent-Shaped Tool Schemas"
+func TestIntegrationMCPSpanOutputIsPlainText(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "crush")
+
+	// The declared schema an agent actually reads.
+	tools, err := sess.ListTools(context.Background(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	// InputSchema is `any` on the wire, so walk it as decoded JSON rather than
+	// reaching for an SDK schema type.
+	var outSchema map[string]any
+	for _, tl := range tools.Tools {
+		if tl.Name != "run_create" {
+			continue
+		}
+		root, _ := tl.InputSchema.(map[string]any)
+		props, _ := root["properties"].(map[string]any)
+		spansProp, _ := props["spans"].(map[string]any)
+		items, _ := spansProp["items"].(map[string]any)
+		spanProps, _ := items["properties"].(map[string]any)
+		outSchema, _ = spanProps["output"].(map[string]any)
+	}
+	if outSchema == nil {
+		t.Fatal("run_create span schema has no output property")
+	}
+	// `type` may be a bare string or a union list including "null".
+	var types []string
+	switch v := outSchema["type"].(type) {
+	case string:
+		types = []string{v}
+	case []any:
+		for _, x := range v {
+			if s, ok := x.(string); ok {
+				types = append(types, s)
+			}
+		}
+	}
+	if !slices.Contains(types, "string") {
+		t.Errorf("output schema type = %v, want string — an array-of-bytes schema is unusable to an agent", types)
+	}
+	if slices.Contains(types, "array") {
+		t.Error("output schema still declares an array; agents would have to send a list of byte integers")
+	}
+
+	// Plain text goes in verbatim and comes back out unchanged.
+	const body = "thinking: the palette only maps thirteen names,\nso every other category fell to the neutral default."
+	res := callTool(t, sess, "run_create", map[string]any{
+		"title": "plain-text output", "model": "claude-opus-5",
+		"spans": []map[string]any{{
+			"span_id": "s1", "category": "research", "name": "a reasoning turn",
+			"output": body, "start_offset_ms": 0, "duration_ms": 1200,
+		}},
+	})
+	if res.IsError {
+		t.Fatalf("run_create rejected plain-text output: %s", toolText(t, res))
+	}
+	var out mcpRunOutput
+	decodeToolJSON(t, res, &out)
+
+	spans, _ := out.Spans.([]any)
+	if len(spans) != 1 {
+		t.Fatalf("got %d spans, want 1", len(spans))
+	}
+	got, _ := spans[0].(map[string]any)["output"].(string)
+	if got != body {
+		t.Errorf("output round-tripped as %q, want %q (stored verbatim, not re-encoded)", got, body)
 	}
 }

@@ -108,6 +108,32 @@ land). The MCP surface MUST provide **no** write path into a stream in v1.
 - **WHEN** an agent attempts to push data into a webhook or trajectory stream over MCP
 - **THEN** the server MUST reject it — streams are read-only to agents in v1
 
+### Requirement: Agent-Shaped Tool Schemas
+
+MCP tool schemas MUST be shaped for the agent that reads them, even where that
+diverges from the REST encoding of the same field. ADR-0003's triple-surface
+parity is about CAPABILITY — every surface can do the same things — not about
+byte-identical wire encodings. REST serves humans and deterministic clients and
+keeps its own representations; MCP is the surface agents write to.
+
+Concretely, a field an agent supplies MUST NOT surface as a schema that is
+impractical to produce from an agent's own data. A text field MUST be declared
+as a string rather than as an array of byte values, and a structured field as an
+object rather than as an encoded scalar. Where a Go type would infer a schema
+that violates this, the MCP input type MUST diverge from the REST type and
+convert at the boundary.
+
+#### Scenario: Span output is plain text over MCP
+
+- **WHEN** an agent inspects the `run_create` input schema
+- **THEN** a span's `output` MUST be declared as a string, and plain UTF-8 text MUST be accepted and stored verbatim
+- **AND** the schema MUST NOT require an array of byte values, which costs several times the bytes for text the agent already holds as a string
+
+#### Scenario: A binary span output
+
+- **WHEN** a span's output is not valid UTF-8
+- **THEN** the REST ingest remains the surface that carries it; the MCP text field is not required to represent arbitrary bytes
+
 ### Requirement: MCP Prompt Surface
 
 Every write tool's input schema MUST describe each field, not merely type it: an agent
@@ -126,6 +152,12 @@ server enforces, so it cannot drift from the implementation it describes.
 
 - **WHEN** an MCP client lists prompts
 - **THEN** `run_capture` MUST be present with a description, and fetching it MUST return guidance naming both category vocabularies and stating that a span's `output` is what a reader sees on expand
+
+#### Scenario: Guidance directs the agent to its own transcript
+
+- **WHEN** an agent fetches `run_capture` before recording a run
+- **THEN** the guidance MUST direct it to locate and parse its harness's own local session record — which holds per-turn timestamps, tool calls, arguments, results and token usage — and to derive span timings from it rather than estimating
+- **AND** MUST instruct it to tell the human, and label the run as approximate, when no such record can be found
 
 #### Scenario: Span schema names the category vocabulary
 
