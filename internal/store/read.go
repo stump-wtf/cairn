@@ -21,7 +21,7 @@ import (
 func (s *Store) GetByPublicID(ctx context.Context, publicID string) (*artifact.Artifact, error) {
 	const q = `
 		SELECT id, public_id, share_type, title, body_sha256, size_bytes,
-		       media_type, previewable, actor_id, on_behalf_of, channel,
+		       media_type, previewable, actor_id, on_behalf_of, model, channel,
 		       captured_at, owner_id, visibility,
 		       reaction_count, comment_count, pin_count, expires_at, created_at
 		FROM artifacts
@@ -34,7 +34,7 @@ func (s *Store) GetByPublicID(ctx context.Context, publicID string) (*artifact.A
 	err := s.pool.QueryRow(ctx, q, publicID).Scan(
 		&a.ID, &a.PublicID, &a.ShareType, &a.Title, &bodySHA, &a.Size,
 		&a.MediaType, &a.Previewable, &a.Provenance.ActorID,
-		&a.Provenance.OnBehalfOf, &a.Provenance.Channel, &a.Provenance.CapturedAt,
+		&a.Provenance.OnBehalfOf, &a.Provenance.Model, &a.Provenance.Channel, &a.Provenance.CapturedAt,
 		&a.Access.OwnerID, &a.Access.Visibility,
 		&a.ReactionCount, &a.CommentCount, &a.PinCount,
 		&a.ExpiresAt, &a.CreatedAt,

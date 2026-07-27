@@ -669,6 +669,12 @@ type mcpCreateInput struct {
 	// there is no binary-safe path yet, so this only works for text bodies a
 	// generous media-type sniff happens to accept.
 	ShareType string `json:"share_type,omitempty"`
+	// Model names the model producing this artifact, e.g. "claude-opus-5". It
+	// is the one piece of provenance MCP cannot derive: `initialize` gives the
+	// harness its clientInfo name/version (which becomes OnBehalfOf), and
+	// nothing on the wire says which model is driving. Optional — omit it and
+	// the viewer simply shows no model row.
+	Model string `json:"model,omitempty" jsonschema:"The model producing this artifact, e.g. claude-opus-5. Recorded as provenance and shown to every reader. Nothing else on the MCP wire identifies the model, so supply it; omit only if you genuinely do not know."`
 }
 
 type mcpCreateOutput struct {
@@ -709,6 +715,7 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 		Provenance: artifact.Provenance{
 			ActorID:    actorID,
 			OnBehalfOf: mcpModelActor(req.Session),
+			Model:      in.Model,
 			Channel:    artifact.ChannelMCP,
 			CapturedAt: now,
 		},
@@ -742,6 +749,12 @@ type mcpBundleCreateInput struct {
 	Title string `json:"title,omitempty"`
 	// Members are the bundle's named files, in bundle order.
 	Members []mcpBundleMemberInput `json:"members"`
+	// Model names the model producing this artifact, e.g. "claude-opus-5". It
+	// is the one piece of provenance MCP cannot derive: `initialize` gives the
+	// harness its clientInfo name/version (which becomes OnBehalfOf), and
+	// nothing on the wire says which model is driving. Optional — omit it and
+	// the viewer simply shows no model row.
+	Model string `json:"model,omitempty" jsonschema:"The model producing this artifact, e.g. claude-opus-5. Recorded as provenance and shown to every reader. Nothing else on the MCP wire identifies the model, so supply it; omit only if you genuinely do not know."`
 }
 
 type mcpBundleCreateOutput struct {
@@ -785,6 +798,7 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 		Provenance: artifact.Provenance{
 			ActorID:    actorID,
 			OnBehalfOf: mcpModelActor(req.Session),
+			Model:      in.Model,
 			Channel:    artifact.ChannelMCP,
 			CapturedAt: now,
 		},
@@ -1089,6 +1103,7 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 		Provenance: artifact.Provenance{
 			ActorID:    actorID,
 			OnBehalfOf: mcpModelActor(req.Session),
+			Model:      in.Model,
 			Channel:    artifact.ChannelMCP,
 			CapturedAt: now,
 		},

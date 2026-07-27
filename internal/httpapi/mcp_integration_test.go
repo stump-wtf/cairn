@@ -1102,3 +1102,70 @@ func assertNoBooleanSchema(t *testing.T, path string, node any) {
 		assertNoBooleanSchema(t, path+".items", items)
 	}
 }
+
+// TestIntegrationMCPProvenanceModel covers the one piece of provenance MCP
+// cannot derive. `initialize` gives the harness its clientInfo (which becomes
+// OnBehalfOf) and nothing on the wire names the model, so an agent must report
+// it — before this, every non-trajectory artifact showed an actor and a harness
+// with no way to say what produced it.
+//
+// Governing: ADR-0004 (provenance recorded server-side), SPEC-0007 REQ
+// "Agent-Shaped Tool Schemas"
+func TestIntegrationMCPProvenanceModel(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "claude-code")
+
+	// Declared on the schema, so an agent can discover it at all.
+	tools, err := sess.ListTools(context.Background(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	for _, want := range []string{"artifact_create", "bundle_create", "run_create"} {
+		var has bool
+		for _, tl := range tools.Tools {
+			if tl.Name != want {
+				continue
+			}
+			root, _ := tl.InputSchema.(map[string]any)
+			props, _ := root["properties"].(map[string]any)
+			_, has = props["model"]
+		}
+		if !has {
+			t.Errorf("%s input schema has no model field; an agent cannot report its model", want)
+		}
+	}
+
+	// Reported on create, it reaches the rendered page.
+	res := callTool(t, sess, "artifact_create", map[string]any{
+		"body": "# report", "title": "a report", "share_type": "markdown",
+		"model": "claude-opus-5",
+	})
+	if res.IsError {
+		t.Fatalf("artifact_create: %s", toolText(t, res))
+	}
+	var out mcpCreateOutput
+	decodeToolJSON(t, res, &out)
+
+	status, html := getHTML(t, srv.URL+"/"+out.ID)
+	if status != http.StatusOK {
+		t.Fatalf("GET /%s = %d, want 200", out.ID, status)
+	}
+	if !strings.Contains(html, "claude-opus-5") {
+		t.Error("the reported model must appear in the rendered provenance")
+	}
+	if !strings.Contains(html, "<dt>model</dt>") {
+		t.Error("expected a model row in the provenance panel")
+	}
+
+	// Omitted, the row is absent rather than blank.
+	res2 := callTool(t, sess, "artifact_create", map[string]any{
+		"body": "# no model", "title": "no model", "share_type": "markdown",
+	})
+	var out2 mcpCreateOutput
+	decodeToolJSON(t, res2, &out2)
+	_, html2 := getHTML(t, srv.URL+"/"+out2.ID)
+	if strings.Contains(html2, "<dt>model</dt>") {
+		t.Error("an unreported model must omit the row, not render it empty")
+	}
+}

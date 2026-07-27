@@ -30,6 +30,16 @@ type binResponse struct {
 //
 // Governing: SPEC-0002 REQ "Artifact Lifecycle — Create", REQ "Bundles with N
 // Members", REQ "Request Body Size Limits".
+
+// requestModel reads the optional model an API client reports for the artifact
+// it is creating, from ?model= or the X-Cairn-Model header — the same
+// query-or-header pairing `title` already uses, so a caller that can set one
+// can set the other. Empty is normal and means "not reported": a human piping a
+// file from the CLI has no model to name, and the viewer omits the row.
+func requestModel(r *http.Request) string {
+	return firstNonEmpty(r.URL.Query().Get("model"), r.Header.Get("X-Cairn-Model"))
+}
+
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFrom(r.Context())
 	if !ok {
@@ -87,7 +97,7 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 		Body:              body,
 		DeclaredMediaType: r.Header.Get("Content-Type"),
 		ExpectedSHA256:    r.Header.Get("X-Cairn-Sha256"),
-		Provenance:        artifact.Provenance{ActorID: p.ActorID, Channel: p.Channel, CapturedAt: now},
+		Provenance:        artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now},
 		Access:            artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
 		ExpiresAt:         now.Add(ttl),
 	})
@@ -183,7 +193,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 	}
 
 	now := s.now()
-	prov := artifact.Provenance{ActorID: p.ActorID, Channel: p.Channel, CapturedAt: now}
+	prov := artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now}
 	access := artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink}
 	expires := now.Add(ttl)
 

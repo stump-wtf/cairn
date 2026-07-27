@@ -53,6 +53,7 @@
       <h2 class="panel-h" id="prov-h">Provenance</h2>
       <dl class="facts">
         <dt>actor</dt><dd>{{.Provenance.Actor}}{{if .Provenance.OnBehalfOf}} <span class="obo">on behalf of {{.Provenance.OnBehalfOf}}</span>{{end}}</dd>
+        {{if .Provenance.Model}}<dt>model</dt><dd>{{.Provenance.Model}}</dd>{{end}}
         <dt>channel</dt><dd>{{.Provenance.Channel}}</dd>
         <dt>captured</dt><dd>{{.Provenance.Captured}}</dd>
         {{if .Provenance.Expires}}<dt>expires</dt><dd data-provenance-expires>{{.Provenance.Expires}}</dd>{{end}}

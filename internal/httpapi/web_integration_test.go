@@ -276,3 +276,43 @@ func TestIntegrationLandingAtRoot(t *testing.T) {
 		t.Error("root should render the landing tagline")
 	}
 }
+
+// TestIntegrationRESTProvenanceModel covers the REST half: a client reports its
+// model through ?model= or X-Cairn-Model, the same query-or-header pairing
+// `title` already uses, and it renders as provenance like any other surface.
+func TestIntegrationRESTProvenanceModel(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+
+	for name, tc := range map[string]struct{ url, header string }{
+		"query param": {"/v1/artifacts?type=markdown&title=q&model=claude-opus-5", ""},
+		"header":      {"/v1/artifacts?type=markdown&title=h", "claude-opus-5"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, srv.URL+tc.url, strings.NewReader("# body"))
+			if err != nil {
+				t.Fatalf("new request: %v", err)
+			}
+			req.Header.Set("Authorization", "Bearer joe")
+			req.Header.Set("Content-Type", "text/markdown")
+			if tc.header != "" {
+				req.Header.Set("X-Cairn-Model", tc.header)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("post: %v", err)
+			}
+			if resp.StatusCode != http.StatusCreated {
+				t.Fatalf("status = %d, want 201", resp.StatusCode)
+			}
+			id := decodeArtifact(t, resp).ID
+
+			status, html := getHTML(t, srv.URL+"/"+id)
+			if status != http.StatusOK {
+				t.Fatalf("GET /%s = %d, want 200", id, status)
+			}
+			if !strings.Contains(html, "claude-opus-5") {
+				t.Error("the reported model must appear in the rendered provenance")
+			}
+		})
+	}
+}

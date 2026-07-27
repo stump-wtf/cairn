@@ -444,9 +444,12 @@ type fileCardView struct {
 type provenanceLine struct {
 	Actor      string
 	OnBehalfOf string
-	Channel    string
-	Captured   string // humanized
-	Expires    string // humanized ("in 6d")
+	// Model is the model that produced the artifact, empty when the creator
+	// reported none — the template omits the row rather than showing it blank.
+	Model    string
+	Channel  string
+	Captured string // humanized
+	Expires  string // humanized ("in 6d")
 }
 
 type commentLine struct {
@@ -504,6 +507,7 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activ
 		Provenance: provenanceLine{
 			Actor:      a.Provenance.ActorID,
 			OnBehalfOf: a.Provenance.OnBehalfOf,
+			Model:      a.Provenance.Model,
 			Channel:    string(a.Provenance.Channel),
 			Captured:   humanizeSince(a.Provenance.CapturedAt),
 			Expires:    humanizeUntil(a.ExpiresAt),
