@@ -59,14 +59,37 @@
           {{range .Legend}}<li data-cat="{{.}}"><span class="swatch" aria-hidden="true"></span>{{.}}</li>{{end}}
         </ul>
       </div>
+      {{/* The axis measures DURATION, not elapsed position — every bar starts at
+      the left edge and is sized against the run's longest span. A wall-clock
+      axis cannot work at this scale: a 611-minute run whose median span is 7.5s
+      puts that median at 0.02% of the width, so all 793 bars clamp to the same
+      stub. "When" lives on the timeline strip below instead. */}}
       <div class="wf-ruler" aria-hidden="true">
-        <span class="wf-rlabel">time</span>
+        <span class="wf-rlabel">duration</span>
         <div class="wf-ticks">{{range .Ticks}}<span class="wf-tick">{{.Label}}</span>{{end}}</div>
       </div>
+      {{/* Scrolls in its own pane rather than pushing the activity stream a
+      thousand rows down the page. */}}
       <ul class="wf-rows" role="list" data-wf-rows>
         {{range .Waterfall}}{{template "waterfall-row" .}}{{end}}
       </ul>
-      <p class="wf-hint">Click any span to jump to it in the stream ↓ · select text or use ＋ to react on a turn</p>
+      {{if .Timeline}}
+      {{/* TIMELINE — the whole run on one line, on a WORKING-time axis with idle
+      and prompt time collapsed out, so the reader keeps the "when" the bars gave
+      up. Positions are applied by trajectory.js from data-pos/data-wid (CSP
+      style-src 'self' forbids inline style attributes). Each tick is a button so
+      the jump is keyboard-operable (WCAG 2.1.1) and names its span (1.1.1). */}}
+      <div class="wf-timeline" data-wf-timeline>
+        <span class="tl-label" aria-hidden="true">timeline</span>
+        <div class="tl-track" role="group" aria-label="Run timeline — jump to a span">
+          {{range .Timeline}}<button type="button" class="tl-tick" data-cat="{{.Category}}"
+            data-pos="{{.PosPct}}" data-wid="{{.WidPct}}" data-spanjump="{{.SpanID}}"
+            aria-label="Jump to {{.SpanID}}"></button>{{end}}
+          <span class="tl-viewport" data-tl-viewport aria-hidden="true"></span>
+        </div>
+      </div>
+      {{end}}
+      <p class="wf-hint">Bars scale to the 95th-percentile span ({{.LongestSpan}}) so typical work stays legible; a longer span fills the track and is marked ▸, with its real time always beside it. The timeline below shows when each span happened, idle time collapsed. Click any span to jump to it in the stream ↓</p>
     </section>
 
     {{/* ACTIVITY STREAM — server-rendered, native <details> collapsibles so
@@ -175,7 +198,7 @@ trajectory.js from data-left/data-width. */}}
       <span class="wf-name">{{.Name}}</span>
     </span>
     <span class="wf-track">
-      <span class="wf-bar" data-cat="{{.Category}}" data-start-ms="{{.StartMS}}" data-dur-ms="{{.DurMS}}">
+      <span class="wf-bar" data-cat="{{.Category}}" data-start-ms="{{.StartMS}}" data-dur-ms="{{.DurMS}}" data-dur-pct="{{.DurPct}}"{{if .Clipped}} data-clipped="1"{{end}}>
         <span class="wf-dur">{{.Duration}}</span>
       </span>
     </span>

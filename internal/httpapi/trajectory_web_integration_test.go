@@ -107,9 +107,16 @@ func TestIntegrationTrajectoryViewerRendersAuditRun(t *testing.T) {
 		`data-cat="reason"`, `data-cat="exec"`, `data-cat="read"`, `data-cat="net"`, `data-cat="write"`,
 		`data-tool="bash"`, `data-tool="grep"`, `data-tool="web_search"`, `data-tool="web_fetch"`,
 		`data-tool="write"`, `data-tool="sub-agent"`,
-		`wf-child`,                     // sub-agent children indent
-		`└`,                            // branch glyph
-		`>8.5s<`, `>17.1s<`, `>34.2s<`, // ruler ticks derived from wall time
+		`wf-child`, // sub-agent children indent
+		`└`,        // branch glyph
+		// The ruler measures DURATION against the run's longest span (the 10.6s
+		// sub-agent), not elapsed position: bars are sized that way, so an axis
+		// labelled with wall-clock quartiles would misdescribe them. Quartiles
+		// of 10.6s.
+		`>0.0s<`, `>2.7s<`, `>5.3s<`, `>8.0s<`, `>10.6s<`,
+		// Every bar carries its duration percentage, and the overview strip
+		// carries the "when" the bars gave up.
+		`data-dur-pct=`, `data-wf-timeline`, `class="tl-tick"`,
 	} {
 		if !strings.Contains(html, frag) {
 			t.Errorf("waterfall missing fragment %q", frag)

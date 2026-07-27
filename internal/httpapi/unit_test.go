@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -423,5 +424,57 @@ func TestPromptCategoryIsRecommendedAndLast(t *testing.T) {
 	}
 	if !found {
 		t.Error("prompt must be a recommended category so the palette maps it and the schema advertises it")
+	}
+}
+
+// TestBuildTimelineCollapsesIdleAndPromptTime pins the overview strip's axis.
+//
+// The run this was built for spent 310 of its 611 minutes on the human typing,
+// including one 155-minute pause that alone owned a quarter of the timeline. On
+// a wall-clock axis that leaves the actual work crushed into the margins with a
+// wide empty band through the middle, which is exactly what it looked like.
+func TestBuildTimelineCollapsesIdleAndPromptTime(t *testing.T) {
+	rows := []waterfallRow{
+		{SpanID: "a", Category: "research", StartMS: 0, DurMS: 10_000},
+		// A 100× longer human pause than the work either side of it.
+		{SpanID: "p", Category: "prompt", StartMS: 10_000, DurMS: 1_000_000},
+		{SpanID: "b", Category: "implementation", StartMS: 1_010_000, DurMS: 10_000},
+	}
+	ticks, longest, label := buildTimeline(rows)
+	if len(ticks) != 3 {
+		t.Fatalf("got %d ticks, want one per span", len(ticks))
+	}
+	// The yardstick every bar is measured against must EXCLUDE prompt spans.
+	// Scaling a 10s command against a 1000s pause puts it at 1% — straight back
+	// to the invisible stub this whole change exists to fix.
+	if longest != 10_000 {
+		t.Errorf("longest span = %d, want the longest WORK span (10000); a prompt must never set the bar scale", longest)
+	}
+	if label == "" {
+		t.Error("expected a human-readable longest-span label for the hint line")
+	}
+
+	pos := func(id string) float64 {
+		for _, k := range ticks {
+			if k.SpanID == id {
+				var f float64
+				_, _ = fmt.Sscanf(k.PosPct, "%f", &f)
+				return f
+			}
+		}
+		t.Fatalf("no tick for %q", id)
+		return 0
+	}
+	// Uncollapsed, `b` would sit at 1_010_000/1_020_000 ≈ 99% — jammed against
+	// the right edge with everything before it invisible. Collapsed, the two
+	// 10s spans should sit at opposite ends of a mostly-work axis.
+	if pos("a") != 0 {
+		t.Errorf("first span should anchor the axis, got %v%%", pos("a"))
+	}
+	if p := pos("b"); p > 80 {
+		t.Errorf("second work span at %v%% — the prompt gap was not collapsed", p)
+	}
+	if p := pos("p"); p >= pos("b") {
+		t.Errorf("prompt tick at %v%% must still precede the work that follows it", p)
 	}
 }

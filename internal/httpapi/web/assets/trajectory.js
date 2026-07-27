@@ -17,52 +17,107 @@
   }
 
   // ---- Waterfall geometry ------------------------------------------------
-  // Lay out every bar's left/width as a fraction of the wall time, derived as
-  // max(start+duration) across all bars. Re-run after a live span append so a
-  // span that extends the timeline re-proportions the whole waterfall. Returns
-  // the wall time (ms) it computed, so callers that also need it (the ruler,
-  // the live stats refresh) don't re-derive it from a second bar scan.
+  // Size every bar by its DURATION against the run's longest span, and refresh
+  // the timeline strip. Re-run after a live span append so a new longest span
+  // re-proportions the whole waterfall. Returns the WALL time (still derived as
+  // max(start+duration)), which the live stats refresh reports separately — the
+  // bars no longer use it, but the run's elapsed figure is still real.
   function layoutWaterfall(root) {
     var bars = root.querySelectorAll('.wf-bar');
-    var wall = 1;
+    var wall = 1, durs = [];
     bars.forEach(function (bar) {
       var end = num(bar.dataset.startMs) + num(bar.dataset.durMs);
       if (end > wall) wall = end;
+      if (bar.dataset.cat !== 'prompt') durs.push(num(bar.dataset.durMs));
     });
+    var longest = yardstick(durs);
     bars.forEach(function (bar) {
-      var left = num(bar.dataset.startMs) / wall * 100;
-      bar.style.left = clamp(left) + '%';
-      // A `prompt` span is drawn as a fixed-size 💬 marker at the moment the
-      // human spoke, never as a length: their typing time is real elapsed time
-      // but says nothing about the run's performance, and as a proportional bar
-      // it dwarfed the work either side of it (see trajectory.css).
+      // Bars encode DURATION against the run's longest span, not position
+      // against the wall clock. At real scale a wall-clock axis is unusable: a
+      // 611-minute run whose median span is 7.5s puts that median at 0.02% of
+      // the width, so every bar clamps to the same minimum stub and the picture
+      // says nothing. Sized against the longest span, a 100s command visibly
+      // dwarfs a 0.1s edit. "When" is carried by the timeline strip below.
+      bar.style.left = '0%';
       if (bar.dataset.cat === 'prompt') {
-        bar.style.width = '16px';
+        bar.style.width = '16px';   // a marker, never a length (see trajectory.css)
       } else {
-        var width = num(bar.dataset.durMs) / wall * 100;
-        bar.style.width = Math.max(clamp(width), 0.6) + '%';
+        var pct = parseFloat(bar.dataset.durPct || '');
+        if (isNaN(pct)) pct = num(bar.dataset.durMs) / longest * 100;
+        if (num(bar.dataset.durMs) > longest) bar.dataset.clipped = '1';
+        bar.style.width = Math.max(clamp(pct), 0.6) + '%';
       }
       var dur = bar.querySelector('.wf-dur');
-      // Keep the duration caption inside the track for bars near the right edge.
+      // The caption sits after the bar; only pull it inside for a bar so wide
+      // there is no room left.
       if (dur) {
-        if (left > 72) { dur.style.left = 'auto'; dur.style.right = 'calc(100% + 6px)'; }
+        if (parseFloat(bar.style.width) > 88) { dur.style.left = 'auto'; dur.style.right = 'calc(100% + 6px)'; }
         else { dur.style.right = 'auto'; dur.style.left = 'calc(100% + 6px)'; }
       }
     });
+    layoutTimeline(root);
     return wall;
   }
 
-  // Re-render the five ruler ticks (0/25/50/75/100%) against a (possibly
-  // grown) wall time, so the ruler never drifts out of agreement with the bar
-  // geometry above it (#38 review note 3: "ruler vs bar scale can diverge on
-  // live runs"). Order matches the server's fixed quartile ticks 1:1, so no
-  // data-* percentage is needed on the tick spans themselves.
-  function layoutRuler(root, wall) {
+  // The 95th-percentile work span, matching the server (buildTimeline). A
+  // single outlier — a 20-minute CI run — otherwise draws the median span at
+  // half a percent and flattens the whole waterfall back to identical stubs.
+  function yardstick(durs) {
+    if (!durs.length) return 1;
+    var s = durs.slice().sort(function (a, b) { return a - b; });
+    return Math.max(s[Math.min(Math.floor(s.length * 0.95), s.length - 1)], 1);
+  }
+
+  // ---- Timeline overview strip -------------------------------------------
+  // Position each tick from the server-computed collapsed-time percentages, and
+  // keep a viewport box in sync with the scrollable waterfall so a reader
+  // scrolling 800 rows still knows where in the run they are.
+  function layoutTimeline(root) {
+    var track = root.querySelector('[data-wf-timeline] .tl-track');
+    if (!track) return;
+    track.querySelectorAll('.tl-tick').forEach(function (tick) {
+      tick.style.left = clamp(parseFloat(tick.dataset.pos || '0')) + '%';
+      tick.style.width = Math.max(clamp(parseFloat(tick.dataset.wid || '0')), 0.3) + '%';
+    });
+    syncTimelineViewport(root);
+  }
+
+  function syncTimelineViewport(root) {
+    var rows = root.querySelector('[data-wf-rows]');
+    var box = root.querySelector('[data-tl-viewport]');
+    if (!rows || !box) return;
+    var total = rows.scrollHeight || 1;
+    var frac = Math.min(rows.clientHeight / total, 1);
+    var at = total > rows.clientHeight ? rows.scrollTop / (total - rows.clientHeight) : 0;
+    // The box spans the visible fraction and slides across the remaining width,
+    // so its right edge lands at 100% when the list is scrolled to the bottom.
+    box.style.width = (frac * 100) + '%';
+    box.style.left = (at * (1 - frac) * 100) + '%';
+  }
+
+  function wireTimeline(root) {
+    var rows = root.querySelector('[data-wf-rows]');
+    if (rows) rows.addEventListener('scroll', function () { syncTimelineViewport(root); }, {passive: true});
+    root.querySelectorAll('.tl-tick').forEach(function (tick) {
+      tick.addEventListener('click', function () { jumpToSpan(tick.dataset.spanjump, root); });
+    });
+    window.addEventListener('resize', function () { syncTimelineViewport(root); });
+  }
+
+  // The ruler labels the DURATION axis the bars are drawn against, so it is
+  // re-derived from the longest span rather than from wall time — labelling it
+  // with elapsed time while the bars mean duration would misread completely.
+  function layoutRuler(root) {
     var ticks = root.querySelectorAll('.wf-tick');
     var pcts = [0, 25, 50, 75, 100];
     if (ticks.length !== pcts.length) return;
+    var durs = [];
+    root.querySelectorAll('.wf-bar').forEach(function (bar) {
+      if (bar.dataset.cat !== 'prompt') durs.push(num(bar.dataset.durMs));
+    });
+    var longest = yardstick(durs);
     ticks.forEach(function (tick, i) {
-      tick.textContent = secs(wall * pcts[i] / 100) + 's';
+      tick.textContent = secs(longest * pcts[i] / 100) + 's';
     });
   }
 
@@ -660,7 +715,7 @@
       seen[span.span_id] = true;
       appendWaterfallRow(wfRows, span, runID);
       var wall = layoutWaterfall(root);
-      layoutRuler(root, wall);
+      layoutRuler(root);
       if (stream) appendStreamRow(stream, span, runID, canWrite, commentsHandle);
       refreshLiveStats(root, wall);
       // After every node this span added (waterfall row, legend entry, stream
@@ -1021,9 +1076,11 @@
     var runID = wf.dataset.runId;
     var canWrite = !!root.querySelector('[data-comment-form]');
     layoutWaterfall(root);
+    layoutRuler(root);
     layoutCategoryBar(root);
     paintCategoryColors(root);
     wireWaterfallJumps(root);
+    wireTimeline(root);
     wireReactions(root, runID, canWrite);
     var commentsHandle = wireComments(root, runID, canWrite);
     wireLazyOutput(root);

@@ -110,7 +110,13 @@
 .wf-ticks { display: flex; justify-content: space-between; color: var(--t7); font: 400 9.5px var(--mono);
   border-left: 1px solid var(--border-3); padding-left: 2px; }
 
-.wf-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+/* The rows scroll in their own pane. A long run is 800+ spans; letting them
+   flow pushed the activity stream twenty pages down the document and made the
+   waterfall the only thing on screen. Capped here, with the timeline strip
+   below giving whole-run context while you scroll. */
+.wf-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px;
+  max-height: 42vh; min-height: 120px; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; }
 .wf-row { display: grid; grid-template-columns: 214px 1fr; gap: 10px; align-items: center;
   width: 100%; text-align: left; background: transparent; border: 0; border-radius: 5px;
   padding: 2px 4px; cursor: pointer; }
@@ -349,3 +355,45 @@
 /* The duration caption is the one thing worth suppressing outright: "9321.8s"
    beside a prompt marker reads as a performance figure. */
 .wf-bar[data-cat="prompt"] .wf-dur { display: none; }
+
+/* A bar longer than the p95 yardstick fills the track; the chevron says so, so
+   a full-width bar is never misread as an exact proportion. The duration text
+   beside it is always the true figure. */
+.wf-bar[data-clipped] { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.wf-bar[data-clipped]::after {
+  content: "▸";
+  position: absolute; right: -9px; top: 50%; transform: translateY(-50%);
+  color: var(--cat, var(--t5)); font-size: 9px; line-height: 1;
+}
+
+/* ---- Timeline overview strip ----------------------------------------------
+   The bars above encode DURATION against the longest span, which is the only
+   way 800 spans of 0.05s–100s are all visible at once. That trades away
+   "when", so this strip gives it back: the whole run on one line, every span a
+   colour-coded tick, on a WORKING-time axis with idle and prompt time
+   collapsed out.
+
+   Collapsing matters as much as the colour. On the run this was built for,
+   half the wall clock was the human typing — including one 155-minute pause
+   that alone owned a quarter of the axis — so an uncollapsed strip is mostly
+   empty band with the work crushed into the margins. */
+.wf-timeline { display: grid; grid-template-columns: 214px 1fr; gap: 10px; align-items: center;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-3); }
+.tl-label { color: var(--t8); font: 400 9.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+.tl-track { position: relative; height: 22px; border-radius: 4px; background: var(--well);
+  border: 1px solid var(--border-3); overflow: hidden; }
+.tl-tick { position: absolute; top: 3px; bottom: 3px; padding: 0; border: 0; border-radius: 1px;
+  background: var(--cat, var(--t7)); opacity: .75; cursor: pointer; }
+.tl-tick:hover, .tl-tick:focus-visible { opacity: 1; outline: 1px solid var(--t2); outline-offset: 1px; }
+/* A prompt reads as a hairline break in the run rather than a block of colour —
+   it is a pause, not work. */
+.tl-tick[data-cat="prompt"] { top: 0; bottom: 0; opacity: .5; border-radius: 0; }
+
+/* Where the scrollable waterfall currently is. Pointer-events off so it never
+   swallows a click meant for a tick underneath it. */
+/* min-width keeps the box findable on a long run: 800 rows in a 42vh pane makes
+   the visible fraction ~2%, which is a hairline nobody can see. */
+.tl-viewport { position: absolute; top: 0; bottom: 0; pointer-events: none; min-width: 10px;
+  border: 1px solid var(--purple); border-radius: 3px;
+  background: rgba(125,86,244,.14); transition: left .08s linear, width .08s linear; }
+@media (prefers-reduced-motion: reduce) { .tl-viewport { transition: none; } }

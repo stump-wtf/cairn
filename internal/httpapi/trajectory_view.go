@@ -70,6 +70,12 @@ type trajectoryView struct {
 	ToolCallCount int
 	Ticks         []rulerTick
 	Waterfall     []waterfallRow
+	// Timeline is the overview strip under the waterfall: one tick per span,
+	// positioned on a WORKING-TIME axis with idle and prompt time collapsed
+	// out. It carries the "when" that the bars stopped encoding once they
+	// switched to showing duration (see waterfallRow.DurPct).
+	Timeline    []timelineTick
+	LongestSpan string
 
 	// Activity stream (the user prompt turn followed by the span rows).
 	Prompt      string
@@ -124,9 +130,31 @@ type waterfallRow struct {
 	// left/width from these against the wall time it derives as max(start+dur),
 	// so the initial render and a live-appended span share one layout path and a
 	// late span that extends the timeline re-proportions the whole waterfall.
-	StartMS  int
-	DurMS    int
+	StartMS int
+	DurMS   int
+	// DurPct is the bar's width as a percentage of the RUN'S LONGEST SPAN, not
+	// of wall time. A 793-span run spanning ten hours has a median span of
+	// 7.5s — 0.02% of the wall clock, a quarter of a pixel — so a
+	// position-and-width flame graph clamped every bar to the same minimum
+	// stub and the bars carried no information at all. Against the longest
+	// span, a 100s command visibly dwarfs a 0.1s edit and the expensive steps
+	// are findable by eye. Chronological ORDER is preserved by the row order;
+	// absolute "when" moves to the timeline strip.
+	DurPct string
+	// Clipped reports the span is longer than the p95 yardstick, so its bar
+	// fills the track rather than reading as an exact proportion. The duration
+	// text beside it is always the real figure.
+	Clipped  bool
 	Duration string
+}
+
+// timelineTick is one span on the overview strip: where it sits on the
+// collapsed working-time axis, and how much of that axis it occupies.
+type timelineTick struct {
+	SpanID   string
+	Category string
+	PosPct   string
+	WidPct   string
 }
 
 // streamRow is one activity-stream turn: a role marker + a collapsible card. A
@@ -326,16 +354,10 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 		Provenance:  vm.Provenance,
 	}
 
-	// Time ruler: five ticks 0→wall at quartile positions (SPEC-0004 waterfall
-	// time axis).
-	for _, q := range []struct {
-		pct float64
-	}{{0}, {25}, {50}, {75}, {100}} {
-		vm.Ticks = append(vm.Ticks, rulerTick{
-			Label: formatSeconds(int64(float64(wall) * q.pct / 100)),
-			Pct:   formatPct(q.pct),
-		})
-	}
+	// The ruler measures DURATION, not elapsed position: bars are sized against
+	// the run's longest span (see buildTimeline), so the axis has to be read the
+	// same way or it lies about what the bars mean. Filled in after the
+	// waterfall rows exist, since it needs the longest span.
 
 	// Reaction tallies, grouped by anchor (type|key). An anonymous read gets
 	// all-false "reacted" flags; a signed-in viewer gets their own toggle state.
@@ -366,6 +388,21 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 		}
 	}
 	walkWaterfall(run.Spans)
+
+	// Duration-relative bars + the collapsed working-time strip.
+	timeline, longest, longestLabel := buildTimeline(vm.Waterfall)
+	vm.Timeline, vm.LongestSpan = timeline, longestLabel
+	for i := range vm.Waterfall {
+		vm.Waterfall[i].DurPct = formatPct(ratioPct(vm.Waterfall[i].DurMS, int64(max(longest, 1))))
+		vm.Waterfall[i].Clipped = vm.Waterfall[i].DurMS > longest &&
+			vm.Waterfall[i].Category != string(trajectory.CategoryPrompt)
+	}
+	for _, q := range []float64{0, 25, 50, 75, 100} {
+		vm.Ticks = append(vm.Ticks, rulerTick{
+			Label: formatSeconds(int64(float64(longest) * q / 100)),
+			Pct:   formatPct(q),
+		})
+	}
 
 	// The user prompt is the run's opening turn — not a span, so its reactions
 	// pin to the whole-artifact anchor (a valid trajectory reaction anchor).
@@ -425,6 +462,118 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 		}
 	}
 	return vm
+}
+
+// buildTimeline projects the waterfall rows onto the overview strip's axis and
+// fills in each row's duration-relative bar width.
+//
+// TWO different axes come out of this, deliberately:
+//
+//   - The BAR is sized against the longest span (DurPct). Wall-clock width does
+//     not work at this scale: a 611-minute run whose median span is 7.5s puts
+//     that median at 0.02% — a quarter of a pixel — so every one of 793 bars
+//     clamped to the same minimum stub and the picture said nothing.
+//   - The STRIP is positioned on WORKING time, with idle and `prompt` time
+//     collapsed out. On this run that is half the axis: 310 of 611 minutes were
+//     the human typing, including one 155-minute gap that alone owned a quarter
+//     of the timeline and pushed a wide empty band through the middle.
+//
+// Collapsing keeps a small fixed stub for each gap rather than closing it
+// completely, so a reader can still see THAT the run paused without the pause
+// dominating. Prompt spans contribute no working time — that is the whole point
+// — but they keep a tick on the strip so the pauses stay visible in context.
+func buildTimeline(rows []waterfallRow) ([]timelineTick, int, string) {
+	if len(rows) == 0 {
+		return nil, 0, ""
+	}
+	order := make([]int, len(rows))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return rows[order[a]].StartMS < rows[order[b]].StartMS })
+
+	// Active total first, so the collapsed gap stub can be sized against it
+	// rather than against a wall clock the collapse is about to discard.
+	// The yardstick bars are measured against is the 95th-PERCENTILE work span,
+	// not the longest one, and prompt spans are excluded from it entirely.
+	//
+	// A single outlier otherwise flattens the whole picture. On the run this was
+	// built for the longest work span is a 20-minute CI gate: against it the
+	// MEDIAN span draws at 0.61% — still the invisible stub this change exists
+	// to remove. Against p95 the median draws at 21.5% and the upper quartile at
+	// 49%, which is a picture you can actually read, at the cost of 38 spans out
+	// of 793 hitting the end of the track. Those keep their exact duration in
+	// text and are marked as clipped, so nothing is misreported — the bar just
+	// stops growing.
+	var active int
+	durs := make([]int, 0, len(rows))
+	for _, r := range rows {
+		if r.Category == string(trajectory.CategoryPrompt) {
+			continue
+		}
+		active += r.DurMS
+		durs = append(durs, r.DurMS)
+	}
+	longest := 1
+	if len(durs) > 0 {
+		sort.Ints(durs)
+		longest = durs[min(int(float64(len(durs))*0.95), len(durs)-1)]
+		if longest <= 0 {
+			longest = max(durs[len(durs)-1], 1)
+		}
+	}
+	gapStub := active / 200
+	if gapStub < 250 {
+		gapStub = 250
+	}
+
+	display := make([]int, len(rows))
+	cursor, shift := 0, 0
+	for _, i := range order {
+		r := rows[i]
+		if r.StartMS > cursor {
+			gap := r.StartMS - cursor
+			if gap > gapStub {
+				shift += gap - gapStub
+			}
+		}
+		display[i] = r.StartMS - shift
+		end := r.StartMS
+		// A prompt span advances the clock without contributing working time,
+		// so the wait it represents collapses like any other idle stretch.
+		if r.Category != string(trajectory.CategoryPrompt) {
+			end += r.DurMS
+		}
+		if end > cursor {
+			cursor = end
+		}
+	}
+
+	wall := 1
+	for i, r := range rows {
+		end := display[i]
+		if r.Category != string(trajectory.CategoryPrompt) {
+			end += r.DurMS
+		}
+		if end > wall {
+			wall = end
+		}
+	}
+
+	ticks := make([]timelineTick, 0, len(rows))
+	for i, r := range rows {
+		w := ratioPct(r.DurMS, int64(wall))
+		if r.Category == string(trajectory.CategoryPrompt) || w < 0.3 {
+			w = 0.3 // a tick a reader can actually see and click
+		}
+		ticks = append(ticks, timelineTick{
+			SpanID:   r.SpanID,
+			Category: r.Category,
+			PosPct:   formatPct(ratioPct(display[i], int64(wall))),
+			WidPct:   formatPct(w),
+		})
+	}
+	return ticks, longest, formatSeconds(int64(longest))
 }
 
 // streamRowFor projects one span onto an activity-stream row, recursively for a
