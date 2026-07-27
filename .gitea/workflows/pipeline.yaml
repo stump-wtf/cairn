@@ -189,7 +189,13 @@ jobs:
   # variable DEPLOY_ON_MERGE is set to true.
   deploy:
     name: deploy to cloud01 (ansible)
-    needs: [image]
+    # docs-image is in needs because the playbook's `docker compose pull` on
+    # cloud01 fetches BOTH cairn:latest and cairn-docs:latest. With only
+    # `needs: [image]` the deploy raced the docs-image job and could pull a
+    # stale cairn-docs (the 2026-07-27 merge only dodged this by luck). Safe to
+    # depend on: docs-image step-gates on REGISTRY_TOKEN and always concludes
+    # success, so an unconfigured repo skips quietly rather than wedging deploy.
+    needs: [image, docs-image]
     if: ${{ vars.DEPLOY_ON_MERGE == 'true' }}
     runs-on: ubuntu-latest
     env:
