@@ -53,13 +53,19 @@ function Hero(): ReactNode {
           <Link className="button button--primary button--lg" to="/docs/intro">
             Read the docs
           </Link>
-          {/* Governing: ADR-0014, SPEC-0010 REQ "No Repository Links" — the
-              hand-maintained /docs/architecture index is deleted, so this points
-              at the generated decisions tree; and there is no forge link to
-              follow, because the full record renders on the site. */}
-          <Link className="button button--secondary button--lg" to="/docs/decisions">
-            Decisions &amp; specs
-          </Link>
+          {/* The way INTO the product. A plain <a> with the absolute product
+              URL, deliberately, twice over: /bin is an app route, not a page
+              of this site, so a Docusaurus <Link to="/bin"> is a broken link
+              to the build checker on every target; and this bundle also ships
+              to Pages (stump-wtf.pages.stump.rocks/cairn/), where a relative
+              /bin would 404 — the absolute URL lands on the app from both.
+              /bin is auth-gated, so for a signed-out visitor this IS the
+              sign-in flow (303 → /auth/login?next=/bin). The former
+              "Decisions & specs" button this replaces survives as the navbar's
+              Decisions/Specs items and the design-record section's own CTAs. */}
+          <a className="button button--secondary button--lg" href="https://cairn.stump.wtf/bin">
+            Open your bin
+          </a>
         </div>
 
         <div
