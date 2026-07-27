@@ -1,0 +1,17 @@
+# In-container static file server for the compiled record site.
+#
+# The bundle is built rooted at `/` (DOCS_BASE_URL=/), and cloud01's edge
+# Caddy proxies the product domain's public paths here WITHOUT rewriting:
+# `/` (the marketing homepage), `/docs/*` (the record), and the bundle's
+# static namespaces (/assets/css|js|fonts/*, /img/*, /sitemap.xml). Paths
+# arrive exactly as the browser sent them and match the build layout
+# directly — no prefix stripping anywhere, which is what makes file_server's
+# canonical-redirect behaviour safe to sidestep with try_files below: a
+# directory URL resolves straight to its index.html with no 308 round-trip.
+# Unknown paths fall through to the Docusaurus 404 page.
+:80 {
+	root * /srv
+	encode gzip zstd
+	try_files {path} {path}/index.html /404.html
+	file_server
+}

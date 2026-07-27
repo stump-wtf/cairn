@@ -154,8 +154,51 @@ const config: Config = {
    * site gets a vhost of its own.
    */
   url: process.env.DOCS_URL || 'https://stump-wtf.pages.stump.rocks',
-  baseUrl: '/cairn/',
-  trailingSlash: false,
+
+  /*
+   * baseUrl is env-driven for the same reason `url` is: this record has a
+   * SECOND deployment target. The canonical Pages bundle serves from
+   * https://stump-wtf.pages.stump.rocks/cairn/ (DOCS_BASE_URL unset — the
+   * /cairn/ default below), and the cairn-docs container serves the same
+   * record as the PRODUCT DOMAIN'S PUBLIC FACE: homepage at
+   * https://cairn.stump.wtf/ and docs at https://cairn.stump.wtf/docs/intro/
+   * (DOCS_URL=https://cairn.stump.wtf DOCS_BASE_URL=/, set by the docs-image
+   * job in pipeline.yaml). cloud01's edge Caddy routes `/`, `/docs/*` and the
+   * bundle's static namespaces to the container; everything else is the app.
+   *
+   * NEVER set DOCS_BASE_URL to '/docs/'. It fails in two stages, both
+   * verified the hard way: with routeBasePath 'docs' the build dies on dozens
+   * of broken links (every `to="/docs/…"` link already starts with baseUrl,
+   * so Docusaurus's already-prefixed heuristic stops resolving them), and a
+   * bundle escorted past that renders the homepage HTML and then HYDRATES
+   * into the 404 page whenever it is served at `/` — the client router
+   * treats any path outside baseUrl as not found. A root baseUrl has neither
+   * failure mode, which is why the app target uses it.
+   *
+   * Same `||`-not-`??` rule as DOCS_URL above: CI env plumbing can hand this
+   * through as an empty string, and an empty baseUrl is a valid-looking wrong
+   * answer.
+   */
+  baseUrl: process.env.DOCS_BASE_URL || '/cairn/',
+
+  /*
+   * `true`, because Garage serves this bundle, and Garage resolves a directory
+   * request to `index.html` and does nothing else. It has no extensionless
+   * fallback — there is no `try_files $uri.html` anywhere in the path.
+   *
+   * With `false`, the build emitted flat `docs/intro.html` while every internal
+   * link pointed at extensionless `/cairn/docs/intro`. The homepage loaded
+   * (`cairn/index.html` is a directory index and resolves) and every single
+   * documentation link 404'd — the site was live and unnavigable at the same
+   * time, which is worse than being down, because it looks fine from the front
+   * page.
+   *
+   * `true` emits `docs/intro/index.html` and links `/cairn/docs/intro/`, which
+   * is exactly the shape S3-style website hosting resolves. Do not set this back
+   * to `false` without putting an extensionless rewrite in front of Garage
+   * first.
+   */
+  trailingSlash: true,
 
   organizationName: 'stump.wtf',
   projectName: 'cairn',
@@ -238,6 +281,26 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
+
+          /*
+           * 'docs' on every target, always. Both deployments carry the /docs
+           * segment here, on top of a plain directory-style baseUrl:
+           *
+           *   Pages — baseUrl /cairn/ → https://…/cairn/docs/intro/
+           *   app   — baseUrl /      → https://cairn.stump.wtf/docs/intro/
+           *
+           * There was briefly a third shape — baseUrl '/docs/' with
+           * routeBasePath '/' — built for serving under the app domain's
+           * /docs prefix. It is gone for a reason: a bundle whose baseUrl is
+           * /docs/ hydrates into the 404 page the moment it is served at `/`
+           * (the client router treats any path outside baseUrl as not
+           * found), and the product domain wants the homepage AT `/`. A root
+           * baseUrl serves both `/` and `/docs/…` from one bundle with no
+           * hydration trap, and this knob never needs to move again — see
+           * the baseUrl comment above for the full failure catalogue.
+           */
+          routeBasePath: 'docs',
+
           // Governing: ADR-0014, SPEC-0010 REQ "No Repository Links"
           // No `editUrl`. The full record text renders on the site, so there
           // is nothing an "edit this page" link could usefully point at, and
@@ -319,6 +382,17 @@ const config: Config = {
         // this capability deletes.
         {to: '/docs/decisions', label: 'Decisions', position: 'left'},
         {to: '/docs/specs', label: 'Specs', position: 'left'},
+        // The way into the app, upper right. `href` (not `to`) with the
+        // absolute product URL for the same reasons as the homepage's
+        // "Open your bin" button (src/pages/index.tsx): /bin is an app
+        // route, not a page of this site, and this bundle also serves from
+        // Pages, where only the absolute URL reaches the app. /bin is
+        // auth-gated, so this is the sign-in entrance for a signed-out
+        // visitor.
+        // target _self: Docusaurus defaults external hrefs to a new tab, and
+        // a sign-in that detaches from the page the visitor was reading is
+        // just disorienting — on the app domain it is not even external.
+        {href: 'https://cairn.stump.wtf/bin', label: 'Sign in', position: 'right', target: '_self'},
       ],
     },
     footer: {

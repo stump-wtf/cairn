@@ -211,11 +211,15 @@ jobs:
           ref: main
           token: ${{ secrets.GIT_AUTH_TOKEN }}
 
-      - name: Set up SSH key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
+      # NOTE: no job-level ssh-agent step. One used to sit here and it was a
+      # no-op that *looked* load-bearing: the agent's socket lives in the job
+      # container, ansible-playbook runs inside the ansible-runner action
+      # container, and the two never meet. The key that actually reaches
+      # ansible is the ssh_private_key input below, which ansible-runner
+      # v2.1.0+ installs inside its own container (earlier versions silently
+      # dropped it — the undeclared input was discarded by the runner, which
+      # is why this job spent its whole life red on
+      # "Permission denied (publickey)").
       - name: Log in to Gitea (pull the ansible-runner action image)
         uses: docker/login-action@v3
         with:
@@ -224,12 +228,99 @@ jobs:
           password: ${{ secrets.GIT_AUTH_TOKEN }}
 
       - name: Deploy Cairn to cloud01
-        uses: https://gitea.stump.rocks/stumpcloud/ansible-runner@v2
+        # v2.1.0 exactly: the first release where ssh_private_key is a real,
+        # delivered input. @v2 was not moved forward to it, so do not "tidy"
+        # this back to the major alias without checking what v2 points at.
+        uses: https://gitea.stump.rocks/stumpcloud/ansible-runner@v2.1.0
         with:
           playbook: playbooks/services/cairn.yaml
           inventory: gva.yaml
           ssh_hosts: cloud01.stump.rocks
           ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+  # ---- 8b. docs image ------------------------------------------------------
+  # The same record the Pages job publishes, rebuilt for the PRODUCT domain and
+  # baked into a static-server image. This bundle is cairn.stump.wtf's public
+  # face: the marketing homepage at /, the record at /docs/intro/ and friends —
+  # cloud01's edge Caddy routes `/`, `/docs/*` and the bundle's static
+  # namespaces to the cairn-docs container, and everything else to the app.
+  # Two builds, not one bundle rsynced twice, because a Docusaurus bundle bakes
+  # its origin and base path into every canonical link, og:url and the sitemap:
+  # the Pages bundle advertises stump-wtf.pages.stump.rocks/cairn/, this one
+  # cairn.stump.wtf/.
+  #
+  # DOCS_BASE_URL is `/`, and must stay `/`: a bundle based at /docs/ hydrates
+  # into the 404 page when served at `/` — the client router treats any path
+  # outside its baseUrl as not found (this shipped once; the homepage rendered,
+  # then React replaced it with "Page Not Found"). docusaurus.config.ts
+  # documents the full failure catalogue.
+  #
+  # The site is built on the runner (npm) and the image only COPYs the static
+  # output — no Node stage, so the docker build fetches nothing. Same
+  # REGISTRY_TOKEN step-guard idiom as the image job above.
+  docs-image:
+    name: docs image (cairn.stump.wtf/docs)
+    needs: [main-only]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REG: ${{ secrets.REGISTRY_TOKEN }}
+    steps:
+      - if: ${{ env.REG != '' }}
+        uses: actions/checkout@v4
+
+      - if: ${{ env.REG != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - if: ${{ env.REG != '' }}
+        name: Build the record for the app domain (rooted at /)
+        working-directory: website
+        run: npm ci --no-audit --no-fund && npm run build
+        env:
+          DOCS_URL: https://cairn.stump.wtf
+          DOCS_BASE_URL: /
+
+      - if: ${{ env.REG != '' }}
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - if: ${{ env.REG != '' }}
+        name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: gitea.stump.rocks/stump.wtf/cairn-docs
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
+
+      - if: ${{ env.REG != '' }}
+        name: Log in to Gitea container registry
+        uses: docker/login-action@v3
+        with:
+          registry: gitea.stump.rocks
+          username: joestump-agent
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - if: ${{ env.REG != '' }}
+        name: Build and push the docs image (amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: website
+          file: website/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=gitea.stump.rocks/stump.wtf/cairn-docs:buildcache
+          cache-to: type=registry,ref=gitea.stump.rocks/stump.wtf/cairn-docs:buildcache,mode=max
 
   # ---- 9. Gitea Pages ------------------------------------------------------
   # The Docusaurus site under website/, published to
