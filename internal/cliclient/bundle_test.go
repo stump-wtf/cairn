@@ -60,6 +60,54 @@ func TestOpenBundleFilesDeduplicatesRelativeAndAbsolute(t *testing.T) {
 	}
 }
 
+// TestOpenBundleFilesDeduplicatesRelativeAndAbsolute only exercises symlink
+// resolution on platforms whose temp dir already sits behind one (macOS:
+// /var → /private/var). This pins the same contract everywhere by naming one
+// file through both a real directory and a symlink to that directory.
+func TestOpenBundleFilesDeduplicatesAcrossSymlinkedDir(t *testing.T) {
+	dir := t.TempDir()
+	realDir := filepath.Join(dir, "real")
+	if err := os.Mkdir(realDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	a := writeTempFile(t, realDir, "a.log", "hello")
+	if err := os.Symlink(realDir, filepath.Join(dir, "link")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	files, closeAll, err := OpenBundleFiles([]string{a, filepath.Join(dir, "link", "a.log")})
+	if err != nil {
+		t.Fatalf("OpenBundleFiles: %v", err)
+	}
+	defer closeAll()
+
+	if len(files) != 1 {
+		t.Fatalf("OpenBundleFiles returned %d files, want 1 (symlinked dir == real dir)", len(files))
+	}
+}
+
+// De-duplication canonicalizes the directory only: a symlink and its target
+// named separately are two distinct members, because each carries its own
+// multipart filename and silently dropping one the user named explicitly
+// would surprise more than the saved upload is worth.
+func TestOpenBundleFilesKeepsDistinctlyNamedSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := writeTempFile(t, dir, "2026-07-27.log", "hello")
+	if err := os.Symlink(target, filepath.Join(dir, "latest.log")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	files, closeAll, err := OpenBundleFiles([]string{target, filepath.Join(dir, "latest.log")})
+	if err != nil {
+		t.Fatalf("OpenBundleFiles: %v", err)
+	}
+	defer closeAll()
+
+	if len(files) != 2 {
+		t.Fatalf("OpenBundleFiles returned %d files, want 2 (differently-named symlink kept)", len(files))
+	}
+}
+
 func TestOpenBundleFilesMissingPathIsError(t *testing.T) {
 	dir := t.TempDir()
 	_, _, err := OpenBundleFiles([]string{filepath.Join(dir, "nope.log")})

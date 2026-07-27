@@ -66,6 +66,39 @@ func TestPrepareBundleFilesConcurrentDeduplicates(t *testing.T) {
 	}
 }
 
+// dedupPaths canonicalizes each path's directory before comparing, so two
+// spellings of one file collapse — an absolute path against the same file
+// reached through a symlinked directory (or, on macOS, relatively via
+// /private/var) is one bundle member, not two.
+func TestPrepareBundleFilesConcurrentDeduplicatesAcrossSymlinkedDir(t *testing.T) {
+	dir := t.TempDir()
+	realDir := filepath.Join(dir, "real")
+	if err := os.Mkdir(realDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	a := writeUploadTestFile(t, realDir, "a.log", 128)
+	if err := os.Symlink(realDir, filepath.Join(dir, "link")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	viaLink := filepath.Join(dir, "link", "a.log")
+
+	files, err := PrepareBundleFilesConcurrent(context.Background(), []string{a, viaLink}, 4, nil)
+	if err != nil {
+		t.Fatalf("PrepareBundleFilesConcurrent: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("got %d files, want 1 (symlinked dir == real dir)", len(files))
+	}
+
+	deduped, err := ValidateBundlePaths([]string{a, viaLink})
+	if err != nil {
+		t.Fatalf("ValidateBundlePaths: %v", err)
+	}
+	if len(deduped) != 1 {
+		t.Fatalf("ValidateBundlePaths got %d paths, want 1", len(deduped))
+	}
+}
+
 func TestPrepareBundleFilesConcurrentMissingFileErrors(t *testing.T) {
 	dir := t.TempDir()
 	_, err := PrepareBundleFilesConcurrent(context.Background(), []string{filepath.Join(dir, "nope.log")}, 2, nil)

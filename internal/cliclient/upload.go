@@ -35,23 +35,49 @@ type FileProgress struct {
 // to call from any goroutine and is the intended receiver.
 type ProgressFunc func(FileProgress)
 
-// dedupPaths resolves each path to an absolute form and drops later
-// duplicates, preserving first-seen order and the caller's original
-// (possibly relative) string — the same de-duplication contract as
-// OpenBundleFiles (SPEC-0008 "Oversize and Duplicate File Handling": "cairn
-// add a.log a.log ... MUST NOT upload a.log twice").
+// dedupKey maps a path to the identity used for de-duplication: the absolute
+// path with its *directory* resolved through any symlinks. filepath.Abs alone
+// is not enough, because it cleans and prefixes the working directory without
+// ever resolving links: on macOS the same file named relatively resolves under
+// /private/var/... while the absolute spelling stays /var/..., so two arguments
+// naming one file would both be uploaded.
+//
+// Only the directory is resolved, deliberately. A symlink and its target
+// passed under different names stay distinct bundle members — they carry
+// different multipart filenames, and silently dropping one the user named
+// explicitly would surprise more than the saved upload is worth.
+func dedupKey(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", p, err)
+	}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		// A missing or unreadable directory is not a de-duplication
+		// problem; fall back to the unresolved form and let the caller's
+		// own open/stat report the real error against the user's path.
+		return abs, nil
+	}
+	return filepath.Join(dir, filepath.Base(abs)), nil
+}
+
+// dedupPaths resolves each path to a canonical form (see dedupKey) and drops
+// later duplicates, preserving first-seen order and the caller's original
+// (possibly relative) string — the shared de-duplication contract behind
+// OpenBundleFiles and ValidateBundlePaths (SPEC-0008 "Oversize and Duplicate
+// File Handling": "cairn add a.log a.log ... MUST NOT upload a.log twice").
 func dedupPaths(paths []string) ([]string, error) {
 	seen := make(map[string]bool, len(paths))
 	out := make([]string, 0, len(paths))
 	for _, p := range paths {
-		abs, err := filepath.Abs(p)
+		key, err := dedupKey(p)
 		if err != nil {
-			return nil, fmt.Errorf("resolve %s: %w", p, err)
+			return nil, err
 		}
-		if seen[abs] {
+		if seen[key] {
 			continue
 		}
-		seen[abs] = true
+		seen[key] = true
 		out = append(out, p)
 	}
 	return out, nil

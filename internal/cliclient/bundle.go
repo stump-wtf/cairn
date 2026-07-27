@@ -86,11 +86,12 @@ func (c *Client) CreateBundle(ctx context.Context, files []BundleFile, opts Crea
 	return &art, nil
 }
 
-// OpenBundleFiles stats and opens each de-duplicated path, returning
-// BundleFile values ready for CreateBundle. Callers must close the returned
-// files (via CloseBundleFiles) once the request completes. A missing file,
-// a directory, or a duplicate path is a client-side usage error — the CLI
-// checks these locally before ever contacting the server (SPEC-0008
+// OpenBundleFiles stats and opens each path that survives de-duplication
+// (dedupPaths, which canonicalizes so two spellings of one file collapse),
+// returning BundleFile values ready for CreateBundle. Callers must close the
+// returned files (via CloseBundleFiles) once the request completes. A missing
+// file, a directory, or a duplicate path is a client-side usage error — the
+// CLI checks these locally before ever contacting the server (SPEC-0008
 // "Oversize and Duplicate File Handling").
 func OpenBundleFiles(paths []string) (files []BundleFile, closeAll func(), err error) {
 	opened := make([]*os.File, 0, len(paths))
@@ -100,18 +101,12 @@ func OpenBundleFiles(paths []string) (files []BundleFile, closeAll func(), err e
 		}
 	}
 
-	seen := make(map[string]bool, len(paths))
-	for _, p := range paths {
-		abs, err := filepath.Abs(p)
-		if err != nil {
-			closeAll()
-			return nil, nil, fmt.Errorf("resolve %s: %w", p, err)
-		}
-		if seen[abs] {
-			continue // de-duplicated, not uploaded twice
-		}
-		seen[abs] = true
+	deduped, err := dedupPaths(paths)
+	if err != nil {
+		return nil, nil, err
+	}
 
+	for _, p := range deduped {
 		f, err := os.Open(p)
 		if err != nil {
 			closeAll()
