@@ -684,6 +684,92 @@ func TestIntegrationMCPRunCreateRendersAtRunURL(t *testing.T) {
 	}
 }
 
+// TestIntegrationMCPRunCreateOpenThenAppend covers issue #51: run_create with
+// mode "open" creates a live run (status "open", no ended_at) that stays open
+// for run_append_spans, rather than being closed on creation. This is the
+// MCP-native create-then-append flow that was impossible before the mode field
+// existed (runs created via run_create were always batch/closed, so every
+// append conflicted). The REST equivalent is TestIntegrationRunBatchAndIncrementalConverge.
+func TestIntegrationMCPRunCreateOpenThenAppend(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "claude-code")
+
+	// Open a live run via the MCP tool (mode "open"), seeding one span.
+	created := callTool(t, sess, "run_create", map[string]any{
+		"mode":  "open",
+		"title": "live agent run",
+		"model": "test-model",
+		"spans": []map[string]any{
+			{
+				"span_id":         "root",
+				"category":        "exec",
+				"tool":            "bash",
+				"name":            "first step",
+				"start_offset_ms": 0,
+				"duration_ms":     100,
+			},
+		},
+	})
+	var openOut mcpRunOutput
+	decodeToolJSON(t, created, &openOut)
+	if openOut.ID == "" {
+		t.Fatalf("run_create open returned no id: %+v", openOut)
+	}
+	if openOut.Status != "open" {
+		t.Fatalf("run_create mode=open status = %q, want open", openOut.Status)
+	}
+	if openOut.EndedAt != nil {
+		t.Fatalf("run_create mode=open ended_at = %v, want nil (open runs have no end yet)", openOut.EndedAt)
+	}
+	if openOut.Stats.SpanCount != 1 {
+		t.Fatalf("seeded open run span_count = %d, want 1", openOut.Stats.SpanCount)
+	}
+
+	// Append a child span; the run stays open and the span lands.
+	appended := callTool(t, sess, "run_append_spans", map[string]any{
+		"id": openOut.ID,
+		"spans": []map[string]any{
+			{
+				"span_id":         "child",
+				"parent_span_id":  "root",
+				"category":        "read",
+				"tool":            "read_file",
+				"name":            "read the output",
+				"start_offset_ms": 50,
+				"duration_ms":     20,
+			},
+		},
+	})
+	var appOut mcpRunOutput
+	decodeToolJSON(t, appended, &appOut)
+	if appOut.Status != "open" {
+		t.Fatalf("run status after append = %q, want still open", appOut.Status)
+	}
+	if appOut.Stats.SpanCount != 2 {
+		t.Fatalf("run span_count after append = %d, want 2", appOut.Stats.SpanCount)
+	}
+
+	// The mcp:// handle form of the id is accepted by run_append_spans too.
+	handleAppended := callTool(t, sess, "run_append_spans", map[string]any{
+		"id": "mcp://cairn/run/" + openOut.ID,
+		"spans": []map[string]any{
+			{
+				"span_id":         "tail",
+				"category":        "reason",
+				"name":            "wrap up",
+				"start_offset_ms": 120,
+				"duration_ms":     10,
+			},
+		},
+	})
+	var handleOut mcpRunOutput
+	decodeToolJSON(t, handleAppended, &handleOut)
+	if handleOut.Stats.SpanCount != 3 {
+		t.Fatalf("run span_count after handle-form append = %d, want 3", handleOut.Stats.SpanCount)
+	}
+}
+
 // TestIntegrationMCPRunAppendSpans covers the "optional but nice"
 // run_append_spans tool (issue #65): a run opened live (over REST, mirroring
 // a CLI-opened run an agent then appends to) accepts an appended span over

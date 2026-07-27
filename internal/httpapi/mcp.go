@@ -252,10 +252,13 @@ func (s *Server) newMCPServer() *mcp.Server {
 	if s.traj != nil {
 		mcp.AddTool(srv, &mcp.Tool{
 			Name: "run_create",
-			Description: "Create a complete trajectory run (a title/prompt/model header plus an ordered " +
-				"span tree) owned by the authorizing human, with the default link-visibility policy and " +
-				"default TTL — the same ingest POST /v1/runs (mode \"batch\") performs via the trajectory " +
-				"service. Returns the run's id, web URL (/run/<id>), and mcp:// handle. Requires artifacts:write.",
+			Description: "Create and push a trajectory run owned by the authorizing human, with the default " +
+				"link-visibility policy and default TTL — the same ingest POST /v1/runs performs via the " +
+				"trajectory service. Mode \"batch\" (the default when mode is omitted) creates a complete run " +
+				"(a title/prompt/model header plus an ordered span tree) that is closed on creation; mode " +
+				"\"open\" creates a live run whose id and shareable URL are returned immediately and which " +
+				"stays open for run_append_spans as work happens (close it with POST /v1/runs/{id}/close " +
+				"when finished). Returns the run's id, web URL (/run/<id>), and mcp:// handle. Requires artifacts:write.",
 		}, s.mcpCreateRun)
 
 		mcp.AddTool(srv, &mcp.Tool{
@@ -1054,12 +1057,15 @@ func toMCPRunOutput(r runResponse) (mcpRunOutput, error) {
 	return out, nil
 }
 
-// mcpRunCreateInput mirrors [runRequest] minus Mode (a run created over MCP
-// is always a complete batch run, exactly POST /v1/runs mode "batch") and
-// minus OnBehalfOf (derived from the connected client's `initialize`
-// identity via [mcpModelActor], the same MCP-native provenance source every
-// other write tool uses — never a client-supplied claim over this transport).
+// mcpRunCreateInput mirrors [runRequest] including Mode (a run created over
+// MCP may be a complete batch run — mode "batch" or empty, the default — or an
+// open live run — mode "open" — that stays open for run_append_spans, exactly
+// the two shapes POST /v1/runs dispatches between). OnBehalfOf is derived from
+// the connected client's `initialize` identity via [mcpModelActor], the same
+// MCP-native provenance source every other write tool uses — never a
+// client-supplied claim over this transport).
 type mcpRunCreateInput struct {
+	Mode       string            `json:"mode,omitempty" jsonschema:"\"batch\" (the default when omitted) creates a complete run that is closed on creation; \"open\" creates a live run whose id and shareable URL are returned immediately and which stays open for run_append_spans as work happens (close it with POST /v1/runs/{id}/close when finished)."`
 	Title      string            `json:"title,omitempty" jsonschema:"Short title for the run, shown in the page header and any listing, e.g. 'msgbrowse #227: semantic status-banner component'."`
 	Prompt     string            `json:"prompt,omitempty" jsonschema:"The human's originating request, rendered as the opening turn of the activity stream."`
 	Model      string            `json:"model,omitempty" jsonschema:"Model identifier that produced the run, e.g. 'claude-opus-5'. Shown in the trace header."`
@@ -1069,14 +1075,14 @@ type mcpRunCreateInput struct {
 }
 
 // mcpCreateRun is the run_create tool handler (SPEC-0007 REQ "Create & Push",
-// issue #65): it ingests a complete run — header plus ordered span tree — via
-// the same trajectory.Service.CreateBatchRun the REST POST /v1/runs (mode
-// "batch") handler calls, with the default link-visibility policy and
-// default TTL always applied (struct-derived input schema,
-// additionalProperties:false, carries no policy/TTL/owner field — matching
-// artifact_create's not-broadening contract). Provenance stamps the human
-// subject as actor, the MCP client's identification as OnBehalfOf, and
-// channel `via MCP` (ADR-0004).
+// issue #65): it ingests a run — header plus an ordered span tree — via the
+// same trajectory.Service.CreateBatchRun / OpenRun the REST POST /v1/runs
+// handler dispatches between on Mode ("batch"/empty → closed, "open" → live),
+// with the default link-visibility policy and default TTL always applied
+// (struct-derived input schema, additionalProperties:false, carries no
+// policy/TTL/owner field — matching artifact_create's not-broadening contract).
+// Provenance stamps the human subject as actor, the MCP client's
+// identification as OnBehalfOf, and channel `via MCP` (ADR-0004).
 func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in mcpRunCreateInput) (*mcp.CallToolResult, mcpRunOutput, error) {
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
 		return nil, mcpRunOutput{}, s.mcpScopeErr(ctx, "run_create", oauth.ScopeArtifactsWrite)
@@ -1094,7 +1100,7 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 	if started.IsZero() {
 		started = now
 	}
-	run, err := s.traj.CreateBatchRun(ctx, trajectory.RunInput{
+	rin := trajectory.RunInput{
 		Title:      in.Title,
 		Prompt:     in.Prompt,
 		Model:      in.Model,
@@ -1110,7 +1116,16 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 		Access:    artifact.AccessPolicy{OwnerID: actorID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 		Spans:     spans,
-	})
+	}
+	var run *trajectory.Run
+	switch in.Mode {
+	case "", "batch":
+		run, err = s.traj.CreateBatchRun(ctx, rin)
+	case "open":
+		run, err = s.traj.OpenRun(ctx, rin)
+	default:
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", errs.Validationf("mode must be \"batch\" or \"open\""))
+	}
 	if err != nil {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", err)
 	}
