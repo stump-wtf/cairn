@@ -40,7 +40,11 @@ var fragmentTmpl = template.Must(template.New("md").Parse(`
 <div class="md-prose" data-md-prose>
 {{range .Blocks}}<div class="md-block{{if .IsList}} md-block-list{{end}}" id="{{.BlockID}}" data-block-id="{{.BlockID}}"{{if .IsList}} data-md-list="true"{{end}}>
 <div class="md-block-body">{{.HTML}}</div>
-<button type="button" class="md-react" data-anchor-type="md_block" data-block-id="{{.BlockID}}" aria-label="React to this block">＋</button>
+{{/* A list block gets NO block-level ＋: markdown.js gives every item its own
+md_bullet affordance, so rendering this one too put two ＋ controls a few pixels
+apart on the first item and made the block one look like a duplicate of it.
+Bullet-level is the finer, more useful anchor, so it wins for lists; every other
+block keeps the block-level control. */}}{{if not .IsList}}<button type="button" class="md-react" data-anchor-type="md_block" data-block-id="{{.BlockID}}" aria-label="React to this block">＋</button>{{end}}
 </div>
 {{end}}</div>
 </div>{{end}}

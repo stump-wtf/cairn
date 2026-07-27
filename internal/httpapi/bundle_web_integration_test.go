@@ -311,3 +311,53 @@ func TestIntegrationBundleMemberDownload(t *testing.T) {
 		t.Errorf("member bytes = %q, want the uploaded blob", got)
 	}
 }
+
+// TestIntegrationBundleRendersSourceMembersInline is the regression for a
+// bundle of source files rendering as nothing but download cards. Only markdown
+// was ever classified as a viewable member, so the single most obvious reason
+// to build a bundle — sharing a set of related source files — produced the
+// least useful page in the product.
+//
+// It also pins the second half of that fix: RenderBody is handed the BUNDLE
+// artifact, so a member whose language was detected from the artifact's own
+// media type/title rendered as "Plain Text" however obvious its filename. The
+// member's language now travels through the body-hint seam.
+//
+// Governing: SPEC-0003 REQ "Bundle Viewer" ("delegate the selected member to
+// that file's registered viewer")
+func TestIntegrationBundleRendersSourceMembersInline(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+	id := createBundle(t, srv.URL, "joe", "source bundle", []bundleMember{
+		{name: "trajectory.go", body: "package trajectory\n\nfunc Run() {}\n"},
+		{name: "styles.css", body: ".a { color: red; }\n"},
+		{name: "data.bin", body: "\x00\x01binary"},
+	})
+
+	for _, tc := range []struct{ file, wantLang string }{
+		{"trajectory.go", "Go ·"},
+		{"styles.css", "CSS ·"},
+	} {
+		status, html := getHTML(t, srv.URL+"/"+id+"?file="+tc.file)
+		if status != http.StatusOK {
+			t.Fatalf("GET member %s = %d, want 200", tc.file, status)
+		}
+		if !strings.Contains(html, "code-line-cell") {
+			t.Errorf("%s must render through the code viewer, not a download card", tc.file)
+		}
+		if !strings.Contains(html, tc.wantLang) {
+			t.Errorf("%s must detect its own language (want %q); a member used to inherit the bundle's", tc.file, tc.wantLang)
+		}
+		if strings.Contains(html, "Plain Text ·") {
+			t.Errorf("%s rendered as Plain Text — the member's language did not reach the viewer", tc.file)
+		}
+	}
+
+	// A member nothing can highlight still degrades to the generic file card.
+	status, html := getHTML(t, srv.URL+"/"+id+"?file=data.bin")
+	if status != http.StatusOK {
+		t.Fatalf("GET binary member = %d, want 200", status)
+	}
+	if strings.Contains(html, "code-line-cell") {
+		t.Error("a binary member must not be forced through the code viewer")
+	}
+}

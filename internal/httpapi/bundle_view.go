@@ -12,6 +12,7 @@ import (
 
 	"github.com/joestump/cairn/internal/annotation"
 	"github.com/joestump/cairn/internal/artifact"
+	"github.com/joestump/cairn/internal/code"
 	"github.com/joestump/cairn/internal/errs"
 	"github.com/joestump/cairn/internal/sharetype"
 	"github.com/joestump/cairn/internal/store"
@@ -146,6 +147,14 @@ func (s *Server) renderMemberPane(ctx context.Context, a *artifact.Artifact, m s
 	if viewer, ok := s.reg.BodyViewerFor(memberType); ok {
 		if rc, _, err := s.store.OpenMember(ctx, a.PublicID, m.Name); err == nil {
 			defer rc.Close()
+			// RenderBody is handed the BUNDLE artifact — a member has no
+			// artifact of its own — so a code viewer detecting its language
+			// from a.MediaType/a.Title would read the bundle's, and every
+			// member rendered as "Plain Text" however obvious its filename.
+			// Resolve the language from the MEMBER's own name and media type
+			// and pass it through the existing body-hint seam, the same channel
+			// the web shell's ?lang= override already uses.
+			ctx := sharetype.WithBodyHint(ctx, s.memberLangHint(memberType, m))
 			if html, err := viewer.RenderBody(ctx, a, rc); err == nil {
 				pane.Body = html
 				return pane
@@ -168,6 +177,20 @@ func (s *Server) renderMemberPane(ctx context.Context, a *artifact.Artifact, m s
 		DownloadURL: "/" + a.PublicID + "/members/" + memberPath(m.Name),
 	}
 	return pane
+}
+
+// memberLangHint resolves the highlighting language for a bundle member from
+// its OWN name and media type, returned as the lexer key the body-hint seam
+// accepts. Empty for a non-code member, or when nothing is detectable — an
+// empty hint leaves the viewer's own detection untouched.
+func (s *Server) memberLangHint(memberType artifact.ShareType, m store.Member) string {
+	if memberType != sharetype.KeyCode {
+		return ""
+	}
+	if lang := code.Detect("", m.MediaType, m.Name); lang.Key != code.PlainTextKey {
+		return lang.Key
+	}
+	return ""
 }
 
 // handleBundlePane serves one member's pane fragment for an HTMX swap

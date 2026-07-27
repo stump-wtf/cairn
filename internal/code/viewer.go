@@ -51,10 +51,11 @@ var fragmentTmpl = template.Must(template.New("code").Funcs(template.FuncMap{
 <tbody>
 {{range .Lines}}<tr class="code-row" id="{{lineID .Num}}" data-line="{{.Num}}">
 <td class="code-lineno" data-code-lineno><a class="code-lineno-link" href="#{{lineID .Num}}" tabindex="-1" aria-label="Line {{.Num}}">{{.Num}}</a></td>
-<td class="code-line-cell">
-<span class="code-line-code">{{.HTML}}</span><button type="button" class="code-react" data-anchor-type="code_line" data-line="{{.Num}}" aria-label="React to line {{.Num}}">＋</button><button type="button" class="code-react code-comment-btn" data-line="{{.Num}}" aria-label="Comment on line {{.Num}}">💬</button>
-<div class="code-annotations" data-code-annotations data-line="{{.Num}}"></div>
-</td>
+{{/* NOTHING inside .code-line-cell may sit on its own source line: the cell is
+white-space:pre so the source keeps its own indentation, which means a newline
+in this TEMPLATE renders as a blank line in the file. Two such newlines (before
+the code span, and before the annotations div) double-spaced every code
+artifact. Keep the cell on one line. */}}<td class="code-line-cell"><span class="code-line-code">{{.HTML}}</span><button type="button" class="code-react" data-anchor-type="code_line" data-line="{{.Num}}" aria-label="React to line {{.Num}}">＋</button><button type="button" class="code-react code-comment-btn" data-line="{{.Num}}" aria-label="Comment on line {{.Num}}">💬</button><div class="code-annotations" data-code-annotations data-line="{{.Num}}"></div></td>
 </tr>
 {{end}}</tbody>
 </table>

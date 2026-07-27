@@ -166,15 +166,27 @@
   transition: opacity 0.1s ease, color 0.1s ease, border-color 0.1s ease;
 }
 .md-react:hover, .md-react:focus-visible { color: var(--green); border-color: var(--green-3); opacity: 1; }
+/* The per-item ＋ sits in the MARGIN, level with the marker — not in the item's
+   content flow. `position: static` put it inline before the text, which pushed
+   the first line right, left it visually unaligned with the bullet/number it
+   belongs to, and wrapped long items around it. Absolute positioning takes it
+   out of flow, so item text starts where the marker says it does and every ＋
+   forms a straight column down the list, including nested levels (each `li` is
+   its own containing block). */
+.md-prose li { position: relative; }
 .md-bullet-react {
-  position: static;
-  margin-right: 6px;
+  position: absolute;
+  /* Clear of the list marker, which sits just outside the item's content box —
+     at -30px the control butted straight up against "1." on ordered lists. */
+  left: -38px;
+  top: 0;
   width: 20px;
   height: 20px;
   font-size: 13px;
-  vertical-align: middle;
-  opacity: 0.55;
+  opacity: 0;
 }
+.md-prose li:hover > .md-bullet-react,
+.md-prose li:focus-within > .md-bullet-react { opacity: 1; }
 
 /* Block/bullet reaction pills (#66) — md.js inserts one per emoji, always
    visible (unlike the hover-revealed ＋ affordance above), matching the
@@ -198,8 +210,10 @@
 .md-react-pill.on { border-color: #244034; background: rgba(86,227,159,.12); color: var(--green-2); }
 .md-react-pill .react-count { color: var(--t3); }
 .md-react-pill.on .react-count { color: var(--green-2); }
-/* A pill beside a bullet trigger (both position:static, inserted right before
-   it) reads inline with the ＋ icon rather than dropping to a new line. */
+/* A bullet's pills stay in the item's normal flow, reading inline at the start
+   of its text. The ＋ trigger they used to sit beside is now absolutely
+   positioned out in the margin, so these no longer share a line with it — which
+   is the point: the pills are content, the trigger is chrome. */
 li > .md-react-pill { display: inline-flex; vertical-align: middle; margin: 0 4px 0 0; }
 .md-react-error {
   display: inline-block;
@@ -233,5 +247,13 @@ li > .md-react-pill { display: inline-flex; vertical-align: middle; margin: 0 4p
 
 @media (max-width: 720px) {
   .md-viewer { padding: 18px 16px 48px; }
-  .md-react { left: -6px; top: -30px; }
+  /* Narrow screens have no left gutter to hang the block ＋ in, so it moves
+     ABOVE its block. Scoped off .md-bullet-react deliberately: a bullet control
+     carries both classes, and this rule is later in the file, so an unscoped
+     `.md-react` override silently won on equal specificity and threw every
+     per-item ＋ 30px above the item it belongs to. */
+  .md-react:not(.md-bullet-react) { left: -6px; top: -30px; }
+  /* A list item keeps its own control inline-adjacent instead, since there is
+     no gutter here either. */
+  .md-bullet-react { left: auto; right: 100%; margin-right: 4px; top: 0; }
 }

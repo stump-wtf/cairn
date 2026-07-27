@@ -147,3 +147,57 @@ func TestRenderMultilineTokenSplitsAcrossLines(t *testing.T) {
 		}
 	}
 }
+
+// TestDetectRealWorldMediaTypesAndTitles covers the two ways detection silently
+// fell through to plaintext on a genuine artifact posted over MCP: a widely-used
+// media type chroma does not register, and a title that carries a filename plus
+// prose. Both produced an unhighlighted "Plain Text" body from a perfectly
+// reasonable create call.
+//
+// Governing: SPEC-0003 REQ "Code Viewer" ("Language detected from
+// media_type/title/extension")
+func TestDetectRealWorldMediaTypesAndTitles(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mediaType, title string
+		want             string
+	}{
+		// chroma registers Go as text/x-gosrc; text/x-go is what everything else
+		// publishes, and it used to match nothing at all.
+		"x- prefixed media type":  {"text/x-go", "", "Go"},
+		"chroma's own media type": {"text/x-gosrc", "", "Go"},
+		"x- python":               {"text/x-python", "", "Python"},
+		// A title is often a filename PLUS prose.
+		"filename buried in title":  {"", "trajectory.go — the open category set", "Go"},
+		"filename in parentheses":   {"", "the viewer (trajectory_view.go)", "Go"},
+		"bare filename still works": {"", "main.py", "Python"},
+		// Neither signal present stays plaintext rather than guessing.
+		"no signal at all": {"", "some notes", "Plain Text"},
+		// A generic media type must not be mined for a lexer name.
+		"generic type stays plain": {"text/plain", "notes", "Plain Text"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := Detect("", tc.mediaType, tc.title).Display; got != tc.want {
+				t.Errorf("Detect(%q, %q).Display = %q, want %q", tc.mediaType, tc.title, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRenderFragmentHasNoBlankLineBetweenRows pins the fix for a double-spaced
+// code viewer. The line cell is white-space:pre so source indentation survives,
+// which means a newline in the TEMPLATE is rendered whitespace — two of them
+// inside the cell put a blank line above and below every single line of every
+// code artifact.
+func TestRenderFragmentHasNoBlankLineBetweenRows(t *testing.T) {
+	html, err := RenderFragment([]byte("package main\n\nfunc main() {}\n"), "text/x-go", "main.go", "")
+	if err != nil {
+		t.Fatalf("RenderFragment: %v", err)
+	}
+	s := string(html)
+	if strings.Contains(s, "<td class=\"code-line-cell\">\n") {
+		t.Error("a newline directly after the line cell renders as a blank line under white-space:pre")
+	}
+	if strings.Contains(s, "\n<div class=\"code-annotations\"") {
+		t.Error("a newline before the annotations div renders as a blank line under white-space:pre")
+	}
+}
