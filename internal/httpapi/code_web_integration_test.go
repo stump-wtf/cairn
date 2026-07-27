@@ -174,3 +174,32 @@ func TestIntegrationCodeLineCommentRejectsNonPositiveLine(t *testing.T) {
 		resp.Body.Close()
 	}
 }
+
+// TestIntegrationCodeViewerDetectsRealWorldMediaType is the regression for a
+// code artifact that rendered as unhighlighted "Plain Text" despite declaring
+// text/x-go and naming a .go file in its title. chroma registers Go as
+// text/x-gosrc, and the title was a filename PLUS prose, so BOTH detection
+// paths missed and the body fell through to the plaintext lexer.
+//
+// Governing: SPEC-0003 REQ "Code Viewer"
+func TestIntegrationCodeViewerDetectsRealWorldMediaType(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+	id := createArtifactWithTitle(t, srv.URL, "code", "joe", codeDoc,
+		"trajectory.go — the open category set", "text/x-go")
+
+	status, html := getHTML(t, srv.URL+"/"+id)
+	if status != http.StatusOK {
+		t.Fatalf("GET /%s = %d, want 200", id, status)
+	}
+	if strings.Contains(html, "Plain Text ·") {
+		t.Error("a text/x-go body with a .go filename in its title must not render as Plain Text")
+	}
+	if !strings.Contains(html, "Go ·") {
+		t.Error("expected the stats line to name the Go language")
+	}
+	// The line cell is white-space:pre, so a newline in the template renders as
+	// a blank line — that double-spaced every code artifact.
+	if strings.Contains(html, "<td class=\"code-line-cell\">\n") {
+		t.Error("newline inside the pre line cell double-spaces the rendered source")
+	}
+}

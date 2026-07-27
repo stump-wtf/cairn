@@ -26,6 +26,8 @@ import (
 
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/errs"
+
+	"github.com/joestump/cairn/internal/code"
 )
 
 // ShareType is the single base interface every kind satisfies. A type sees only
@@ -182,6 +184,18 @@ func (r *Registry) ClassifyMember(name, mediaType string) artifact.ShareType {
 		if r.Registered(KeyMarkdown) {
 			return KeyMarkdown
 		}
+	}
+	// A member chroma can highlight renders through the code viewer, exactly as
+	// the same file would if it were shared on its own. Before this, a bundle of
+	// source files — the most obvious reason to make a bundle at all — showed
+	// nothing but download cards, because only markdown was ever classified.
+	//
+	// Detection is delegated to code.Detect rather than reimplemented as an
+	// extension list here, so a member and a standalone artifact can never
+	// disagree about what language a file is. A body chroma has no lexer for
+	// falls through to the generic file card, as it always did.
+	if r.Registered(KeyCode) && code.Detect("", mediaType, name).Key != code.PlainTextKey {
+		return KeyCode
 	}
 	return genericFileType(mediaType)
 }
