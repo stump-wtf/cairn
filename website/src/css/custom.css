@@ -143,6 +143,30 @@
   --cat-fix:     #f08550;   /* orange  */
   --cat-fail:    #f0506a;   /* red     */
   --cat-meta:    #808c9a;   /* slate   */
+
+  /* Workflow-phase categories (ADR-0009). Each REPEATS the hex of the
+     operation-kind accent that means the same thing, because the record
+     decides the two share a hue: roughly thirteen accents is the limit of
+     comfortable discrimination, and ten more near-duplicates would make a
+     waterfall harder to read, not easier.
+
+     Repeated rather than aliased to `var(--cat-search)` and friends, because a
+     category token names a FIXED colour — an indirection could be re-pointed,
+     which is a recolour (SPEC-0010 REQ "Category Palette Immutability", and
+     `npm run lint:tokens` rejects the indirection). The synonym is named in a
+     trailing comment so the pairing stays legible without becoming load-bearing.
+     `docs` is the one phase with no operation-kind synonym. */
+  --cat-research:       #5ed4e0;   /* cyan     = search  */
+  --cat-implementation: #f0568f;   /* pink     = write   */
+  --cat-review:         #e0a060;   /* amber    = analyze */
+  --cat-testing:        #6cc8e8;   /* sky      = test    */
+  --cat-debug:          #f08550;   /* orange   = fix     */
+  --cat-build:          #46c878;   /* green    = exec    */
+  --cat-docs:           #c8b18a;   /* sand               */
+  --cat-delivery:       #e6b450;   /* gold     = net     */
+  --cat-deploy:         #e6b450;   /* gold     = net     */
+  --cat-wait:           #808c9a;   /* slate    = meta    */
+
   --cat-other:   #aab2bd;   /* neutral default */
 }
 
@@ -754,6 +778,18 @@ table { display: table; width: 100%; }
 .chip-fix     { --chip-accent: var(--cat-fix); }
 .chip-fail    { --chip-accent: var(--cat-fail); }
 .chip-meta    { --chip-accent: var(--cat-meta); }
+/* Workflow-phase categories (ADR-0009). */
+.chip-research       { --chip-accent: var(--cat-research); }
+.chip-implementation { --chip-accent: var(--cat-implementation); }
+.chip-review         { --chip-accent: var(--cat-review); }
+.chip-testing        { --chip-accent: var(--cat-testing); }
+.chip-debug          { --chip-accent: var(--cat-debug); }
+.chip-build          { --chip-accent: var(--cat-build); }
+.chip-docs           { --chip-accent: var(--cat-docs); }
+.chip-delivery       { --chip-accent: var(--cat-delivery); }
+.chip-deploy         { --chip-accent: var(--cat-deploy); }
+.chip-wait           { --chip-accent: var(--cat-wait); }
+
 .chip-other   { --chip-accent: var(--cat-other); }
 
 /* ==========================================================================

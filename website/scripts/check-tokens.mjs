@@ -66,6 +66,7 @@ const AA_TEXT = 4.5;
  * exactly that instead of passing silently.
  */
 const SHIPPED_VALUES = {
+  /* Operation kind. */
   reason: '#8b7cf6',
   exec: '#46c878',
   read: '#4f9cf9',
@@ -79,6 +80,25 @@ const SHIPPED_VALUES = {
   fix: '#f08550',
   fail: '#f0506a',
   meta: '#808c9a',
+
+  /* Workflow phase. Each repeats the hex of the operation-kind category that
+     means the same thing, because ADR-0009 decides they SHARE a hue: roughly
+     thirteen accents is the limit of comfortable discrimination, and ten more
+     near-duplicates would make a waterfall harder to read, not easier. The
+     values are repeated rather than aliased because this table's job is to
+     freeze what shipped — an alias here would let a synonym's colour change
+     silently when its partner changed. The stylesheet expresses the sharing. */
+  research: '#5ed4e0', // = search
+  implementation: '#f0568f', // = write
+  review: '#e0a060', // = analyze
+  testing: '#6cc8e8', // = test
+  debug: '#f08550', // = fix
+  build: '#46c878', // = exec
+  docs: '#c8b18a', // sand — the one phase with no operation-kind synonym
+  delivery: '#e6b450', // = net
+  deploy: '#e6b450', // = net
+  wait: '#808c9a', // = meta
+
   /* The ADR-0009 neutral default, for any category the ADR does not name. */
   other: '#aab2bd',
 };
@@ -89,11 +109,27 @@ const NEUTRAL = 'other';
 /* --------------------------------------------------- ADR-0009 category names */
 
 /**
- * ADR-0009 states its recommended set as a backticked, middot-separated list
- * ("`reason · exec · read · … · meta`"), in more than one place, and states the
- * original five as a subset elsewhere. Take the longest list and require every
- * other one to be a subset of it, so a record that contradicts itself fails
- * here rather than shipping half a palette.
+ * ADR-0009 states its recommended categories as backticked, middot-separated
+ * lists ("`reason · exec · read · … · meta`"), in more than one place.
+ *
+ * It now states TWO vocabularies, not one — operation kind and workflow phase
+ * — because agents describing their own runs reach for SDLC phases at least as
+ * readily as for operation kinds. Neither is a subset of the other, so the
+ * older "longest list wins, everything else must be a subset" rule reported the
+ * phase vocabulary as a self-contradiction and failed the build.
+ *
+ * So this returns the UNION of the maximal lists: every name the record
+ * recommends, which is exactly the set the site must ship an accent for.
+ * Phases share their synonym's hue (ADR-0009), so several of those accents
+ * resolve to one colour — a decision recorded in the ADR, not duplication.
+ *
+ * Note this no longer catches a mistyped name here, the way the subset rule
+ * did: a typo just reads as another vocabulary. That protection did not
+ * disappear, it moved downstream — checkTokens cross-checks this union against
+ * SHIPPED_VALUES in BOTH directions, so a name the ADR invents with no shipped
+ * accent, or an accent no longer named by the ADR, still fails the build, and
+ * with a message that says which. Do not re-add a subset rule here: with two
+ * independent vocabularies there is no longer a single set to be a subset of.
  */
 export function adr0009Categories(repo = REPO) {
   const dir = join(repo, 'docs', 'adrs');
@@ -118,16 +154,17 @@ export function adr0009Categories(repo = REPO) {
         `drifted; fix the parser rather than hardcoding the names.`,
     );
   }
-  lists.sort((a, b) => b.length - a.length);
-  const [recommended, ...rest] = lists;
-  for (const other of rest) {
-    const stray = other.filter((i) => !recommended.includes(i));
-    if (stray.length) {
-      throw new Error(
-        `docs/adrs/${file} lists ${stray.join(', ')} outside its own recommended set — the ` +
-          `ADR contradicts itself.`,
-      );
-    }
+  /* The vocabularies are the MAXIMAL lists — those no longer list contains.
+     Everything else the ADR quotes (the original five, in its consequences) is
+     a subset of one of them and contributes no new name. */
+  const containedByAnother = (list, i) =>
+    lists.some(
+      (other, j) => j !== i && other.length > list.length && list.every((x) => other.includes(x)),
+    );
+  const recommended = [...new Set(lists.filter((l, i) => !containedByAnother(l, i)).flat())];
+
+  if (!recommended.length) {
+    throw new Error(`docs/adrs/${file} yielded no category names. The parser and the ADR have drifted.`);
   }
   return recommended;
 }
