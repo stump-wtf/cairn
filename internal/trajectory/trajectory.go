@@ -76,6 +76,7 @@ const (
 	CategoryDelivery       Category = "delivery"
 	CategoryDeploy         Category = "deploy"
 	CategoryWait           Category = "wait"
+	CategoryPrompt         Category = "prompt"
 )
 
 // OperationCategories names a span by WHAT THE AGENT DID in it. Original order
@@ -88,11 +89,18 @@ var OperationCategories = []Category{
 }
 
 // PhaseCategories names a span by WHERE IN THE JOB it sat, in workflow order.
-// `wait` is last because it describes dead time rather than work.
+// `wait` and `prompt` are last because they describe elapsed time rather than
+// work: `wait` is blocked on something external (CI, a rate limit), `prompt` is
+// the human composing their next instruction.
+//
+// `prompt` is rendered specially — the waterfall draws it as a 💬 marker rather
+// than a bar. A human taking four minutes to type is real elapsed time, but it
+// is not something the run DID, and as a proportional bar it dwarfed the work
+// either side of it and told the reader nothing.
 var PhaseCategories = []Category{
 	CategoryResearch, CategoryImplementation, CategoryReview, CategoryTesting,
 	CategoryDebug, CategoryBuild, CategoryDocs, CategoryDelivery,
-	CategoryDeploy, CategoryWait,
+	CategoryDeploy, CategoryWait, CategoryPrompt,
 }
 
 // RecommendedCategories is the color-mapped set, in the fixed order the legend

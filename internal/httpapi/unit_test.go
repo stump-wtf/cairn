@@ -406,3 +406,22 @@ func TestRunCapturePrompt(t *testing.T) {
 		t.Error("run_capture prompt should weave in the task argument when given")
 	}
 }
+
+// TestPromptCategoryIsRecommendedAndLast pins `prompt` as part of the workflow
+// vocabulary and, with `wait`, at the end of it — both describe elapsed time
+// rather than work, so they sort after the phases that describe effort.
+func TestPromptCategoryIsRecommendedAndLast(t *testing.T) {
+	last := trajectory.PhaseCategories[len(trajectory.PhaseCategories)-1]
+	if last != trajectory.CategoryPrompt {
+		t.Errorf("last phase category = %q, want prompt", last)
+	}
+	var found bool
+	for _, c := range trajectory.RecommendedCategories {
+		if c == trajectory.CategoryPrompt {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("prompt must be a recommended category so the palette maps it and the schema advertises it")
+	}
+}

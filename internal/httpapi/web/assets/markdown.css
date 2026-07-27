@@ -176,10 +176,16 @@
 .md-prose li { position: relative; }
 .md-bullet-react {
   position: absolute;
-  /* Clear of the list marker, which sits just outside the item's content box —
-     at -30px the control butted straight up against "1." on ordered lists. */
-  left: -38px;
-  top: 0;
+  /* Fully clear of the list marker, which sits in the list's own padding just
+     outside the item's content box. At -38px the control's right edge landed on
+     the marker and overlapped it; -52px leaves a clear gap between the two, and
+     that gap IS the right-hand padding — the control is 20px wide, so its right
+     edge sits at -32px against a marker that starts around -20px. */
+  left: -52px;
+  /* Centred on the item's FIRST LINE rather than pinned to its top: the line
+     box is 1.7 × 15px ≈ 25.5px and the control is 20px, so half the difference
+     drops it level with the bullet instead of riding above it. */
+  top: 3px;
   width: 20px;
   height: 20px;
   font-size: 13px;
@@ -210,11 +216,24 @@
 .md-react-pill.on { border-color: #244034; background: rgba(86,227,159,.12); color: var(--green-2); }
 .md-react-pill .react-count { color: var(--t3); }
 .md-react-pill.on .react-count { color: var(--green-2); }
-/* A bullet's pills stay in the item's normal flow, reading inline at the start
-   of its text. The ＋ trigger they used to sit beside is now absolutely
-   positioned out in the margin, so these no longer share a line with it — which
-   is the point: the pills are content, the trigger is chrome. */
-li > .md-react-pill { display: inline-flex; vertical-align: middle; margin: 0 4px 0 0; }
+/* A bullet's pills get their OWN line under the item text (markdown.js appends
+   them into this container as the item's last child), so the item reads:
+
+       • Some bullet point text
+         👍 2  🎉 1
+
+   They used to be inserted before the trigger — the li's first child — so every
+   reaction pushed itself in front of the text. One pill was merely odd; several
+   turned the start of the line into a row of emoji. Wrapping, so a well-reacted
+   item grows downward instead of pushing its text around. */
+.md-bullet-reacts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  margin-top: 4px;
+}
+.md-bullet-reacts > .md-react-pill { margin: 0 6px 0 0; }
 .md-react-error {
   display: inline-block;
   color: var(--red, #e05a5a);

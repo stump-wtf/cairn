@@ -32,7 +32,7 @@ transport (ADR-0010/ADR-0012); it decides the *capture format and ingestion path
 
 * **Faithful waterfall** — the model must carry everything the waterfall needs:
   ordering, nesting/depth, a start offset and duration per span, a category from either
-  recommended vocabulary (by operation kind `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`, or by workflow phase `research · implementation · review · testing · debug · build · docs · delivery · deploy · wait`),
+  recommended vocabulary (by operation kind `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`, or by workflow phase `research · implementation · review · testing · debug · build · docs · delivery · deploy · wait · prompt`),
   a name, and — for tool spans — a tool name, arguments, and output. A sub-agent must
   render as a nested span group.
 * **Derived run stats, not stored redundantly** — wall time, span count, tool-call
@@ -108,7 +108,7 @@ the agent. Each **span** carries:
   by **operation kind**,
   `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`,
   or by **workflow phase**,
-  `research · implementation · review · testing · debug · build · docs · delivery · deploy · wait`.
+  `research · implementation · review · testing · debug · build · docs · delivery · deploy · wait · prompt`.
   Both are color-mapped in the waterfall legend; any other non-empty string is accepted
   and rendered in a color derived deterministically from the category name, so agents
   are never forced to remap their natural vocabulary. An empty, whitespace-only, or

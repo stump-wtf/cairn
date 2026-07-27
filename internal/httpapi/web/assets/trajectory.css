@@ -79,6 +79,7 @@
 [data-cat="delivery"]       { --cat: var(--yellow); }
 [data-cat="deploy"]         { --cat: var(--yellow); }
 [data-cat="wait"]           { --cat: var(--cat-meta); }
+[data-cat="prompt"]         { --cat: var(--purple); }
 
 .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px;
   background: var(--cat, var(--t7)); }
@@ -320,3 +321,31 @@
   .traj-panel { border-left: 0; border-top: 1px solid var(--border); }
   .wf-ruler, .wf-row { grid-template-columns: 120px 1fr; }
 }
+
+/* ---- prompt spans render as a marker, not a bar ----------------------------
+   A human taking four minutes to type their next instruction is real elapsed
+   time, but it is not something the run DID: as a proportional bar it dwarfed
+   every unit of actual work either side of it and told the reader nothing about
+   performance. So a `prompt` span draws a 💬 at the moment the human spoke
+   instead of a length.
+
+   The bar keeps its data-start-ms/data-dur-ms and its position on the time axis
+   — the timeline is still truthful about WHEN it happened and the stream row
+   still carries the full turn — only its WIDTH stops being drawn, which is the
+   part that carried no information. trajectory.js skips the width computation
+   for these (see layoutWaterfall). */
+.wf-bar[data-cat="prompt"] {
+  background: none;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.wf-bar[data-cat="prompt"]::before {
+  content: "💬";
+  font-size: 12px;
+  line-height: 1;
+}
+/* The duration caption is the one thing worth suppressing outright: "9321.8s"
+   beside a prompt marker reads as a performance figure. */
+.wf-bar[data-cat="prompt"] .wf-dur { display: none; }

@@ -70,7 +70,7 @@ The flagship addition. A trajectory is a captured agent run.
   cairn.sh/run/<id>] [copy] [Share]`.
 - **Call-trace waterfall** pinned at the top: OTel-style spans nested by depth, with
   a time ruler (`0s … 34.2s`). Span **categories** (color-coded legend):
-  by operation kind `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`, or by workflow phase `research · implementation · review · testing · debug · build · docs · delivery · deploy · wait`
+  by operation kind `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`, or by workflow phase `research · implementation · review · testing · debug · build · docs · delivery · deploy · wait · prompt`
   (two recommended vocabularies — pick one per run; any non-empty string is accepted and
   rendered in a color derived from its name). A **sub-agent** appears as a nested group
   (e.g. "advisory lookup" containing `web_search`, `web_fetch`, `summarize`).

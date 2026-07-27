@@ -163,6 +163,7 @@
 .cat_delivery       { --accent: var(--cat-delivery); }
 .cat_deploy         { --accent: var(--cat-deploy); }
 .cat_wait           { --accent: var(--cat-wait); }
+.cat_prompt           { --accent: var(--cat-prompt); }
 
 .cat_mono    { --accent: var(--cat-other); }
 .cat_other   { --accent: var(--cat-other); }
