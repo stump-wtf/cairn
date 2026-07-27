@@ -894,3 +894,61 @@ func appendSpanViaMCP(t *testing.T, srv *httptest.Server, token, runID string) {
 		t.Fatalf("append span status = %d, body %s", resp.StatusCode, b)
 	}
 }
+
+// TestIntegrationMCPRunCapturePromptIsDiscoverable exercises the prompt over a
+// real MCP session rather than by calling the handler: registration, the
+// server's prompts capability, prompts/list, and prompts/get.
+//
+// The unit test covers the prompt's CONTENT; this one covers the part that can
+// silently regress without any Go compile error — a prompt that is never
+// advertised is exactly as useful to an agent as one that does not exist, which
+// was the status quo before this change.
+//
+// Governing: ADR-0004 (MCP as a first-class surface), SPEC-0007 REQ "MCP Prompt
+// Surface"
+func TestIntegrationMCPRunCapturePromptIsDiscoverable(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "crush")
+
+	listed, err := sess.ListPrompts(context.Background(), &mcp.ListPromptsParams{})
+	if err != nil {
+		t.Fatalf("prompts/list: %v", err)
+	}
+	var found *mcp.Prompt
+	for _, p := range listed.Prompts {
+		if p.Name == "run_capture" {
+			found = p
+		}
+	}
+	if found == nil {
+		t.Fatalf("run_capture absent from prompts/list (got %d prompts)", len(listed.Prompts))
+	}
+	if found.Description == "" {
+		t.Error("run_capture needs a description — it is how a client decides to surface it")
+	}
+
+	got, err := sess.GetPrompt(context.Background(), &mcp.GetPromptParams{
+		Name:      "run_capture",
+		Arguments: map[string]string{"task": "capture this refactor"},
+	})
+	if err != nil {
+		t.Fatalf("prompts/get: %v", err)
+	}
+	if len(got.Messages) == 0 {
+		t.Fatal("prompts/get returned no messages")
+	}
+	text, ok := got.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("prompt content = %T, want *mcp.TextContent", got.Messages[0].Content)
+	}
+	if !strings.Contains(text.Text, "capture this refactor") {
+		t.Error("prompts/get should weave the task argument into the guidance")
+	}
+	// The guidance an agent most needs, end to end over the wire.
+	for _, want := range []string{"output", "research", "reason", "sub-agent"} {
+		if !strings.Contains(text.Text, want) {
+			t.Errorf("run_capture guidance missing %q", want)
+		}
+	}
+}

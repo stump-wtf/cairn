@@ -31,8 +31,8 @@ transport (ADR-0010/ADR-0012); it decides the *capture format and ingestion path
 ## Decision Drivers
 
 * **Faithful waterfall** — the model must carry everything the waterfall needs:
-  ordering, nesting/depth, a start offset and duration per span, a category from the
-  recommended set (`reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`),
+  ordering, nesting/depth, a start offset and duration per span, a category from either
+  recommended vocabulary (by operation kind `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`, or by workflow phase `research · implementation · review · testing · debug · build · docs · delivery · deploy · wait`),
   a name, and — for tool spans — a tool name, arguments, and output. A sub-agent must
   render as a nested span group.
 * **Derived run stats, not stored redundantly** — wall time, span count, tool-call
@@ -104,10 +104,13 @@ the agent. Each **span** carries:
   span containing `web_search`, `web_fetch`, `summarize`).
 * **`depth`** and **`seq`** — derived nesting depth and a monotonic sibling order, so
   the waterfall renders deterministically without re-deriving the tree on every draw.
-* **`category`** — a free-form string drawn from the recommended set
-  `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`.
-  The recommended categories are color-mapped in the waterfall legend; any other
-  non-empty string is accepted and rendered with a neutral default color, so agents
+* **`category`** — a free-form string drawn from either of two recommended vocabularies:
+  by **operation kind**,
+  `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`,
+  or by **workflow phase**,
+  `research · implementation · review · testing · debug · build · docs · delivery · deploy · wait`.
+  Both are color-mapped in the waterfall legend; any other non-empty string is accepted
+  and rendered in a color derived deterministically from the category name, so agents
   are never forced to remap their natural vocabulary. An empty, whitespace-only, or
   missing `category` is rejected at ingest, as is one longer than 64 characters — open
   is not the same as unbounded, and the value is agent-supplied text that lands in a
@@ -118,6 +121,27 @@ the agent. Each **span** carries:
   calls that don't fit a narrower category (`tool`), analyzing or synthesizing results
   (`analyze`), applying a change (`fix`), a failed attempt (`fail`), and run
   overhead/metadata (`meta`).
+
+  The **workflow-phase** vocabulary was added after observing what agents actually send
+  when left to choose. An agent describing its own run reaches for SDLC phases far more
+  readily than for operation kinds, and the two vocabularies share no values at all — so
+  a phase-labelled run landed entirely outside the color-mapped set and rendered as a
+  single flat color, which looked like a broken viewer. Recognising both is cheaper and
+  more honest than insisting agents translate: `research` (understanding the problem),
+  `implementation` (writing the change), `review` (reading a change critically),
+  `testing` (writing/running tests), `debug` (diagnosing a failure, as distinct from
+  `fix`, which applies the remedy), `build` (compiling, bundling, `make check`), `docs`
+  (documentation), `delivery` (commit/push/PR), `deploy` (shipping to an environment),
+  and `wait` (blocked on something external — CI, a rate limit, a human — which is
+  otherwise invisible as an unexplained gap in the waterfall).
+
+  A phase and the operation that means the same thing deliberately SHARE a color
+  (`research`↔`search`, `implementation`↔`write`, `testing`↔`test`, `build`↔`exec`,
+  `delivery`↔`deploy`↔`net`, `review`↔`analyze`, `debug`↔`fix`, `wait`↔`meta`). Roughly
+  thirteen hues is the practical limit of comfortable discrimination on the viewer's
+  background, so inventing ten more would produce near-duplicates and make the waterfall
+  harder to read, not easier. The two vocabularies are not expected to co-occur in one
+  run, and within either one every value is visually distinct.
 * **`name`** — the human-readable label (`plan the audit`, `npm ls --all`,
   `read package.json`).
 * **`start_offset_ms`** and **`duration_ms`** — start is relative to the run's
@@ -227,10 +251,18 @@ above; each is additive:
   real one), and teams already exporting OTel get no free bridge.
 * Neutral on categories — the recommended set is a superset of the original five
   (`reason · exec · read · net · write`) plus eight additions that cover common agent
-  activities (`search · plan · tool · analyze · test · fix · fail · meta`). Because the
-  `category` field accepts any non-empty string, a genuinely new category does not
-  require a migration; it simply renders with a neutral default color until the
-  recommended set and color legend are updated to include it.
+  activities (`search · plan · tool · analyze · test · fix · fail · meta`), and a second
+  workflow-phase vocabulary alongside it. Because the `category` field accepts any
+  non-empty string, a genuinely new category does not require a migration; it renders in
+  a color hashed from its name until the recommended set and color legend are updated to
+  include it.
+* Negative, and learned the hard way — an open set is only as usable as the guidance
+  that accompanies it. Openness alone let a client fill `category` with a vocabulary
+  nothing rendered specially, and the schema gave it no reason to choose otherwise. The
+  fix was not to close the set but to (a) advertise the vocabularies in the tool schema
+  and the `run_capture` prompt, and (b) make an unrecognised category render as a real
+  color rather than a fallback. An open set obliges us to make the unrecognised case
+  genuinely good, not merely accepted.
 * Neutral, because deferring error/status modeling keeps v1 lean but means a failed run
   is currently indistinguishable from a successful one in the schema until the
   errored-run "try next" is picked up; the append-only, immutable-when-closed rule is a

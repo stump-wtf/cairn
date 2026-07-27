@@ -6,12 +6,21 @@
 
 /* ---- Category palette (single source for swatches/bars/markers/legend) ----
    The category set is OPEN (ADR-0009, SPEC-0004 "Non-recommended category
-   accepted"): the thirteen recommended values are color-mapped, and anything an
+   accepted"): the recommended values are color-mapped here, and anything an
    agent invents must still render. So resolution happens exactly once — every
    [data-cat] element sets a `--cat` custom property, and swatches, waterfall
    bars, stream markers and the stacked breakdown all paint from `var(--cat)`.
-   Adding a category is one line here, not four scattered rules, and an
-   unrecognised one inherits the neutral default from the bare [data-cat] rule.
+   Adding a category is one line here, not four scattered rules.
+
+   An UNRECOGNISED category inherits `--cat-other` from the bare [data-cat] rule
+   and is then repainted by trajectory.js (paintCategoryColors) with a color
+   hashed from the category name — stable across runs and reloads, so one
+   agent's own vocabulary reads as a real palette rather than a wall of grey.
+   The JS detects "unrecognised" by resolving `--cat` and comparing it against
+   `--cat-other`, so THIS FILE stays the single source of truth for what is
+   mapped: adding a rule below automatically stops the hash from applying.
+   With JS off, unmapped categories stay neutral — the same progressive
+   degradation the bar geometry already accepts (ADR-0011).
 
    That bare rule is listed FIRST deliberately: `[data-cat]` and
    `[data-cat="exec"]` have identical specificity, so the named values only win
@@ -19,8 +28,17 @@
 
    Color is never the only signal — the legend, the breakdown, the waterfall row
    labels and the stream rows all carry the category name as text (WCAG 1.4.1,
-   SPEC-0004 "Category is not color-only"), so the neutral default costs a
-   reader nothing but the color cue. */
+   SPEC-0004 "Category is not color-only"), so a neutral fallback costs a reader
+   nothing but the color cue.
+
+   Hue is SHARED between an operation-kind category and the workflow-phase
+   category that means the same thing (research↔search, implementation↔write,
+   testing↔test, build↔exec, delivery↔deploy↔net, review↔analyze, debug↔fix,
+   wait↔meta). Thirteen hues is already the limit of comfortable discrimination
+   on this background, and inventing ten more near-duplicates would make the
+   waterfall harder to read, not easier. The two vocabularies are not expected
+   to appear in the same run (see trajectory.go RecommendedCategories), and
+   within either one every value is visually distinct. */
 :root {
   --cat-search:  #4FD6E8;  /* cyan     */
   --cat-plan:    #A98BFF;  /* violet   */
@@ -30,9 +48,12 @@
   --cat-fix:     #F2914B;  /* orange   */
   --cat-fail:    #F2647A;  /* coral    */
   --cat-meta:    #7E8CA0;  /* slate    */
-  --cat-other:   #A0A6AE;  /* neutral default for anything unrecognised */
+  --cat-docs:    #C8B18A;  /* sand     */
+  --cat-other:   #A0A6AE;  /* neutral default, replaced by the JS hash color */
 }
 [data-cat]            { --cat: var(--cat-other); }
+
+/* Operation kind. */
 [data-cat="reason"]   { --cat: var(--purple); }
 [data-cat="net"]      { --cat: var(--yellow); }
 [data-cat="exec"]     { --cat: var(--green); }
@@ -46,6 +67,18 @@
 [data-cat="fix"]      { --cat: var(--cat-fix); }
 [data-cat="fail"]     { --cat: var(--cat-fail); }
 [data-cat="meta"]     { --cat: var(--cat-meta); }
+
+/* Workflow phase, each sharing the hue of its operation-kind synonym. */
+[data-cat="research"]       { --cat: var(--cat-search); }
+[data-cat="implementation"] { --cat: var(--pink); }
+[data-cat="review"]         { --cat: var(--cat-analyze); }
+[data-cat="testing"]        { --cat: var(--cat-test); }
+[data-cat="debug"]          { --cat: var(--cat-fix); }
+[data-cat="build"]          { --cat: var(--green); }
+[data-cat="docs"]           { --cat: var(--cat-docs); }
+[data-cat="delivery"]       { --cat: var(--yellow); }
+[data-cat="deploy"]         { --cat: var(--yellow); }
+[data-cat="wait"]           { --cat: var(--cat-meta); }
 
 .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px;
   background: var(--cat, var(--t7)); }
@@ -171,6 +204,22 @@
   overflow-x: auto; white-space: pre; }
 .output-load { background: var(--well); border: 1px solid var(--border); border-radius: 6px;
   color: var(--green-3); font: 500 11px var(--mono); padding: 5px 10px; cursor: pointer; }
+
+/* A span's structured `args`, rendered above its output (SPEC-0004 REQ
+   "Activity Stream": the stream MUST show a span's `args` and its `output`).
+   Tinted apart from `.output-pre` so args and stdout are never misread as one
+   blob, and bounded in height because `args` is unbounded agent content. */
+.args-pre { background: rgba(106,169,255,.05); border: 1px solid #26303F; border-radius: 9px;
+  padding: 10px 12px; margin: 0 0 8px; color: var(--t4); font: 400 11.5px/1.7 var(--mono);
+  overflow: auto; max-height: 16em; white-space: pre; }
+.turn-reason .args-pre { font-family: var(--mono); }
+
+/* Empty state for a span whose agent sent no args, no output, no produced
+   artifact and no children: the collapsible would otherwise open onto nothing
+   at all, reading as a broken viewer rather than as a thin capture. Names the
+   cause, so the run's author knows it is their ingest and not the page. */
+.detail-empty { margin: 0; color: var(--t7); font: 400 11.5px/1.6 var(--sans); font-style: italic; }
+.detail-empty code { font: 400 11px var(--mono); color: var(--t5); font-style: normal; }
 
 .artifact-card { display: flex; align-items: center; gap: 10px; text-decoration: none; margin-top: 8px;
   border: 1px solid #26303F; background: rgba(106,169,255,.06); border-radius: 10px; padding: 10px 12px; }
