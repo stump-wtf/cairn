@@ -43,8 +43,17 @@ import {join, relative, sep} from 'node:path';
  *   Docusaurus baseUrl documentation. It is emitted by the theme, is not a
  *   repository, and is only ever reachable when the JavaScript bundle has
  *   already failed.
+ *
+ * - `cairn.stump.wtf` — the PRODUCT. The homepage's "Open your bin" button and
+ *   the navbar's "Sign in" item point at the app's auth-gated /bin, and they
+ *   use the absolute URL because /bin is an app route, not a page of this
+ *   site, and the bundle also serves from Pages where a relative link would
+ *   dead-end. On the app-domain build this entry is redundant (same-origin,
+ *   skipped before the allowlist is consulted); it exists for the Pages
+ *   build, where the product is a foreign host that the record may
+ *   legitimately send people to.
  */
-export const ALLOWED_HOSTS = new Set(['docusaurus.io']);
+export const ALLOWED_HOSTS = new Set(['docusaurus.io', 'cairn.stump.wtf']);
 
 /**
  * Hosts known to serve source repositories. This list does NOT decide whether a

@@ -382,6 +382,17 @@ const config: Config = {
         // this capability deletes.
         {to: '/docs/decisions', label: 'Decisions', position: 'left'},
         {to: '/docs/specs', label: 'Specs', position: 'left'},
+        // The way into the app, upper right. `href` (not `to`) with the
+        // absolute product URL for the same reasons as the homepage's
+        // "Open your bin" button (src/pages/index.tsx): /bin is an app
+        // route, not a page of this site, and this bundle also serves from
+        // Pages, where only the absolute URL reaches the app. /bin is
+        // auth-gated, so this is the sign-in entrance for a signed-out
+        // visitor.
+        // target _self: Docusaurus defaults external hrefs to a new tab, and
+        // a sign-in that detaches from the page the visitor was reading is
+        // just disorienting — on the app domain it is not even external.
+        {href: 'https://cairn.stump.wtf/bin', label: 'Sign in', position: 'right', target: '_self'},
       ],
     },
     footer: {
