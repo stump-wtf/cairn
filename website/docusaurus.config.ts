@@ -156,21 +156,24 @@ const config: Config = {
   url: process.env.DOCS_URL || 'https://stump-wtf.pages.stump.rocks',
 
   /*
-   * baseUrl is env-driven for the same reason `url` is: this record now has a
+   * baseUrl is env-driven for the same reason `url` is: this record has a
    * SECOND deployment target. The canonical Pages bundle serves from
    * https://stump-wtf.pages.stump.rocks/cairn/ (DOCS_BASE_URL unset — the
    * /cairn/ default below), and the cairn-docs container serves the same
-   * record on the product domain at https://cairn.stump.wtf/docs/
-   * (DOCS_URL=https://cairn.stump.wtf DOCS_BASE_URL=/docs/, set by the
-   * docs-image job in pipeline.yaml).
+   * record as the PRODUCT DOMAIN'S PUBLIC FACE: homepage at
+   * https://cairn.stump.wtf/ and docs at https://cairn.stump.wtf/docs/intro/
+   * (DOCS_URL=https://cairn.stump.wtf DOCS_BASE_URL=/, set by the docs-image
+   * job in pipeline.yaml). cloud01's edge Caddy routes `/`, `/docs/*` and the
+   * bundle's static namespaces to the container; everything else is the app.
    *
-   * THE /docs SEGMENT COMES FROM EXACTLY ONE PLACE PER TARGET — routeBasePath
-   * on Pages, baseUrl on the app domain — never both. See the preset's
-   * routeBasePath comment for why that is load-bearing and not a styling
-   * choice: a baseUrl of `/docs/` combined with a route base of `docs` makes
-   * every `to="/docs/…"` link in the tree ambiguous to Docusaurus's
-   * already-has-baseUrl heuristic, and the build fails with dozens of broken
-   * links.
+   * NEVER set DOCS_BASE_URL to '/docs/'. It fails in two stages, both
+   * verified the hard way: with routeBasePath 'docs' the build dies on dozens
+   * of broken links (every `to="/docs/…"` link already starts with baseUrl,
+   * so Docusaurus's already-prefixed heuristic stops resolving them), and a
+   * bundle escorted past that renders the homepage HTML and then HYDRATES
+   * into the 404 page whenever it is served at `/` — the client router
+   * treats any path outside baseUrl as not found. A root baseUrl has neither
+   * failure mode, which is why the app target uses it.
    *
    * Same `||`-not-`??` rule as DOCS_URL above: CI env plumbing can hand this
    * through as an empty string, and an empty baseUrl is a valid-looking wrong
@@ -280,32 +283,23 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
 
           /*
-           * Where the /docs URL segment comes from depends on the deployment
-           * target, and it must come from exactly one place:
+           * 'docs' on every target, always. Both deployments carry the /docs
+           * segment here, on top of a plain directory-style baseUrl:
            *
-           *   Pages  — baseUrl /cairn/, routeBasePath 'docs'
-           *            → https://…/cairn/docs/intro/
-           *   app    — baseUrl /docs/,  routeBasePath '/'
-           *            → https://cairn.stump.wtf/docs/intro/
+           *   Pages — baseUrl /cairn/ → https://…/cairn/docs/intro/
+           *   app   — baseUrl /      → https://cairn.stump.wtf/docs/intro/
            *
-           * The tempting alternative — keep routeBasePath 'docs' and only set
-           * baseUrl to /docs/ — does not merely produce ugly /docs/docs/…
-           * URLs; it BREAKS THE BUILD. Docusaurus's Link/broken-link
-           * machinery treats a path that already starts with baseUrl as
-           * already-prefixed, so every `to="/docs/…"` link in the homepage,
-           * the navbar and the generated record is kept as-is and points at
-           * routes that now live under /docs/docs/…. With the segment owned
-           * by baseUrl alone, those same links resolve identically on both
-           * targets: on Pages the heuristic prepends /cairn/, on the app
-           * domain the link already IS the full path.
-           *
-           * This is also why the record plugin's routeBase stays '/docs' for
-           * both targets (DOCS_ROUTE_BASE above) even though it no longer
-           * literally equals this routeBasePath on the app target — its
-           * generated hrefs are /docs/decisions/ADR-XXXX, which the same
-           * heuristic resolves correctly under either base.
+           * There was briefly a third shape — baseUrl '/docs/' with
+           * routeBasePath '/' — built for serving under the app domain's
+           * /docs prefix. It is gone for a reason: a bundle whose baseUrl is
+           * /docs/ hydrates into the 404 page the moment it is served at `/`
+           * (the client router treats any path outside baseUrl as not
+           * found), and the product domain wants the homepage AT `/`. A root
+           * baseUrl serves both `/` and `/docs/…` from one bundle with no
+           * hydration trap, and this knob never needs to move again — see
+           * the baseUrl comment above for the full failure catalogue.
            */
-          routeBasePath: process.env.DOCS_BASE_URL === '/docs/' ? '/' : 'docs',
+          routeBasePath: 'docs',
 
           // Governing: ADR-0014, SPEC-0010 REQ "No Repository Links"
           // No `editUrl`. The full record text renders on the site, so there
