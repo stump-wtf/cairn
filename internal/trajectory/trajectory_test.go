@@ -233,6 +233,22 @@ func TestNormalizeArtifactID(t *testing.T) {
 	}
 }
 
+// TestPrepareSpansNormalizesProducedHandle pins that the handle is normalized at
+// ingest rather than only at the produced-edge lookup: a prepared span feeds the
+// span projected back to an appending caller AND the span published to live SSE
+// subscribers, both of which would otherwise render a cross-link to
+// `/mcp://cairn/<id>` until the viewer reloaded and re-read the bare id.
+func TestPrepareSpansNormalizesProducedHandle(t *testing.T) {
+	out, err := prepareSpans(map[string]int{}, map[string]int{}, map[string]bool{},
+		[]SpanInput{{SpanID: "s1", Category: CategoryWrite, ProducedArtifactID: "mcp://cairn/TE4Fb89R"}})
+	if err != nil {
+		t.Fatalf("prepareSpans: %v", err)
+	}
+	if got := out[0].in.ProducedArtifactID; got != "TE4Fb89R" {
+		t.Errorf("prepared produced id = %q, want the bare id TE4Fb89R", got)
+	}
+}
+
 func TestPrepareSpansDuplicateID(t *testing.T) {
 	_, err := prepareSpans(map[string]int{}, map[string]int{}, map[string]bool{},
 		[]SpanInput{

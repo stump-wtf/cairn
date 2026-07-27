@@ -14,6 +14,7 @@ package id
 import (
 	"crypto/rand"
 	"fmt"
+	"strings"
 )
 
 const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -62,6 +63,19 @@ func NewLength(n int) (string, error) {
 func IsReserved(s string) bool {
 	_, ok := reserved[s]
 	return ok
+}
+
+// Normalize resolves a bare public id or an mcp://cairn/<id> agent handle
+// (optionally under its /run/ or /hook/ sub-prefix) to the bare public id every
+// core lookup takes. It is the single definition of that mapping, so the
+// transport adapters and the core services cannot drift apart on what an id is
+// (ADR-0005: "one id, every surface").
+func Normalize(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = strings.TrimPrefix(s, "mcp://cairn/")
+	s = strings.TrimPrefix(s, "run/")
+	s = strings.TrimPrefix(s, "hook/")
+	return s
 }
 
 // gen draws n unbiased base62 characters using rejection sampling over the

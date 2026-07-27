@@ -50,6 +50,7 @@ import (
 	"github.com/joestump/cairn/internal/annotation"
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/errs"
+	publicid "github.com/joestump/cairn/internal/id"
 	"github.com/joestump/cairn/internal/mcpsession"
 	"github.com/joestump/cairn/internal/oauth"
 	"github.com/joestump/cairn/internal/pat"
@@ -526,13 +527,10 @@ func (s *Server) mcpToolErr(ctx context.Context, tool string, err error) error {
 // normalizeMCPHandle resolves a bare public id or an mcp://cairn/<id> agent
 // handle (optionally under its /run/ or /hook/ sub-prefix) to the bare public
 // id every core lookup takes (ADR-0005: "one id, every surface").
-func normalizeMCPHandle(raw string) string {
-	s := strings.TrimSpace(raw)
-	s = strings.TrimPrefix(s, "mcp://cairn/")
-	s = strings.TrimPrefix(s, "run/")
-	s = strings.TrimPrefix(s, "hook/")
-	return s
-}
+// It aliases [publicid.Normalize] so this transport and the core services share
+// one definition of what an id is (the import is aliased because `id` is a
+// pervasive local variable name in this file).
+func normalizeMCPHandle(raw string) string { return publicid.Normalize(raw) }
 
 // --- artifact_read -------------------------------------------------------------
 

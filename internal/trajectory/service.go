@@ -510,10 +510,9 @@ func (s *Service) nextStreamBase(ctx context.Context, tx pgx.Tx, runID int64) (i
 
 // insertProducedEdge resolves the produced artifact's public id to its internal
 // id (uniform not-found for unknown/expired) and records the directed edge. The
-// id may be supplied as a bare public id or an mcp://cairn/<id> handle; the
-// handle is normalized to the bare id before lookup (issue #50).
-func (s *Service) insertProducedEdge(ctx context.Context, tx pgx.Tx, runID int64, spanID, producedPublicID string) error {
-	pid := normalizeArtifactID(producedPublicID)
+// id arrives already normalized from prepareSpans, so an mcp://cairn/<id> handle
+// resolves exactly as the bare id does (issue #50).
+func (s *Service) insertProducedEdge(ctx context.Context, tx pgx.Tx, runID int64, spanID, pid string) error {
 	var artID int64
 	err := tx.QueryRow(ctx,
 		`SELECT id FROM artifacts WHERE public_id = $1 AND expires_at > now()`, pid,

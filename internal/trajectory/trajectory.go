@@ -26,6 +26,7 @@ import (
 
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/errs"
+	"github.com/joestump/cairn/internal/id"
 )
 
 // Category is an OPEN set of span categories: any non-empty string is accepted
@@ -380,6 +381,12 @@ func prepareSpans(existingDepth map[string]int, existingChildCount map[string]in
 		key := s.ParentSpanID // "" for the top level
 		seq := childCount[key]
 		childCount[key] = seq + 1
+		// Normalize the produced-artifact handle here, once, so every consumer of
+		// a prepared span sees the bare id: the produced-edge lookup, the span
+		// projected back to the appending caller, and the span published to live
+		// SSE subscribers. Normalizing only at the lookup would leave a live
+		// viewer rendering a cross-link to `/mcp://cairn/<id>` until it reloaded.
+		s.ProducedArtifactID = normalizeArtifactID(s.ProducedArtifactID)
 		out = append(out, preparedSpan{in: s, depth: newDepth[s.SpanID], seq: seq})
 	}
 	return out, nil
@@ -392,16 +399,11 @@ func hasKey(m map[string]int, k string) bool {
 
 // normalizeArtifactID resolves a bare public id or an mcp://cairn/<id> agent
 // handle (optionally under a /run/ or /hook/ sub-prefix a caller may copy-paste)
-// to the bare public id the produced-edge lookup takes. Mirrors the transport
-// layer's normalizeMCPHandle (ADR-0005: "one id, every surface") so a produced
-// artifact id supplied as a handle resolves the same as a bare id (issue #50).
-func normalizeArtifactID(raw string) string {
-	s := strings.TrimSpace(raw)
-	s = strings.TrimPrefix(s, "mcp://cairn/")
-	s = strings.TrimPrefix(s, "run/")
-	s = strings.TrimPrefix(s, "hook/")
-	return s
-}
+// to the bare public id the produced-edge lookup takes, so a produced artifact
+// id supplied as a handle resolves the same as a bare id (issue #50). It is the
+// same [id.Normalize] the transport adapters use, not a second copy of the
+// rule, so core and transport cannot drift (ADR-0005: "one id, every surface").
+func normalizeArtifactID(raw string) string { return id.Normalize(raw) }
 
 // buildTree assembles a flat, per-parent-seq-ordered span slice into an ordered
 // forest, nesting each span under its parent and returning the top-level roots.

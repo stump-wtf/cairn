@@ -328,6 +328,39 @@ func TestBatchRunResolvesProducedArtifactHandle(t *testing.T) {
 	}
 }
 
+// TestAppendSpansNormalizesProducedHandle pins the append path's *returned*
+// span, which is byte-for-byte what the live SSE stream publishes: a handle-form
+// produced_artifact_id must come back as the bare id, or a viewer watching the
+// run live renders the produced-artifact cross-link as `/mcp://cairn/<id>` and
+// only self-corrects on reload, when the card is re-rendered from the database.
+func TestAppendSpansNormalizesProducedHandle(t *testing.T) {
+	svc, st, _, _ := newHarness(t)
+	ctx := context.Background()
+	producedID := createMarkdown(t, st)
+
+	in := checkoutWebAudit("")
+	in.Spans = nil
+	run, err := svc.OpenRun(ctx, in)
+	if err != nil {
+		t.Fatalf("open run: %v", err)
+	}
+	appended, err := svc.AppendSpans(ctx, run.PublicID, in.Access.OwnerID, []SpanInput{{
+		SpanID: "w1", Category: CategoryWrite, Tool: "write", Name: "wrote the report",
+		ProducedArtifactID: "mcp://cairn/" + producedID,
+		StartOffsetMS:      0, DurationMS: 10,
+	}})
+	if err != nil {
+		t.Fatalf("append with handle-form produced id: %v", err)
+	}
+	if len(appended) != 1 {
+		t.Fatalf("appended %d spans, want 1", len(appended))
+	}
+	got := appended[0].ProducedArtifactIDs
+	if len(got) != 1 || got[0] != producedID {
+		t.Fatalf("appended span produced = %v, want [%s] (bare id, not the handle)", got, producedID)
+	}
+}
+
 // TestBatchAndIncrementalConverge proves a batch ingest and the equivalent
 // open→append→close sequence yield identical span trees and identical derived
 // stats (SPEC-0004 "Batch and incremental converge").
