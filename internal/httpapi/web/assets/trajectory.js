@@ -64,6 +64,75 @@
     });
   }
 
+  // ---- Category colors for an unmapped vocabulary ------------------------
+  // The category set is OPEN (ADR-0009), and trajectory.css can only hard-map
+  // the recommended names. Everything else used to collapse onto one neutral
+  // grey, so an agent that labelled its run with its own vocabulary — SDLC
+  // phases, most often — got a waterfall with no color information at all.
+  //
+  // Here each unmapped category gets a color hashed from its NAME, so it is
+  // stable across reloads, across runs, and between the initial render and a
+  // live-appended span, without any server round-trip or stored palette.
+  //
+  // "Unmapped" is resolved against the stylesheet rather than a duplicated name
+  // list: an element whose computed `--cat` still equals `--cat-other` was not
+  // claimed by any `[data-cat="…"]` rule. That keeps trajectory.css the single
+  // source of truth — mapping a new category there automatically stops the hash
+  // from applying, with nothing to keep in sync here.
+  var CAT_OTHER = '';
+  var catColors = {};
+
+  // FNV-1a over the UTF-16 units of the name, QUANTIZED onto a ring of twelve
+  // slots rather than mapped onto the continuous hue circle.
+  //
+  // The continuous version was tried first and is wrong: hue is effectively
+  // uniform-random, so two categories in the same run land a couple of degrees
+  // apart often enough to matter (the first run this was tested on produced
+  // 109.2° and 112.4° — indistinguishable). Quantizing means two unmapped
+  // categories either get visibly different colors or the SAME one; near-misses,
+  // the only genuinely misleading outcome, cannot happen.
+  //
+  // Lightness alternates with slot parity, so even adjacent slots differ in
+  // value as well as hue and stay apart for a red/green-colorblind reader.
+  // Saturation sits below the hand-picked palette's on purpose: generated colors
+  // read as a muted family, distinct from the vivid categories the design named.
+  var HASH_SLOTS = 12;
+  function hashCatColor(cat) {
+    var h = 2166136261;
+    for (var i = 0; i < cat.length; i++) {
+      h ^= cat.charCodeAt(i);
+      h = (h * 16777619) >>> 0;
+    }
+    var slot = h % HASH_SLOTS;
+    // Offset by half a step so slots fall between, not on, the primary hues.
+    var hue = slot * (360 / HASH_SLOTS) + 15;
+    return 'hsl(' + hue + ', 52%, ' + (slot % 2 ? 58 : 74) + '%)';
+  }
+
+  // Paint every [data-cat] element under root whose category the stylesheet did
+  // not claim. Resolution is cached per category NAME (one getComputedStyle per
+  // distinct category, not per element), because a 500-span run holds thousands
+  // of [data-cat] elements and probing each one would thrash style recalc.
+  function paintCategoryColors(root) {
+    if (!CAT_OTHER) {
+      CAT_OTHER = getComputedStyle(document.documentElement).getPropertyValue('--cat-other').trim();
+      if (!CAT_OTHER) return; // stylesheet not loaded; leave the CSS default alone
+    }
+    root.querySelectorAll('[data-cat]').forEach(function (el) {
+      var cat = el.dataset.cat;
+      if (!cat || el.style.getPropertyValue('--cat')) return;
+      var color = catColors[cat];
+      if (color === undefined) {
+        // Probe before writing anything: this element still carries whatever
+        // the stylesheet resolved, which is exactly the question being asked.
+        var resolved = getComputedStyle(el).getPropertyValue('--cat').trim();
+        color = (resolved === CAT_OTHER) ? hashCatColor(cat) : '';
+        catColors[cat] = color;
+      }
+      if (color) el.style.setProperty('--cat', color);
+    });
+  }
+
   function num(v) { var n = parseInt(v, 10); return isNaN(n) ? 0 : n; }
   function clamp(n) { if (n < 0) return 0; if (n > 100) return 100; return n; }
 
@@ -586,6 +655,10 @@
       layoutRuler(root, wall);
       if (stream) appendStreamRow(stream, span, runID, canWrite, commentsHandle);
       refreshLiveStats(root, wall);
+      // After every node this span added (waterfall row, legend entry, stream
+      // row), so a live span in a category the stylesheet does not map picks up
+      // the same hashed color the initial render would have given it.
+      paintCategoryColors(root);
       if (region) region.textContent = 'Span added: ' + (span.name || span.span_id);
     });
     es.addEventListener('status', function (ev) {
@@ -733,6 +806,16 @@
     details.appendChild(summary);
 
     var detail = document.createElement('div'); detail.className = 'turn-detail';
+    // args first, mirroring the server's "stream-row" template ordering. Same
+    // "empty object is nothing" rule as formatSpanArgs in trajectory_view.go —
+    // agents routinely send `{}` on spans that take no arguments, and a
+    // labelled empty block on every one of them is pure noise.
+    var argsText = formatArgs(span.args);
+    if (argsText) {
+      var argStrip = document.createElement('div'); argStrip.className = 'output-strip'; argStrip.textContent = 'args';
+      var argPre = document.createElement('pre'); argPre.className = 'args-pre'; argPre.textContent = argsText;
+      detail.appendChild(argStrip); detail.appendChild(argPre);
+    }
     if (span.output_ref) {
       var strip = document.createElement('div'); strip.className = 'output-strip'; strip.textContent = 'stdout · truncated';
       var pre = document.createElement('pre'); pre.className = 'output-pre';
@@ -770,6 +853,16 @@
         childrenBox.appendChild(orphan);
       });
       metaEl.textContent = '· ' + childrenBox.querySelectorAll(':scope > .turn').length + ' tools · ' + secs(span.duration_ms) + 's';
+    }
+    // Nothing to reveal at all — same empty state the server renders, so a
+    // live-appended thin span and a reloaded one read identically.
+    if (!detail.firstChild) {
+      var empty = document.createElement('p'); empty.className = 'detail-empty';
+      empty.appendChild(document.createTextNode('No output captured for this span — the run sent a name and a duration only. Populate '));
+      var codeEl = document.createElement('code'); codeEl.textContent = 'output';
+      empty.appendChild(codeEl);
+      empty.appendChild(document.createTextNode(' when ingesting to show the turn’s reasoning or stdout here.'));
+      detail.appendChild(empty);
     }
     details.appendChild(detail);
     body.appendChild(details);
@@ -900,6 +993,18 @@
 
   function secs(ms) { return (Math.round((ms || 0) / 100) / 10).toFixed(1); }
 
+  // Pretty-print a live span's `args` for display, returning '' when there is
+  // nothing worth showing — the client-side twin of formatSpanArgs in
+  // trajectory_view.go, and deliberately the same rules: absent, null, and
+  // empty object/array all render nothing. The value arrives already parsed
+  // (the SSE payload is JSON), so this re-serializes rather than re-indenting
+  // text. Only ever written back out via textContent, never innerHTML.
+  function formatArgs(args) {
+    if (args === null || args === undefined) return '';
+    if (typeof args === 'object' && Object.keys(args).length === 0) return '';
+    try { return JSON.stringify(args, null, 2); } catch (e) { return ''; }
+  }
+
   // ---- Init --------------------------------------------------------------
   function init() {
     var root = document;
@@ -909,6 +1014,7 @@
     var canWrite = !!root.querySelector('[data-comment-form]');
     layoutWaterfall(root);
     layoutCategoryBar(root);
+    paintCategoryColors(root);
     wireWaterfallJumps(root);
     wireReactions(root, runID, canWrite);
     var commentsHandle = wireComments(root, runID, canWrite);

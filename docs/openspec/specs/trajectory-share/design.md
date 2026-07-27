@@ -54,8 +54,8 @@ nesting, and run-relative timing.
 
 **Rationale**: The model carries exactly the fields the waterfall and RUN panel need and
 nothing else; stats are derivable; sub-agents fall out of `parent_span_id`. The
-recommended set — `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`
-— covers the vocabulary agents naturally produce, and accepting arbitrary non-empty
+recommended vocabularies — by operation kind `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`, or by workflow phase `research · implementation · review · testing · debug · build · docs · delivery · deploy · wait`
+— cover what agents naturally produce, by operation and by workflow phase respectively, and accepting arbitrary non-empty
 strings means agents are never forced to remap their categories. Known categories get
 their designated accent color; unknowns fall back to a neutral default.
 
@@ -180,8 +180,8 @@ sequenceDiagram
 - **No OTLP bridge** → teams already exporting OpenTelemetry get no free ingest; they must
   emit Cairn's run shape (a thin adapter). Accepted per ADR-0009 — verbatim OTLP would cost
   a read-time translation for no gain.
-- **Open category set** → unknown categories render with a neutral default color rather
-  than being rejected. This is a deliberate trade-off: it means agents can always post their
+- **Open category set** → unknown categories render in a color hashed from the category
+  name rather than being rejected. This is a deliberate trade-off: it means agents can always post their
   natural vocabulary without remapping, at the cost of a slightly less polished legend for
   non-standard categories. The recommended set is expanded to thirteen values to cover the
   most common agent activities.

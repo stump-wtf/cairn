@@ -36,7 +36,21 @@ import (
 // breakdown still total correctly over whatever an agent actually sent.
 type Category string
 
+// The recommended vocabulary spans two ways agents naturally describe a run,
+// because in practice they reach for one or the other and neither is wrong:
+//
+//   - OPERATION KIND — what the agent did in this span (reason, read, exec…).
+//     The original set; it maps onto the OTel-ish span shape ADR-0009 describes.
+//   - WORKFLOW PHASE — where in the job the span sat (research, implementation,
+//     testing…). Left to itself an agent reaches for SDLC vocabulary far more
+//     readily than ours, and the two vocabularies do not overlap at all, so a
+//     phase-labelled run used to land entirely on the neutral color.
+//
+// Both are advertised in the run_create/run_append_spans schema and the
+// `run_capture` MCP prompt, and both are color-mapped in trajectory.css. Mixing
+// them within one run is allowed but reads poorly — the prompt says to pick one.
 const (
+	// Operation kind.
 	CategoryReason  Category = "reason"
 	CategoryExec    Category = "exec"
 	CategoryRead    Category = "read"
@@ -50,18 +64,45 @@ const (
 	CategoryFix     Category = "fix"
 	CategoryFail    Category = "fail"
 	CategoryMeta    Category = "meta"
+
+	// Workflow phase.
+	CategoryResearch       Category = "research"
+	CategoryImplementation Category = "implementation"
+	CategoryReview         Category = "review"
+	CategoryTesting        Category = "testing"
+	CategoryDebug          Category = "debug"
+	CategoryBuild          Category = "build"
+	CategoryDocs           Category = "docs"
+	CategoryDelivery       Category = "delivery"
+	CategoryDeploy         Category = "deploy"
+	CategoryWait           Category = "wait"
 )
+
+// OperationCategories names a span by WHAT THE AGENT DID in it. Original order
+// preserved, so an existing run's legend renders exactly as it did before the
+// phase vocabulary was added.
+var OperationCategories = []Category{
+	CategoryReason, CategoryNet, CategoryExec, CategoryRead, CategoryWrite,
+	CategorySearch, CategoryPlan, CategoryTool, CategoryAnalyze,
+	CategoryTest, CategoryFix, CategoryFail, CategoryMeta,
+}
+
+// PhaseCategories names a span by WHERE IN THE JOB it sat, in workflow order.
+// `wait` is last because it describes dead time rather than work.
+var PhaseCategories = []Category{
+	CategoryResearch, CategoryImplementation, CategoryReview, CategoryTesting,
+	CategoryDebug, CategoryBuild, CategoryDocs, CategoryDelivery,
+	CategoryDeploy, CategoryWait,
+}
 
 // RecommendedCategories is the color-mapped set, in the fixed order the legend
 // and the time-by-category breakdown render them. It is presentation order, not
 // a validation whitelist — prepareSpans accepts categories outside it. The
 // viewer derives its ordering from this one slice so the legend can never drift
-// from the palette (SPEC-0004 "Span Model and Ordered Tree").
-var RecommendedCategories = []Category{
-	CategoryReason, CategoryNet, CategoryExec, CategoryRead, CategoryWrite,
-	CategorySearch, CategoryPlan, CategoryTool, CategoryAnalyze,
-	CategoryTest, CategoryFix, CategoryFail, CategoryMeta,
-}
+// from the palette (SPEC-0004 "Span Model and Ordered Tree"), and the MCP
+// surface derives the vocabulary it advertises from the same two slices so the
+// schema, the run_capture prompt, and the palette cannot disagree.
+var RecommendedCategories = append(append([]Category{}, OperationCategories...), PhaseCategories...)
 
 // MaxCategoryLen bounds an accepted category. The set is open, but the value is
 // unbounded agent-supplied text that lands in a TEXT column and is rendered in
