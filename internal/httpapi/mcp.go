@@ -925,12 +925,12 @@ Send spans as a flat list; nesting is expressed through ` + "`parent_span_id`" +
 // timeline of rows that expanded onto nothing. mcpRunSpanSchemaDoc pins the
 // category list to trajectory.RecommendedCategories so the two cannot drift.
 type mcpRunSpanInput struct {
-	SpanID       string `json:"span_id" jsonschema:"Stable identifier for this span, unique within the run. Re-posting an existing span_id to run_append_spans is an idempotent no-op."`
-	ParentSpanID string `json:"parent_span_id,omitempty" jsonschema:"span_id of the enclosing span, for a child of a sub-agent excursion. Omit for a top-level span. Naming a span that is not in the run rejects the whole batch."`
-	Category     string `json:"category" jsonschema:"What this span was doing. Sets the waterfall color and the time-by-category breakdown. Any non-empty string is accepted, but pick ONE vocabulary and use it for the whole run. Operation kind: reason, net, exec, read, write, search, plan, tool, analyze, test, fix, fail, meta. Workflow phase: research, implementation, review, testing, debug, build, docs, delivery, deploy, wait, prompt. Use 'prompt' for time the HUMAN spent composing their next instruction and 'wait' for time blocked on something external (CI, a rate limit) — the viewer draws a prompt as a marker rather than a bar, since typing time says nothing about performance. A category outside both still renders, colored from a hash of its name."`
-	Name         string `json:"name,omitempty" jsonschema:"Short human label for the span, shown in the waterfall row and the stream header, e.g. 'Explore templates and CSS' or 'go test ./internal/httpapi'."`
-	Tool         string `json:"tool,omitempty" jsonschema:"Name of the tool this span invoked, e.g. 'bash', 'read_file', 'web_fetch'. Omit for a pure reasoning turn; a 'reason' span must not carry one. Use the literal 'sub-agent' for a nested agent excursion, whose children reference this span's span_id as their parent_span_id."`
-	Args         any    `json:"args,omitempty" jsonschema:"The structured arguments this span was invoked with, as a JSON object. Rendered above the output when a reader expands the span. Omit for a span that takes no arguments — an empty object renders as nothing."`
+	SpanID       string         `json:"span_id" jsonschema:"Stable identifier for this span, unique within the run. Re-posting an existing span_id to run_append_spans is an idempotent no-op."`
+	ParentSpanID string         `json:"parent_span_id,omitempty" jsonschema:"span_id of the enclosing span, for a child of a sub-agent excursion. Omit for a top-level span. Naming a span that is not in the run rejects the whole batch."`
+	Category     string         `json:"category" jsonschema:"What this span was doing. Sets the waterfall color and the time-by-category breakdown. Any non-empty string is accepted, but pick ONE vocabulary and use it for the whole run. Operation kind: reason, net, exec, read, write, search, plan, tool, analyze, test, fix, fail, meta. Workflow phase: research, implementation, review, testing, debug, build, docs, delivery, deploy, wait, prompt. Use 'prompt' for time the HUMAN spent composing their next instruction and 'wait' for time blocked on something external (CI, a rate limit) — the viewer draws a prompt as a marker rather than a bar, since typing time says nothing about performance. A category outside both still renders, colored from a hash of its name."`
+	Name         string         `json:"name,omitempty" jsonschema:"Short human label for the span, shown in the waterfall row and the stream header, e.g. 'Explore templates and CSS' or 'go test ./internal/httpapi'."`
+	Tool         string         `json:"tool,omitempty" jsonschema:"Name of the tool this span invoked, e.g. 'bash', 'read_file', 'web_fetch'. Omit for a pure reasoning turn; a 'reason' span must not carry one. Use the literal 'sub-agent' for a nested agent excursion, whose children reference this span's span_id as their parent_span_id."`
+	Args         map[string]any `json:"args,omitempty" jsonschema:"The structured arguments this span was invoked with, as a JSON object. Rendered above the output when a reader expands the span. Omit for a span that takes no arguments — an empty object renders as nothing."`
 	// Output is the single most consequential field on this struct and the one
 	// agents most often omit, so its description says outright what happens when
 	// it is missing.
@@ -998,19 +998,22 @@ type mcpRunOutput struct {
 	ExpiresAt  time.Time      `json:"expires_at"`
 	Stats      statsView      `json:"stats"`
 	// Spans is the ordered span tree, wire-identical to [spanView] (each span's
-	// args/output_ref/children included), but held as `any` rather than
-	// []spanView for two independent reasons: (1) spanView.Args is a
+	// args/output_ref/children included), but held as []map[string]any rather
+	// than []spanView for two independent reasons: (1) spanView.Args is a
 	// json.RawMessage, the same byte-array-schema misinference [mcpAnchorInput]
 	// works around for AnchorRef — Args needs to surface as an embedded JSON
 	// object, not a base64 string; (2) spanView.Children is self-referencing,
 	// and the MCP SDK's reflection-based output-schema builder rejects a
 	// recursive struct outright ("cycle detected for type ..."), which a typed
 	// mirror struct (even a distinctly-named one) would reproduce identically.
-	// `any` sidesteps both: the schema is unrestricted, and the value is built
-	// by marshaling []spanView then unmarshaling into `any`, so json.RawMessage
-	// decodes to a plain object and there is no Go type for the schema builder
-	// to recurse into.
-	Spans any `json:"spans"`
+	// A slice of untyped maps sidesteps both — there is no Go type for the
+	// schema builder to recurse into — while still inferring as
+	// {"type":"array","items":{"type":"object"}}. Bare `any` would sidestep
+	// them too but infers as the boolean schema `true`, which strict clients
+	// reject outright; see [mcpAnchorInput]. The value is built by marshaling
+	// []spanView and unmarshaling back, so json.RawMessage decodes to a plain
+	// object.
+	Spans []map[string]any `json:"spans"`
 }
 
 // toMCPRunOutput projects a REST [runResponse] (already built by
@@ -1029,7 +1032,7 @@ func toMCPRunOutput(r runResponse) (mcpRunOutput, error) {
 	if err != nil {
 		return mcpRunOutput{}, fmt.Errorf("internal: encode run spans: %w", err)
 	}
-	var spans any
+	var spans []map[string]any
 	if err := json.Unmarshal(b, &spans); err != nil {
 		return mcpRunOutput{}, fmt.Errorf("internal: decode run spans: %w", err)
 	}
@@ -1148,10 +1151,21 @@ func (s *Server) mcpAppendRunSpans(ctx context.Context, req *mcp.CallToolRequest
 // --- artifact_comment / artifact_react ------------------------------------------
 
 // mcpAnchorInput is the anchor shape shared by the comment and react tools.
-// AnchorRef is `any` (not json.RawMessage) so the input schema stays
-// unrestricted — an arbitrary JSON object/scalar — rather than the byte-array
-// schema []byte would otherwise infer; the handler re-marshals it to the
+// AnchorRef is map[string]any rather than json.RawMessage because a []byte-
+// backed type infers as a JSON *array* (byte-string) schema, which is wrong for
+// a field carrying a locator object; the handler re-marshals it to the
 // json.RawMessage the annotation core expects.
+//
+// It is deliberately NOT bare `any`: jsonschema-go infers `any` as the boolean
+// schema `true`, and while draft 2020-12 permits a boolean as a `properties`
+// value, strict clients require a schema *object* there and reject the entire
+// tool list ("Invalid input at tools.N.inputSchema.properties.anchor_ref"),
+// taking every other tool down with it. map[string]any infers as
+// {"type":"object","additionalProperties":true} — object-shaped, and still
+// accepting an arbitrary locator. Every locator in the registry is a JSON
+// object (AnchorArtifact validates to the empty object; every LocatorSchema
+// payload is keyed), so this is also strictly more accurate than the
+// unrestricted schema it replaces.
 type mcpAnchorInput struct {
 	// ID is the artifact/run public id, or an mcp://cairn/<id> handle.
 	ID string `json:"id"`
@@ -1161,7 +1175,22 @@ type mcpAnchorInput struct {
 	// implicit default, matching the REST surface's identical contract.
 	AnchorType string `json:"anchor_type"`
 	// AnchorRef is the anchor locator object, shaped per anchor_type.
-	AnchorRef any `json:"anchor_ref,omitempty"`
+	AnchorRef map[string]any `json:"anchor_ref,omitempty"`
+}
+
+// anchorRefObject decodes a stored anchor_ref into the object form the MCP
+// output schemas declare. An absent ref, JSON null, or (defensively) a
+// non-object decodes to nil, which the `omitempty` output fields then drop —
+// mirroring CanonicalRef's treatment of an absent locator.
+func anchorRefObject(ref json.RawMessage) map[string]any {
+	if len(ref) == 0 {
+		return nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(ref, &obj); err != nil {
+		return nil
+	}
+	return obj
 }
 
 func (a mcpAnchorInput) anchorRefJSON() (json.RawMessage, error) {
@@ -1183,30 +1212,29 @@ type mcpCommentInput struct {
 	Body string `json:"body"`
 }
 
-// mcpCommentOutput mirrors [commentResponse] but carries AnchorRef as `any`
-// rather than json.RawMessage: a []byte-backed type infers as a JSON *array*
-// schema (bytes), which then fails client-side output validation against the
-// object/scalar the anchor ref actually is. `any` infers as unrestricted and
-// still marshals the underlying json.RawMessage verbatim (json.Marshal honors
-// json.Marshaler through an interface value), so the wire shape is identical.
+// mcpCommentOutput mirrors [commentResponse] but carries AnchorRef as
+// map[string]any rather than json.RawMessage: a []byte-backed type infers as a
+// JSON *array* schema (bytes), which then fails client-side output validation
+// against the object the anchor ref actually is. See [mcpAnchorInput] for why
+// this is a concrete map and not bare `any`.
 type mcpCommentOutput struct {
-	ID         int64      `json:"id"`
-	AnchorType string     `json:"anchor_type"`
-	AnchorRef  any        `json:"anchor_ref,omitempty"`
-	AnchorKey  string     `json:"anchor_key"`
-	ParentID   *int64     `json:"parent_id,omitempty"`
-	ActorID    string     `json:"actor_id"`
-	OnBehalfOf string     `json:"on_behalf_of,omitempty"`
-	Body       string     `json:"body"`
-	CreatedAt  time.Time  `json:"created_at"`
-	EditedAt   *time.Time `json:"edited_at,omitempty"`
-	Deleted    bool       `json:"deleted"`
+	ID         int64          `json:"id"`
+	AnchorType string         `json:"anchor_type"`
+	AnchorRef  map[string]any `json:"anchor_ref,omitempty"`
+	AnchorKey  string         `json:"anchor_key"`
+	ParentID   *int64         `json:"parent_id,omitempty"`
+	ActorID    string         `json:"actor_id"`
+	OnBehalfOf string         `json:"on_behalf_of,omitempty"`
+	Body       string         `json:"body"`
+	CreatedAt  time.Time      `json:"created_at"`
+	EditedAt   *time.Time     `json:"edited_at,omitempty"`
+	Deleted    bool           `json:"deleted"`
 }
 
 func toMCPCommentOutput(c annotation.Comment) mcpCommentOutput {
 	r := toCommentResponse(c)
 	return mcpCommentOutput{
-		ID: r.ID, AnchorType: r.AnchorType, AnchorRef: r.AnchorRef, AnchorKey: r.AnchorKey,
+		ID: r.ID, AnchorType: r.AnchorType, AnchorRef: anchorRefObject(r.AnchorRef), AnchorKey: r.AnchorKey,
 		ParentID: r.ParentID, ActorID: r.ActorID, OnBehalfOf: r.OnBehalfOf, Body: r.Body,
 		CreatedAt: r.CreatedAt, EditedAt: r.EditedAt, Deleted: r.Deleted,
 	}
@@ -1249,22 +1277,22 @@ type mcpReactInput struct {
 	Emoji string `json:"emoji"`
 }
 
-// mcpReactOutput mirrors [reactionResponse] with the same AnchorRef `any`
-// substitution as [mcpCommentOutput], for the identical schema-inference
-// reason.
+// mcpReactOutput mirrors [reactionResponse] with the same map[string]any
+// AnchorRef substitution as [mcpCommentOutput], for the identical
+// schema-inference reason.
 type mcpReactOutput struct {
-	ID         int64     `json:"id"`
-	AnchorType string    `json:"anchor_type"`
-	AnchorRef  any       `json:"anchor_ref,omitempty"`
-	Emoji      string    `json:"emoji"`
-	ActorID    string    `json:"actor_id"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID         int64          `json:"id"`
+	AnchorType string         `json:"anchor_type"`
+	AnchorRef  map[string]any `json:"anchor_ref,omitempty"`
+	Emoji      string         `json:"emoji"`
+	ActorID    string         `json:"actor_id"`
+	CreatedAt  time.Time      `json:"created_at"`
 }
 
 func toMCPReactOutput(r annotation.Reaction) mcpReactOutput {
 	v := toReactionResponse(r)
 	return mcpReactOutput{
-		ID: v.ID, AnchorType: v.AnchorType, AnchorRef: v.AnchorRef, Emoji: v.Emoji,
+		ID: v.ID, AnchorType: v.AnchorType, AnchorRef: anchorRefObject(v.AnchorRef), Emoji: v.Emoji,
 		ActorID: v.ActorID, CreatedAt: v.CreatedAt,
 	}
 }
