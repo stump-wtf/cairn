@@ -80,26 +80,51 @@
   // click-time pill are therefore rendered here, progressively (ADR-0011): the
   // prose and the ＋ affordance work with JS disabled, exactly as before.
 
-  // findPill returns this emoji's already-rendered pill beside a trigger, or
-  // null if none exists yet. Scoped to DIRECT children of the trigger's parent
-  // (`:scope >`) — not all descendants — because a list block's `.md-block`
-  // parent also contains its bullets' own `.md-react-pill`s nested inside the
-  // list, which must never match a lookup for the block-level trigger's pills.
+  // pillHost returns the element a trigger's pills live in.
+  //
+  // A BLOCK trigger's pills sit as siblings beside it, flowing after the prose.
+  // A BULLET's go in a container appended to the END of its <li>, so they read
+  // as their own line under the item text:
+  //
+  //     • Some bullet point text
+  //       👍 2  🎉 1
+  //
+  // They used to be inserted before the trigger, which is the li's first child
+  // — so every reaction pushed itself in FRONT of the item's text. One pill was
+  // merely odd; several turned the start of the line into a row of emoji.
+  function pillHost(trigger) {
+    if (trigger.getAttribute('data-anchor-type') !== 'md_bullet') return trigger.parentNode;
+    var li = trigger.closest('li');
+    if (!li) return trigger.parentNode;
+    var host = li.querySelector(':scope > .md-bullet-reacts');
+    if (!host) {
+      host = document.createElement('div');
+      host.className = 'md-bullet-reacts';
+      li.appendChild(host);
+    }
+    return host;
+  }
+
+  // findPill returns this emoji's already-rendered pill for a trigger, or null
+  // if none exists yet. Scoped to DIRECT children of the pill host (`:scope >`)
+  // — not all descendants — because a list block's `.md-block` parent also
+  // contains its bullets' own `.md-react-pill`s nested inside the list, which
+  // must never match a lookup for the block-level trigger's pills.
   function findPill(trigger, emoji) {
-    var pills = trigger.parentNode.querySelectorAll(':scope > .md-react-pill');
+    var pills = pillHost(trigger).querySelectorAll(':scope > .md-react-pill');
     for (var i = 0; i < pills.length; i++) {
       if (pills[i].dataset.emoji === emoji) return pills[i];
     }
     return null;
   }
 
-  // pillFor finds (or creates, inserted right before the trigger) this emoji's
-  // pill button beside a react trigger, so a repeat reaction updates the same
-  // element rather than accumulating duplicates.
+  // pillFor finds (or creates, in the trigger's pill host) this emoji's pill
+  // button, so a repeat reaction updates the same element rather than
+  // accumulating duplicates.
   function pillFor(trigger, emoji) {
     var found = findPill(trigger, emoji);
     if (found) return found;
-    var parent = trigger.parentNode;
+    var host = pillHost(trigger);
     var pill = document.createElement('button');
     pill.type = 'button';
     pill.className = 'react-pill md-react-pill';
@@ -111,7 +136,10 @@
     pill.appendChild(document.createTextNode(' '));
     pill.appendChild(ct);
     pill.addEventListener('click', function () { togglePill(trigger, pill); });
-    parent.insertBefore(pill, trigger);
+    // A block's pills flow beside the trigger; a bullet's append into its own
+    // line container (see pillHost).
+    if (host === trigger.parentNode) host.insertBefore(pill, trigger);
+    else host.appendChild(pill);
     return pill;
   }
 

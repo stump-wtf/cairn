@@ -31,9 +31,17 @@
     });
     bars.forEach(function (bar) {
       var left = num(bar.dataset.startMs) / wall * 100;
-      var width = num(bar.dataset.durMs) / wall * 100;
       bar.style.left = clamp(left) + '%';
-      bar.style.width = Math.max(clamp(width), 0.6) + '%';
+      // A `prompt` span is drawn as a fixed-size 💬 marker at the moment the
+      // human spoke, never as a length: their typing time is real elapsed time
+      // but says nothing about the run's performance, and as a proportional bar
+      // it dwarfed the work either side of it (see trajectory.css).
+      if (bar.dataset.cat === 'prompt') {
+        bar.style.width = '16px';
+      } else {
+        var width = num(bar.dataset.durMs) / wall * 100;
+        bar.style.width = Math.max(clamp(width), 0.6) + '%';
+      }
       var dur = bar.querySelector('.wf-dur');
       // Keep the duration caption inside the track for bars near the right edge.
       if (dur) {

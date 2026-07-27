@@ -98,6 +98,7 @@ const SHIPPED_VALUES = {
   delivery: '#e6b450', // = net
   deploy: '#e6b450', // = net
   wait: '#808c9a', // = meta
+  prompt: '#8b7cf6', // = reason
 
   /* The ADR-0009 neutral default, for any category the ADR does not name. */
   other: '#aab2bd',

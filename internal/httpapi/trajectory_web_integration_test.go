@@ -450,3 +450,52 @@ func TestIntegrationTrajectoryRendersArgsAndEmptySpans(t *testing.T) {
 		t.Error("a span's output must still render")
 	}
 }
+
+// TestIntegrationTrajectoryPromptRendersAsMarker pins the prompt treatment: a
+// human taking minutes to type is real elapsed time but says nothing about how
+// the run performed, and as a proportional bar it dwarfed every unit of actual
+// work either side of it.
+//
+// So a `prompt` span keeps its place on the time axis and its full turn in the
+// stream, but the waterfall draws it as a marker and the time-by-category
+// breakdown leaves it out. A `wait` span — blocked on CI, a rate limit — is a
+// genuine performance fact and keeps its bar and its slice.
+func TestIntegrationTrajectoryPromptRendersAsMarker(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+	resp := do(t, http.MethodPost, srv.URL+"/v1/runs", "joe",
+		jsonReader(t, runRequest{Mode: "batch", Title: "prompt marker", Prompt: "Do some work.",
+			Model: "claude-opus-5", StartedAt: fixedRunStart, Spans: []spanRequest{
+				{SpanID: "a", Category: "research", Name: "Read the code", StartOffsetMS: 0, DurationMS: 20000},
+				{SpanID: "b", Category: "prompt", Name: "Joe: now the other thing", StartOffsetMS: 20000, DurationMS: 540000},
+				{SpanID: "c", Category: "wait", Name: "Blocked on CI", StartOffsetMS: 560000, DurationMS: 45000},
+			}}),
+		"application/json")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed run = %d, want 201", resp.StatusCode)
+	}
+	runID := decodeRun(t, resp).ID
+
+	status, html := getHTML(t, srv.URL+"/run/"+runID)
+	if status != http.StatusOK {
+		t.Fatalf("GET /run/%s = %d, want 200", runID, status)
+	}
+
+	// The span is still fully present: legend entry, waterfall row, stream turn.
+	for _, frag := range []string{`data-cat="prompt"`, "Joe: now the other thing"} {
+		if !strings.Contains(html, frag) {
+			t.Errorf("a prompt span must still render (%q missing)", frag)
+		}
+	}
+
+	// But it contributes no time-by-category segment, while wait still does.
+	segs := strings.Count(html, `class="cat-seg"`)
+	if strings.Contains(html, `<span class="cat-seg" data-cat="prompt"`) {
+		t.Error("prompt must not take a slice of the time-by-category bar — it is elapsed time, not effort")
+	}
+	if !strings.Contains(html, `data-cat="wait"`) {
+		t.Error("wait is a real performance fact and must keep its place")
+	}
+	if segs == 0 {
+		t.Error("expected the breakdown to still render segments for the other categories")
+	}
+}

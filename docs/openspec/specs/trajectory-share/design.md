@@ -54,7 +54,7 @@ nesting, and run-relative timing.
 
 **Rationale**: The model carries exactly the fields the waterfall and RUN panel need and
 nothing else; stats are derivable; sub-agents fall out of `parent_span_id`. The
-recommended vocabularies — by operation kind `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`, or by workflow phase `research · implementation · review · testing · debug · build · docs · delivery · deploy · wait`
+recommended vocabularies — by operation kind `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`, or by workflow phase `research · implementation · review · testing · debug · build · docs · delivery · deploy · wait · prompt`
 — cover what agents naturally produce, by operation and by workflow phase respectively, and accepting arbitrary non-empty
 strings means agents are never forced to remap their categories. Known categories get
 their designated accent color; unknowns fall back to a neutral default.

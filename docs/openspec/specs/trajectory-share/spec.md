@@ -55,7 +55,7 @@ A trajectory MUST store its run as an ordered tree of spans in PostgreSQL keyed 
 `seq`; a `category` string drawn from either recommended vocabulary — by operation kind,
 `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`,
 or by workflow phase,
-`research · implementation · review · testing · debug · build · docs · delivery · deploy · wait`
+`research · implementation · review · testing · debug · build · docs · delivery · deploy · wait · prompt`
 (any non-empty string of at most 64 characters is accepted; a value outside both
 vocabularies MUST still render, in a color derived deterministically from the category
 name so one agent's own vocabulary reads as a palette rather than a single flat color); a

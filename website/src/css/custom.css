@@ -166,6 +166,7 @@
   --cat-delivery:       #e6b450;   /* gold     = net     */
   --cat-deploy:         #e6b450;   /* gold     = net     */
   --cat-wait:           #808c9a;   /* slate    = meta    */
+  --cat-prompt:         #8b7cf6;   /* purple   = reason  */
 
   --cat-other:   #aab2bd;   /* neutral default */
 }
@@ -789,6 +790,7 @@ table { display: table; width: 100%; }
 .chip-delivery       { --chip-accent: var(--cat-delivery); }
 .chip-deploy         { --chip-accent: var(--cat-deploy); }
 .chip-wait           { --chip-accent: var(--cat-wait); }
+.chip-prompt           { --chip-accent: var(--cat-prompt); }
 
 .chip-other   { --chip-accent: var(--cat-other); }
 

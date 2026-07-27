@@ -401,6 +401,15 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 		if ms == 0 {
 			continue
 		}
+		// `prompt` is elapsed time, not effort: it is the human composing their
+		// next instruction. It stays OUT of the breakdown for the same reason
+		// the waterfall draws it as a marker rather than a bar — a four-minute
+		// think swamps the panel and buries where the run actually spent
+		// itself. The waterfall still shows when each prompt happened, and the
+		// legend still explains the colour, so nothing is hidden.
+		if cat == trajectory.CategoryPrompt {
+			continue
+		}
 		vm.Categories = append(vm.Categories, categorySeg{
 			Category: string(cat),
 			Pct:      formatPct(ratioPct(int(ms), wall)),
