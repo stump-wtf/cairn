@@ -1,0 +1,19 @@
+-- Provenance records WHO made an artifact and through what, but not WHAT MODEL
+-- produced it. A trajectory carried a model only because run_create takes one
+-- explicitly and stores it on the run; every other share type — the markdown
+-- report an agent wrote, the code it pushed, the bundle it assembled — showed
+-- an actor and a harness with no way to say which model did the work.
+--
+-- Model belongs on provenance rather than beside it: it is part of the same
+-- "where did this come from" claim as actor/on_behalf_of/channel, it is
+-- captured once at ingest and never changes, and every surface that renders
+-- provenance should be able to render it without a second lookup.
+--
+-- Nullable-free: TEXT NOT NULL DEFAULT '' matches on_behalf_of directly above
+-- it. An empty string means "not reported", which is honest for a human posting
+-- from the CLI and for any agent that does not name its model — the viewer
+-- omits the row rather than showing a blank one.
+--
+-- Governing: ADR-0004 (provenance is recorded server-side, never a client
+-- claim), SPEC-0007 REQ "Agent-Shaped Tool Schemas"
+ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT '';

@@ -21,7 +21,7 @@ const (
 // path so the Bin and a single read agree on shape.
 const binColumns = `
 	id, public_id, share_type, title, body_sha256, size_bytes,
-	media_type, previewable, actor_id, on_behalf_of, channel,
+	media_type, previewable, actor_id, on_behalf_of, model, channel,
 	captured_at, owner_id, visibility, reaction_count, comment_count, pin_count,
 	expires_at, created_at`
 
@@ -110,7 +110,7 @@ func scanArtifact(row rowScanner) (*artifact.Artifact, error) {
 	if err := row.Scan(
 		&a.ID, &a.PublicID, &a.ShareType, &a.Title, &bodySHA, &a.Size,
 		&a.MediaType, &a.Previewable, &a.Provenance.ActorID,
-		&a.Provenance.OnBehalfOf, &a.Provenance.Channel, &a.Provenance.CapturedAt,
+		&a.Provenance.OnBehalfOf, &a.Provenance.Model, &a.Provenance.Channel, &a.Provenance.CapturedAt,
 		&a.Access.OwnerID, &a.Access.Visibility,
 		&a.ReactionCount, &a.CommentCount, &a.PinCount,
 		&a.ExpiresAt, &a.CreatedAt,

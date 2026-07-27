@@ -77,7 +77,7 @@ surfaces present one Share sheet (ADR-0011). */}}
     <dt>access</dt><dd data-share-access-label>{{.AccessLabel}}</dd>
     <dt>expires</dt><dd>⧗ expires <span data-share-expires>{{if .ExpiresIn}}{{.ExpiresIn}}{{else}}—{{end}}</span></dd>
     <dt>provenance</dt>
-    <dd>{{.Provenance.Actor}}{{if .Provenance.OnBehalfOf}} <span class="obo">on behalf of {{.Provenance.OnBehalfOf}}</span>{{end}} · {{.Provenance.Channel}} · captured {{.Provenance.Captured}}</dd>
+    <dd>{{.Provenance.Actor}}{{if .Provenance.OnBehalfOf}} <span class="obo">on behalf of {{.Provenance.OnBehalfOf}}</span>{{end}}{{if .Provenance.Model}} · {{.Provenance.Model}}{{end}} · {{.Provenance.Channel}} · captured {{.Provenance.Captured}}</dd>
   </dl>
 
   {{if .IsOwner}}

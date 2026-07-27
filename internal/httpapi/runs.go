@@ -171,6 +171,9 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		Provenance: artifact.Provenance{
 			ActorID:    p.ActorID,
 			OnBehalfOf: req.OnBehalfOf,
+			// The run already names its model; mirror it onto provenance so a
+			// trajectory reads the same as every other artifact.
+			Model:      req.Model,
 			Channel:    p.Channel,
 			CapturedAt: now,
 		},

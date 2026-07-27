@@ -176,9 +176,9 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 	const insertSQL = `
 		INSERT INTO artifacts
 			(public_id, share_type, title, body_sha256, size_bytes, media_type,
-			 previewable, actor_id, on_behalf_of, channel, captured_at,
+			 previewable, actor_id, on_behalf_of, model, channel, captured_at,
 			 owner_id, visibility, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		RETURNING id, created_at`
 
 	for attempt := 0; attempt < idMaxAttempts; attempt++ {
@@ -201,7 +201,7 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 		err = sp.QueryRow(ctx, insertSQL,
 			art.PublicID, art.ShareType, art.Title, bodySHA, art.Size,
 			art.MediaType, art.Previewable, art.Provenance.ActorID,
-			art.Provenance.OnBehalfOf, art.Provenance.Channel,
+			art.Provenance.OnBehalfOf, art.Provenance.Model, art.Provenance.Channel,
 			art.Provenance.CapturedAt, art.Access.OwnerID, art.Access.Visibility,
 			art.ExpiresAt,
 		).Scan(&art.ID, &art.CreatedAt)

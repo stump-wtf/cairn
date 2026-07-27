@@ -84,6 +84,23 @@ model.
 - **WHEN** a human creates an artifact from the CLI
 - **THEN** provenance MUST record `actor = human:<email>` and `channel = via CLI`
 
+#### Scenario: The producing model is recorded on any share type
+
+- **WHEN** an agent creates an artifact of any share type and reports the model producing it
+- **THEN** provenance MUST record that model and every viewer MUST show it, not only the trajectory viewer
+
+The model is the one provenance fact the server cannot derive: an MCP client's
+`initialize` identifies the HARNESS (which becomes on-behalf-of) and nothing on the
+wire names the model. It is therefore reported by the creator, and the create surfaces
+MUST offer a way to report it. This is the sole exception to server-derived provenance
+above, and it is deliberately narrow: an unreported model is recorded as empty and
+rendered as nothing, never guessed at or defaulted.
+
+#### Scenario: No model reported
+
+- **WHEN** an artifact is created without a model — a human piping a file from the CLI, or an agent that does not know it
+- **THEN** provenance MUST record an empty model and the viewer MUST omit the model row entirely rather than rendering it blank
+
 ### Requirement: Link-Based Capability Read
 
 Possession of a valid public capability-URL (ADR-0005) MUST grant **read** with no

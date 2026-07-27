@@ -58,6 +58,13 @@ const (
 type Provenance struct {
 	ActorID    string
 	OnBehalfOf string
+	// Model names the model that produced the artifact, e.g. "claude-opus-5".
+	// Empty means the creator did not report one, which is the honest state for
+	// a human posting from the CLI — a viewer omits the row rather than showing
+	// it blank. It sits on provenance rather than beside it because it answers
+	// the same "where did this come from" question as ActorID/OnBehalfOf, is
+	// captured once at ingest, and never changes afterwards.
+	Model      string
 	Channel    Channel
 	CapturedAt time.Time
 }
