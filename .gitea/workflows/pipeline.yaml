@@ -240,14 +240,20 @@ jobs:
 
   # ---- 8b. docs image ------------------------------------------------------
   # The same record the Pages job publishes, rebuilt for the PRODUCT domain and
-  # baked into a static-server image — cloud01's edge Caddy serves it at
-  # https://cairn.stump.wtf/docs/ (handle_path /docs/* → the cairn-docs
-  # container), exactly the stump.wtf/switchboard docs pattern. Two builds, not
-  # one bundle rsynced twice, because a Docusaurus bundle bakes its origin and
-  # base path into every canonical link, og:url and the sitemap: the Pages
-  # bundle advertises stump-wtf.pages.stump.rocks/cairn/, this one
-  # cairn.stump.wtf/docs/. See docusaurus.config.ts for why the /docs segment
-  # here comes from baseUrl with routeBasePath '/', and never both.
+  # baked into a static-server image. This bundle is cairn.stump.wtf's public
+  # face: the marketing homepage at /, the record at /docs/intro/ and friends —
+  # cloud01's edge Caddy routes `/`, `/docs/*` and the bundle's static
+  # namespaces to the cairn-docs container, and everything else to the app.
+  # Two builds, not one bundle rsynced twice, because a Docusaurus bundle bakes
+  # its origin and base path into every canonical link, og:url and the sitemap:
+  # the Pages bundle advertises stump-wtf.pages.stump.rocks/cairn/, this one
+  # cairn.stump.wtf/.
+  #
+  # DOCS_BASE_URL is `/`, and must stay `/`: a bundle based at /docs/ hydrates
+  # into the 404 page when served at `/` — the client router treats any path
+  # outside its baseUrl as not found (this shipped once; the homepage rendered,
+  # then React replaced it with "Page Not Found"). docusaurus.config.ts
+  # documents the full failure catalogue.
   #
   # The site is built on the runner (npm) and the image only COPYs the static
   # output — no Node stage, so the docker build fetches nothing. Same
@@ -273,12 +279,12 @@ jobs:
           cache-dependency-path: website/package-lock.json
 
       - if: ${{ env.REG != '' }}
-        name: Build the record for the app domain (baseUrl /docs/)
+        name: Build the record for the app domain (rooted at /)
         working-directory: website
         run: npm ci --no-audit --no-fund && npm run build
         env:
           DOCS_URL: https://cairn.stump.wtf
-          DOCS_BASE_URL: /docs/
+          DOCS_BASE_URL: /
 
       - if: ${{ env.REG != '' }}
         name: Set up Docker Buildx
