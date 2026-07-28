@@ -22,41 +22,98 @@
   // re-proportions the whole waterfall. Returns the WALL time (still derived as
   // max(start+duration)), which the live stats refresh reports separately — the
   // bars no longer use it, but the run's elapsed figure is still real.
+  // ZOOM is how many multiples of the visible track width the time axis is
+  // stretched to. A flame graph only works if a typical span is wide enough to
+  // see: unzoomed, a run whose p95 span is 1/200th of its collapsed working
+  // time draws that span at half a percent. Derived per run rather than fixed,
+  // so a short run is not stretched pointlessly and a long one is stretched
+  // enough — targeting roughly six p95-length spans across the viewport.
+  function zoomFor(root) {
+    var wall = collapsedWallMS(root), durs = [];
+    root.querySelectorAll('.wf-bar').forEach(function (bar) {
+      if (bar.dataset.cat !== 'prompt') durs.push(num(bar.dataset.durMs));
+    });
+    var p95 = yardstick(durs);
+    if (!(wall > 0) || !(p95 > 0)) return 1;
+    // Stretch until roughly six p95-length spans span the viewport.
+    return Math.min(Math.max(wall / p95 / 6, 1), 60);
+  }
+
+  // The working-time total the axis covers, sent by the server in ms.
+  function collapsedWallMS(root) {
+    var wf = root.querySelector('.waterfall');
+    return wf ? Math.max(num(wf.dataset.collapsedWallMs), 1) : 1;
+  }
+
   function layoutWaterfall(root) {
     var bars = root.querySelectorAll('.wf-bar');
+    var rows = root.querySelector('[data-wf-rows]');
     var wall = 1, durs = [];
     bars.forEach(function (bar) {
       var end = num(bar.dataset.startMs) + num(bar.dataset.durMs);
       if (end > wall) wall = end;
       if (bar.dataset.cat !== 'prompt') durs.push(num(bar.dataset.durMs));
     });
+    var zoom = zoomFor(root);
+    var wallMS = collapsedWallMS(root);
     var longest = yardstick(durs);
+
+    // The zoom is applied as a PERCENTAGE on the ROW, via one custom property
+    // the stylesheet reads — not as pixel widths on 800 rows.
+    //
+    // It has to be the row, not just the track: a wide track inside a
+    // viewport-width row leaves the row itself one screen wide, so panning
+    // right scrolls past the end of every row and the pane goes blank. The row
+    // is the thing that must be as wide as the zoomed axis, both so horizontal
+    // scrolling keeps it in view and so the sticky label column has something
+    // to stick to.
+    //
+    // Percentages rather than measured pixels because they need no layout read:
+    // a pixel width computed from clientWidth is wrong whenever the pane has
+    // not been laid out yet (hidden panel, pre-font-load, an offscreen render),
+    // and silently collapses the whole graph to 1px when that happens.
+    if (rows) rows.style.setProperty('--wf-zoom', (zoom * 100) + '%');
+
     bars.forEach(function (bar) {
-      // Bars encode DURATION against the run's longest span, not position
-      // against the wall clock. At real scale a wall-clock axis is unusable: a
-      // 611-minute run whose median span is 7.5s puts that median at 0.02% of
-      // the width, so every bar clamps to the same minimum stub and the picture
-      // says nothing. Sized against the longest span, a 100s command visibly
-      // dwarfs a 0.1s edit. "When" is carried by the timeline strip below.
-      bar.style.left = '0%';
+      // A real flame graph again: LEFT is when the span started on the collapsed
+      // working-time axis, WIDTH is how long it ran on that same axis. Both are
+      // percentages of the zoomed track, so they stay correct at any zoom.
+      // Percentages are computed HERE from exact milliseconds, never sent
+      // pre-rounded: a 7s span on a 5000s axis is 0.14%, which one decimal place
+      // truncates to zero — that flattened every bar in a long run.
+      if (!bar.dataset.posMs) {   // no server geometry: fall back to duration-relative
+        bar.style.left = '0%';
+        bar.style.width = Math.max(clamp(num(bar.dataset.durMs) / longest * 100), 0.6) + '%';
+        return;
+      }
+      bar.style.left = (num(bar.dataset.posMs) / wallMS * 100) + '%';
       if (bar.dataset.cat === 'prompt') {
         bar.style.width = '16px';   // a marker, never a length (see trajectory.css)
       } else {
-        var pct = parseFloat(bar.dataset.durPct || '');
-        if (isNaN(pct)) pct = num(bar.dataset.durMs) / longest * 100;
-        if (num(bar.dataset.durMs) > longest) bar.dataset.clipped = '1';
-        bar.style.width = Math.max(clamp(pct), 0.6) + '%';
+        // The floor is in PIXELS of the zoomed track, so a sub-second span stays
+        // visible and clickable without misreporting its length.
+        bar.style.width = 'max(' + (num(bar.dataset.durMs) / wallMS * 100) + '%, 3px)';
       }
       var dur = bar.querySelector('.wf-dur');
-      // The caption sits after the bar; only pull it inside for a bar so wide
-      // there is no room left.
-      if (dur) {
-        if (parseFloat(bar.style.width) > 88) { dur.style.left = 'auto'; dur.style.right = 'calc(100% + 6px)'; }
-        else { dur.style.right = 'auto'; dur.style.left = 'calc(100% + 6px)'; }
-      }
+      if (dur) { dur.style.right = 'auto'; dur.style.left = 'calc(100% + 6px)'; }
     });
+
+    if (rows) syncPan(root);
     layoutTimeline(root);
     return wall;
+  }
+
+  // Vertical scroll drives horizontal pan: down walks forward through the run,
+  // up walks back. The rows are in chronological order, so a linear mapping
+  // keeps the bars under the labels that describe them.
+  function syncPan(root) {
+    var rows = root.querySelector('[data-wf-rows]');
+    if (!rows) return;
+    var vMax = rows.scrollHeight - rows.clientHeight;
+    var hMax = rows.scrollWidth - rows.clientWidth;
+    if (hMax <= 0) return;
+    rows.scrollLeft = vMax > 0 ? (rows.scrollTop / vMax) * hMax : 0;
+    layoutRuler(root);
   }
 
   // The 95th-percentile work span, matching the server (buildTimeline). A
@@ -97,29 +154,36 @@
 
   function wireTimeline(root) {
     var rows = root.querySelector('[data-wf-rows]');
-    if (rows) rows.addEventListener('scroll', function () { syncTimelineViewport(root); }, {passive: true});
+    if (rows) rows.addEventListener('scroll', function () {
+      syncPan(root);
+      syncTimelineViewport(root);
+    }, {passive: true});
     root.querySelectorAll('.tl-tick').forEach(function (tick) {
       tick.addEventListener('click', function () { jumpToSpan(tick.dataset.spanjump, root); });
     });
     window.addEventListener('resize', function () { syncTimelineViewport(root); });
   }
 
-  // The ruler labels the DURATION axis the bars are drawn against, so it is
-  // re-derived from the longest span rather than from wall time — labelling it
-  // with elapsed time while the bars mean duration would misread completely.
+  // The axis pans, so the ruler labels the WINDOW currently in view rather than
+  // the whole run — a fixed 0→total ruler would be wrong for every scroll
+  // position but the first. Times are working time (idle collapsed out), which
+  // is the axis the bars are drawn on.
   function layoutRuler(root) {
     var ticks = root.querySelectorAll('.wf-tick');
+    var rows = root.querySelector('[data-wf-rows]');
     var pcts = [0, 25, 50, 75, 100];
-    if (ticks.length !== pcts.length) return;
-    var durs = [];
-    root.querySelectorAll('.wf-bar').forEach(function (bar) {
-      if (bar.dataset.cat !== 'prompt') durs.push(num(bar.dataset.durMs));
-    });
-    var longest = yardstick(durs);
+    if (ticks.length !== pcts.length || !rows) return;
+    var total = collapsedWallMS(root);
+    var frac = rows.scrollWidth > 0 ? rows.clientWidth / rows.scrollWidth : 1;
+    var at = rows.scrollWidth > rows.clientWidth
+      ? rows.scrollLeft / (rows.scrollWidth - rows.clientWidth) : 0;
+    var from = at * (1 - frac) * total;
     ticks.forEach(function (tick, i) {
-      tick.textContent = secs(longest * pcts[i] / 100) + 's';
+      tick.textContent = secs(from + frac * total * pcts[i] / 100) + 's';
     });
   }
+
+
 
   function layoutCategoryBar(root) {
     root.querySelectorAll('.cat-seg').forEach(function (seg) {
@@ -214,13 +278,41 @@
     if (!turn) return;
     var det = turn.querySelector('details.turn-collapse');
     if (det) det.open = true;
-    turn.scrollIntoView({ block: 'center', behavior: prefersReduced() ? 'auto' : 'smooth' });
+
+    // The activity stream is its own scroll pane, and on a long run it sits well
+    // below the fold. A plain scrollIntoView on the turn therefore scrolled the
+    // PANE — correctly, but invisibly, because the pane itself was off-screen —
+    // and a click on a waterfall row looked like it did nothing at all.
+    //
+    // So do both, outer first: bring the stream into the viewport, then centre
+    // the turn inside it. Computed from rects rather than a second
+    // scrollIntoView, because nested scrollers make the implicit version's
+    // behaviour hard to predict.
+    var smooth = prefersReduced() ? 'auto' : 'smooth';
+    var pane = scrollParent(turn);
+    if (pane && pane !== document.scrollingElement) {
+      pane.scrollIntoView({ block: 'nearest', behavior: smooth });
+      var delta = turn.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+      pane.scrollTo({ top: pane.scrollTop + delta - (pane.clientHeight - turn.offsetHeight) / 2, behavior: smooth });
+    } else {
+      turn.scrollIntoView({ block: 'center', behavior: smooth });
+    }
+
     turn.classList.remove('wf-flash');
     void turn.offsetWidth; // restart the animation
-    var target = turn.querySelector('.turn-summary') || turn;
     turn.classList.add('wf-flash');
     setTimeout(function () { turn.classList.remove('wf-flash'); }, 900);
   }
+
+  // The nearest ancestor that actually scrolls vertically, or the document.
+  function scrollParent(el) {
+    for (var p = el.parentElement; p; p = p.parentElement) {
+      var oy = getComputedStyle(p).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight) return p;
+    }
+    return document.scrollingElement;
+  }
+
 
   function cssEsc(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/"/g, '\\"'); }
   function prefersReduced() { return window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches; }

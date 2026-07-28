@@ -46,7 +46,8 @@
     with no JS, and the activity stream below carries the full content, so the
     no-JS / screen-reader experience is complete (ADR-0011, WCAG 1.3.1). */}}
     <section class="waterfall" aria-label="Span waterfall"
-             data-run-id="{{.ID}}" data-live="{{if .Live}}1{{else}}0{{end}}">
+             data-run-id="{{.ID}}" data-live="{{if .Live}}1{{else}}0{{end}}"
+             data-collapsed-wall-ms="{{.CollapsedWallMS}}">
       <div class="wf-head">
         <span class="wf-trace">TRACE</span>
         <span class="wf-legendmeta" data-model="{{.Model}}">{{.Model}} · {{.SubAgentCount}} sub-agent · {{.ToolCallCount}} tool calls</span>
@@ -89,7 +90,7 @@
         </div>
       </div>
       {{end}}
-      <p class="wf-hint">Bars scale to the 95th-percentile span ({{.LongestSpan}}) so typical work stays legible; a longer span fills the track and is marked ▸, with its real time always beside it. The timeline below shows when each span happened, idle time collapsed. Click any span to jump to it in the stream ↓</p>
+      <p class="wf-hint">A flame graph on working time — idle and prompt time collapsed out. The track is zoomed so short spans stay visible, and scrolling the rows pans it: down moves later, up moves earlier. Click any span to jump to it in the stream ↓</p>
     </section>
 
     {{/* ACTIVITY STREAM — server-rendered, native <details> collapsibles so
@@ -198,7 +199,7 @@ trajectory.js from data-left/data-width. */}}
       <span class="wf-name">{{.Name}}</span>
     </span>
     <span class="wf-track">
-      <span class="wf-bar" data-cat="{{.Category}}" data-start-ms="{{.StartMS}}" data-dur-ms="{{.DurMS}}" data-dur-pct="{{.DurPct}}"{{if .Clipped}} data-clipped="1"{{end}}>
+      <span class="wf-bar" data-cat="{{.Category}}" data-start-ms="{{.StartMS}}" data-dur-ms="{{.DurMS}}" data-dur-pct="{{.DurPct}}" data-pos-ms="{{.PosMS}}"{{if .Clipped}} data-clipped="1"{{end}}>
         <span class="wf-dur">{{.Duration}}</span>
       </span>
     </span>

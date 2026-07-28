@@ -76,6 +76,10 @@ type trajectoryView struct {
 	// switched to showing duration (see waterfallRow.DurPct).
 	Timeline    []timelineTick
 	LongestSpan string
+	// CollapsedWallMS is the total working time the flame graph's axis spans,
+	// idle and prompt time removed. The client turns each row's PosMS/DurMS into
+	// geometry against it.
+	CollapsedWallMS int
 
 	// Activity stream (the user prompt turn followed by the span rows).
 	Prompt      string
@@ -132,14 +136,17 @@ type waterfallRow struct {
 	// late span that extends the timeline re-proportions the whole waterfall.
 	StartMS int
 	DurMS   int
-	// DurPct is the bar's width as a percentage of the RUN'S LONGEST SPAN, not
-	// of wall time. A 793-span run spanning ten hours has a median span of
-	// 7.5s — 0.02% of the wall clock, a quarter of a pixel — so a
-	// position-and-width flame graph clamped every bar to the same minimum
-	// stub and the bars carried no information at all. Against the longest
-	// span, a 100s command visibly dwarfs a 0.1s edit and the expensive steps
-	// are findable by eye. Chronological ORDER is preserved by the row order;
-	// absolute "when" moves to the timeline strip.
+	// PosMS is the bar's left edge on the collapsed working-time axis, in
+	// MILLISECONDS — not a percentage. Percentages were tried and are unusable
+	// here: a 7s span on a 5000s axis is 0.14%, and formatting that to one
+	// decimal rounds it to 0.0, so every bar in a long run collapsed to the
+	// minimum width and the ruler read 0.0s across the board. Milliseconds are
+	// exact, and the client divides by CollapsedWallMS at render time.
+	PosMS int
+	// DurPct is the width against the p95 yardstick, kept as the no-JS fallback:
+	// without the pan the track is only as wide as the viewport, where an axis
+	// width would be sub-pixel, so a JS-less reader still gets a legible
+	// duration-relative bar rather than 800 identical stubs.
 	DurPct string
 	// Clipped reports the span is longer than the p95 yardstick, so its bar
 	// fills the track rather than reading as an exact proportion. The duration
@@ -390,8 +397,8 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 	walkWaterfall(run.Spans)
 
 	// Duration-relative bars + the collapsed working-time strip.
-	timeline, longest, longestLabel := buildTimeline(vm.Waterfall)
-	vm.Timeline, vm.LongestSpan = timeline, longestLabel
+	timeline, longest, longestLabel, collapsedWall := buildTimeline(vm.Waterfall)
+	vm.Timeline, vm.LongestSpan, vm.CollapsedWallMS = timeline, longestLabel, collapsedWall
 	for i := range vm.Waterfall {
 		vm.Waterfall[i].DurPct = formatPct(ratioPct(vm.Waterfall[i].DurMS, int64(max(longest, 1))))
 		vm.Waterfall[i].Clipped = vm.Waterfall[i].DurMS > longest &&
@@ -482,9 +489,9 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 // completely, so a reader can still see THAT the run paused without the pause
 // dominating. Prompt spans contribute no working time — that is the whole point
 // — but they keep a tick on the strip so the pauses stay visible in context.
-func buildTimeline(rows []waterfallRow) ([]timelineTick, int, string) {
+func buildTimeline(rows []waterfallRow) ([]timelineTick, int, string, int) {
 	if len(rows) == 0 {
-		return nil, 0, ""
+		return nil, 0, "", 0
 	}
 	order := make([]int, len(rows))
 	for i := range order {
@@ -560,6 +567,12 @@ func buildTimeline(rows []waterfallRow) ([]timelineTick, int, string) {
 		}
 	}
 
+	// Hand the collapsed positions back to the rows too — the waterfall and the
+	// strip must sit on ONE axis or the two pictures disagree.
+	for i := range rows {
+		rows[i].PosMS = display[i]
+	}
+
 	ticks := make([]timelineTick, 0, len(rows))
 	for i, r := range rows {
 		w := ratioPct(r.DurMS, int64(wall))
@@ -573,7 +586,7 @@ func buildTimeline(rows []waterfallRow) ([]timelineTick, int, string) {
 			WidPct:   formatPct(w),
 		})
 	}
-	return ticks, longest, formatSeconds(int64(longest))
+	return ticks, longest, formatSeconds(int64(longest)), wall
 }
 
 // streamRowFor projects one span onto an activity-stream row, recursively for a
