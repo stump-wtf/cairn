@@ -492,3 +492,104 @@ func TestBuildTimelineCollapsesIdleAndPromptTime(t *testing.T) {
 		t.Errorf("prompt tick at %v%% must still precede the work that follows it", p)
 	}
 }
+
+// TestBuildTimelineEdgeCases covers the degenerate inputs the happy-path test
+// does not reach. Each one has crashed or produced silent garbage in a
+// predecessor of this code.
+func TestBuildTimelineEdgeCases(t *testing.T) {
+	t.Run("empty rows return zero values without panicking", func(t *testing.T) {
+		ticks, longest, label, wall := buildTimeline(nil)
+		if ticks != nil {
+			t.Errorf("expected nil ticks for empty input, got %d", len(ticks))
+		}
+		if longest != 0 || label != "" || wall != 0 {
+			t.Errorf("expected zero returns, got longest=%d label=%q wall=%d", longest, label, wall)
+		}
+	})
+
+	t.Run("all-prompt spans produce a floor yardstick without crashing", func(t *testing.T) {
+		// No work spans means the p95 computation has an empty slice. The
+		// yardstick must fall back to 1, not panic on an empty sort.
+		rows := []waterfallRow{
+			{SpanID: "p1", Category: "prompt", StartMS: 0, DurMS: 5_000},
+			{SpanID: "p2", Category: "prompt", StartMS: 5_000, DurMS: 10_000},
+		}
+		ticks, longest, _, wall := buildTimeline(rows)
+		if longest < 1 {
+			t.Fatalf("yardstick must be at least 1 even with no work spans, got %d", longest)
+		}
+		if len(ticks) != 2 {
+			t.Errorf("expected a tick per prompt span, got %d", len(ticks))
+		}
+		if wall < 1 {
+			t.Errorf("collapsed wall must be at least 1, got %d", wall)
+		}
+	})
+
+	t.Run("single work span anchors the axis at zero", func(t *testing.T) {
+		rows := []waterfallRow{
+			{SpanID: "solo", Category: "research", StartMS: 0, DurMS: 42_000},
+		}
+		ticks, longest, _, wall := buildTimeline(rows)
+		if longest != 42_000 {
+			t.Errorf("yardstick = %d, want 42000 (the only span)", longest)
+		}
+		if rows[0].PosMS != 0 {
+			t.Errorf("first span must anchor at PosMS=0, got %d", rows[0].PosMS)
+		}
+		if wall != 42_000 {
+			t.Errorf("wall = %d, want 42000", wall)
+		}
+		if len(ticks) != 1 || ticks[0].SpanID != "solo" {
+			t.Errorf("expected one tick for the single span, got %v", ticks)
+		}
+	})
+
+	t.Run("collapsed wall is never zero", func(t *testing.T) {
+		// A zero-duration span and a zero-start prompt: the collapse logic
+		// must still produce a wall >= 1, or the client divides by zero.
+		rows := []waterfallRow{
+			{SpanID: "z", Category: "research", StartMS: 0, DurMS: 0},
+		}
+		_, _, _, wall := buildTimeline(rows)
+		if wall < 1 {
+			t.Fatalf("wall = %d; must be at least 1 to avoid client-side div-by-zero", wall)
+		}
+	})
+
+	t.Run("prompt span gets a position on the collapsed axis", func(t *testing.T) {
+		rows := []waterfallRow{
+			{SpanID: "w1", Category: "research", StartMS: 0, DurMS: 5_000},
+			{SpanID: "p", Category: "prompt", StartMS: 5_000, DurMS: 100_000},
+			{SpanID: "w2", Category: "implementation", StartMS: 105_000, DurMS: 5_000},
+		}
+		ticks, _, _, _ := buildTimeline(rows)
+		var promptTick *timelineTick
+		for i := range ticks {
+			if ticks[i].SpanID == "p" {
+				promptTick = &ticks[i]
+			}
+		}
+		if promptTick == nil {
+			t.Fatal("no tick produced for the prompt span")
+		}
+		// The prompt tick must sit between the two work spans on the axis.
+		var w1Pos, w2Pos float64
+		for _, tk := range ticks {
+			var f float64
+			_, _ = fmt.Sscanf(tk.PosPct, "%f", &f)
+			if tk.SpanID == "w1" {
+				w1Pos = f
+			}
+			if tk.SpanID == "w2" {
+				w2Pos = f
+			}
+		}
+		var promptPos float64
+		_, _ = fmt.Sscanf(promptTick.PosPct, "%f", &promptPos)
+		if promptPos <= w1Pos || promptPos >= w2Pos {
+			t.Errorf("prompt at %.1f%% must sit between w1 (%.1f%%) and w2 (%.1f%%)",
+				promptPos, w1Pos, w2Pos)
+		}
+	})
+}
