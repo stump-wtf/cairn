@@ -214,6 +214,41 @@ func TestPrepareSpansProducedOnNonWriteRejected(t *testing.T) {
 	}
 }
 
+// TestNormalizeArtifactID pins the handle-form resolution added for issue #50:
+// a produced_artifact_id supplied as an mcp://cairn/<id> handle (optionally
+// under a /run/ or /hook/ sub-prefix a caller may copy-paste) must normalize to
+// the bare public id the produced-edge lookup takes, identical to a bare id.
+func TestNormalizeArtifactID(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"TE4Fb89R", "TE4Fb89R"},
+		{" mcp://cairn/TE4Fb89R ", "TE4Fb89R"},
+		{"mcp://cairn/run/TE4Fb89R", "TE4Fb89R"},
+		{"mcp://cairn/hook/TE4Fb89R", "TE4Fb89R"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := normalizeArtifactID(c.in); got != c.want {
+			t.Errorf("normalizeArtifactID(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestPrepareSpansNormalizesProducedHandle pins that the handle is normalized at
+// ingest rather than only at the produced-edge lookup: a prepared span feeds the
+// span projected back to an appending caller AND the span published to live SSE
+// subscribers, both of which would otherwise render a cross-link to
+// `/mcp://cairn/<id>` until the viewer reloaded and re-read the bare id.
+func TestPrepareSpansNormalizesProducedHandle(t *testing.T) {
+	out, err := prepareSpans(map[string]int{}, map[string]int{}, map[string]bool{},
+		[]SpanInput{{SpanID: "s1", Category: CategoryWrite, ProducedArtifactID: "mcp://cairn/TE4Fb89R"}})
+	if err != nil {
+		t.Fatalf("prepareSpans: %v", err)
+	}
+	if got := out[0].in.ProducedArtifactID; got != "TE4Fb89R" {
+		t.Errorf("prepared produced id = %q, want the bare id TE4Fb89R", got)
+	}
+}
+
 func TestPrepareSpansDuplicateID(t *testing.T) {
 	_, err := prepareSpans(map[string]int{}, map[string]int{}, map[string]bool{},
 		[]SpanInput{

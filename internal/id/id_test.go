@@ -81,3 +81,23 @@ func TestDistribution(t *testing.T) {
 		t.Fatalf("only %d distinct characters observed, sampling range looks wrong", len(counts))
 	}
 }
+
+// TestNormalize pins the one definition of an id-or-handle every surface shares:
+// the transport adapters and the trajectory core both delegate here, so a
+// produced-artifact id, a run id in a tool call, and a webhook handle all resolve
+// identically no matter which form the caller pasted (ADR-0005).
+func TestNormalize(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"TE4Fb89R", "TE4Fb89R"},
+		{"  TE4Fb89R  ", "TE4Fb89R"},
+		{"mcp://cairn/TE4Fb89R", "TE4Fb89R"},
+		{" mcp://cairn/run/TE4Fb89R ", "TE4Fb89R"},
+		{"mcp://cairn/hook/TE4Fb89R", "TE4Fb89R"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := Normalize(c.in); got != c.want {
+			t.Errorf("Normalize(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

@@ -300,6 +300,67 @@ func TestBatchRoundTrip(t *testing.T) {
 	}
 }
 
+// TestBatchRunResolvesProducedArtifactHandle covers issue #50: a write span's
+// produced_artifact_id may be supplied as an mcp://cairn/<id> handle rather
+// than a bare public id, and must resolve to the same produced edge. The bare-id
+// path is covered by TestBatchRoundTrip; this pins the handle form.
+func TestBatchRunResolvesProducedArtifactHandle(t *testing.T) {
+	svc, st, _, _ := newHarness(t)
+	ctx := context.Background()
+	producedID := createMarkdown(t, st)
+
+	in := checkoutWebAudit("mcp://cairn/" + producedID)
+	run, err := svc.CreateBatchRun(ctx, in)
+	if err != nil {
+		t.Fatalf("batch with handle-form produced id: %v", err)
+	}
+	var s9 *Span
+	for _, r := range run.Spans {
+		if r.SpanID == "s9" {
+			s9 = r
+		}
+	}
+	if s9 == nil {
+		t.Fatal("s9 not found in run")
+	}
+	if len(s9.ProducedArtifactIDs) != 1 || s9.ProducedArtifactIDs[0] != producedID {
+		t.Fatalf("s9 produced = %v, want [%s] (handle normalized to bare id)", s9.ProducedArtifactIDs, producedID)
+	}
+}
+
+// TestAppendSpansNormalizesProducedHandle pins the append path's *returned*
+// span, which is byte-for-byte what the live SSE stream publishes: a handle-form
+// produced_artifact_id must come back as the bare id, or a viewer watching the
+// run live renders the produced-artifact cross-link as `/mcp://cairn/<id>` and
+// only self-corrects on reload, when the card is re-rendered from the database.
+func TestAppendSpansNormalizesProducedHandle(t *testing.T) {
+	svc, st, _, _ := newHarness(t)
+	ctx := context.Background()
+	producedID := createMarkdown(t, st)
+
+	in := checkoutWebAudit("")
+	in.Spans = nil
+	run, err := svc.OpenRun(ctx, in)
+	if err != nil {
+		t.Fatalf("open run: %v", err)
+	}
+	appended, err := svc.AppendSpans(ctx, run.PublicID, in.Access.OwnerID, []SpanInput{{
+		SpanID: "w1", Category: CategoryWrite, Tool: "write", Name: "wrote the report",
+		ProducedArtifactID: "mcp://cairn/" + producedID,
+		StartOffsetMS:      0, DurationMS: 10,
+	}})
+	if err != nil {
+		t.Fatalf("append with handle-form produced id: %v", err)
+	}
+	if len(appended) != 1 {
+		t.Fatalf("appended %d spans, want 1", len(appended))
+	}
+	got := appended[0].ProducedArtifactIDs
+	if len(got) != 1 || got[0] != producedID {
+		t.Fatalf("appended span produced = %v, want [%s] (bare id, not the handle)", got, producedID)
+	}
+}
+
 // TestBatchAndIncrementalConverge proves a batch ingest and the equivalent
 // open→append→close sequence yield identical span trees and identical derived
 // stats (SPEC-0004 "Batch and incremental converge").

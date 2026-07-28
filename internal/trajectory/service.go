@@ -509,17 +509,19 @@ func (s *Service) nextStreamBase(ctx context.Context, tx pgx.Tx, runID int64) (i
 }
 
 // insertProducedEdge resolves the produced artifact's public id to its internal
-// id (uniform not-found for unknown/expired) and records the directed edge.
-func (s *Service) insertProducedEdge(ctx context.Context, tx pgx.Tx, runID int64, spanID, producedPublicID string) error {
+// id (uniform not-found for unknown/expired) and records the directed edge. The
+// id arrives already normalized from prepareSpans, so an mcp://cairn/<id> handle
+// resolves exactly as the bare id does (issue #50).
+func (s *Service) insertProducedEdge(ctx context.Context, tx pgx.Tx, runID int64, spanID, pid string) error {
 	var artID int64
 	err := tx.QueryRow(ctx,
-		`SELECT id FROM artifacts WHERE public_id = $1 AND expires_at > now()`, producedPublicID,
+		`SELECT id FROM artifacts WHERE public_id = $1 AND expires_at > now()`, pid,
 	).Scan(&artID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errs.Validationf("trajectory: span %q produced-artifact %q not found", spanID, producedPublicID)
+			return errs.Validationf("trajectory: span %q produced-artifact %q not found", spanID, pid)
 		}
-		return fmt.Errorf("trajectory: resolve produced-artifact %q: %w", producedPublicID, err)
+		return fmt.Errorf("trajectory: resolve produced-artifact %q: %w", pid, err)
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO produced_edges (run_id, span_id, artifact_id)
