@@ -110,15 +110,24 @@
 .wf-ticks { display: flex; justify-content: space-between; color: var(--t7); font: 400 9.5px var(--mono);
   border-left: 1px solid var(--border-3); padding-left: 2px; }
 
-/* The rows scroll in their own pane. A long run is 800+ spans; letting them
-   flow pushed the activity stream twenty pages down the document and made the
-   waterfall the only thing on screen. Capped here, with the timeline strip
-   below giving whole-run context while you scroll. */
+/* Scrolls BOTH ways. Vertically because a long run is 800+ rows and letting
+   them flow buried the activity stream twenty pages down. Horizontally because
+   the track is zoomed wider than the viewport — that is what makes a 0.3s span
+   visible on a time axis at all — and trajectory.js drives the horizontal
+   position from the vertical one, so scrolling down walks forward through the
+   run. The horizontal scrollbar is hidden: it is driven, not dragged. */
 .wf-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px;
-  max-height: 42vh; min-height: 120px; overflow-y: auto; overscroll-behavior: contain;
-  scrollbar-width: thin; }
+  max-height: 42vh; min-height: 120px; overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain; scrollbar-width: thin; }
+/* The label column stays put while the track pans under it — without this the
+   names slide off the left edge and the graph becomes unreadable. */
+.wf-label { position: sticky; left: 0; z-index: 1; background: var(--well-2); padding-right: 6px; }
+/* --wf-zoom is set by trajectory.js as a percentage of the scroll container, so
+   the row is as wide as the zoomed time axis and horizontal panning keeps it in
+   view. Defaults to 100% so a no-JS render is exactly full-bleed. */
 .wf-row { display: grid; grid-template-columns: 214px 1fr; gap: 10px; align-items: center;
-  width: 100%; text-align: left; background: transparent; border: 0; border-radius: 5px;
+  width: var(--wf-zoom, 100%); min-width: 100%;
+  text-align: left; background: transparent; border: 0; border-radius: 5px;
   padding: 2px 4px; cursor: pointer; }
 .wf-row:hover { background: rgba(125,86,244,.08); }
 .wf-row.wf-flash { animation: cairnflash .9s ease; }

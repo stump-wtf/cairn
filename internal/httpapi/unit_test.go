@@ -440,7 +440,7 @@ func TestBuildTimelineCollapsesIdleAndPromptTime(t *testing.T) {
 		{SpanID: "p", Category: "prompt", StartMS: 10_000, DurMS: 1_000_000},
 		{SpanID: "b", Category: "implementation", StartMS: 1_010_000, DurMS: 10_000},
 	}
-	ticks, longest, label := buildTimeline(rows)
+	ticks, longest, label, collapsedWall := buildTimeline(rows)
 	if len(ticks) != 3 {
 		t.Fatalf("got %d ticks, want one per span", len(ticks))
 	}
@@ -452,6 +452,20 @@ func TestBuildTimelineCollapsesIdleAndPromptTime(t *testing.T) {
 	}
 	if label == "" {
 		t.Error("expected a human-readable longest-span label for the hint line")
+	}
+	// The axis the flame graph is drawn on covers WORKING time only. Uncollapsed
+	// it would be 1,020,000ms; the two 10s spans plus one collapsed gap stub is
+	// a small fraction of that.
+	if collapsedWall > 100_000 {
+		t.Errorf("collapsed axis = %dms; the 1000s prompt was not collapsed out", collapsedWall)
+	}
+	// And the rows carry exact millisecond positions on it — percentages were
+	// tried and rounded a 7s span on a 5000s axis to 0.0%.
+	if rows[2].PosMS <= rows[0].PosMS {
+		t.Errorf("second work span at %dms must follow the first at %dms", rows[2].PosMS, rows[0].PosMS)
+	}
+	if rows[2].PosMS > collapsedWall {
+		t.Errorf("span position %dms lies outside the %dms axis", rows[2].PosMS, collapsedWall)
 	}
 
 	pos := func(id string) float64 {
