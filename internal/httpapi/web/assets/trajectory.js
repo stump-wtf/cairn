@@ -110,15 +110,36 @@
   }
 
   // Vertical scroll drives horizontal pan: down walks forward through the run,
-  // up walks back. The rows are in chronological order, so a linear mapping
-  // keeps the bars under the labels that describe them.
+  // up walks back.
+  //
+  // The pan tracks the CENTER ROW's time, not the scroll fraction. The first
+  // version mapped vertical fraction to horizontal fraction linearly, which
+  // assumes row index is proportional to time — false for any real run, where
+  // a burst of quick tool calls is row-dense but time-sparse and one long turn
+  // is the reverse. Wherever the two diverged, the bars belonging to the
+  // visible rows sat outside the visible time window and the pane looked
+  // empty. Centering the window on the middle visible row's span makes the
+  // span you are looking at always on screen, by construction, and its
+  // chronological neighbours with it.
   function syncPan(root) {
     var rows = root.querySelector('[data-wf-rows]');
     if (!rows) return;
-    var vMax = rows.scrollHeight - rows.clientHeight;
     var hMax = rows.scrollWidth - rows.clientWidth;
     if (hMax <= 0) return;
-    rows.scrollLeft = vMax > 0 ? (rows.scrollTop / vMax) * hMax : 0;
+    var items = rows.children;
+    if (!items.length) return;
+    // Rows are uniform height, so index ≈ centre offset / mean row height —
+    // no per-row layout reads on a scroll handler.
+    var mid = rows.scrollTop + rows.clientHeight / 2;
+    var idx = Math.min(Math.max(Math.floor(mid / (rows.scrollHeight / items.length)), 0), items.length - 1);
+    var bar = items[idx].querySelector('.wf-bar');
+    if (!bar) return;
+    // A prompt marker's duration is off the axis (it collapses like idle
+    // time), so centring on posMs + dur/2 would aim far past where the marker
+    // actually sits. Anchor prompts on their position alone.
+    var t = num(bar.dataset.posMs) + (bar.dataset.cat === 'prompt' ? 0 : num(bar.dataset.durMs) / 2);
+    var target = (t / collapsedWallMS(root)) * rows.scrollWidth - rows.clientWidth / 2;
+    rows.scrollLeft = Math.min(Math.max(target, 0), hMax);
     layoutRuler(root);
   }
 
