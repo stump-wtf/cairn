@@ -514,8 +514,6 @@ func buildTimeline(rows []waterfallRow) ([]timelineTick, int, string, int) {
 	}
 	sort.SliceStable(order, func(a, b int) bool { return rows[order[a]].StartMS < rows[order[b]].StartMS })
 
-	// Active total first, so the collapsed gap stub can be sized against it
-	// rather than against a wall clock the collapse is about to discard.
 	// The yardstick bars are measured against is the 95th-PERCENTILE work span,
 	// not the longest one, and prompt spans are excluded from it entirely.
 	//
@@ -527,13 +525,11 @@ func buildTimeline(rows []waterfallRow) ([]timelineTick, int, string, int) {
 	// of 793 hitting the end of the track. Those keep their exact duration in
 	// text and are marked as clipped, so nothing is misreported — the bar just
 	// stops growing.
-	var active int
 	durs := make([]int, 0, len(rows))
 	for _, r := range rows {
 		if r.Category == string(trajectory.CategoryPrompt) {
 			continue
 		}
-		active += r.DurMS
 		durs = append(durs, r.DurMS)
 	}
 	longest := 1
@@ -544,10 +540,27 @@ func buildTimeline(rows []waterfallRow) ([]timelineTick, int, string, int) {
 			longest = max(durs[len(durs)-1], 1)
 		}
 	}
-	gapStub := active / 200
-	if gapStub < 250 {
-		gapStub = 250
+	// The collapsed-gap stub is sized against the MEDIAN work span, because the
+	// zoom is too (trajectory.js targets ~30 medians per viewport). It was
+	// active/200 — 0.5% of the axis, which sounded small until the zoom made the
+	// visible window itself only ~1% of the axis: on a 1500s run the stub came
+	// out at 7.5s while the window showed ~6s, so every collapsed gap was wider
+	// than the entire viewport and the graph read as mostly empty space with
+	// occasional spans. A third of a median keeps the seam visible (a reader can
+	// still see THAT the run paused) at about 1% of the window, and the clamp
+	// keeps it sane for degenerate span distributions.
+	sortedDurs := make([]int, 0, len(durs))
+	for _, d := range durs {
+		if d > 0 {
+			sortedDurs = append(sortedDurs, d)
+		}
 	}
+	sort.Ints(sortedDurs)
+	gapStub := 250
+	if len(sortedDurs) > 0 {
+		gapStub = sortedDurs[len(sortedDurs)/2] / 3
+	}
+	gapStub = min(max(gapStub, 100), 2000)
 
 	display := make([]int, len(rows))
 	cursor, shift := 0, 0

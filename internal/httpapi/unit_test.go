@@ -496,6 +496,35 @@ func TestBuildTimelineCollapsesIdleAndPromptTime(t *testing.T) {
 // TestBuildTimelineEdgeCases covers the degenerate inputs the happy-path test
 // does not reach. Each one has crashed or produced silent garbage in a
 // predecessor of this code.
+// TestBuildTimelineGapStubScalesWithMedian pins the collapsed-gap stub to the
+// MEDIAN work span rather than the active total. The old active/200 stub grew
+// with the run: a 1500s-active run of 0.2s tool calls got a 7.5s stub, and at
+// a zoom whose visible window is ~30 medians (~6s) every collapsed gap was
+// wider than the whole viewport — the graph read as empty space.
+func TestBuildTimelineGapStubScalesWithMedian(t *testing.T) {
+	// A Karakeep-shaped run: a few long turns push the active total up while
+	// the median span stays tiny, with a real ~3s think-gap before each call.
+	rows := []waterfallRow{{SpanID: "turn", Category: "reason", StartMS: 0, DurMS: 500_000}}
+	cursor := 500_000
+	for i := 0; i < 100; i++ {
+		cursor += 3_000 // uncaptured inference gap
+		rows = append(rows, waterfallRow{SpanID: fmt.Sprintf("c%d", i), Category: "tool", StartMS: cursor, DurMS: 200})
+		cursor += 200
+	}
+	_, _, _, wall := buildTimeline(rows)
+
+	spanSum := 500_000 + 100*200
+	// Median span is 200ms, so each of the 100 gaps must collapse to the 100ms
+	// clamp floor — not survive at 3s (the old stub was 5.2s here, preserving
+	// them all and adding five minutes of empty axis).
+	if wall > spanSum+100*500 {
+		t.Errorf("collapsed wall = %dms; think-gaps were not collapsed against the median (span sum %dms)", wall, spanSum)
+	}
+	if wall < spanSum {
+		t.Errorf("collapsed wall = %dms is smaller than the spans it contains (%dms)", wall, spanSum)
+	}
+}
+
 func TestBuildTimelineEdgeCases(t *testing.T) {
 	t.Run("empty rows return zero values without panicking", func(t *testing.T) {
 		ticks, longest, label, wall := buildTimeline(nil)
