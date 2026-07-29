@@ -196,7 +196,9 @@ func (s *Server) newMCPServer() *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "cairn", Version: "0.1.0"}, &mcp.ServerOptions{
 		Instructions: "Cairn is an AI-native artifact-sharing service. Read and create shareable " +
 			"artifacts, comment and react on them, and tail live trajectory runs and webhook " +
-			"streams — all scoped to what the authorizing human can already reach.",
+			"streams — all scoped to what the authorizing human can already reach. Large trace " +
+			"captures do not belong in single MCP calls: open a run and page spans in modest " +
+			"batches, or POST the run JSON to /v1/runs over REST (see the run_capture prompt).",
 		Logger: s.log,
 		// The SDK holds exactly one Subscribe/UnsubscribeHandler pair for the
 		// whole server, so mcpSubscribeResource dispatches by URI prefix
@@ -259,7 +261,10 @@ func (s *Server) newMCPServer() *mcp.Server {
 				"(a title/prompt/model header plus an ordered span tree) that is closed on creation; mode " +
 				"\"open\" creates a live run whose id and shareable URL are returned immediately and which " +
 				"stays open for run_append_spans as work happens (close it with POST /v1/runs/{id}/close " +
-				"when finished). Returns the run's id, web URL (/run/<id>), and mcp:// handle. Requires artifacts:write.",
+				"when finished). Returns the run's id, web URL (/run/<id>), and mcp:// handle. Requires artifacts:write. " +
+				"A batch run beyond a couple hundred spans (or ~1 MB of payload) does not belong in one MCP call — " +
+				"the call transits your own context window. Open the run (mode \"open\") and page spans in with " +
+				"run_append_spans, or POST the JSON to /v1/runs over REST so the payload never enters your context.",
 		}, s.mcpCreateRun)
 
 		mcp.AddTool(srv, &mcp.Tool{
@@ -267,7 +272,8 @@ func (s *Server) newMCPServer() *mcp.Server {
 			Description: "Append one or more spans to a run this human owns — the same incremental ingest " +
 				"POST /v1/runs/{id}/spans performs. Re-posting an already-present span_id is an idempotent " +
 				"no-op; a span naming an unknown parent is rejected atomically. Returns the run's current " +
-				"state. Requires artifacts:write.",
+				"state. Requires artifacts:write. Page a large capture as several modest batches (tens of " +
+				"spans per call), never one huge call — each call transits your own context window.",
 		}, s.mcpAppendRunSpans)
 
 		// The run_capture prompt (SPEC-0007 REQ "MCP Prompt Surface"). Tool
@@ -876,6 +882,8 @@ From whatever you find, derive each span's ` + "`start_offset_ms`" + ` and ` + "
 **Put the content in ` + "`output`" + `.** This is the single most important thing, and the most commonly skipped. Every span's ` + "`output`" + ` is what a reader sees when they expand it. For a toolless turn, that is the reasoning/thinking text for that step. For a tool call, it is the stdout or the result. A span sent with only a name and a duration renders as an empty row — the viewer says so explicitly, because there is nothing else it can show. Never pre-truncate: large outputs are stored as blobs and fetched lazily.
 
 **One span per turn, not per phase.** Aim for the granularity you actually worked at — a span for each reasoning turn and each tool call. Collapsing an hour of work into five summary spans throws away exactly the detail the viewer exists to show. A long run with a hundred spans reads fine; a five-span run reads like a summary someone already wrote.
+
+**Mind the transport: page a large capture.** Every MCP tool call transits your own context window, so a whole big run in one ` + "`run_create`" + ` call is pathological — a multi-megabyte payload can fail to send, and even when it succeeds it evicts the very context you are working with. For a run beyond a couple hundred spans (or with outputs totalling more than about a megabyte): create the run with mode ` + "`open`" + ` and only its header, page the spans in with ` + "`run_append_spans`" + ` in batches of 50–100, then close it. Better still for a finished large run, if your environment carries a Cairn API token: write the run JSON to a file and POST it to ` + "`/v1/runs`" + ` over REST — the payload then never enters your context at all.
 
 **Pick one category vocabulary and stay in it for the whole run.** Mixing the two reads as noise, because they answer different questions.
   - Operation kind — what you did in the span: ` + catList(trajectory.OperationCategories) + `

@@ -394,6 +394,11 @@ func TestRunCapturePrompt(t *testing.T) {
 	if !strings.Contains(body, "One span per turn") {
 		t.Error("run_capture prompt must state the span-granularity rule")
 	}
+	// The transport rule from the 4 MB single-call stress test: granularity
+	// says "many spans", so the very next thing said must be "page them".
+	if !strings.Contains(body, "Mind the transport") || !strings.Contains(body, "run_append_spans` in batches") {
+		t.Error("run_capture prompt must steer large captures to paged appends, never one huge MCP call")
+	}
 
 	// The optional `task` argument is woven in when supplied.
 	withTask, err := s.mcpRunCapturePrompt(context.Background(), &mcp.GetPromptRequest{
