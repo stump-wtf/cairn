@@ -117,6 +117,10 @@ func TestIntegrationTrajectoryViewerRendersAuditRun(t *testing.T) {
 		// Every bar carries its duration percentage, and the overview strip
 		// carries the "when" the bars gave up.
 		`data-dur-pct=`, `data-wf-timeline`, `class="tl-tick"`,
+		// The strip's viewport box is also the scrubber (trajectory.js
+		// wireTimelineDrag hangs off data-tl-viewport), and the hint tells the
+		// reader it is grabbable.
+		`data-tl-viewport`, `grab the timeline box to scrub`,
 	} {
 		if !strings.Contains(html, frag) {
 			t.Errorf("waterfall missing fragment %q", frag)

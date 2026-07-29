@@ -398,11 +398,27 @@
    it is a pause, not work. */
 .tl-tick[data-cat="prompt"] { top: 0; bottom: 0; opacity: .5; border-radius: 0; }
 
-/* Where the scrollable waterfall currently is. Pointer-events off so it never
-   swallows a click meant for a tick underneath it. */
+/* The time window currently on screen — and the scrubber: grab it to slide
+   along the run (trajectory.js wireTimelineDrag). It overlays the ticks, so an
+   undragged click is forwarded to the tick underneath rather than swallowed —
+   the affordance its old pointer-events: none used to protect. The grip pill
+   in the middle is what says "draggable"; keyboard users keep the tick buttons
+   and the scrollable rows pane, which reach everything the drag reaches. */
 /* min-width keeps the box findable on a long run: 800 rows in a 42vh pane makes
    the visible fraction ~2%, which is a hairline nobody can see. */
-.tl-viewport { position: absolute; top: 0; bottom: 0; pointer-events: none; min-width: 10px;
+/* touch-action is pan-y, not none: the scrub is horizontal, so surrendering
+   only the horizontal gesture leaves a vertical swipe that starts on the box
+   scrolling the PAGE. `none` claimed both axes, and since the box is a wide
+   band across a full-width strip it is easy to land on by accident — a reader
+   who did could not flick past the waterfall on a phone. */
+.tl-viewport { position: absolute; top: 0; bottom: 0; min-width: 10px;
   border: 1px solid var(--purple); border-radius: 3px;
-  background: rgba(125,86,244,.14); transition: left .08s linear, width .08s linear; }
+  background: rgba(125,86,244,.14); transition: left .08s linear, width .08s linear;
+  cursor: grab; touch-action: pan-y; }
+.tl-viewport::after { content: ''; position: absolute; left: 50%; top: 50%;
+  width: min(14px, 60%); height: 4px; transform: translate(-50%, -50%);
+  border-radius: 2px; background: var(--purple); opacity: .9; }
+.tl-viewport:hover { background: rgba(125,86,244,.22); }
+/* Dragging: the transition would make the box lag the pointer. */
+.tl-viewport.tl-dragging { cursor: grabbing; transition: none; }
 @media (prefers-reduced-motion: reduce) { .tl-viewport { transition: none; } }

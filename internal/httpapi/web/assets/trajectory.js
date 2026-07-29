@@ -112,15 +112,23 @@
   // Vertical scroll drives horizontal pan: down walks forward through the run,
   // up walks back.
   //
-  // The pan tracks the CENTER ROW's time, not the scroll fraction. The first
-  // version mapped vertical fraction to horizontal fraction linearly, which
-  // assumes row index is proportional to time — false for any real run, where
-  // a burst of quick tool calls is row-dense but time-sparse and one long turn
-  // is the reverse. Wherever the two diverged, the bars belonging to the
-  // visible rows sat outside the visible time window and the pane looked
-  // empty. Centering the window on the middle visible row's span makes the
-  // span you are looking at always on screen, by construction, and its
-  // chronological neighbours with it.
+  // The pan tracks a ROW's time, not the scroll fraction. The first version
+  // mapped vertical fraction to horizontal fraction linearly, which assumes
+  // row index is proportional to time — false for any real run, where a burst
+  // of quick tool calls is row-dense but time-sparse and one long turn is the
+  // reverse. Wherever the two diverged, the bars belonging to the visible rows
+  // sat outside the visible time window and the pane looked empty.
+  //
+  // The anchor row walks the FULL row range as the pane scrolls — the top of
+  // the list anchors the first row, the bottom the last, interpolating between
+  // neighbours in between. The previous anchor was the centre VISIBLE row,
+  // which by construction can never be a row in the first or last
+  // half-viewport: with one dominant span near the top, scrollTop 0 therefore
+  // still anchored the pan on that span's midpoint, and the opening bars sat
+  // unreachably off-screen left no matter how far up the reader scrolled. At
+  // mid-scroll this anchor coincides with the centre visible row, so the
+  // span-you-are-looking-at-is-on-screen property survives everywhere the old
+  // maths actually delivered it.
   function syncPan(root) {
     var rows = root.querySelector('[data-wf-rows]');
     if (!rows) return;
@@ -128,19 +136,50 @@
     if (hMax <= 0) return;
     var items = rows.children;
     if (!items.length) return;
-    // Rows are uniform height, so index ≈ centre offset / mean row height —
-    // no per-row layout reads on a scroll handler.
-    var mid = rows.scrollTop + rows.clientHeight / 2;
-    var idx = Math.min(Math.max(Math.floor(mid / (rows.scrollHeight / items.length)), 0), items.length - 1);
-    var bar = items[idx].querySelector('.wf-bar');
-    if (!bar) return;
-    // A prompt marker's duration is off the axis (it collapses like idle
-    // time), so centring on posMs + dur/2 would aim far past where the marker
-    // actually sits. Anchor prompts on their position alone.
-    var t = num(bar.dataset.posMs) + (bar.dataset.cat === 'prompt' ? 0 : num(bar.dataset.durMs) / 2);
+    var vMax = rows.scrollHeight - rows.clientHeight;
+    // Clamped because macOS rubber-banding reports scrollTop outside [0, vMax]
+    // mid-bounce, which would index past the row array.
+    var fi = Math.min(Math.max((vMax > 0 ? rows.scrollTop / vMax : 0) * (items.length - 1), 0), items.length - 1);
+    var i0 = Math.floor(fi);
+    var t0 = anchorNear(items, i0, -1);
+    var t1 = anchorNear(items, Math.min(i0 + 1, items.length - 1), 1);
+    if (t0 === null) t0 = t1;
+    if (t1 === null) t1 = t0;
+    if (t0 === null) return;
+    var t = t0 + (t1 - t0) * (fi - i0);
     var target = (t / collapsedWallMS(root)) * rows.scrollWidth - rows.clientWidth / 2;
     rows.scrollLeft = Math.min(Math.max(target, 0), hMax);
     layoutRuler(root);
+  }
+
+  // A row's time on the collapsed axis: its span's midpoint — except a prompt
+  // marker, whose duration is off the axis (it collapses like idle time), so
+  // centring on posMs + dur/2 would aim far past where the marker actually
+  // sits. Anchor prompts on their position alone.
+  //
+  // No posMs means no place on the collapsed axis at all, so the row has no
+  // anchor rather than an anchor of zero. Live-appended rows are exactly this
+  // case — appendWaterfallRow has only the span's raw start/duration from the
+  // SSE payload, never the server's collapsed position, which is why
+  // layoutWaterfall carries its own !posMs fallback. Reading the absent value
+  // as 0 anchored every streamed row at the START of the run, and since the
+  // bottom of the pane now anchors the LAST row, scrolling down to watch spans
+  // arrive threw the pan back to 0.0s on the first appended span.
+  function anchorTime(item) {
+    var bar = item.querySelector('.wf-bar');
+    if (!bar || !bar.dataset.posMs) return null;
+    return num(bar.dataset.posMs) + (bar.dataset.cat === 'prompt' ? 0 : num(bar.dataset.durMs) / 2);
+  }
+
+  // The nearest anchored row from `i` walking in `step`, so an unanchored row
+  // (see anchorTime) pins the pan to its closest real neighbour instead of
+  // cancelling the pan or dragging it to zero.
+  function anchorNear(items, i, step) {
+    for (var j = i; j >= 0 && j < items.length; j += step) {
+      var t = anchorTime(items[j]);
+      if (t !== null) return t;
+    }
+    return null;
   }
 
   // The 95th-percentile work span, matching the server (buildTimeline). A
@@ -166,29 +205,153 @@
     syncTimelineViewport(root);
   }
 
+  // The box marks the TIME window currently on screen — scrollLeft over the
+  // zoomed track — not the vertical row fraction it used to mirror. The ticks
+  // it slides across are laid out on the collapsed time axis, so only a
+  // time-window box lines up with them: the ticks inside the box are exactly
+  // the spans whose bars are visible. (Row-fraction and time-fraction diverge
+  // for real runs — the same non-linearity syncPan exists to absorb.)
   function syncTimelineViewport(root) {
     var rows = root.querySelector('[data-wf-rows]');
     var box = root.querySelector('[data-tl-viewport]');
     if (!rows || !box) return;
-    var total = rows.scrollHeight || 1;
-    var frac = Math.min(rows.clientHeight / total, 1);
-    var at = total > rows.clientHeight ? rows.scrollTop / (total - rows.clientHeight) : 0;
+    var sw = rows.scrollWidth || 1;
+    var frac = Math.min(rows.clientWidth / sw, 1);
+    var at = sw > rows.clientWidth ? rows.scrollLeft / (sw - rows.clientWidth) : 0;
     // The box spans the visible fraction and slides across the remaining width,
-    // so its right edge lands at 100% when the list is scrolled to the bottom.
+    // so its right edge lands at 100% when the pan reaches the end of the run.
     box.style.width = (frac * 100) + '%';
     box.style.left = (at * (1 - frac) * 100) + '%';
   }
 
   function wireTimeline(root) {
     var rows = root.querySelector('[data-wf-rows]');
-    if (rows) rows.addEventListener('scroll', function () {
-      syncPan(root);
-      syncTimelineViewport(root);
-    }, {passive: true});
+    if (rows) {
+      // Only a VERTICAL move re-derives the pan. The pan itself writes
+      // scrollLeft — which echoes back through this same listener — and the
+      // timeline scrubber drives scrollLeft directly when the pane has no
+      // vertical travel; re-deriving on those events would immediately
+      // overwrite the position they just set.
+      //
+      // Seeded from the CURRENT scrollTop, not null: a null seed makes the
+      // first scroll event of the page's life always look like a vertical
+      // move. On a run whose rows all fit (no vertical travel, so scrollTop is
+      // pinned at 0), that event is the scrubber's own horizontal write, and
+      // syncPan answered it by snapping the pan back to the first row —
+      // measured: the opening move of the first drag was reverted, and only
+      // the second onwards took effect.
+      var lastTop = rows.scrollTop;
+      rows.addEventListener('scroll', function () {
+        if (rows.scrollTop !== lastTop) {
+          lastTop = rows.scrollTop;
+          syncPan(root);
+        } else {
+          layoutRuler(root);
+        }
+        syncTimelineViewport(root);
+      }, {passive: true});
+    }
     root.querySelectorAll('.tl-tick').forEach(function (tick) {
       tick.addEventListener('click', function () { jumpToSpan(tick.dataset.spanjump, root); });
     });
+    wireTimelineDrag(root);
     window.addEventListener('resize', function () { syncTimelineViewport(root); });
+  }
+
+  // The viewport box doubles as the scrubber Joe asked for: grab it and slide
+  // to move through the run without wheeling through hundreds of rows. A drag
+  // maps the box position to a window-centre time, then to the scrollTop whose
+  // pan anchor lands there — scrollTop stays the single source of truth and
+  // syncPan derives the pan exactly as a wheel scroll would. When the rows all
+  // fit (no vertical travel) the scrubber drives scrollLeft directly instead:
+  // it is the only pan control such a run has.
+  function wireTimelineDrag(root) {
+    var box = root.querySelector('[data-tl-viewport]');
+    var track = root.querySelector('[data-wf-timeline] .tl-track');
+    var rows = root.querySelector('[data-wf-rows]');
+    if (!box || !track || !rows) return;
+    var drag = null;
+    box.addEventListener('pointerdown', function (e) {
+      if (e.button) return; // primary button/touch only
+      e.preventDefault();
+      box.setPointerCapture(e.pointerId);
+      box.classList.add('tl-dragging');
+      // Armed even when there is nothing to scrub. A run with no horizontal
+      // overflow (zoom 1 and the last span ending before the axis end) gets a
+      // full-width box covering every tick, and returning here left `drag`
+      // null — so release() bailed and the click-forwarding below never ran,
+      // killing the jump affordance for exactly the runs where the box is
+      // useless as a scrubber. The move handler is what declines to scrub;
+      // arming is only what lets a click still find the tick underneath.
+      drag = { x: e.clientX, left: box.offsetLeft, moved: false };
+    });
+    box.addEventListener('pointermove', function (e) {
+      if (!drag) return;
+      var dx = e.clientX - drag.x;
+      if (Math.abs(dx) > 3) drag.moved = true;
+      var maxLeft = Math.max(track.clientWidth - box.offsetWidth, 0);
+      if (maxLeft <= 0) return;
+      var at = Math.min(Math.max(drag.left + dx, 0), maxLeft) / maxLeft;
+      var hMax = rows.scrollWidth - rows.clientWidth;
+      if (hMax <= 0) return;
+      var vMax = rows.scrollHeight - rows.clientHeight;
+      if (vMax > 0) {
+        var tc = ((at * hMax + rows.clientWidth / 2) / rows.scrollWidth) * collapsedWallMS(root);
+        rows.scrollTop = scrollTopForTime(rows, tc); // scroll listener re-derives the pan
+      } else {
+        rows.scrollLeft = at * hMax;
+        layoutRuler(root);
+      }
+      // Draw the box where the POINTER is, rather than waiting for the scroll
+      // event to derive it back from scrollLeft. Both writes above saturate:
+      // past the last row's anchor time scrollTopForTime keeps returning vMax,
+      // the assignment becomes a no-op, no scroll event fires, and the box
+      // froze mid-drag while the cursor kept going — the grabbed thing visibly
+      // detaching from the hand holding it. The scroll path still owns the box
+      // whenever it does fire; this only guarantees it never lags the pointer.
+      box.style.left = (at * maxLeft / track.clientWidth * 100) + '%';
+    });
+    function release(e) {
+      if (!drag) return;
+      var wasDrag = drag.moved;
+      drag = null;
+      box.classList.remove('tl-dragging');
+      // The box overlays the ticks, so an undragged click on it is forwarded to
+      // the tick underneath rather than swallowed — the jump affordance its old
+      // pointer-events: none protected.
+      if (!wasDrag && e.type === 'pointerup' && document.elementsFromPoint) {
+        var under = document.elementsFromPoint(e.clientX, e.clientY);
+        for (var i = 0; i < under.length; i++) {
+          if (under[i].classList && under[i].classList.contains('tl-tick')) { under[i].click(); break; }
+        }
+      }
+    }
+    box.addEventListener('pointerup', release);
+    box.addEventListener('pointercancel', release);
+  }
+
+  // The scrollTop whose pan anchor (syncPan) lands nearest the given collapsed-
+  // axis time: find where t falls between consecutive rows' anchor times and
+  // map that fractional row index back through the anchor's own row↔scroll
+  // relation. Row anchor times are start-ordered, so the walk is effectively
+  // monotone; a linear scan is fine at pointer-move rate.
+  function scrollTopForTime(rows, t) {
+    var items = rows.children;
+    var vMax = rows.scrollHeight - rows.clientHeight;
+    if (items.length < 2 || vMax <= 0) return 0;
+    var prev = anchorNear(items, 0, 1);
+    if (prev === null) return 0;
+    for (var i = 1; i < items.length; i++) {
+      var ti = anchorTime(items[i]);
+      if (ti === null) continue;
+      if (ti >= t) {
+        var fi = (i - 1) + (ti > prev ? (t - prev) / (ti - prev) : 0);
+        fi = Math.min(Math.max(fi, 0), items.length - 1);
+        return fi / (items.length - 1) * vMax;
+      }
+      prev = ti;
+    }
+    return vMax;
   }
 
   // The axis pans, so the ruler labels the WINDOW currently in view rather than
