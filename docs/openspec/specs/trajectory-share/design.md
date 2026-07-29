@@ -10,6 +10,15 @@ content-addressed outputs and dual (batch + incremental) ingestion — and expli
 to be *OTel-inspired, not OTLP-compliant*. This spec formalizes that model's observable
 behavior.
 
+The tree-semantics, timing-validity, and size-bound requirements were added in July 2026
+after a production stress test: a harness posted a 162-span, multi-megabyte capture (over
+MCP) organized as eleven category-labelled "phase" containers. Every one of its 147 child
+spans carried a placeholder `duration_ms` of 1; 40 children started up to four hours
+outside their parent's interval; and the category breakdown read `plan 26,104s` against
+`0.14s` of everything else, because the containers' durations dominated a sum that also
+counted their children. Each new requirement targets one of those observed failures
+mechanically, rather than trusting guidance alone.
+
 Constraints inherited from the ADRs:
 
 - **SPEC-0002 / ADR-0002** — a trajectory is an ordinary artifact and a registry entry; it
@@ -94,6 +103,71 @@ directed `produced` row resolvable from both run and artifact.
 
 **Rationale**: Honors ADR-0001's "a run produces artifacts" as a real queryable edge rather
 than prose, and lets the produced artifact carry its own provenance, access, and TTL.
+
+### Nesting means temporal containment, enforced at ingest
+
+**Choice**: A child's interval must lie within its parent's; violations reject the payload
+atomically. Siblings may overlap freely. Depth is capped at 32.
+
+**Rationale**: The waterfall, the collapsed-time axis, the pan, and self-time accounting
+all assume a parent covers its children — an assumption the schema previously never
+checked, and the first harness to lean on nesting broke it four hours wide. Enforcing
+containment makes "parent" mean something again without banning legitimate structure:
+sub-agents, composite ops, and honest phase groupings all satisfy it naturally.
+
+**Alternatives considered**:
+- Guidance only (`run_capture` prompt): already tried for sibling overlap discipline; a
+  prompt cannot stop a determined mis-modeller, and a broken tree breaks the *viewer*, not
+  just the offender's own capture.
+- Clamping children into the parent at ingest: launders wrong data into plausible-looking
+  data; the reader can no longer tell the capture was wrong.
+- Rejecting sibling overlap too: parallel tool calls are real (observed in Cairn's own
+  session captures); concurrency is not an error.
+
+### Zero and placeholder durations are rejected, not repaired
+
+**Choice**: `duration_ms` must be present and ≥ 1; `start_offset_ms` ≥ 0. No clamping, no
+defaulting.
+
+**Rationale**: Nothing happens in zero time — a zero duration is always a capture bug, and
+it poisons shared surfaces (breakdown percentages, zoom statistics, bar geometry) rather
+than just its own row. Rejection with a clear message teaches the capturing agent to mine
+its transcript for real timings (which every harness has); silently repairing to 1 ms
+would preserve exactly the pathology observed in production, where every child span
+carried a fabricated 1 ms and the trace answered no timing question at all. The 1 ms
+floor is the resolution boundary: an instantaneous op measured at the model's granularity
+is 1 ms, and that is measurement, not placeholder.
+
+### Self-time category accounting
+
+**Choice**: Time-by-category sums each span's duration minus the union of its children's
+intervals, on every surface (server render and live client recompute), with legacy
+uncontained children clipped to the parent before the union.
+
+**Rationale**: With containers in the tree, summing raw durations double-counts every
+child millisecond and lets the containers' label dominate the breakdown — the panel then
+describes the capture's *organization*, not the run's *time*. Self-time is the standard
+flame-graph answer, is insensitive to how many grouping layers an agent wraps around the
+same work, and needs no schema change.
+
+**Alternatives considered**:
+- Leaf-only accounting: erases real parent self-work (a sub-agent's own reasoning between
+  its tool calls would vanish).
+- Excluding containers by heuristic (e.g. "has children ⇒ ignore"): same erasure, plus a
+  cliff where adding one child re-classifies a span.
+
+### Per-request and per-run span bounds, with MCP steered to the CLI
+
+**Choice**: Cap spans per ingest request (default 500) and per run (default 10,000), both
+configurable; reject over-bound requests with a message naming the paging path. MCP tool
+descriptions and the `run_capture` prompt direct captures beyond the request bound to the
+`cairn` CLI or paged REST appends.
+
+**Rationale**: The server can digest a large run paged; what cannot digest it is the MCP
+transport, where a tool call transits the agent's own context window — the observed 4 MB
+single-call attempt is pathological even when the server would accept it. Bounds give the
+steering teeth, and the error message makes the right path discoverable at the moment of
+failure. This answers the former open question "what is the maximum span count per run."
 
 ## Architecture
 
@@ -196,12 +270,21 @@ sequenceDiagram
   source of truth.
 - **Orphaned blob on crash** → a span-output blob written before its row commits can orphan;
   mitigated by ADR-0008's DB-authoritative refcounted GC reaper.
+- **Stored runs predate the new validation** → runs ingested before containment/timing
+  rules exist violate them and must still render. Mitigation: validation applies at ingest
+  only; readers clip legacy child intervals to their parent for self-time and never reject
+  stored data. Self-time also changes the displayed breakdown of existing container-heavy
+  runs — deliberately, since the old numbers were the misleading ones.
+- **Stricter ingest rejects captures that used to succeed** → an agent sending zero
+  durations or uncontained children now gets `validation_failed`. Mitigation: the error
+  message names the exact rule and the `run_capture` prompt teaches the fix (mine the
+  transcript); the alternative — accepting the data — was observed to produce unreadable
+  shares, which is the worse failure for a sharing product.
 
 ## Open Questions
 
 - What is the exact inline-output threshold, and is it configurable per deployment? (ADR-0009
   suggests ≤ 16 KB as an example.)
-- What is the maximum span count per run before ingest is throttled or the run is capped?
 - Should a run's token count be re-derivable/validated, or is the agent-reported figure
   authoritative (the ADR treats it as reported)?
 - How long may a run stay `open` before it is auto-closed as abandoned, and does auto-close

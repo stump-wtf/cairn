@@ -1,6 +1,6 @@
 ---
 status: draft
-date: 2026-07-08
+date: 2026-07-29
 implements: [ADR-0009]
 requires: [SPEC-0002]
 ---
@@ -112,6 +112,71 @@ assigned, because it is the anchor target for ADR-0006 annotations.
 - **WHEN** a span is persisted and later re-read
 - **THEN** its `span_id`, `parent_span_id`, `depth`, and `seq` MUST be unchanged, so an annotation anchored to it still resolves
 
+### Requirement: Parent/Child Semantics and Temporal Containment
+
+A parent span MUST represent an operation that actually contains its children in time — a
+sub-agent excursion, a composite operation, or a phase of the run whose interval covers the
+work done inside it. Nesting is a statement about *when*, not a decorative grouping device:
+every child's interval MUST lie within its parent's, i.e. `child.start_offset_ms >=
+parent.start_offset_ms` and `child.start_offset_ms + child.duration_ms <=
+parent.start_offset_ms + parent.duration_ms`. An ingest whose spans violate containment
+MUST be rejected with `validation_failed`, atomically (no span from the payload persists).
+
+Siblings MAY overlap one another — parallel tool calls are real and MUST NOT be rejected
+for concurrency. Nesting depth MUST be bounded: a span at depth greater than 32 MUST be
+rejected with `validation_failed`; the bound is a structural sanity limit, far above any
+observed real capture, not a modelling constraint.
+
+This requirement was earned in production: a 162-span capture arrived as eleven top-level
+"phase" containers whose children carried start offsets up to four hours *outside* their
+parent's interval — 40 of 147 children lay outside the span that claimed to contain them —
+and the waterfall it produced was unreadable precisely because nesting no longer meant
+containment.
+
+#### Scenario: Child outside its parent's interval rejected
+
+- **WHEN** an ingested span tree contains a parent spanning `[11489000, 12577000]` ms and a child of it starting at `26970000` ms
+- **THEN** the server MUST reject the ingest with `validation_failed` and persist no span from that payload
+
+#### Scenario: Parallel sibling tool calls accepted
+
+- **WHEN** two sibling spans under one parent overlap in time (concurrent tool calls)
+- **THEN** the server MUST accept them, because sibling concurrency is real; only parent/child containment is enforced
+
+#### Scenario: Depth bound
+
+- **WHEN** an ingested span tree nests a span at depth 33
+- **THEN** the server MUST reject the ingest with `validation_failed`
+
+### Requirement: Span Timing Validity
+
+Every ingested span MUST declare a `duration_ms` of at least 1 and a `start_offset_ms` of
+at least 0. A `duration_ms` that is absent, zero, or negative MUST be rejected with
+`validation_failed`, atomically — nothing happens in zero time, and a zero or placeholder
+duration poisons every derived figure (the category breakdown, the waterfall geometry, the
+zoom and yardstick statistics) rather than degrading just its own row. Durations MUST be
+measured, not invented: the capture guidance (the `run_capture` MCP prompt) MUST direct
+agents to derive timings from their harness's own transcript rather than estimating, and
+MUST NOT present placeholder durations as an acceptable fallback.
+
+The millisecond is the model's resolution floor: a genuinely instantaneous operation is
+recorded as 1 ms, and that is the *measured minimum*, not a placeholder convention.
+
+#### Scenario: Zero-duration span rejected
+
+- **WHEN** an ingested span declares `duration_ms: 0`
+- **THEN** the server MUST reject the ingest with `validation_failed` and persist no span from that payload
+
+#### Scenario: Absent duration rejected
+
+- **WHEN** an ingested span omits `duration_ms` entirely
+- **THEN** the server MUST reject the ingest with `validation_failed`, not default the value to zero
+
+#### Scenario: Negative start offset rejected
+
+- **WHEN** an ingested span declares `start_offset_ms: -100`
+- **THEN** the server MUST reject the ingest with `validation_failed`
+
 ### Requirement: Run Model and Lifecycle
 
 A run MUST record the human `prompt`, an absolute `started_at`, an optional `ended_at`
@@ -155,6 +220,33 @@ equivalent open→append→close sequence MUST converge to the identical final r
 - **WHEN** an append references a `parent_span_id` absent from the run
 - **THEN** the server MUST reject the append with `validation_failed` and persist none of its spans
 
+### Requirement: Ingest Size Bounds and Transport Steering
+
+A single ingest request (batch `POST /v1/runs` or append `POST /v1/runs/{id}/spans`) MUST
+enforce a documented maximum span count per request (RECOMMENDED default: 500,
+configurable per deployment), and a run MUST enforce a documented maximum total span count
+(RECOMMENDED default: 10,000, configurable). Exceeding either bound MUST be rejected with
+`validation_failed` whose message names the bound and the paging path (open the run, append
+in pages, close). These bounds complement — not replace — the byte-level Request Body Size
+Limits below.
+
+Large captures MUST be steered away from the MCP transport before they are attempted: the
+MCP tool descriptions for run creation/append and the `run_capture` prompt MUST state that
+a capture beyond the per-request span bound (or of multi-megabyte size) belongs on the
+`cairn` CLI or paged REST appends, never in a single MCP tool call. MCP tool calls pass
+through the agent's own context window; a 4 MB span payload is pathological there even
+when the server would accept it.
+
+#### Scenario: Oversized single append rejected with steering
+
+- **WHEN** a client appends more spans in one request than the per-request bound allows
+- **THEN** the server MUST reject with `validation_failed`, persist none of them, and the error message MUST name the bound and direct the client to page its appends
+
+#### Scenario: Run span-count ceiling
+
+- **WHEN** an append would carry a run past the per-run span ceiling
+- **THEN** the server MUST reject that append with `validation_failed` and leave the run unchanged
+
 ### Requirement: Span Output Storage and Content Addressing
 
 A span `output` at or below a fixed inline threshold (e.g. ≤ 16 KB) MUST be stored inline
@@ -181,9 +273,22 @@ The RUN-panel figures — wall time, span count, tool-call count, token count, a
 time-by-category breakdown — MUST be **computed from the span rows plus the run's token
 count**, not stored as independent authoritative fields. Wall time MUST be `ended_at −
 started_at` for a closed run and `now − started_at` while open; span count and tool-call
-count MUST be row counts (tool calls = spans with a non-null `tool`); time-by-category
-MUST sum `duration_ms` per category. Aggregates MAY be cached for a closed run, but the
-span rows MUST remain the source of truth.
+count MUST be row counts (tool calls = spans with a non-null `tool`). Aggregates MAY be
+cached for a closed run, but the span rows MUST remain the source of truth.
+
+Time-by-category MUST sum each span's **self time**: its `duration_ms` minus the portion
+of its interval covered by the union of its children's intervals (children may overlap
+each other, so the union — not the sum — is subtracted). A parent and its children
+therefore never count the same millisecond twice, and a container span contributes only
+the time its children do not account for. Without self-time accounting, a run organized
+as category-labelled phase containers reports a breakdown that is almost entirely the
+containers' category — observed in production as `plan 26,104s` against a combined
+`0.14s` for every real operation — which answers "what were the containers called," not
+"where did the time go." Every surface that renders the breakdown (server render, live
+client-side recompute on span append) MUST use this same self-time rule. For spans
+persisted before temporal containment was enforced, a child interval MUST be clipped to
+its parent's interval before the union is taken, so legacy data degrades to a sane
+breakdown rather than a negative one.
 
 #### Scenario: Live stats tick as spans append
 
@@ -194,6 +299,16 @@ span rows MUST remain the source of truth.
 
 - **WHEN** the RUN panel and the waterfall are rendered for the same run
 - **THEN** span count, tool-call count, and per-category durations MUST be identical because both read the same span rows
+
+#### Scenario: Container span does not double-count its children
+
+- **WHEN** a `plan` parent span of 300s contains child tool spans covering 280s of its interval
+- **THEN** time-by-category MUST attribute 20s to `plan` (the parent's self time) and 280s to the children's own categories, and the category totals MUST NOT exceed the union of all span intervals
+
+#### Scenario: Overlapping children subtract as a union
+
+- **WHEN** a parent span's two children run concurrently over the same 60s window
+- **THEN** the parent's self time MUST subtract that window once (the union), not twice (the sum)
 
 ### Requirement: Produced-Artifact Link
 
@@ -308,7 +423,9 @@ Every layer boundary (transport adapter → core service → PostgreSQL / object
 wrap errors with context preserving the underlying error, so a handler can map a domain
 failure to a stable error `code` (ADR-0012) without string-matching. Sentinel errors MUST
 be defined for domain failures callers distinguish — run-not-found, run-closed
-(append-after-close), unknown-parent-span, and empty-category. Errors MUST NOT be
+(append-after-close), unknown-parent-span, empty-category, invalid-duration
+(zero/absent/negative), child-outside-parent (containment), and span-bound-exceeded
+(per-request or per-run ceiling). Errors MUST NOT be
 silently swallowed, and every failure MUST be recorded with structured (key-value) logging
 carrying the `request_id`.
 
