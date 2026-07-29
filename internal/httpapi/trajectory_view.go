@@ -450,6 +450,21 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 
 	// TIME BY CATEGORY stacked bar + waterfall legend, both over the categories
 	// this run actually used.
+	//
+	// Segments are percentages of the CATEGORIZED TOTAL, not of wall time. The
+	// panel answers "of the time the agent spent working, where did it go?" —
+	// a composition — so the bar should always fill. Divided by wall time it
+	// instead answered "what fraction of the wall clock was categorized?", and
+	// on a run that idled for 31 hours around 29 minutes of work every segment
+	// came out under 1% and the bar rendered as a broken-looking sliver.
+	// Prompt time is excluded from the denominator for the same reason it has
+	// no segment of its own.
+	var catTotal int64
+	for cat, ms := range run.Stats.TimeByCategoryMS {
+		if cat != trajectory.CategoryPrompt {
+			catTotal += ms
+		}
+	}
 	for _, cat := range orderCategories(run.Stats.TimeByCategoryMS) {
 		// The legend names every category the run used, even one whose spans all
 		// measured 0ms — the waterfall still draws them, so the legend must still
@@ -471,7 +486,7 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 		}
 		vm.Categories = append(vm.Categories, categorySeg{
 			Category: string(cat),
-			Pct:      formatPct(ratioPct(int(ms), wall)),
+			Pct:      formatPct(ratioPct(int(ms), max(catTotal, 1))),
 			Duration: formatSeconds(ms),
 		})
 	}

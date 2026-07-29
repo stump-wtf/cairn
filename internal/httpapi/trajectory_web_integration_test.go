@@ -551,3 +551,33 @@ func TestIntegrationTrajectoryPromptRendersAsMarker(t *testing.T) {
 		t.Error("expected the breakdown to still render segments for the other categories")
 	}
 }
+
+// TestIntegrationTrajectoryCategoryBarIsComposition pins the TIME BY CATEGORY
+// bar's denominator. It answers "of the time the agent spent working, where did
+// it go?" — a composition that always fills the bar — not "what fraction of the
+// wall clock was categorized?". Divided by wall time, a run that idled for
+// hours around minutes of work rendered every segment under 1% and the panel
+// looked broken (observed: 31h wall around 29min of work → a sliver).
+func TestIntegrationTrajectoryCategoryBarIsComposition(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+	resp := do(t, http.MethodPost, srv.URL+"/v1/runs", "joe",
+		jsonReader(t, runRequest{Mode: "batch", Title: "idle heavy", Prompt: "Work briefly, idle enormously.",
+			Model: "kimi-k3", StartedAt: fixedRunStart, Spans: []spanRequest{
+				{SpanID: "a", Category: "reason", Name: "think", StartOffsetMS: 0, DurationMS: 30_000},
+				// A day of dead air the composition must ignore.
+				{SpanID: "b", Category: "tool", Tool: "bash", Name: "run", StartOffsetMS: 86_430_000, DurationMS: 70_000},
+			}}),
+		"application/json")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed run = %d, want 201", resp.StatusCode)
+	}
+	runID := decodeRun(t, resp).ID
+
+	_, html := getHTML(t, srv.URL+"/run/"+runID)
+	// 30s of 100s categorized = 30%, 70s = 70% — regardless of the ~24h wall.
+	for _, frag := range []string{`data-cat="reason" data-pct="30.0"`, `data-cat="tool" data-pct="70.0"`} {
+		if !strings.Contains(html, frag) {
+			t.Errorf("category bar missing %q — segments must be shares of categorized time, not wall time", frag)
+		}
+	}
+}
