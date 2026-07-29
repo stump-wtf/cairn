@@ -396,6 +396,21 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 	}
 	walkWaterfall(run.Spans)
 
+	// Every run READS as starting from its prompt, so the waterfall should too.
+	// A capture that emitted no opening prompt span (most of them, so far) had
+	// its graph open mid-thought on the first tool call. Synthesize a zero-length
+	// prompt marker at offset 0 when the run has a prompt and its first span is
+	// not already one. The id "__prompt__" is the stream's existing prompt-turn
+	// anchor, so the span→stream jump lands on the real prompt card for free.
+	if run.Prompt != "" && (len(vm.Waterfall) == 0 || vm.Waterfall[0].Category != string(trajectory.CategoryPrompt)) {
+		vm.Waterfall = append([]waterfallRow{{
+			SpanID:   "__prompt__",
+			Name:     promptLabel(run.Prompt),
+			Category: string(trajectory.CategoryPrompt),
+			Duration: formatSeconds(0),
+		}}, vm.Waterfall...)
+	}
+
 	// Duration-relative bars + the collapsed working-time strip.
 	timeline, longest, longestLabel, collapsedWall := buildTimeline(vm.Waterfall)
 	vm.Timeline, vm.LongestSpan, vm.CollapsedWallMS = timeline, longestLabel, collapsedWall
@@ -587,6 +602,23 @@ func buildTimeline(rows []waterfallRow) ([]timelineTick, int, string, int) {
 		})
 	}
 	return ticks, longest, formatSeconds(int64(longest)), wall
+}
+
+// promptLabel is a prompt's one-line waterfall label: its first line, bounded,
+// with an ellipsis when either bound trims something.
+func promptLabel(prompt string) string {
+	line := prompt
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	runes := []rune(strings.TrimSpace(line))
+	if len(runes) > 60 {
+		return string(runes[:60]) + "…"
+	}
+	if string(runes) != strings.TrimSpace(prompt) {
+		return string(runes) + "…"
+	}
+	return string(runes)
 }
 
 // streamRowFor projects one span onto an activity-stream row, recursively for a

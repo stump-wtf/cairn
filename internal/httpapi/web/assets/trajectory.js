@@ -23,20 +23,26 @@
   // max(start+duration)), which the live stats refresh reports separately — the
   // bars no longer use it, but the run's elapsed figure is still real.
   // ZOOM is how many multiples of the visible track width the time axis is
-  // stretched to. A flame graph only works if a typical span is wide enough to
-  // see: unzoomed, a run whose p95 span is 1/200th of its collapsed working
-  // time draws that span at half a percent. Derived per run rather than fixed,
-  // so a short run is not stretched pointlessly and a long one is stretched
-  // enough — targeting roughly six p95-length spans across the viewport.
+  // stretched to. A flame graph only works if a TYPICAL span is wide enough to
+  // see, so the stretch targets the MEDIAN work span at roughly 1/30 of the
+  // viewport — not the p95. Anchoring on p95 under-zoomed any run with a few
+  // long spans: a run of 6–13s spans plus two 560s turns computed zoom ≈ 1, so
+  // everything after the long turns sat crushed against the right edge, which
+  // is exactly the squish this exists to remove. The graph is deliberately NOT
+  // bounded by the viewport on the right — it extends as far as legibility
+  // needs and the scroll-driven pan walks along it. The cap is a DOM-sanity
+  // backstop (a 300-viewport-wide track is ~300k px), not a design bound.
   function zoomFor(root) {
     var wall = collapsedWallMS(root), durs = [];
     root.querySelectorAll('.wf-bar').forEach(function (bar) {
-      if (bar.dataset.cat !== 'prompt') durs.push(num(bar.dataset.durMs));
+      var d = num(bar.dataset.durMs);
+      if (bar.dataset.cat !== 'prompt' && d > 0) durs.push(d);
     });
-    var p95 = yardstick(durs);
-    if (!(wall > 0) || !(p95 > 0)) return 1;
-    // Stretch until roughly six p95-length spans span the viewport.
-    return Math.min(Math.max(wall / p95 / 6, 1), 60);
+    if (!(wall > 0) || !durs.length) return 1;
+    var s = durs.slice().sort(function (a, b) { return a - b; });
+    var med = s[Math.floor(s.length / 2)];
+    if (!(med > 0)) return 1;
+    return Math.min(Math.max(wall / (med * 30), 1), 300);
   }
 
   // The working-time total the axis covers, sent by the server in ms.
@@ -427,9 +433,15 @@
       .catch(function () { return { ok: false, status: 0 }; });
   }
 
+  // The one open picker, so a second click on the SAME ＋ dismisses it. The
+  // doc-level dismiss listener deliberately ignores clicks on the trigger
+  // (else close-then-reopen race), so without this the trigger could only ever
+  // (re)open — clicking ＋ again looked like it did nothing.
+  var activePicker = null;
+
   function openPicker(runID, cluster, add) {
-    var open = document.querySelector('.react-picker');
-    if (open) open.remove();
+    if (activePicker && activePicker.trigger === add) { activePicker.close(true); return; }
+    if (activePicker) activePicker.close(false);
     if (activeCommentComposer) activeCommentComposer.close(false);
     var pick = document.createElement('div');
     pick.className = 'react-picker';
@@ -445,6 +457,7 @@
     function close(restoreFocus) {
       if (closed) return;
       closed = true;
+      if (activePicker && activePicker.trigger === add) activePicker = null;
       pick.remove();
       document.removeEventListener('click', onDocClick, true);
       pick.removeEventListener('keydown', onKeydown);
@@ -487,6 +500,7 @@
     if (buttons.length) buttons[0].focus();
     // Defer the outside-click listener so the click that opened the picker
     // does not immediately close it. Capture phase so it fires before row handlers.
+    activePicker = { trigger: add, close: close };
     setTimeout(function () { document.addEventListener('click', onDocClick, true); }, 0);
   }
 
@@ -574,6 +588,10 @@
   // without a full reload — the anchor visibly attached at the point of
   // authorship even though the record of it lives in the panel thread (#58).
   function openCommentComposer(root, runID, trigger) {
+    if (activeCommentComposer && activeCommentComposer.trigger === trigger) {
+      activeCommentComposer.close(true);
+      return;
+    }
     if (activeCommentComposer) activeCommentComposer.close(false);
 
     var spanID = trigger.dataset.commentSpan;
@@ -639,7 +657,7 @@
       if (restoreFocus && trigger && document.contains(trigger)) trigger.focus();
     }
     function onDocClick(e) {
-      if (!box.contains(e.target)) close(false);
+      if (!box.contains(e.target) && e.target !== trigger && !trigger.contains(e.target)) close(false);
     }
     // Trap Tab within the composer and dismiss on Escape.
     function onKeydown(e) {
@@ -684,7 +702,7 @@
       });
     });
 
-    activeCommentComposer = { close: close };
+    activeCommentComposer = { close: close, trigger: trigger };
     ta.focus();
     // Defer the outside-click listener so the click that opened the composer
     // does not immediately close it. Capture phase so it fires before row

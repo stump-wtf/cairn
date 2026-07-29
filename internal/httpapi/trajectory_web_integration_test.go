@@ -458,6 +458,51 @@ func TestIntegrationTrajectoryRendersArgsAndEmptySpans(t *testing.T) {
 	}
 }
 
+// TestIntegrationTrajectorySynthesizesOpeningPromptMarker pins the waterfall
+// opening with the human's prompt. Most captures so far emitted no opening
+// prompt span, so the graph opened mid-thought on the first tool call; the
+// viewer now synthesizes a zero-length 💬 marker from the run's prompt field —
+// wired to the stream's existing "__prompt__" turn so the jump lands on the
+// real prompt card — and stands down when the capture already provides one.
+func TestIntegrationTrajectorySynthesizesOpeningPromptMarker(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+
+	seed := func(t *testing.T, spans []spanRequest) string {
+		t.Helper()
+		resp := do(t, http.MethodPost, srv.URL+"/v1/runs", "joe",
+			jsonReader(t, runRequest{Mode: "batch", Title: "opening marker", Prompt: "Fix the bugs in harness.",
+				Model: "kimi-k3", StartedAt: fixedRunStart, Spans: spans}),
+			"application/json")
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("seed run = %d, want 201", resp.StatusCode)
+		}
+		return decodeRun(t, resp).ID
+	}
+
+	// No opening prompt span in the capture: the marker is synthesized.
+	bare := seed(t, []spanRequest{
+		{SpanID: "a", Category: "reason", Name: "Assistant turn", StartOffsetMS: 0, DurationMS: 560000},
+		{SpanID: "b", Category: "tool", Tool: "view", Name: "view", StartOffsetMS: 560000, DurationMS: 7000},
+	})
+	_, html := getHTML(t, srv.URL+"/run/"+bare)
+	if !strings.Contains(html, `data-spanjump="__prompt__"`) {
+		t.Error("a run without an opening prompt span must get a synthesized 💬 marker row")
+	}
+	if !strings.Contains(html, "Fix the bugs in harness.") {
+		t.Error("the synthesized marker should carry the prompt as its label")
+	}
+
+	// The capture already opens with a prompt span: no synthetic duplicate.
+	explicit := seed(t, []spanRequest{
+		{SpanID: "p0", Category: "prompt", Name: "Joe: fix the bugs", StartOffsetMS: 0, DurationMS: 0},
+		{SpanID: "a", Category: "reason", Name: "Assistant turn", StartOffsetMS: 0, DurationMS: 560000},
+	})
+	_, html2 := getHTML(t, srv.URL+"/run/"+explicit)
+	if strings.Contains(html2, `data-spanjump="__prompt__"`) {
+		t.Error("a capture that already opens with a prompt span must not get a second, synthetic one")
+	}
+}
+
 // TestIntegrationTrajectoryPromptRendersAsMarker pins the prompt treatment: a
 // human taking minutes to type is real elapsed time but says nothing about how
 // the run performed, and as a proportional bar it dwarfed every unit of actual
