@@ -38,3 +38,45 @@ jobs:
           body_path: release-notes.md
           name: ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+  # Builds and attaches the cross-platform `cairn` CLI binaries (SPEC-0008).
+  # The CLI is a pure REST client with no CGO deps, so goreleaser ships static
+  # darwin/linux/windows amd64+arm64 binaries (.goreleaser.yaml). The `cairnd`
+  # server is deployed separately as a container image and is not built here.
+  #
+  # Runs AFTER `release`, not beside it: both jobs address the same GitHub
+  # Release for the tag, and in parallel whichever lands first creates it. When
+  # that is goreleaser, the release is born with goreleaser's own generated
+  # notes and `release` then overwrites the body — so the notes a reader sees
+  # depend on a race. Ordering it behind `release` means the release always
+  # already exists with the CHANGELOG.md section as its body, and goreleaser
+  # only uploads archives onto it (release.mode: keep-existing).
+  binaries:
+    name: Build CLI binaries
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # REQUIRED by goreleaser: the default depth-1 checkout has no history
+          # and no earlier tags, so it logs "running against a shallow clone"
+          # and computes an empty changelog (verified against a depth-1 clone of
+          # a tag — it degrades rather than failing, which is why the shallow
+          # version looks like it works).
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

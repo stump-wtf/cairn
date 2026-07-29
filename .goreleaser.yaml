@@ -1,0 +1,83 @@
+# GoReleaser configuration for Cairn — the cairn CLI binary.
+# https://goreleaser.com
+#
+# Builds and attaches cross-platform `cairn` CLI binaries to each GitHub
+# release (SPEC-0008: the CLI is the human's terminal surface). The `cairnd`
+# server is deployed separately as a container image (see deploy.yml), so only
+# the CLI is built here. The pure-REST client has no CGO deps, so static
+# CGO_ENABLED=0 builds are safe on every target.
+
+version: 2
+
+project_name: cairn
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: cairn
+    main: ./cmd/cairn
+    binary: cairn
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/joestump/cairn/internal/clicmd.Version={{.Version}}
+      - -X github.com/joestump/cairn/internal/clicmd.Commit={{.Commit}}
+      - -X github.com/joestump/cairn/internal/clicmd.Date={{.Date}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: stump-wtf
+    name: cairn
+  # Releases are cut from v* tags and named by the tag (release.yml creates the
+  # release from the CHANGELOG section; goreleaser attaches binaries to it).
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"
+  # CHANGELOG.md is the single source of release notes — release.yml extracts
+  # the section for the tag and writes it as the body. Stated explicitly rather
+  # than left to the default so a goreleaser default change cannot silently
+  # replace hand-written notes with the generated commit list above.
+  mode: keep-existing
+  # Re-running the job against a tag that already carries archives is the
+  # normal recovery path (a half-finished upload, a re-run after fixing a
+  # secret). goreleaser defaults this to false and errors on the first name
+  # collision, which turns every retry into a manual "delete the assets by
+  # hand" step.
+  replace_existing_artifacts: true
