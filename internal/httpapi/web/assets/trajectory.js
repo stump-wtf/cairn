@@ -922,9 +922,15 @@
     // selector (stream.go "Active content in a span output").
     var catBar = root.querySelector('[data-cat-bar]');
     if (catBar) {
+      // Segments are shares of the CATEGORIZED total, matching the server's
+      // initial render — dividing by the wall clock made the whole bar a
+      // sub-1% sliver on any run that idled around its work. Prompt time is
+      // excluded from the denominator, as it has no segment.
+      var catTotal = 0;
+      Object.keys(catMs).forEach(function (c) { if (c !== 'prompt') catTotal += catMs[c]; });
       catBar.querySelectorAll('.cat-seg').forEach(function (seg) {
         var ms = catMs[seg.dataset.cat] || 0;
-        seg.dataset.pct = String(clamp(wall > 0 ? (ms / wall * 100) : 0));
+        seg.dataset.pct = String(clamp(catTotal > 0 ? (ms / catTotal * 100) : 0));
       });
       root.querySelectorAll('.cat-legend li').forEach(function (li) {
         var ms = catMs[li.dataset.cat] || 0;
