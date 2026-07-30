@@ -359,17 +359,17 @@ func TestBinRowRendersDesignFacts(t *testing.T) {
 		Rows: []binRow{{
 			ID: "abc123", Badge: "TRJ", TypeLabel: "trajectory",
 			Title: "checkout-web-audit", Subtitle: "trajectory", WebURL: "/run/abc123",
-			Lead: "claude", Channel: "via MCP", Age: "2h ago", TTL: "in 6d",
+			Lead: "claude", LeadShort: "claude", Channel: "via MCP", Age: "2h ago", TTL: "in 6d",
 			ReactionCount: 3, CommentCount: 2, PinCount: 1,
 			IsAgent: true, IsShared: true,
 		}},
 	}
 	html := renderBinHTML(t, s, "bin", vm)
 	for _, frag := range []string{
-		"checkout-web-audit",        // title
-		`class="bin-row-sub"`,       // subtitle slot
-		"claude · via MCP · 2h ago", // provenance line
-		"💬", "🔥", "🎯",               // the three engagement icons
+		"checkout-web-audit",          // title
+		`class="bin-row-sub"`,         // subtitle slot
+		"claude", "via MCP", "2h ago", // provenance line parts
+		"💬", "🔥", "🎯", // the three engagement icons
 		" comments", " reactions", " pins", // sr-only text cues (not color-only)
 		"in 6d",                             // TTL chip
 		`data-agent="1"`, `data-shared="1"`, // tab-lens flags
@@ -476,5 +476,48 @@ func TestHumanizeHelpers(t *testing.T) {
 	}
 	if got := humanizeUntil(now.Add(-time.Hour)); got != "expired" {
 		t.Errorf("humanizeUntil(past) = %q, want expired", got)
+	}
+}
+
+func TestTruncateAgentVersion(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"crush/v0.66.2-0.20260724213111-ccae1f266157", "crush/v0.66.2"},
+		{"claude-code/2.1.219", "claude-code/2.1.219"},
+		{"claude", "claude"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := truncateAgentVersion(c.in); got != c.want {
+			t.Errorf("truncateAgentVersion(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestBinRowTruncatesPseudoVersion asserts a Bin row renders the truncated
+// agent version with a tooltip carrying the full pseudo-version string.
+func TestBinRowTruncatesPseudoVersion(t *testing.T) {
+	s := newWebServer(t)
+	vm := binPageView{
+		Actor: "joe",
+		Rows: []binRow{{
+			ID: "abc123", Badge: "MD", TypeLabel: "markdown",
+			Title: "report", WebURL: "/a/abc123",
+			Lead:      "crush/v0.66.2-0.20260724213111-ccae1f266157",
+			LeadShort: "crush/v0.66.2",
+			Channel:   "via MCP", Age: "23h ago",
+		}},
+	}
+	html := renderBinHTML(t, s, "bin", vm)
+	if !strings.Contains(html, `title="crush/v0.66.2-0.20260724213111-ccae1f266157"`) {
+		t.Error("bin row should carry full pseudo-version in tooltip")
+	}
+	if !strings.Contains(html, ">crush/v0.66.2<") {
+		t.Error("bin row should render truncated pseudo-version")
+	}
+	if strings.Contains(html, "ccae1f266157") && !strings.Contains(html, `title="`) {
+		t.Error("pseudo-version suffix should not appear in display text")
 	}
 }
