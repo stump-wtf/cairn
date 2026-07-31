@@ -81,6 +81,17 @@ document.addEventListener('alpine:init', () => {
     const noMatch = document.querySelector('[data-bin-nomatch]');
     let scope = 'all';
 
+    // The three scopes are client-side lenses over the loaded rows, so the
+    // per-tab counts count the same loaded rows the tabs filter — both see
+    // exactly the loaded page, never a total the lens can't back up. Counts
+    // refresh on apply() so an HTMX "load more" keeps them honest.
+    const SCOPES = ['all', 'shared', 'agents'];
+    const EMPTY_COPY = {
+      all: 'Your bin is empty.',
+      shared: 'Nothing shared yet.',
+      agents: 'No agent pushes yet.'
+    };
+
     function rowMatches(row) {
       if (scope === 'shared' && row.dataset.shared !== '1') return false;
       if (scope === 'agents' && row.dataset.agent !== '1') return false;
@@ -89,24 +100,70 @@ document.addEventListener('alpine:init', () => {
       return true;
     }
 
+    function rowInScope(row, s) {
+      if (s === 'shared') return row.dataset.shared === '1';
+      if (s === 'agents') return row.dataset.agent === '1';
+      return true;
+    }
+
     function apply() {
-      const rows = rowsBox.querySelectorAll('.bin-row');
+      const rows = Array.from(rowsBox.querySelectorAll('.bin-row'));
       let shown = 0;
       rows.forEach(function (row) {
         const ok = rowMatches(row);
         row.hidden = !ok;
         if (ok) shown++;
       });
-      if (noMatch) noMatch.hidden = !(rows.length > 0 && shown === 0);
+      // Refresh each tab's count over the loaded rows, so identical scopes are
+      // VISIBLY identical (Bin 24 · Shared 24 · From agents 24) rather than
+      // mysteriously so (#67). The counting itself is the exported pure helper
+      // (binCountsByScope) so the node test pins the exact figures the tabs
+      // show.
+      const flags = rows.map(function (row) {
+        return { agent: row.dataset.agent === '1', shared: row.dataset.shared === '1' };
+      });
+      const counts = binCountsByScope(flags);
+      tabs.forEach(function (tab) {
+        const s = tab.dataset.scope || 'all';
+        const n = counts[s] || 0;
+        const c = tab.querySelector('[data-tab-count]');
+        if (c) c.textContent = String(n);
+        tab.setAttribute('aria-label', (tab.dataset.label || tab.textContent.trim()) + ' — ' + n + ' artifacts');
+      });
+      // Per-scope empty state: when the active scope has no rows of its own,
+      // say which lens is empty rather than showing a bare "no match"
+      // (distinct from the text filter's "no artifacts match" case).
+      if (noMatch) {
+        const inScope = rows.filter(function (row) { return rowInScope(row, scope); }).length;
+        if (rows.length > 0 && shown === 0) {
+          noMatch.hidden = false;
+          noMatch.textContent = inScope === 0 ? EMPTY_COPY[scope] : 'No artifacts match this filter.';
+        } else {
+          noMatch.hidden = true;
+        }
+      }
     }
 
-    function selectTab(tab) {
+    // The active scope lives in the URL hash (`#scope=shared`) so a filtered
+    // view is bookmarkable/shareable and survives reload (#67).
+    function writeScopeToURL() {
+      const hash = scope === 'all' ? '' : '#scope=' + encodeURIComponent(scope);
+      const url = window.location.pathname + window.location.search + hash;
+      if (window.history && window.history.replaceState) window.history.replaceState(null, '', url);
+    }
+
+    function scopeFromURL() {
+      return binScopeFromHash(window.location.hash || '');
+    }
+
+    function selectTab(tab, updateURL) {
       scope = tab.dataset.scope || 'all';
       tabs.forEach(function (t) {
         const on = t === tab;
         t.setAttribute('aria-selected', on ? 'true' : 'false');
         t.tabIndex = on ? 0 : -1;
       });
+      if (updateURL !== false) writeScopeToURL();
       apply();
     }
 
@@ -132,6 +189,17 @@ document.addEventListener('alpine:init', () => {
       if (rowsBox.contains(e.target) || e.target === rowsBox) apply();
     });
 
+    // Restore the scope from the URL on load, then render. A hash the user
+    // edited by hand (back/forward) re-selects without re-pushing the hash.
+    const initial = scopeFromURL();
+    const initialTab = tabs.find(function (t) { return (t.dataset.scope || 'all') === initial; });
+    if (initialTab) selectTab(initialTab, false);
+    window.addEventListener('hashchange', function () {
+      const s = scopeFromURL();
+      const t = tabs.find(function (x) { return (x.dataset.scope || 'all') === s; });
+      if (t && (t.dataset.scope || 'all') !== scope) selectTab(t, false);
+    });
+
     apply();
   }
 
@@ -141,6 +209,38 @@ document.addEventListener('alpine:init', () => {
     initBin();
   }
 })();
+
+// ---- Bin tab scope/count math (exported for the node unit test) ------------
+// The DOM-free core of the Bin tab lenses (#67), lifted out of the IIFE so
+// app_js_test.js can pin count computation and URL-hash scope restoration
+// without a browser. The in-page code calls the same functions.
+
+// binCountsByScope counts loaded rows per tab scope from their {agent, shared}
+// flags, over exactly the rows the client-side lenses filter. `all` counts
+// every loaded row; `shared`/`agents` count rows carrying that flag.
+function binCountsByScope(flags) {
+  const counts = { all: flags.length, shared: 0, agents: 0 };
+  flags.forEach(function (f) {
+    if (f && f.shared) counts.shared++;
+    if (f && f.agent) counts.agents++;
+  });
+  return counts;
+}
+
+// binScopeFromHash reads the active scope out of the URL hash (`#scope=shared`),
+// defaulting to 'all' for an absent, malformed, or out-of-vocabulary value, so
+// a hand-edited or stale hash can never select a lens that doesn't exist.
+function binScopeFromHash(hash) {
+  const m = (hash || '').match(/(?:^|#|&)scope=([a-z]+)/);
+  return (m && ['all', 'shared', 'agents'].indexOf(m[1]) !== -1) ? m[1] : 'all';
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = Object.assign(module.exports || {}, {
+    binCountsByScope: binCountsByScope,
+    binScopeFromHash: binScopeFromHash
+  });
+}
 
 // Share dialog (SPEC-0001 REQ "Share Affordance"; #46): a native <dialog> so
 // the browser furnishes the modal focus trap and Escape-to-dismiss for free —

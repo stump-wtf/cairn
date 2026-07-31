@@ -316,6 +316,10 @@ body.landing { display: flex; flex-direction: column; align-items: center; justi
 }
 .bin-tab:hover { color: var(--t2); }
 .bin-tab[aria-selected="true"] { background: var(--well); color: var(--t1); box-shadow: inset 0 0 0 1px var(--border-2); }
+/* The live count beside each tab label (issue #67): quieter than the label so
+   it reads as metadata, not a second button. */
+.bin-tab-count { color: var(--t6); font-weight: 400; margin-left: 2px; }
+.bin-tab[aria-selected="true"] .bin-tab-count { color: var(--t4); }
 .bin-toolbar-right { display: inline-flex; align-items: center; gap: 10px; }
 .bin-filter { display: inline-flex; align-items: center; gap: 6px; background: var(--well-2); border: 1px solid var(--border-3); border-radius: 8px; padding: 0 10px; }
 .bin-filter:focus-within { border-color: var(--border); }
