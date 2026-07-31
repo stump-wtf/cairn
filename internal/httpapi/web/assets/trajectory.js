@@ -158,15 +158,36 @@
     }
     var i0 = Math.floor(fi);
     var anchors = monotoneAnchors(items);
-    var t0 = anchors[i0];
-    var t1 = anchors[Math.min(i0 + 1, items.length - 1)];
+    // Walk to the nearest ANCHORED row rather than reading anchors[i0] flat:
+    // live-appended rows carry no posMs (appendWaterfallRow has only the raw
+    // SSE start, never the server's collapsed position), so on a streaming run
+    // the last rows are all null — and those are exactly the rows _panPin aims
+    // fi at. Reading flat made both t0 and t1 null there and syncPan returned
+    // without panning, which silently turned the pin into a no-op (#61).
+    var t0 = anchorAt(anchors, i0, -1);
+    var t1 = anchorAt(anchors, Math.min(i0 + 1, items.length - 1), 1);
     if (t0 === null) t0 = t1;
     if (t1 === null) t1 = t0;
     if (t0 === null) return;
     var t = t0 + (t1 - t0) * (fi - i0);
-    var target = (t / collapsedWallMS(root)) * rows.scrollWidth - rows.clientWidth / 2;
+    // Over the TRACK axis, not the whole row: `scrollWidth`/`clientWidth` here
+    // put the forward map on a different scale from the box and the ruler
+    // (trackViewport), so the thing the pan centred and the thing the box
+    // claimed were on screen drifted apart by a label column (#61).
+    var ax = trackAxis(rows);
+    var target = timeToScrollLeft(t, collapsedWallMS(root), ax.axisW, ax.viewW);
     rows.scrollLeft = Math.min(Math.max(target, 0), hMax);
     layoutRuler(root);
+  }
+
+  // The nearest anchored row from `i` walking in `step`, over the monotone
+  // envelope. An unanchored row (see anchorTime) pins the pan to its closest
+  // real neighbour instead of cancelling the pan.
+  function anchorAt(anchors, i, step) {
+    for (var j = i; j >= 0 && j < anchors.length; j += step) {
+      if (anchors[j] !== null && anchors[j] !== undefined) return anchors[j];
+    }
+    return null;
   }
 
   // A row's time on the collapsed axis: its span's START (posMs), the point in
@@ -219,8 +240,10 @@
   // one envelope, so they can never disagree.
   //
   // Rows without an anchor (no posMs — live-appended rows) pass through as
-  // null and do not advance the envelope; the carrier stays at the last real
-  // anchor so a trailing run of unanchored rows inherits a sane time.
+  // null and do not advance the carrier: they have no place on the collapsed
+  // axis, and inventing one would map scrub positions onto rows the server has
+  // not placed yet. Consumers walk past them instead — syncPan via anchorAt,
+  // scrollTopForTime by skipping nulls in its scan.
   function monotoneAnchors(items) {
     var anchors = new Array(items.length);
     for (var i = 0; i < items.length; i++) anchors[i] = anchorTime(items[i]);
@@ -278,44 +301,61 @@
     box.setAttribute('aria-valuetext', centre + 's into the run');
   }
 
-  // The one place the TIME window on screen is measured, shared by
-  // syncTimelineViewport and layoutRuler so the box and the ruler labels can
-  // never disagree (#61).
+  // The collapsed time axis, measured once and read by EVERY time↔pixel
+  // conversion in the scrubber (#61) — the viewport box, the ruler labels,
+  // syncPan's forward map, the pointer drag and the keyboard scrub. Mixing
+  // scales across those is what made the box, the ticks and the bars disagree;
+  // routing all five through one measurement is what makes that impossible.
   //
-  // The collapsed 0–100% time axis lives on the .wf-track column, NOT the whole
-  // .wf-row: the row is `grid-template-columns: 214px 1fr` with a gap, and the
-  // sticky label column sits to the LEFT of where bar percentages begin.
-  // Reading clientWidth/scrollWidth/scrollLeft over the whole row (what this
-  // used to do) therefore brackets the box and the ruler `from` a label-column
-  // width early — measured: at zoom 2 scrolled to the end the box claimed
-  // ticks sp15–sp29 while the bars on screen were sp17–sp29, 3s of error on a
-  // 27s window. Measuring the track column directly lands both on the exact
-  // invariant the box exists to establish. The label column differs at the
-  // mobile breakpoint (120px), so the inset is read from the DOM, never
-  // hardcoded: the rows' own insetLeft is the offset from the rows' content
-  // box to the first track, in the same scrolled coordinate space as
-  // scrollWidth and scrollLeft.
-  function trackViewport(rows) {
-    var sw = rows.scrollWidth || 1;
-    var inset = rowsInsetLeft(rows);
-    var cw = Math.max(sw - inset, 1);
+  // The 0–100% axis lives on the .wf-track column, NOT the whole .wf-row: the
+  // row is `grid-template-columns: 214px 1fr` with a gap, and the sticky label
+  // column sits to the LEFT of where bar percentages begin (layoutWaterfall
+  // sets bar.style.left as a percentage of the track). Reading
+  // clientWidth/scrollWidth over the whole row brackets the box and the ruler
+  // `from` a label-column width early — measured: at zoom 2 scrolled to the end
+  // the box claimed ticks sp15–sp29 while the bars on screen were sp17–sp29,
+  // 3s of error on a 27s window.
+  //
+  //   inset  content-space x where the axis begins (behind the sticky label).
+  //   axisW  the axis at the CURRENT zoom — the track column's laid-out width,
+  //          which is the full zoomed width, not the visible slice.
+  //   viewW  the slice of the axis actually on screen: the pane minus the label
+  //          column the sticky header parks over it.
+  //
+  // The label column differs at the mobile breakpoint (120px), so the inset is
+  // read from the DOM, never hardcoded. No caching: the callers (scroll, drag)
+  // already run at event rate and a stale inset is worse than a layout read.
+  function trackAxis(rows) {
     var trackEl = rows.querySelector('.wf-track');
-    var trackW = trackEl ? Math.max(trackEl.clientWidth, 1) : rows.clientWidth;
-    var frac = Math.min(trackW / cw, 1);
-    var at = cw > trackW ? rows.scrollLeft / (cw - trackW) : 0;
-    return { frac: frac, at: Math.min(Math.max(at, 0), 1) };
+    var inset = trackInset(rows, trackEl);
+    var axisW = trackEl ? Math.max(trackEl.clientWidth, 1) : Math.max(rows.scrollWidth - inset, 1);
+    var viewW = Math.min(Math.max(rows.clientWidth - inset, 1), axisW);
+    return { inset: inset, axisW: axisW, viewW: viewW };
   }
 
   // The horizontal offset from the rows' content-box left edge to the track
-  // column's left edge — i.e. how far into scrollWidth/scrollLeft the time
-  // axis begins. Rows are grid items of a grid-template-columns: <label> 1fr
-  // row; the label column is sticky and scrolls WITH the row, so its offset
-  // already includes the current scrollLeft. One layout read, cached nowhere
-  // because the caller (scroll/drag) already runs at event rate.
-  function rowsInsetLeft(rows) {
-    var trackEl = rows.querySelector('.wf-track');
+  // column's left edge, in the pane's SCROLLED CONTENT coordinates — the same
+  // space as scrollLeft and scrollWidth.
+  //
+  // Measured off getBoundingClientRect, not offsetLeft: nothing between
+  // .wf-track and <body> is positioned (.wf-rows and .wf-row are both static),
+  // so the track's offsetParent is the body and offsetLeft measures from the
+  // PAGE — it carries the whole left gutter of the shell layout, which on a
+  // wide viewport exceeds the pane's own width and collapsed the axis to
+  // nothing. The rects are viewport-relative and therefore already shifted by
+  // -scrollLeft, so adding scrollLeft back lands in content coordinates; the
+  // inset is a layout constant and must NOT move as the pane pans.
+  function trackInset(rows, trackEl) {
     if (!trackEl) return 0;
-    return trackEl.offsetLeft - rows.scrollLeft;
+    var d = trackEl.getBoundingClientRect().left - rows.getBoundingClientRect().left;
+    return Math.max(d + rows.scrollLeft, 0);
+  }
+
+  // The TIME window on screen as a fraction of the axis (`frac`) and how far
+  // its travel is used up (`at`, 0..1) — the box's width and position.
+  function trackViewport(rows) {
+    var ax = trackAxis(rows);
+    return viewportGeom(ax.axisW, ax.viewW, rows.scrollLeft);
   }
 
   function wireTimeline(root) {
@@ -400,16 +440,14 @@
       if (hMax <= 0) return;
       var vMax = rowsEl.scrollHeight - rowsEl.clientHeight;
       if (vMax > 0) {
-        // The window-centre time `at` points at, on the collapsed axis: the
-        // axis begins `inset` px into the scrolled content, spans (axisW -
-        // trackW) of box travel, and the box's centre sits half a track-width
-        // into the visible window. Expressed over scrollWidth so it divides
-        // straight into collapsedWallMS, the same unit scrollTopForTime wants.
-        var inset = rowsInsetLeft(rowsEl);
-        var trackW = trackClientW(rowsEl);
-        var axisW = rowsEl.scrollWidth - inset;
-        var centrePx = inset + at * Math.max(axisW - trackW, 0) + trackW / 2;
-        var tc = (centrePx / rowsEl.scrollWidth) * collapsedWallMS(root);
+        // The window-centre time `at` points at, on the collapsed axis — over
+        // the TRACK, the same scale trackViewport draws the box from. Deriving
+        // it over scrollWidth (which includes the label column) reintroduced
+        // the exact bias this change exists to remove, and put the drag on a
+        // different scale from the box it was dragging (#61).
+        var ax = trackAxis(rowsEl);
+        var tc = centreTimeForScrollLeft(
+          at * Math.max(ax.axisW - ax.viewW, 0), collapsedWallMS(root), ax.axisW, ax.viewW);
         rowsEl.scrollTop = scrollTopForTime(rowsEl, tc); // scroll listener re-derives the pan
       } else {
         rowsEl.scrollLeft = at * hMax;
@@ -417,10 +455,6 @@
       }
       box.style.left = (at * (1 - geom.frac) * 100) + '%';
       announceViewport(box, { frac: geom.frac, at: at });
-    }
-    function trackClientW(rowsEl) {
-      var trackEl = rowsEl.querySelector('.wf-track');
-      return trackEl ? Math.max(trackEl.clientWidth, 1) : rowsEl.clientWidth;
     }
 
     box.addEventListener('pointerdown', function (e) {
@@ -1593,6 +1627,45 @@ function envelopeAnchors(anchors) {
   return out;
 }
 
+// ---- Pure axis math (exported for the node unit test) ----------------------
+// The time↔pixel conversions, over the collapsed TRACK axis. `axisW` is the
+// axis at the current zoom, `viewW` the slice of it on screen, `scrollLeft` the
+// pan. Every caller in the viewer routes through these three functions, which
+// is what guarantees the box, the ruler, the drag, the keyboard scrub and
+// syncPan's forward map all describe the same window (#61).
+
+// The box geometry: `frac` is how much of the axis fits on screen (its width),
+// `at` how much of its travel is used up (its position). `at * (1 - frac)`
+// reduces to scrollLeft / axisW — the window's left edge as a fraction of the
+// run — which is what layoutRuler labels.
+function viewportGeom(axisW, viewW, scrollLeft) {
+  var w = Math.max(axisW, 1);
+  var v = Math.min(Math.max(viewW, 1), w);
+  var travel = w - v;
+  var at = travel > 0 ? scrollLeft / travel : 0;
+  return { frac: v / w, at: Math.min(Math.max(at, 0), 1) };
+}
+
+// The scrollLeft that centres time `t` in the visible window. Note it divides
+// into axisW, never scrollWidth: the label column is not part of the axis.
+function timeToScrollLeft(t, total, axisW, viewW) {
+  return (t / Math.max(total, 1)) * Math.max(axisW, 1) - Math.min(viewW, axisW) / 2;
+}
+
+// The exact inverse: the time sitting at the centre of the window at a given
+// scrollLeft. timeToScrollLeft and this must round-trip, or the pointer drag
+// (which goes scrollLeft → time → scrollTop → syncPan → scrollLeft) walks.
+function centreTimeForScrollLeft(scrollLeft, total, axisW, viewW) {
+  var w = Math.max(axisW, 1);
+  return ((scrollLeft + Math.min(viewW, w) / 2) / w) * Math.max(total, 1);
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { anchorTimeFor: anchorTimeFor, envelopeAnchors: envelopeAnchors };
+  module.exports = {
+    anchorTimeFor: anchorTimeFor,
+    envelopeAnchors: envelopeAnchors,
+    viewportGeom: viewportGeom,
+    timeToScrollLeft: timeToScrollLeft,
+    centreTimeForScrollLeft: centreTimeForScrollLeft,
+  };
 }

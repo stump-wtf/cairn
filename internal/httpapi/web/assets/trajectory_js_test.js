@@ -67,4 +67,66 @@ assert.strictEqual(tj.anchorTimeFor(42), 42);
   }
 });
 
+// ---- Axis math: the time↔pixel conversions over the collapsed track --------
+// A 30s run zoomed 3x in a 900px pane whose sticky label column eats 228px:
+// the axis is 3 * (900 - 228) = 2016px wide and 672px of it is on screen.
+var AXIS_W = 2016, VIEW_W = 672, TOTAL = 30000;
+
+// 7. The box's width is the visible fraction of the AXIS, not of the whole row.
+//    Measuring the row (label column included) is what let the box claim ticks
+//    whose bars were still off screen.
+var atStart = tj.viewportGeom(AXIS_W, VIEW_W, 0);
+assert.strictEqual(atStart.frac, VIEW_W / AXIS_W, 'box width is viewW/axisW');
+assert.strictEqual(atStart.at, 0, 'unscrolled pan sits at the start of its travel');
+
+// 8. `at` saturates at 1 exactly when the pan reaches the end of the axis, so
+//    the box's right edge lands at 100% and not short of it.
+var atEnd = tj.viewportGeom(AXIS_W, VIEW_W, AXIS_W - VIEW_W);
+assert.strictEqual(atEnd.at, 1, 'a fully scrolled pan uses up all of its travel');
+assert.ok(Math.abs(atEnd.at * (1 - atEnd.frac) + atEnd.frac - 1) < 1e-9,
+  'the box right edge reaches exactly 100% at the end of the run');
+
+// 9. An axis that fits on screen has nothing to pan: full-width box, at 0 —
+//    and no division by a zero travel.
+var noPan = tj.viewportGeom(600, 900, 0);
+assert.strictEqual(noPan.frac, 1, 'an axis narrower than the pane fills the box');
+assert.strictEqual(noPan.at, 0, 'no travel means no pan');
+
+// 10. `at * (1 - frac)` is the window's LEFT edge as a fraction of the run —
+//     the quantity layoutRuler turns into its `from` label. It must equal
+//     scrollLeft/axisW, or the ruler and the box label different instants.
+[0, 300, 900, AXIS_W - VIEW_W].forEach(function (sl) {
+  var g = tj.viewportGeom(AXIS_W, VIEW_W, sl);
+  assert.ok(Math.abs(g.at * (1 - g.frac) - sl / AXIS_W) < 1e-9,
+    'ruler `from` matches the box left edge at scrollLeft ' + sl);
+});
+
+// 11. timeToScrollLeft and centreTimeForScrollLeft are exact inverses. The
+//     pointer drag round-trips through both (scrollLeft → time → scrollTop →
+//     syncPan → scrollLeft), so any mismatch makes a held drag creep.
+[0, 5000, 15000, 29000].forEach(function (t) {
+  var sl = tj.timeToScrollLeft(t, TOTAL, AXIS_W, VIEW_W);
+  assert.ok(Math.abs(tj.centreTimeForScrollLeft(sl, TOTAL, AXIS_W, VIEW_W) - t) < 1e-9,
+    'time round-trips through scrollLeft at t=' + t);
+});
+
+// 12. The conversions divide into the AXIS, never the axis plus the label
+//     column. Centring the midpoint of the run must land the pan exactly
+//     halfway through its travel — off-by-a-label-column is the #61 bug.
+assert.strictEqual(
+  tj.timeToScrollLeft(TOTAL / 2, TOTAL, AXIS_W, VIEW_W),
+  AXIS_W / 2 - VIEW_W / 2,
+  'the midpoint of the run centres at the midpoint of the travel'
+);
+
+// 13. Degenerate inputs (pre-layout reads, where widths are 0) return finite
+//     numbers rather than NaN/Infinity — those would poison scrollLeft and
+//     blank the pane.
+[[0, 0, 0], [0, 100, 50], [100, 0, 0]].forEach(function (a) {
+  var g = tj.viewportGeom(a[0], a[1], a[2]);
+  assert.ok(isFinite(g.frac) && isFinite(g.at), 'viewportGeom finite for ' + JSON.stringify(a));
+  assert.ok(isFinite(tj.timeToScrollLeft(1000, 0, a[0], a[1])), 'timeToScrollLeft finite for ' + JSON.stringify(a));
+  assert.ok(isFinite(tj.centreTimeForScrollLeft(a[2], 0, a[0], a[1])), 'centreTime finite for ' + JSON.stringify(a));
+});
+
 console.log('trajectory_js_test: ok');

@@ -627,3 +627,29 @@ func TestBuildTimelineEdgeCases(t *testing.T) {
 		}
 	})
 }
+
+// The scrubber's aria-valuemax is the run's collapsed working time in whole
+// seconds. It is rounded UP with a floor of 1 so a short run still gets a
+// movable slider: truncation gave anything under a second valuemax="0", which
+// equals valuemin and announces as an unmovable control — the precise defect
+// adding role="slider" was meant to fix (#61).
+func TestCollapsedWallSecsNeverDegenerate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ms   int
+		want int
+	}{
+		{"no working time at all", 0, 0},
+		{"a single millisecond still gets a second", 1, 1},
+		{"sub-second run rounds up", 400, 1},
+		{"just over a second rounds up", 1001, 2},
+		{"whole seconds are exact", 30000, 30},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := collapsedWallSecs(tc.ms)
+			if got != tc.want {
+				t.Errorf("collapsed wall %dms → %ds, want %ds", tc.ms, got, tc.want)
+			}
+		})
+	}
+}
