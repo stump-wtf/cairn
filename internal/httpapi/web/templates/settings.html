@@ -127,7 +127,7 @@
             </tr>
           </thead>
           <tbody data-mcp-session-rows>
-            {{range .MCPSessions}}{{template "mcp-session-row" .}}{{else}}<tr class="token-empty-row" data-mcp-session-empty><td colspan="5">No agents have connected yet.</td></tr>{{end}}
+            {{range .MCPSessions}}{{template "mcp-session-row" .}}{{else}}<tr class="token-empty-row" data-mcp-session-empty><td colspan="5">No OAuth agent sessions yet. Artifacts pushed with API tokens or the CLI don't appear here.</td></tr>{{end}}
           </tbody>
         </table>
       </section>
