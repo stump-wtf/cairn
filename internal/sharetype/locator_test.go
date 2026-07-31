@@ -92,10 +92,24 @@ func TestLocatorSchemas(t *testing.T) {
 		},
 		{
 			anchor: AnchorBundleFile,
-			valid:  []string{`{"name":"notes.md"}`, `{"block_id":"b_3f2a","name":"notes.md"}`},
+			// A markdown member anchors blocks AND bullets exactly as the
+			// standalone markdown viewer does, so the optional block_id takes
+			// an optional ordinal path alongside it. Without the path every
+			// bullet of a list collapsed onto its block's anchor.
+			valid: []string{
+				`{"name":"notes.md"}`, `{"block_id":"b_3f2a","name":"notes.md"}`,
+				`{"name":"notes.md","block_id":"b_3f2a","path":[0]}`,
+				`{"path":[2,0],"name":"notes.md","block_id":"b_3f2a"}`,
+			},
 			invalid: []string{
 				`{}`, `{"name":""}`, `{"name":7}`, `{"file":"notes.md"}`,
 				`{"name":"notes.md","block_id":""}`, `{"name":"notes.md","extra":true}`,
+				// A path names a bullet WITHIN a block, so it is meaningless
+				// without one, and shares md_bullet's ordinal constraints.
+				`{"name":"notes.md","path":[0]}`,
+				`{"name":"notes.md","block_id":"b_3f2a","path":[]}`,
+				`{"name":"notes.md","block_id":"b_3f2a","path":[-1]}`,
+				`{"name":"notes.md","block_id":"b_3f2a","path":["a"]}`,
 			},
 		},
 		{
