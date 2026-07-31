@@ -210,8 +210,14 @@ jobs:
           done
           # `key import`, not `key create`: create mints RANDOM credentials that
           # the test env would then have to scrape back out of stdout.
+          #
+          # stdout to /dev/null because `key import` ECHOES THE SECRET KEY, and a
+          # credential printed into a CI log is bad practice even when — as here
+          # — it is per-run and dies with the container: logs outlive the job,
+          # get pasted around, and trip secret scanners. stderr is kept so a
+          # genuine failure is still diagnosable, and `set -e` still catches it.
           docker exec "$GARAGE" /garage key import --yes -n cairn-ci \
-            "$CAIRN_TEST_S3_ACCESS_KEY" "$CAIRN_TEST_S3_SECRET_KEY"
+            "$CAIRN_TEST_S3_ACCESS_KEY" "$CAIRN_TEST_S3_SECRET_KEY" >/dev/null
           docker exec "$GARAGE" /garage bucket allow --read --write --owner \
             "$S3_BUCKET" --key "$CAIRN_TEST_S3_ACCESS_KEY"
 
