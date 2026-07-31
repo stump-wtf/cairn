@@ -271,8 +271,10 @@ func isImage(mediaType string) bool {
 func anyMedia(string) bool { return true }
 
 // Built-in types. Badges follow ADR-0002 (`MD`, lang/`CODE`, `IMG`, `FILE`/`GZ`,
-// `HK`, `TRJ`); anchor capability sets follow the SPEC-0006 annotations design
-// matrix verbatim:
+// `HK`) — except the trajectory badge, which #68 renamed `TRJ` -> `RUN` to match
+// the /run/ route and the run_* MCP tools; ADR-0002 and ADR-0009 still record
+// `TRJ` and want amending. Anchor capability sets follow the SPEC-0006
+// annotations design matrix verbatim:
 //
 //	markdown    reactions: artifact, md_block, md_bullet     comments: artifact, text_selection
 //	code        reactions: artifact, code_line, code_range   comments: artifact, code_line, text_selection

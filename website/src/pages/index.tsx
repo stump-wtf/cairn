@@ -17,7 +17,7 @@ const TYPE_BADGES: {label: string; cat: string}[] = [
   {label: 'IMG', cat: 'net'},
   {label: 'FILE', cat: 'read'},
   {label: 'HK', cat: 'net'},
-  {label: 'TRJ', cat: 'reason'},
+  {label: 'RUN', cat: 'reason'},
 ];
 
 function Hero(): ReactNode {
