@@ -86,7 +86,15 @@
           {{range .Timeline}}<button type="button" class="tl-tick" data-cat="{{.Category}}"
             data-pos="{{.PosPct}}" data-wid="{{.WidPct}}" data-spanjump="{{.SpanID}}"
             aria-label="Jump to {{.SpanID}}"></button>{{end}}
-          <span class="tl-viewport" data-tl-viewport aria-hidden="true"></span>
+          {{/* The viewport box is also the scrubber, so it is a real slider:
+          focusable and arrow-key operable (WCAG 2.1.1). A run whose rows all
+          fit the pane has no vertical travel, so the wheel-driven pan cannot
+          move and this is the ONLY control that pans the zoomed axis — leaving
+          it pointer-only locked a keyboard-only reader out of it (#61). The
+          value is the run's collapsed working seconds. */}}
+          <span class="tl-viewport" data-tl-viewport role="slider" tabindex="0"
+            aria-label="Scrub through the run"
+            aria-valuemin="0" aria-valuemax="{{.CollapsedWallSecs}}" aria-valuenow="0" aria-valuetext="start of run"></span>
         </div>
       </div>
       {{end}}

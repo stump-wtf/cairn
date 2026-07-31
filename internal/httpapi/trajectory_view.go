@@ -81,6 +81,10 @@ type trajectoryView struct {
 	// idle and prompt time removed. The client turns each row's PosMS/DurMS into
 	// geometry against it.
 	CollapsedWallMS int
+	// CollapsedWallSecs is CollapsedWallMS rendered as the slider's
+	// aria-valuemax, in whole seconds (the scrubber announces position as a
+	// time, and milliseconds would read as noise to a screen reader).
+	CollapsedWallSecs int
 
 	// Activity stream (the user prompt turn followed by the span rows).
 	Prompt      string
@@ -416,6 +420,7 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 	// Duration-relative bars + the collapsed working-time strip.
 	timeline, longest, longestLabel, collapsedWall := buildTimeline(vm.Waterfall)
 	vm.Timeline, vm.LongestSpan, vm.CollapsedWallMS = timeline, longestLabel, collapsedWall
+	vm.CollapsedWallSecs = collapsedWall / 1000
 	for i := range vm.Waterfall {
 		vm.Waterfall[i].DurPct = formatPct(ratioPct(vm.Waterfall[i].DurMS, int64(max(longest, 1))))
 		vm.Waterfall[i].Clipped = vm.Waterfall[i].DurMS > longest &&
