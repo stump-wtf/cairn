@@ -91,7 +91,7 @@ function Tile({code, cat, title, body}: Guarantee): ReactNode {
 
         `TRJ`, `HK`, `MD·PY·IMG` and `◆ mcp` are text, and they are hidden on
         the other ground the requirement gives: they are not informative. Each
-        is a compression of the tile it sits on — `TRJ` of "Trajectories", `HK`
+        is a compression of the tile it sits on — `TRC` of "Traces", `HK`
         of "Live webhooks", `◆ mcp` of "MCP-native", `MD·PY·IMG` of a body that
         already spells out "Markdown, code, images, generic files, and
         multi-file bundles". Announced, they would read every tile's subject

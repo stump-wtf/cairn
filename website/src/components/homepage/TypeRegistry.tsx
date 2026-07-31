@@ -125,9 +125,9 @@ const TYPES: ShareType[] = [
     ),
   },
   {
-    code: 'RUN',
+    code: 'TRC',
     cat: 'reason',
-    name: 'Run',
+    name: 'Trace',
     wide: true,
     body: (
       <>

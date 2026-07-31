@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-29
 decision-makers: joestump
 # optional forward-only graph edges (extends / enables / related: lists of ADR IDs).

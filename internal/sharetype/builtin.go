@@ -271,10 +271,8 @@ func isImage(mediaType string) bool {
 func anyMedia(string) bool { return true }
 
 // Built-in types. Badges follow ADR-0002 (`MD`, lang/`CODE`, `IMG`, `FILE`/`GZ`,
-// `HK`) — except the trajectory badge, which #68 renamed `TRJ` -> `RUN` to match
-// the /run/ route and the run_* MCP tools; ADR-0002 and ADR-0009 still record
-// `TRJ` and want amending. Anchor capability sets follow the SPEC-0006
-// annotations design matrix verbatim:
+// `HK`, `TRC`); anchor capability sets follow the SPEC-0006 annotations design
+// matrix verbatim:
 //
 //	markdown    reactions: artifact, md_block, md_bullet     comments: artifact, text_selection
 //	code        reactions: artifact, code_line, code_range   comments: artifact, code_line, text_selection
@@ -367,14 +365,21 @@ var (
 	}}
 	// Trajectory: reactions pin moments (turns, tool calls); comment threads
 	// attach to spans and text selections (SPEC-0006 matrix). Both the web URL
-	// and the MCP handle carry the run/ prefix (ADR-0005). The reader-facing
-	// NAME is "run" — the badge, the bin-row label, the /run/ route and the
-	// run_create/run_append_spans MCP tools all agree on it (#68); "trajectory"
-	// stays the registry key and the docs-prose term for what a run captures.
+	// and the MCP handle carry the run/ prefix (ADR-0005).
+	//
+	// The reader-facing NAME is "trace" and the badge is `TRC` (ADR-0016): the
+	// thing users and agents already say for a captured agent run, and the word
+	// ADR-0015's OTLP endpoint makes coherent end to end. "run" survives as the
+	// EXECUTION a trace records — /run/<id>, /v1/runs, run_create — because
+	// renaming the resource would break every live URL and tool integration for
+	// cosmetics. "trajectory" stays the registry key until ADR-0016 Phase 2
+	// flips the stored value, and remains a wire alias indefinitely after.
+	//
+	// Governing: ADR-0016 (traces, not trajectories) Phase 1, ADR-0002.
 	trajectoryType = trajectoryShareType{prefixedType{
 		simpleType{
 			key:     KeyTrajectory,
-			badge:   "RUN",
+			badge:   "TRC",
 			preview: anyMedia,
 			anchors: []AnchorSpec{
 				both(AnchorArtifact),
@@ -389,14 +394,15 @@ var (
 )
 
 // trajectoryShareType composes prefixedType with the DisplayNamer capability:
-// the flagship artifact type reads as "run" to every reader while keeping
-// "trajectory" as its registry key (see the #68 taxonomy decision).
+// the flagship artifact type reads as "trace" to every reader while keeping
+// "trajectory" as its registry key until ADR-0016 Phase 2 flips the stored
+// value. The key is a wire identifier; the display name is what a reader sees.
 type trajectoryShareType struct {
 	prefixedType
 }
 
 // DisplayName implements the DisplayNamer capability.
-func (t trajectoryShareType) DisplayName() string { return "run" }
+func (t trajectoryShareType) DisplayName() string { return "trace" }
 
 // defaultRegistry is the process-wide registry, seeded with the built-in types.
 // The generic file handler is both a registered type and the total-resolution

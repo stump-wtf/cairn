@@ -346,8 +346,10 @@ func TestAnchorTypeStringsMatchSpec(t *testing.T) {
 }
 
 func TestBadges(t *testing.T) {
-	// Badge codes follow ADR-0002: MD, CODE/lang, IMG, FILE/GZ, HK, RUN (the
-	// trajectory type's reader-facing badge, renamed in #68).
+	// Badge codes follow ADR-0002: MD, CODE/lang, IMG, FILE/GZ, HK, TRC. The
+	// trajectory badge is TRC — what the artifact HOLDS, a trace — while its
+	// reader-facing NAME is "trace" (ADR-0016). TestDisplayNames pins the name
+	// half.
 	want := map[artifact.ShareType]string{
 		artifact.TypeFile:   "FILE",
 		artifact.TypeGZ:     "GZ",
@@ -356,7 +358,7 @@ func TestBadges(t *testing.T) {
 		KeyCode:             "CODE",
 		KeyImage:            "IMG",
 		KeyWebhook:          "HK",
-		KeyTrajectory:       "RUN",
+		KeyTrajectory:       "TRC",
 	}
 	for key, badge := range want {
 		if b := Default().Resolve(key).Badge(); b != badge {
@@ -366,13 +368,14 @@ func TestBadges(t *testing.T) {
 }
 
 // TestDisplayNames covers the #68 taxonomy decision: the flagship trajectory
-// type reads as "run" to a reader (matching /run/ and the run_create/
-// run_append_spans MCP tools) while keeping "trajectory" as its registry key;
-// every other type's display name is its key.
+// type reads as "trace" to a reader (ADR-0016 — the word users and agents
+// already use) while keeping "trajectory" as its registry key until Phase 2;
+// every other type's display name is its key. "run" stays the EXECUTION a
+// trace records: /run/<id> and the run_* MCP tools keep their names.
 func TestDisplayNames(t *testing.T) {
 	r := Default()
-	if got := r.DisplayNameFor(KeyTrajectory); got != "run" {
-		t.Errorf("DisplayNameFor(trajectory) = %q, want %q", got, "run")
+	if got := r.DisplayNameFor(KeyTrajectory); got != "trace" {
+		t.Errorf("DisplayNameFor(trajectory) = %q, want %q", got, "trace")
 	}
 	for _, key := range []artifact.ShareType{KeyMarkdown, KeyCode, KeyImage, KeyWebhook, artifact.TypeFile} {
 		if got := r.DisplayNameFor(key); got != string(key) {
@@ -398,7 +401,7 @@ func TestBadgeForLangBadges(t *testing.T) {
 		{"python with charset param", &artifact.Artifact{ShareType: KeyCode, MediaType: "text/x-python; charset=utf-8"}, "PY"},
 		{"ts by title extension", &artifact.Artifact{ShareType: KeyCode, MediaType: "text/plain", Title: "deploy.ts"}, "TS"},
 		{"unrecognized lang falls back", &artifact.Artifact{ShareType: KeyCode, MediaType: "text/plain", Title: "notes.xyz"}, "CODE"},
-		{"non-code type uses static badge", &artifact.Artifact{ShareType: KeyTrajectory, MediaType: "application/json"}, "RUN"},
+		{"non-code type uses static badge", &artifact.Artifact{ShareType: KeyTrajectory, MediaType: "application/json"}, "TRC"},
 		{"unknown type falls back to FILE", &artifact.Artifact{ShareType: "mystery", MediaType: "text/plain"}, "FILE"},
 	}
 	for _, tc := range tests {

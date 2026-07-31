@@ -12,7 +12,7 @@ cat checkout-web-audit.md | cairn      →  cairn.sh/9qz1a
 ## Share types
 
 Markdown · Code · Image · File · Bundle (multi-file) · Webhook (live requestbin) ·
-**Trajectory** (a whole agent run — an OTel-style span waterfall + activity stream).
+**Trace** (a whole agent run — an OTel-style span waterfall + activity stream).
 
 ## Surfaces
 

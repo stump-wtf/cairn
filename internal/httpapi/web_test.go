@@ -213,11 +213,11 @@ func TestShellBadgeAndURLVaryByType(t *testing.T) {
 	if !strings.Contains(trj, `mcp://cairn/run/abc123`) {
 		t.Error("trajectory mcp handle should carry the /run/ prefix")
 	}
-	if !strings.Contains(trj, `>RUN<`) {
-		t.Error("trajectory badge should be RUN (the #68 reader-facing name)")
+	if !strings.Contains(trj, `>TRC<`) {
+		t.Error("trajectory badge should be TRC — a badge names what the artifact holds (a trace)")
 	}
-	if !strings.Contains(trj, `title="run"`) {
-		t.Error("trajectory badge tooltip should read \"run\" (the #68 reader-facing name)")
+	if !strings.Contains(trj, `title="trace"`) {
+		t.Error("trace badge tooltip should read \"trace\" (ADR-0016)")
 	}
 }
 
@@ -362,7 +362,7 @@ func TestBinRowRendersDesignFacts(t *testing.T) {
 	vm := binPageView{
 		Actor: "joe",
 		Rows: []binRow{{
-			ID: "abc123", Badge: "RUN", TypeLabel: "trajectory", TypeName: "run",
+			ID: "abc123", Badge: "TRC", TypeLabel: "trajectory", TypeName: "trace",
 			Title: "checkout-web-audit", Subtitle: "trajectory", WebURL: "/run/abc123",
 			Lead: "claude", LeadShort: "claude", Channel: "via MCP", Age: "2h ago", TTL: "in 6d",
 			ReactionCount: 3, CommentCount: 2, PinCount: 1,
@@ -383,9 +383,9 @@ func TestBinRowRendersDesignFacts(t *testing.T) {
 		`title="expires in 6d"`,             // the TTL glyph is labelled too
 		`data-agent="1"`, `data-shared="1"`, // tab-lens flags
 		`data-type="trajectory"`, // live-dot / badge data hook (raw key, unchanged)
-		// The reader-facing name is "run" (the #68 taxonomy decision), shown in
-		// the badge tooltip and sr-only cue while data-type keeps the raw key.
-		`>RUN<`, `title="run"`, `<span class="sr-only"> run</span>`,
+		// The reader-facing name is "trace" (ADR-0016), shown in the badge
+		// tooltip and sr-only cue while data-type keeps the raw registry key.
+		`>TRC<`, `title="trace"`, `<span class="sr-only"> trace</span>`,
 	} {
 		if !strings.Contains(html, frag) {
 			t.Errorf("bin row missing %q", frag)
@@ -616,5 +616,33 @@ func TestAssetsShipNoTestFiles(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("walking the embedded asset FS: %v", err)
+	}
+}
+
+// A bodyless artifact's meta line is rendered as visible text — the shell's
+// artifact-meta span and the bin row subtitle both show it — so it must carry
+// the registry DISPLAY NAME, never the raw share_type key. A trace's key stays
+// "trajectory" until ADR-0016 Phase 2, and reading it here printed the retired
+// word onto the page in two places at once.
+//
+// Governing: ADR-0016 (traces, not trajectories) Phase 1.
+func TestMetaLineUsesDisplayNameNotRegistryKey(t *testing.T) {
+	s := newWebServer(t)
+	a := fixtureArtifact(artifact.TypeTrajectory, false)
+	a.BodySHA256 = "" // bodyless: the branch that names the type
+
+	if got := s.metaLine(a); got != "trace" {
+		t.Errorf("metaLine for a bodyless trace = %q, want %q", got, "trace")
+	}
+	if strings.Contains(s.metaLine(a), "trajectory") {
+		t.Error("the meta line must not surface the trajectory registry key as reader-facing text")
+	}
+
+	// A type whose key already reads well is unaffected — the display name
+	// falls back to the key, so this is not a special case for one type.
+	b := fixtureArtifact(sharetype.KeyWebhook, false)
+	b.BodySHA256 = ""
+	if got := s.metaLine(b); got != string(sharetype.KeyWebhook) {
+		t.Errorf("metaLine for a bodyless webhook = %q, want its key", got)
 	}
 }

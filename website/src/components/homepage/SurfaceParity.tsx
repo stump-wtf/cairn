@@ -103,7 +103,7 @@ const SURFACES: Surface[] = [
       <>
         Cairn is an MCP server with OAuth, not a bolted-on API key. Your agent consents once to
         three scopes and then reads, creates, comments and reacts <strong>as you</strong> —
-        including tailing live webhook and trajectory streams.
+        including tailing live webhook and trace streams.
       </>
     ),
     points: [

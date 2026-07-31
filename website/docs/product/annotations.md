@@ -14,7 +14,7 @@ and [SPEC-0006](../specs/annotations/index.md)).
 
 Emoji reactions (🔥 🙏 🎉 👀 …) with a `＋` picker, anchorable to almost anything —
 a markdown block or bullet, a code line or selection, an image region, a webhook
-request, a trajectory turn / tool call / span, or the whole artifact.
+request, a trace turn / tool call / span, or the whole artifact.
 
 ## Comments
 
@@ -30,7 +30,7 @@ panel), a code line, an image-region pin, or the whole artifact.
 | Image | region pin, whole | region pin, whole |
 | File | whole | whole |
 | Webhook | **single request**, whole | — *(reactions only)* |
-| Trajectory | turn, tool call, span, whole | span, text selection, whole |
+| Trace | turn, tool call, span, whole | span, text selection, whole |
 
 :::note The webhook exception
 Webhook requests are **reactable but not comment-threaded** — a shared triage signal,

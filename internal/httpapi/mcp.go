@@ -195,7 +195,7 @@ func (s *Server) mcpTokenVerifier() sdkauth.TokenVerifier {
 func (s *Server) newMCPServer() *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "cairn", Version: "0.1.0"}, &mcp.ServerOptions{
 		Instructions: "Cairn is an AI-native artifact-sharing service. Read and create shareable " +
-			"artifacts, comment and react on them, and tail live trajectory runs and webhook " +
+			"artifacts, comment and react on them, and tail live traces and webhook " +
 			"streams — all scoped to what the authorizing human can already reach. Large trace " +
 			"captures do not belong in single MCP calls: open a run and page spans in modest " +
 			"batches, or POST the run JSON to /v1/runs over REST (see the run_capture prompt).",
@@ -230,7 +230,7 @@ func (s *Server) newMCPServer() *mcp.Server {
 		Description: "Create and push a new single-body artifact (file, markdown, or code — share_type " +
 			"defaults to file, sniffed/declared media type selects the viewer) owned by the authorizing " +
 			"human, with the default link-visibility policy and default TTL. Bundles (N named members) " +
-			"are not creatable here — use bundle_create. Trajectory runs (a header + span tree) are not " +
+			"are not creatable here — use bundle_create. Traces (a run header + span tree) are not " +
 			"creatable here — use run_create. Requires artifacts:write.",
 	}, s.mcpCreateArtifact)
 
@@ -255,9 +255,9 @@ func (s *Server) newMCPServer() *mcp.Server {
 	if s.traj != nil {
 		mcp.AddTool(srv, &mcp.Tool{
 			Name: "run_create",
-			Description: "Create and push a trajectory run owned by the authorizing human, with the default " +
-				"link-visibility policy and default TTL — the same ingest POST /v1/runs performs via the " +
-				"trajectory service. Mode \"batch\" (the default when mode is omitted) creates a complete run " +
+			Description: "Create and push a trace of an agent run, owned by the authorizing human, with the " +
+				"default link-visibility policy and default TTL — the same ingest POST /v1/runs performs " +
+				"internally. Mode \"batch\" (the default when mode is omitted) creates a complete run " +
 				"(a title/prompt/model header plus an ordered span tree) that is closed on creation; mode " +
 				"\"open\" creates a live run whose id and shareable URL are returned immediately and which " +
 				"stays open for run_append_spans as work happens (close it with POST /v1/runs/{id}/close " +
@@ -284,8 +284,8 @@ func (s *Server) newMCPServer() *mcp.Server {
 		// and prompts are the surface MCP gives us to state them.
 		srv.AddPrompt(&mcp.Prompt{
 			Name:        "run_capture",
-			Title:       "Capture a trajectory run",
-			Description: "How to record an agent run as a Cairn trajectory that reads well: span granularity, the category vocabulary, and what to put in each span's output.",
+			Title:       "Capture a trace of a run",
+			Description: "How to record an agent run as a Cairn trace that reads well: span granularity, the category vocabulary, and what to put in each span's output.",
 			Arguments: []*mcp.PromptArgument{{
 				Name:        "task",
 				Title:       "Task",
@@ -295,8 +295,11 @@ func (s *Server) newMCPServer() *mcp.Server {
 
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
 			URITemplate: "mcp://cairn/run/{id}",
-			Name:        "trajectory-run",
-			Description: "A trajectory run's header, derived stats, and ordered span tree. Subscribe to " +
+			// The URI template is what clients bind to; this Name is the label
+			// shown in a resource picker, so it takes the reader-facing word
+			// (ADR-0016). Renaming it cannot break a subscription.
+			Name: "trace",
+			Description: "A trace's run header, derived stats, and ordered span tree. Subscribe to " +
 				"receive a notification each time a new span lands. Requires artifacts:read.",
 			MIMEType: "application/json",
 		}, s.mcpReadRun)
@@ -711,7 +714,7 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 	}
 	shareType := artifact.ShareType(firstNonEmpty(in.ShareType, string(artifact.TypeFile)))
 	if shareType == artifact.TypeBundle || shareType == artifact.TypeTrajectory {
-		return nil, mcpCreateOutput{}, fmt.Errorf("validation_failed: share_type must not be %q; use bundle_create for bundles or run_create for trajectory runs", shareType)
+		return nil, mcpCreateOutput{}, fmt.Errorf("validation_failed: share_type must not be %q; use bundle_create for bundles or run_create for traces", shareType)
 	}
 	now := s.now()
 	art, err := s.store.CreateArtifact(ctx, store.CreateArtifactInput{
@@ -860,16 +863,16 @@ func (s *Server) mcpRunCapturePrompt(_ context.Context, req *mcp.GetPromptReques
 	if req != nil && req.Params != nil {
 		task = req.Params.Arguments["task"]
 	}
-	intro := "You are recording an agent run to Cairn as a trajectory, using the run_create tool (or run_create followed by run_append_spans for a run you capture as it happens)."
+	intro := "You are recording an agent run to Cairn as a trace, using the run_create tool (or run_create followed by run_append_spans for a run you capture as it happens)."
 	if strings.TrimSpace(task) != "" {
 		intro += " The run to capture is: " + task
 	}
 
 	body := intro + `
 
-A trajectory is read by a human scrubbing a waterfall and expanding the turns that look interesting. Optimize for that reader.
+A trace is read by a human scrubbing a waterfall and expanding the turns that look interesting. Optimize for that reader.
 
-**First: find your own transcript and capture from THAT, not from memory.** You are almost certainly running inside a harness that already keeps a high-fidelity local record of this session — per-turn timestamps, every tool call with its arguments, every result, and token usage. That record IS the trajectory; your job is mostly to reshape it. Reconstructing from what you remember yields round-numbered guesses and a waterfall whose shape is fiction, and it is not obvious to the reader that it is fiction. Parsing the transcript costs one read and a little scripting.
+**First: find your own transcript and capture from THAT, not from memory.** You are almost certainly running inside a harness that already keeps a high-fidelity local record of this session — per-turn timestamps, every tool call with its arguments, every result, and token usage. That record IS the trace; your job is mostly to reshape it. Reconstructing from what you remember yields round-numbered guesses and a waterfall whose shape is fiction, and it is not obvious to the reader that it is fiction. Parsing the transcript costs one read and a little scripting.
 
 Go and look before you write a single span. Two confirmed shapes, as worked examples:
   - Claude Code — ` + "`~/.claude/projects/<cwd-slug>/<session-id>.jsonl`" + `, one JSON object per line, each carrying a ` + "`timestamp`" + ` and a ` + "`message`" + ` whose ` + "`content`" + ` holds ` + "`text`" + ` / ` + "`tool_use`" + ` / ` + "`tool_result`" + ` blocks, plus ` + "`usage`" + ` for tokens.
@@ -877,7 +880,7 @@ Go and look before you write a single span. Two confirmed shapes, as worked exam
 
 If yours is neither, it still almost certainly exists — find it rather than assuming it does not. Look under the harness's data or state directory (` + "`~/.<harness>/`" + `, ` + "`~/.local/share/<harness>/`" + `, ` + "`~/Library/Application Support/<harness>/`" + `, or a ` + "`.<harness>/`" + ` folder in the project), and prefer the newest file, or the one whose name carries the current session id. A JSONL of turns and a SQLite database are the two common shapes; both are readable with tools you already have.
 
-From whatever you find, derive each span's ` + "`start_offset_ms`" + ` and ` + "`duration_ms`" + ` from real timestamps (a tool call runs from its invocation to its matching result), the ` + "`tool`" + ` name and ` + "`args`" + ` from the call itself, the ` + "`output`" + ` from the result, and ` + "`token_count`" + ` by summing usage. If you truly cannot find a transcript, say so plainly in your reply to the human and label the run's timings as estimated — a trajectory that looks measured but is not is worse than one that admits it is approximate.
+From whatever you find, derive each span's ` + "`start_offset_ms`" + ` and ` + "`duration_ms`" + ` from real timestamps (a tool call runs from its invocation to its matching result), the ` + "`tool`" + ` name and ` + "`args`" + ` from the call itself, the ` + "`output`" + ` from the result, and ` + "`token_count`" + ` by summing usage. If you truly cannot find a transcript, say so plainly in your reply to the human and label the run's timings as estimated — a trace that looks measured but is not is worse than one that admits it is approximate.
 
 **Put the content in ` + "`output`" + `.** This is the single most important thing, and the most commonly skipped. Every span's ` + "`output`" + ` is what a reader sees when they expand it. For a toolless turn, that is the reasoning/thinking text for that step. For a tool call, it is the stdout or the result. A span sent with only a name and a duration renders as an empty row — the viewer says so explicitly, because there is nothing else it can show. Never pre-truncate: large outputs are stored as blobs and fetched lazily.
 
@@ -904,7 +907,7 @@ A category outside both is accepted and rendered with a color hashed from its na
 Send spans as a flat list; nesting is expressed through ` + "`parent_span_id`" + `, never by nesting the JSON.`
 
 	return &mcp.GetPromptResult{
-		Description: "Guidance for capturing an agent run as a well-formed Cairn trajectory.",
+		Description: "Guidance for capturing an agent run as a well-formed Cairn trace.",
 		Messages: []*mcp.PromptMessage{{
 			Role:    "user",
 			Content: &mcp.TextContent{Text: body},

@@ -222,7 +222,7 @@ export interface RecordEndpoints {
  * codes; it assigns them no colour, so nothing here carries one.
  */
 export interface BadgeEntry {
-  /** The short code the shell renders: `MD`, `RUN`. */
+  /** The short code the shell renders: `MD`, `TRC`. */
   code: string;
   /** Every record declaring it, in record order, so the page can cite it. */
   sources: RecordRef[];
