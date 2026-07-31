@@ -66,11 +66,10 @@ jobs:
     uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/go-service.yaml@main
     with:
       # cairn's gate is `make ci` (fmt-check + vet + build + test-race), not the
-      # `make check` these repos usually use. The integration tests self-skip
-      # when CAIRN_TEST_DATABASE_URL is unset, so this passes without standing
-      # up Postgres/MinIO on the runner. This is strictly stronger than the
-      # `go test ./...` the old ci.yml ran: that one never enabled the race
-      # detector, on a codebase whose streaming ingest is concurrency-sensitive.
+      # `make check` these repos usually use. This job runs the race detector
+      # over everything that does NOT need a database; the `integration` job
+      # below stands up Postgres + Garage and runs the ~270 tests that self-skip
+      # here. Both are required — this one for `-race`, that one for coverage.
       lint_cmd: make ci
       # `make ci` already runs `go build ./...`; a second build_cmd would only
       # recompile the same packages.
@@ -83,6 +82,159 @@ jobs:
       publish_image: false
     secrets: inherit
 
+  # ---- 4b. integration tests (Postgres + Garage) --------------------------
+  # Roughly half of cairn's suite gates itself on CAIRN_TEST_DATABASE_URL and
+  # self-skips when it is unset. Until this job existed nothing on the CI that
+  # gates merges ever set it, so ~270 tests — every httpapi integration test,
+  # the store/webhook/trajectory harnesses, the annotation anchor round-trips —
+  # were dead weight. A reaction bug that posted a duplicate anchor and rendered
+  # nothing shipped under a green pipeline because of exactly that gap.
+  #
+  # Garage, not MinIO: ADR-0008 names any S3-compatible store, and cairn's
+  # objectstore is the MinIO *SDK* used as a plain S3 client. Running the
+  # S3-backed harnesses (internal/store, internal/webhook — they take
+  # CAIRN_TEST_S3_ENDPOINT and fall back to in-memory without it) against Garage
+  # is what keeps "S3-compatible" an actually-tested claim rather than an
+  # assumption, and matches what the deployment actually runs.
+  #
+  # RUNNER FACTS this encodes, established empirically by a probe run (cairn run
+  # 4005) because none of these repos had ever stood a database up on Gitea:
+  #   * Jobs run INSIDE a container (`ubuntu-latest:docker://…`), so `localhost`
+  #     is the job's own netns — a sidecar there is NOT reachable that way, and
+  #     copying the .github workflow's `localhost:5432` is the trap. Confirmed:
+  #     "Connection refused" in 0.07s.
+  #   * `host.docker.internal` does not resolve on this runner.
+  #   * The host bridge gateway (172.17.0.1) DOES reach a published port, but a
+  #     fixed host port collides — six runners share one daemon at capacity 3.
+  #   * `docker network connect <net> "$HOSTNAME"` joins the RUNNING job
+  #     container to a user-defined network, where Docker's embedded DNS then
+  #     resolves sidecars by `--network-alias`. That is what this uses: no
+  #     published ports, no collisions, everything scoped to the run id.
+  #   * The runner mounts the host docker socket, so `docker run` from a step
+  #     works — but `-v` mounts resolve on the HOST, where the job container's
+  #     files do not exist. Garage needs a config file and ships a distroless
+  #     image with no shell, so neither a bind mount nor an entrypoint heredoc
+  #     works: `docker create` → `docker cp` → `docker start` does.
+  integration:
+    name: integration (postgres + garage)
+    needs: [secrets]
+    runs-on: ubuntu-latest
+    env:
+      NET: cairn-ci-${{ gitea.run_id }}
+      PG: cairn-pg-${{ gitea.run_id }}
+      GARAGE: cairn-garage-${{ gitea.run_id }}
+      # Garage refuses to serve until a layout is applied, so the bucket and key
+      # are created after the node is up rather than baked into the image.
+      S3_BUCKET: cairn
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start Postgres and Garage on a run-scoped network
+        run: |
+          set -euo pipefail
+          docker network create "$NET"
+
+          docker run -d --name "$PG" --network "$NET" --network-alias postgres \
+            -e POSTGRES_USER=cairn -e POSTGRES_PASSWORD=cairn -e POSTGRES_DB=cairn \
+            postgres:16-alpine
+
+          # Generated per run, never committed: a literal 64-hex rpc_secret in
+          # this file is precisely what the gitleaks job upstream exists to
+          # catch, and it would be a real (if inert) credential in git history.
+          # od fallback because this runner image is slimmer than it looks —
+          # `ip` is absent from it, so openssl is not worth assuming either.
+          randhex() {
+            openssl rand -hex "$1" 2>/dev/null && return 0
+            head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'
+          }
+          rpc_secret="$(randhex 32)"
+          s3_key_id="GK$(randhex 12)"
+          s3_secret="$(randhex 32)"
+          # Exported under their FINAL names so later steps read real
+          # environment variables rather than depending on `${{ env.X }}`
+          # resolving a value a previous step wrote — one less act_runner
+          # behaviour to have assumed correctly.
+          echo "CAIRN_TEST_S3_ACCESS_KEY=${s3_key_id}" >> "$GITHUB_ENV"
+          echo "CAIRN_TEST_S3_SECRET_KEY=${s3_secret}" >> "$GITHUB_ENV"
+
+          cat > garage-ci.toml <<TOML
+          metadata_dir = "/var/lib/garage/meta"
+          data_dir     = "/var/lib/garage/data"
+          db_engine    = "sqlite"
+          replication_factor = 1
+          rpc_bind_addr = "[::]:3901"
+          rpc_public_addr = "127.0.0.1:3901"
+          rpc_secret = "${rpc_secret}"
+          [s3_api]
+          s3_region = "us-east-1"
+          api_bind_addr = "[::]:3900"
+          [admin]
+          api_bind_addr = "[::]:3903"
+          TOML
+
+          docker create --name "$GARAGE" --network "$NET" --network-alias garage \
+            dxflrs/garage:v1.0.1
+          docker cp garage-ci.toml "$GARAGE":/etc/garage.toml
+          rm -f garage-ci.toml
+          docker start "$GARAGE"
+
+          # Join the job container itself so `postgres` / `garage` resolve here.
+          docker network connect "$NET" "$HOSTNAME"
+
+      - name: Wait for Postgres and bootstrap Garage
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            docker exec "$PG" pg_isready -U cairn >/dev/null 2>&1 && break
+            sleep 1
+          done
+          docker exec "$PG" pg_isready -U cairn
+
+          for i in $(seq 1 60); do
+            docker exec "$GARAGE" /garage status >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          # A single-node cluster still needs a layout before it will serve S3.
+          node="$(docker exec "$GARAGE" /garage status | awk '/NO ROLE ASSIGNED/{print $1}')"
+          docker exec "$GARAGE" /garage layout assign -z dc1 -c 1G "$node"
+          docker exec "$GARAGE" /garage layout apply --version 1
+          for i in $(seq 1 30); do
+            docker exec "$GARAGE" /garage bucket create "$S3_BUCKET" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          # `key import`, not `key create`: create mints RANDOM credentials that
+          # the test env would then have to scrape back out of stdout.
+          docker exec "$GARAGE" /garage key import --yes -n cairn-ci \
+            "$CAIRN_TEST_S3_ACCESS_KEY" "$CAIRN_TEST_S3_SECRET_KEY"
+          docker exec "$GARAGE" /garage bucket allow --read --write --owner \
+            "$S3_BUCKET" --key "$CAIRN_TEST_S3_ACCESS_KEY"
+
+      # `make test`, not `make ci`: the shared build job above already runs
+      # fmt-check + vet + build + test-race. This job's job is COVERAGE — the
+      # tests that cannot run without a database. Putting -race on top of the
+      # DB and S3 round trips roughly quintuples this job's wall time on a
+      # runner six workers already share; worth measuring before adopting.
+      - name: make test
+        env:
+          CAIRN_TEST_DATABASE_URL: postgres://cairn:cairn@postgres:5432/cairn?sslmode=disable
+          CAIRN_TEST_S3_ENDPOINT: garage:3900
+          CAIRN_TEST_S3_BUCKET: cairn
+        run: make test
+
+      # Always: a leaked network or sidecar outlives the job on a shared daemon.
+      - name: Tear down
+        if: always()
+        run: |
+          docker network disconnect "$NET" "$HOSTNAME" >/dev/null 2>&1 || true
+          docker rm -f "$PG" "$GARAGE" >/dev/null 2>&1 || true
+          docker network rm "$NET" >/dev/null 2>&1 || true
+
   # ---- 5. ai review (PRs only, and only once the build is green) -----------
   # aibot.yml still exists beside this file, narrowed to the conversation
   # events (issue_comment, review, review_comment) so a maintainer can keep
@@ -90,7 +242,7 @@ jobs:
   # review waits for a build rather than racing it, and the two triggers cannot
   # both fire on the same event.
   review:
-    needs: [build]
+    needs: [build, integration]
     if: ${{ github.event_name == 'pull_request' }}
     uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/aibot.yaml@main
     secrets: inherit
@@ -100,7 +252,7 @@ jobs:
   # Downstream stages just `needs: [main-only]`, so the fence is stated once and
   # cannot drift between them.
   main-only:
-    needs: [build]
+    needs: [build, integration]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
