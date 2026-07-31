@@ -85,12 +85,16 @@ document.addEventListener('alpine:init', () => {
     // per-tab counts count the same loaded rows the tabs filter — both see
     // exactly the loaded page, never a total the lens can't back up. Counts
     // refresh on apply() so an HTMX "load more" keeps them honest.
-    const SCOPES = ['all', 'shared', 'agents'];
+    //
+    // Only the narrowing lenses get their own empty copy: `all` is empty only
+    // when the bin itself is, and that case never reaches here — the server
+    // renders its own empty state instead of a row list. The scope vocabulary
+    // lives in binScopeFromHash, the one place that has to validate it.
     const EMPTY_COPY = {
-      all: 'Your bin is empty.',
       shared: 'Nothing shared yet.',
       agents: 'No agent pushes yet.'
     };
+    const NO_MATCH_COPY = 'No artifacts match this filter.';
 
     function rowMatches(row) {
       if (scope === 'shared' && row.dataset.shared !== '1') return false;
@@ -128,16 +132,26 @@ document.addEventListener('alpine:init', () => {
         const n = counts[s] || 0;
         const c = tab.querySelector('[data-tab-count]');
         if (c) c.textContent = String(n);
-        tab.setAttribute('aria-label', (tab.dataset.label || tab.textContent.trim()) + ' — ' + n + ' artifacts');
+        // data-label, never textContent: the count span is INSIDE the button,
+        // so textContent already reads "Bin 24" and the fallback would build
+        // "Bin 24 — 24 artifacts".
+        tab.setAttribute('aria-label', (tab.dataset.label || '') + ' — ' + n + ' artifacts');
       });
       // Per-scope empty state: when the active scope has no rows of its own,
       // say which lens is empty rather than showing a bare "no match"
       // (distinct from the text filter's "no artifacts match" case).
+      //
+      // The element is role="status" aria-live="polite", so WRITING to it is
+      // what announces it. apply() runs on every keystroke in the filter box,
+      // and re-assigning the same string still replaces the text node — which
+      // re-announces the message on each character typed. Write only on an
+      // actual change.
       if (noMatch) {
         const inScope = rows.filter(function (row) { return rowInScope(row, scope); }).length;
         if (rows.length > 0 && shown === 0) {
+          const copy = (inScope === 0 && EMPTY_COPY[scope]) ? EMPTY_COPY[scope] : NO_MATCH_COPY;
+          if (noMatch.textContent !== copy) noMatch.textContent = copy;
           noMatch.hidden = false;
-          noMatch.textContent = inScope === 0 ? EMPTY_COPY[scope] : 'No artifacts match this filter.';
         } else {
           noMatch.hidden = true;
         }

@@ -63,4 +63,21 @@ assert.strictEqual(app.binScopeFromHash('#scope=nope'), 'all', 'unknown scope fa
 assert.strictEqual(app.binScopeFromHash('#other=1&scope=shared'), 'shared', 'scope amid other hash params');
 assert.strictEqual(app.binScopeFromHash('#scope=SHARED'), 'all', 'scope is case-sensitive, uppercase is not a scope');
 
+// 5. A hash carrying a scope-SHAPED key that is not the scope key must not be
+//    mistaken for one — the delimiter alternation is what stops `#myscope=x`
+//    from selecting a lens the user never asked for.
+assert.strictEqual(app.binScopeFromHash('#myscope=shared'), 'all', 'a suffix match is not the scope key');
+assert.strictEqual(app.binScopeFromHash('#xscope=agents'), 'all', 'a suffix match is not the scope key');
+assert.strictEqual(app.binScopeFromHash('#scope='), 'all', 'an empty scope value falls back');
+assert.strictEqual(app.binScopeFromHash('#scope=shared&scope=agents'), 'shared', 'the first scope wins');
+
+// 6. Counts tolerate the malformed entries a partially-rendered row list can
+//    produce, rather than throwing and taking the whole listing down with it.
+assert.deepStrictEqual(
+  app.binCountsByScope([null, undefined, {}, { agent: true }]),
+  { all: 4, shared: 0, agents: 1 },
+  'missing or partial flags count as absent, never as a throw'
+);
+
 console.log('app_js_test: ok');
+
