@@ -99,7 +99,7 @@ func (s *Server) renderBin(w http.ResponseWriter, r *http.Request, p *Principal)
 			TypeLabel:     string(a.ShareType),
 			TypeName:      s.reg.DisplayNameFor(a.ShareType),
 			Title:         firstNonEmpty(a.Title, a.PublicID),
-			Subtitle:      metaLine(a),
+			Subtitle:      s.metaLine(a),
 			WebURL:        s.webURL(a),
 			Lead:          lead,
 			LeadShort:     truncateAgentVersion(lead),

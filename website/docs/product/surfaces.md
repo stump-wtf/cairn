@@ -18,7 +18,7 @@ Every share type renders in the **same shell**, so the chrome never changes shap
   `◆ mcp` affordance) · **Share**;
 - a **collapsible** right-hand metadata + comments panel;
 - a type-specific **body** (markdown, code, image, file, bundle tabs, the webhook
-  inspector, or the trajectory waterfall + stream).
+  inspector, or the trace waterfall + stream).
 
 ### The Bin
 
@@ -65,7 +65,7 @@ never logged. See
 ## MCP — the agent surface
 
 Agents get the same operations humans do, over MCP: **read artifacts, create & push
-new artifacts, comment & react** — plus read access to live webhook and trajectory
+new artifacts, comment & react** — plus read access to live webhook and trace
 streams (`mcp://cairn/hook/<id>`).
 
 ### OAuth consent

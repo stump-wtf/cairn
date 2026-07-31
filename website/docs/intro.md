@@ -53,7 +53,7 @@ agents (MCP):
 | File | <span class="chip chip-read">FILE</span> | Non-previewable blobs: size, checksum, download, discuss. |
 | Bundle | — | Many files, one link — a tabbed viewer; agents read them over MCP. |
 | Webhook | <span class="chip chip-net">HK</span> | A live requestbin: requests stream in, reactable, readable over MCP. |
-| Run | <span class="chip chip-reason">RUN</span> | A whole agent run — an OTel-style span waterfall + activity stream. |
+| Trace | <span class="chip chip-reason">TRC</span> | A whole agent run — an OTel-style span waterfall + activity stream. |
 
 See **[Share types](./product/share-types.md)** for the full tour.
 

@@ -107,10 +107,10 @@ function Waterfall(): ReactNode {
   return (
     <div className={styles.panel}>
       <div className={styles.panelBar}>
-        <span className="chip chip-reason">RUN</span>
+        <span className="chip chip-reason">TRC</span>
         <span className={styles.panelTitle}>checkout-web-audit</span>
         <span>
-          · run · {ROWS.length} spans · {secs(TOTAL)}
+          · trace · {ROWS.length} spans · {secs(TOTAL)}
         </span>
         <span className={styles.panelLink}>cairn.sh/run/8kd2p</span>
       </div>
@@ -204,8 +204,8 @@ function RunPanel(): ReactNode {
 export default function Trajectory(): ReactNode {
   return (
     <Section id="trajectory">
-      <SectionHead kicker="◇  FLAGSHIP · RUN" headline="A whole agent run, shared.">
-        Your agent captures its run as OTel spans and drops it as a trajectory. The waterfall shows
+      <SectionHead kicker="◇  FLAGSHIP · TRC" headline="A whole agent run, shared.">
+        Your agent captures its run as OTel spans and drops it as a trace. The waterfall shows
         where the time actually went — reasoning, exec, reads, network, writes — and every{' '}
         <strong>write</strong> span links to the artifact it produced. A run is not a log; it is a
         shareable object with reactions and comments on any span.

@@ -495,7 +495,7 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activ
 		TypeName:      s.reg.DisplayNameFor(a.ShareType),
 		WebURL:        s.webURL(a),
 		MCPHandle:     s.mcpHandle(a),
-		MetaLine:      metaLine(a),
+		MetaLine:      s.metaLine(a),
 		PanelFields:   s.reg.MetadataPanelFor(a),
 		Details:       detailFields(a),
 		ReactionCount: a.ReactionCount,
@@ -729,9 +729,17 @@ func detailFields(a *artifact.Artifact) []sharetype.PanelField {
 
 // metaLine is the compact header meta ("1.2 kB · text/markdown"). For bodyless
 // types (trajectory, bundle) it names the type instead.
-func metaLine(a *artifact.Artifact) string {
+func (s *Server) metaLine(a *artifact.Artifact) string {
 	if a.BodySHA256 == "" {
-		return string(a.ShareType)
+		// The registry's DISPLAY NAME, never the raw share_type key: this string
+		// is rendered as visible text (the shell's artifact-meta line, the bin
+		// row subtitle), and the key is a wire identifier. A trace's key stays
+		// "trajectory" until ADR-0016 Phase 2, so reading it here printed the
+		// retired word straight onto the page.
+		//
+		// Governing: ADR-0016 (traces, not trajectories) Phase 1, ADR-0002
+		// (registry-resolved presentation; no switch on type).
+		return s.reg.DisplayNameFor(a.ShareType)
 	}
 	if a.MediaType != "" {
 		return humanizeBytes(a.Size) + " · " + a.MediaType

@@ -8,7 +8,7 @@ slug: /share-types
 
 A share type is the *kind* of artifact. It decides three things: the **viewer** that
 renders the body, the **metadata panel** on the right, and the **annotation anchors**
-you can react to or comment on. The set is **extensible** — trajectories were added
+you can react to or comment on. The set is **extensible** — traces were added
 as a new type without disturbing the others (see
 [ADR-0002](../decisions/ADR-0002.md)).
 
@@ -53,12 +53,16 @@ Requests are **reactable but not comment-threaded** — discussion moves to the
 artifacts they produce. See
 [ADR-0010](../decisions/ADR-0010.md).
 
-## <span class="chip chip-reason">RUN</span> Run
+## <span class="chip chip-reason">TRC</span> Trace
 
-**A whole agent run, shared.** The flagship type — a run captures the trajectory
-of an agent's work. (The registry key and `/v1` API noun stay `trajectory`; the
-badge, the `/run/` route, and the `run_create`/`run_append_spans` MCP tools all
-say "run".)
+**A whole agent run, shared.** The flagship type — a trace is the captured,
+shareable record of an agent run.
+
+A **trace** is the artifact; a **run** is the execution it records. That is why
+the URL and the tools keep the run noun — `cairn.sh/run/<id>`, `/v1/runs`,
+`run_create`/`run_append_spans` — while everything a reader sees says trace. The
+stored `share_type` is still `trajectory` and stays accepted on the wire
+indefinitely; see [ADR-0016](../decisions/ADR-0016.md).
 
 - A call-trace **waterfall** is pinned up top: OTel-style spans nested by depth, over
   a time ruler, colored by category —

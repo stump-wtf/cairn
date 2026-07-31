@@ -39,33 +39,39 @@ func TestUXBinTabsRenderCountsAndTruthfulLabels(t *testing.T) {
 	}
 }
 
-// #68 — One primary name for the flagship type: "run" across badge, bin label,
-// detail title, and route. The badge is RUN, the display name is "run", the
-// route is /run/, and the registry key stays "trajectory" only as the data
-// hook (never reader-facing). No legacy /trajectory/ route exists to break.
-func TestUXRunsHaveOnePrimaryName(t *testing.T) {
+// #68 / ADR-0016 — One primary name for the flagship type, and it is "trace":
+// the word users and agents already say, and the one ADR-0015's OTLP endpoint
+// makes coherent. The badge is TRC and the display name is "trace"; "run"
+// survives only as the EXECUTION a trace records, which is why the route and
+// the MCP handle keep /run/. The registry key stays "trajectory" as a pure data
+// hook until ADR-0016 Phase 2 flips the stored value — never reader-facing.
+func TestUXTracesHaveOnePrimaryName(t *testing.T) {
 	s := newWebServer(t)
 	trj := renderShellHTML(t, s, fixtureArtifact(artifact.TypeTrajectory, false))
 	for _, frag := range []string{
-		`>RUN<`,                       // badge
-		`title="run"`,                 // badge tooltip / reader-facing name
-		`https://cairn.sh/run/abc123`, // route
-		`mcp://cairn/run/abc123`,      // mcp handle
+		`>TRC<`,                       // badge
+		`title="trace"`,               // badge tooltip / reader-facing name
+		`https://cairn.sh/run/abc123`, // route — a trace OF a run (ADR-0005 kept)
+		`mcp://cairn/run/abc123`,      // mcp handle, likewise
 		`data-type="trajectory"`,      // registry key stays the data hook only
 	} {
 		if !strings.Contains(trj, frag) {
-			t.Errorf("#68 run naming: trajectory shell missing %q", frag)
+			t.Errorf("ADR-0016 naming: trace shell missing %q", frag)
 		}
 	}
-	// The reader-facing name is "run" everywhere a reader meets it; the only
-	// "trajectory" left on the page is the data-type hook, never a label.
+	// "trajectory" is a wire identifier, never a label: the only occurrence left
+	// on the page is the data-type hook.
 	if strings.Contains(trj, `title="trajectory"`) {
-		t.Error("#68 run naming: badge tooltip should read \"run\", not the registry key")
+		t.Error("ADR-0016 naming: badge tooltip should read \"trace\", not the registry key")
+	}
+	// And the retired name must not come back as the reader-facing one.
+	if strings.Contains(trj, `title="run"`) {
+		t.Error("ADR-0016 naming: the type is a trace; \"run\" names the execution, not the artifact")
 	}
 
 	// The registry resolves the display name from data, not a switch (ADR-0002).
-	if got := sharetype.Default().DisplayNameFor(sharetype.KeyTrajectory); got != "run" {
-		t.Errorf("#68 run naming: DisplayNameFor(trajectory) = %q, want \"run\"", got)
+	if got := sharetype.Default().DisplayNameFor(sharetype.KeyTrajectory); got != "trace" {
+		t.Errorf("ADR-0016 naming: DisplayNameFor(trajectory) = %q, want \"trace\"", got)
 	}
 }
 
@@ -147,7 +153,7 @@ func TestUXBinRowGlyphsAreLabeled(t *testing.T) {
 	html := renderBinHTML(t, s, "bin", binPageView{
 		Actor: "joe",
 		Rows: []binRow{{
-			ID: "abc123", Badge: "RUN", TypeLabel: "trajectory", TypeName: "run",
+			ID: "abc123", Badge: "TRC", TypeLabel: "trajectory", TypeName: "trace",
 			Title: "audit", WebURL: "/run/abc123",
 			Lead: "claude", LeadShort: "claude", Channel: "via MCP", Age: "2h ago", TTL: "in 6d",
 			ReactionCount: 1, CommentCount: 1, PinCount: 1,
