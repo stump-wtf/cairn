@@ -496,6 +496,28 @@ func TestTruncateAgentVersion(t *testing.T) {
 	}
 }
 
+func TestFormatSecondsHumanizesLongDurations(t *testing.T) {
+	cases := []struct {
+		ms   int64
+		want string
+	}{
+		{2900, "2.9s"},
+		{34164, "34.2s"},
+		{45_000, "45.0s"},
+		{89_999, "90.0s"},
+		{90_000, "1m 30s"},
+		{260_000, "4m 20s"},
+		{3_600_000, "1h 0m"},
+		{5_540_000, "1h 32m"},
+		{7_200_000, "2h 0m"},
+	}
+	for _, c := range cases {
+		if got := formatSeconds(c.ms); got != c.want {
+			t.Errorf("formatSeconds(%d) = %q, want %q", c.ms, got, c.want)
+		}
+	}
+}
+
 // TestBinRowTruncatesPseudoVersion asserts a Bin row renders the truncated
 // agent version with a tooltip carrying the full pseudo-version string.
 func TestBinRowTruncatesPseudoVersion(t *testing.T) {
@@ -519,5 +541,39 @@ func TestBinRowTruncatesPseudoVersion(t *testing.T) {
 	}
 	if strings.Contains(html, "ccae1f266157") && !strings.Contains(html, `title="`) {
 		t.Error("pseudo-version suffix should not appear in display text")
+	}
+}
+
+func TestHumanizeDurationMS(t *testing.T) {
+	cases := []struct {
+		ms   int64
+		want string
+	}{
+		{90_000, "1m 30s"},
+		{260_000, "4m 20s"},
+		{3_600_000, "1h 0m"},
+		{5_540_000, "1h 32m"},
+		{7_200_000, "2h 0m"},
+		{7_260_000, "2h 1m"},
+	}
+	for _, c := range cases {
+		if got := humanizeDurationMS(c.ms); got != c.want {
+			t.Errorf("humanizeDurationMS(%d) = %q, want %q", c.ms, got, c.want)
+		}
+	}
+}
+
+func TestFormatTokensZeroIsAbsent(t *testing.T) {
+	// formatTokens still renders the number; the absent-value dash is handled
+	// by the caller (buildTrajectoryView) which substitutes "—" with a tooltip.
+	// This test proves the underlying formatter doesn't fabricate a zero.
+	if got := formatTokens(0); got != "0" {
+		t.Errorf("formatTokens(0) = %q, want \"0\"", got)
+	}
+	if got := formatTokens(48100); got != "48.1k" {
+		t.Errorf("formatTokens(48100) = %q, want \"48.1k\"", got)
+	}
+	if got := formatTokens(900); got != "900" {
+		t.Errorf("formatTokens(900) = %q, want \"900\"", got)
 	}
 }

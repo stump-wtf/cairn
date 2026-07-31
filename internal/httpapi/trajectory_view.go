@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -237,6 +238,7 @@ type statTile struct {
 	Value string
 	Unit  string
 	Label string
+	Title string // tooltip for values that need explanation (e.g. "not reported")
 }
 
 // categorySeg is one segment of the TIME BY CATEGORY stacked bar and its legend
@@ -440,12 +442,19 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 		vm.Stream = append(vm.Stream, s.streamRowFor(a.PublicID, sp, tallies))
 	}
 
-	// RUN STATS 2×2 tiles (all derived).
+	// RUN STATS 2×2 tiles (all derived). Tokens render "—" when the client
+	// didn't report them, not a fabricated zero that reads as "no tokens used".
+	tokenVal := formatTokens(run.Stats.TokenCount)
+	var tokenTitle string
+	if run.Stats.TokenCount == 0 {
+		tokenVal = "—"
+		tokenTitle = "not reported by this client"
+	}
 	vm.Stats = []statTile{
 		{Value: formatSecondsBare(wall), Unit: "s", Label: "wall time"},
 		{Value: itoa(run.Stats.SpanCount), Label: "spans"},
 		{Value: itoa(run.Stats.ToolCallCount), Label: "tool calls"},
-		{Value: formatTokens(run.Stats.TokenCount), Label: "tokens"},
+		{Value: tokenVal, Label: "tokens", Title: tokenTitle},
 	}
 
 	// TIME BY CATEGORY stacked bar + waterfall legend, both over the categories
@@ -802,9 +811,12 @@ func formatPct(p float64) string {
 	return strconv.FormatFloat(p, 'f', 1, 64)
 }
 
-// formatSeconds renders milliseconds as one-decimal seconds with a trailing "s"
-// (e.g. 2900 → "2.9s", 34164 → "34.2s"), matching the design's duration labels.
+// formatSeconds renders a millisecond duration with a "s" suffix. Durations
+// ≥ 90s are humanized ("1h 32m", "4m 20s"); below that, seconds are fine.
 func formatSeconds(ms int64) string {
+	if ms >= 90_000 {
+		return humanizeDurationMS(ms)
+	}
 	return formatSecondsBare(ms) + "s"
 }
 
@@ -812,6 +824,23 @@ func formatSeconds(ms int64) string {
 // the unit separately.
 func formatSecondsBare(ms int64) string {
 	return strconv.FormatFloat(float64(ms)/1000, 'f', 1, 64)
+}
+
+// humanizeDurationMS renders a millisecond duration ≥ 90s as "Nh Mm" or
+// "Nm Ns". Seconds are only included when the duration is under an hour.
+func humanizeDurationMS(ms int64) string {
+	d := time.Duration(ms) * time.Millisecond
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	s := int(d.Seconds()) % 60
+	switch {
+	case h > 0:
+		return strconv.Itoa(h) + "h " + strconv.Itoa(m) + "m"
+	case m > 0:
+		return strconv.Itoa(m) + "m " + strconv.Itoa(s) + "s"
+	default:
+		return strconv.Itoa(s) + "s"
+	}
 }
 
 // formatTokens renders a token count compactly (48100 → "48.1k", 900 → "900").

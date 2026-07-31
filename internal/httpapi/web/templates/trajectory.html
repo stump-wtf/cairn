@@ -130,7 +130,7 @@
     <section class="panel-section" aria-labelledby="stats-h">
       <h2 class="panel-h" id="stats-h">Run stats</h2>
       <div class="stat-grid">
-        {{range .Stats}}<div class="stat-tile"><span class="stat-val">{{.Value}}{{if .Unit}}<span class="stat-unit">{{.Unit}}</span>{{end}}</span><span class="stat-label">{{.Label}}</span></div>{{end}}
+        {{range .Stats}}<div class="stat-tile"{{if .Title}} title="{{.Title}}"{{end}}><span class="stat-val">{{.Value}}{{if .Unit}}<span class="stat-unit">{{.Unit}}</span>{{end}}</span><span class="stat-label">{{.Label}}</span></div>{{end}}
       </div>
     </section>
 
