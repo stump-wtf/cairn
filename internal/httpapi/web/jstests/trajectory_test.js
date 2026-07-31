@@ -9,7 +9,7 @@
 'use strict';
 
 var assert = require('assert');
-var tj = require('./trajectory.js');
+var tj = require('../assets/trajectory.js');
 
 // A sub-agent excursion: parent [0..200], children nested inside it, then a
 // following top-level span. Anchors are START times (posMs) in row order.

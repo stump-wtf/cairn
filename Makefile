@@ -15,11 +15,18 @@ test-race:
 
 # The trajectory viewer's pure scrubber math has a plain-node unit test (no
 # DOM). Skipped silently when node is absent, so a Go-only box still passes.
+#
+# It lives in web/jstests/, NOT beside the code in web/assets/: that directory
+# is embedded wholesale (`//go:embed web/assets` in web.go) and served at
+# /assets/*, so a *_test.js sitting there ships inside the production binary and
+# is publicly fetchable. TestAssetsShipNoTestFiles guards that boundary.
 test-js:
 	@if command -v node >/dev/null 2>&1; then \
-		node internal/httpapi/web/assets/trajectory_js_test.js; \
+		for f in internal/httpapi/web/jstests/*_test.js; do \
+			[ -e "$$f" ] || continue; node "$$f" || exit 1; \
+		done; \
 	else \
-		echo "node not found; skipping trajectory_js_test.js"; \
+		echo "node not found; skipping JS unit tests"; \
 	fi
 
 vet:
