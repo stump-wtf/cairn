@@ -151,12 +151,24 @@ func isGenericFloor(declared artifact.ShareType) bool {
 // it names, used to promote a generic-floor declaration to a content-derived
 // type. Markdown is recognized by its `markdown` token (http.DetectContentType
 // reports markdown as text/plain, so this only fires when the client declared
-// the markdown media type); code is delegated to code.Detect so a body and a
-// standalone artifact can never disagree about language. Anything else stays
-// on the generic floor. Mirrored by ClassifyMember for bundle members.
+// the markdown media type); images are delegated to the image type's own
+// PreviewableMedia and code to code.Detect, so a promoted artifact and an
+// explicitly declared one can never disagree. Anything else stays on the
+// generic floor. Mirrored by ClassifyMember for bundle members.
+//
+// Order is markdown, then image, then code, and it matters: chroma has an XML
+// lexer, so an `image/svg+xml` body would otherwise promote to CODE while the
+// same body declared `image` renders as an image — reintroducing the exact
+// push-path divergence this promotion exists to remove.
 func (r *Registry) classifyByMedia(mediaType string) artifact.ShareType {
 	if strings.Contains(strings.ToLower(mediaType), "markdown") && r.Registered(KeyMarkdown) {
 		return KeyMarkdown
+	}
+	// Asked of the registered handler rather than re-testing an `image/` prefix
+	// here: the type owns what it can render (ADR-0002, no switch on type), and
+	// a second copy of that predicate is a divergence waiting to happen.
+	if r.Registered(KeyImage) && r.Resolve(KeyImage).PreviewableMedia(mediaType) {
+		return KeyImage
 	}
 	if r.Registered(KeyCode) && code.Detect("", mediaType, "").Key != code.PlainTextKey {
 		return KeyCode

@@ -142,6 +142,17 @@ func TestDecidePreviewPromotesGenericFloorByContent(t *testing.T) {
 		{"markdown declared empty", "", "text/markdown", KeyMarkdown, true},
 		{"go declared file", artifact.TypeFile, "text/x-go", KeyCode, true},
 		{"go declared empty", "", "text/x-gosrc", KeyCode, true},
+		// An image pushed on the generic route badges IMG and previews, exactly
+		// as the same body declared `image` does — the promotion is asked of
+		// the image type's own PreviewableMedia, so the two routes cannot
+		// diverge. SVG lands on IMAGE, not CODE, despite chroma having an XML
+		// lexer: the ordering in classifyByMedia is what guarantees it.
+		{"png declared file", artifact.TypeFile, "image/png", KeyImage, true},
+		{"jpeg declared empty", "", "image/jpeg", KeyImage, true},
+		{"svg prefers image over the xml lexer", artifact.TypeFile, "image/svg+xml", KeyImage, true},
+		// Plain text is not code: chroma resolves it to its plain-text
+		// sentinel, so a .txt body stays on the floor rather than badging CODE.
+		{"plain text stays file", artifact.TypeFile, "text/plain", artifact.TypeFile, false},
 		{"generic binary stays file", artifact.TypeFile, "application/octet-stream", artifact.TypeFile, false},
 		{"gzip floor stays gz", artifact.TypeGZ, "application/gzip", artifact.TypeGZ, false},
 		{"declared bundle untouched", artifact.TypeBundle, "application/octet-stream", artifact.TypeBundle, true},
