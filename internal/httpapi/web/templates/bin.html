@@ -26,9 +26,14 @@
 <main id="bin-main" class="bin-main" role="main" tabindex="-1">
   <div class="bin-toolbar" data-bin-toolbar>
     <div class="bin-tabs" role="tablist" aria-label="Filter artifacts">
-      <button type="button" class="bin-tab" role="tab" data-scope="all" aria-selected="true" tabindex="0">Bin</button>
-      <button type="button" class="bin-tab" role="tab" data-scope="shared" aria-selected="false" tabindex="-1">Shared</button>
-      <button type="button" class="bin-tab" role="tab" data-scope="agents" aria-selected="false" tabindex="-1">Agents</button>
+      {{/* Each tab names its scope AND carries a live count, so identical
+          scopes are visibly identical rather than mysteriously so (#67). The
+          count is filled by app.js over the loaded rows (the same rows the
+          tabs filter); "From agents" — not "Agents" — because the lens is
+          artifacts PUSHED BY agents, not a directory of agents. */}}
+      <button type="button" class="bin-tab" role="tab" data-scope="all" data-label="Bin" aria-selected="true" tabindex="0">Bin <span class="bin-tab-count" data-tab-count aria-hidden="true"></span></button>
+      <button type="button" class="bin-tab" role="tab" data-scope="shared" data-label="Shared" aria-selected="false" tabindex="-1">Shared <span class="bin-tab-count" data-tab-count aria-hidden="true"></span></button>
+      <button type="button" class="bin-tab" role="tab" data-scope="agents" data-label="From agents" aria-selected="false" tabindex="-1">From agents <span class="bin-tab-count" data-tab-count aria-hidden="true"></span></button>
     </div>
     <div class="bin-toolbar-right">
       <label class="bin-filter" for="bin-filter-input">

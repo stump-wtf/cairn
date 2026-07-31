@@ -392,7 +392,11 @@ func TestBinChromeRendersTabsFilterPush(t *testing.T) {
 	for _, frag := range []string{
 		`role="tablist"`,
 		`data-scope="all"`, `data-scope="shared"`, `data-scope="agents"`,
-		">Bin<", ">Shared<", ">Agents<",
+		// Each tab names its scope and carries a live-count slot (#67); "From
+		// agents" is the truthful label for the agent-pushed lens, not "Agents"
+		// (which reads as a directory of agents).
+		">Bin <span", ">Shared <span", ">From agents <span",
+		`data-tab-count`,
 		`data-bin-filter`,
 		`aria-label="Filter artifacts by title or provenance"`,
 		"how to push",
