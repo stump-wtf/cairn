@@ -53,9 +53,12 @@ Requests are **reactable but not comment-threaded** — discussion moves to the
 artifacts they produce. See
 [ADR-0010](../decisions/ADR-0010.md).
 
-## <span class="chip chip-reason">TRJ</span> Trajectory
+## <span class="chip chip-reason">RUN</span> Run
 
-**A whole agent run, shared.** The flagship type.
+**A whole agent run, shared.** The flagship type — a run captures the trajectory
+of an agent's work. (The registry key and `/v1` API noun stay `trajectory`; the
+badge, the `/run/` route, and the `run_create`/`run_append_spans` MCP tools all
+say "run".)
 
 - A call-trace **waterfall** is pinned up top: OTel-style spans nested by depth, over
   a time ruler, colored by category —

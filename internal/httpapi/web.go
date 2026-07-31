@@ -349,7 +349,8 @@ type shellView struct {
 	ID            string
 	Badge         string
 	Title         string
-	TypeLabel     string // the share-type key, shown as the breadcrumb crumb
+	TypeLabel     string // the share-type key, the data-type hook
+	TypeName      string // the reader-facing type name ("run" for a trajectory — #68)
 	WebURL        string
 	MCPHandle     string
 	MetaLine      string // e.g. "1.2 kB · text/markdown"
@@ -491,6 +492,7 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activ
 		Badge:         s.reg.BadgeFor(a),
 		Title:         firstNonEmpty(a.Title, a.PublicID),
 		TypeLabel:     string(a.ShareType),
+		TypeName:      s.reg.DisplayNameFor(a.ShareType),
 		WebURL:        s.webURL(a),
 		MCPHandle:     s.mcpHandle(a),
 		MetaLine:      metaLine(a),

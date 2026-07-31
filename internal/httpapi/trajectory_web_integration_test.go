@@ -81,8 +81,8 @@ func TestIntegrationTrajectoryViewerRendersAuditRun(t *testing.T) {
 
 	// Header + shell chrome.
 	for _, frag := range []string{
-		`>TRJ<`,
-		`data-type="trajectory"`,
+		`>RUN<`,
+		`data-type="trajectory"`, // the registry key stays the data hook (#68)
 		`checkout-web-audit`,
 		`13 spans · 34.2s`,
 		`mcp://cairn/run/` + runID,

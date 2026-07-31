@@ -12,7 +12,7 @@
 <header class="app-header" role="banner">
   <a class="brand" href="/bin" aria-label="cairn bin">{{template "stone-logo" .}}<span class="wordmark">cairn</span></a>
   <span class="crumb-sep" aria-hidden="true">▸</span>
-  <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeLabel}}">{{.Badge}}</span>
+  <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeName}}">{{.Badge}}</span>
   <span class="artifact-title">{{.Title}}</span>
   <span class="artifact-meta">{{.MetaLine}}</span>
   {{if .Live}}<span class="live-badge" data-live-badge><span class="live-dot" aria-hidden="true"></span>live</span>{{end}}

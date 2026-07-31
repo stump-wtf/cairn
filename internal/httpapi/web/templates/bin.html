@@ -79,8 +79,8 @@
 
 {{define "bin-rows"}}{{range .Rows}}<a class="bin-row" href="{{.WebURL}}" data-type="{{.TypeLabel}}"
    data-agent="{{if .IsAgent}}1{{else}}0{{end}}" data-shared="{{if .IsShared}}1{{else}}0{{end}}"
-   data-search="{{.Title}} {{.Lead}} {{.Channel}} {{.TypeLabel}}">
-  <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeLabel}}">{{.Badge}}<span class="sr-only"> {{.TypeLabel}}</span></span>
+   data-search="{{.Title}} {{.Lead}} {{.Channel}} {{.TypeLabel}} {{.TypeName}}">
+  <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeName}}">{{.Badge}}<span class="sr-only"> {{.TypeName}}</span></span>
   <span class="bin-row-main">
     <span class="bin-row-title">{{.Title}}</span>
     <span class="bin-row-sub">{{.Subtitle}}</span>

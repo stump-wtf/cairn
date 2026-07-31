@@ -41,7 +41,8 @@ type binPageView struct {
 type binRow struct {
 	ID            string
 	Badge         string
-	TypeLabel     string
+	TypeLabel     string // the raw share-type key: the data-type/data-search hook
+	TypeName      string // the reader-facing type name ("run" for a trajectory — #68)
 	Title         string
 	Subtitle      string
 	WebURL        string
@@ -96,6 +97,7 @@ func (s *Server) renderBin(w http.ResponseWriter, r *http.Request, p *Principal)
 			ID:            a.PublicID,
 			Badge:         s.reg.BadgeFor(a),
 			TypeLabel:     string(a.ShareType),
+			TypeName:      s.reg.DisplayNameFor(a.ShareType),
 			Title:         firstNonEmpty(a.Title, a.PublicID),
 			Subtitle:      metaLine(a),
 			WebURL:        s.webURL(a),

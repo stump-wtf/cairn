@@ -76,6 +76,30 @@ func (r *Registry) BadgeFor(a *artifact.Artifact) string {
 	return t.Badge()
 }
 
+// DisplayNamer is the optional capability for a share type whose human-facing
+// name differs from its registry key — the trajectory type is keyed
+// "trajectory" (the stored identifier, the /v1 API noun, the docs-prose term)
+// but reads as "run" everywhere a reader meets it, matching the /run/ routes
+// and the run_create/run_append_spans MCP tools agents actually call (the #68
+// taxonomy decision). Types whose key already reads well do not implement it.
+type DisplayNamer interface {
+	DisplayName() string
+}
+
+// DisplayNameFor resolves key and returns its human-facing display name: the
+// type's DisplayName() when implemented and non-empty, else the raw key.
+// Total, like Resolve. Callers rendering the type for a reader (badge tooltip,
+// sr-only cue, breadcrumb) use this; the raw key stays the data-hook value.
+func (r *Registry) DisplayNameFor(key artifact.ShareType) string {
+	t := r.Resolve(key)
+	if n, ok := t.(DisplayNamer); ok {
+		if name := n.DisplayName(); name != "" {
+			return name
+		}
+	}
+	return string(key)
+}
+
 // BodyViewer is the optional capability through which a share type renders its
 // server-side body fragment for the app shell's body slot (ADR-0011). The body
 // reader streams from the content-addressed store (ADR-0008); the fragment is
