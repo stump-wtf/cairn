@@ -119,6 +119,10 @@ jobs:
     name: integration (postgres + garage)
     needs: [secrets]
     runs-on: ubuntu-latest
+    # Six runners share one daemon at capacity 3, so a job that hangs holding a
+    # network and two sidecars costs a third of the fleet until it is reaped.
+    # The bootstrap waits are individually bounded; this bounds the whole job.
+    timeout-minutes: 20
     env:
       NET: cairn-ci-${{ gitea.run_id }}
       PG: cairn-pg-${{ gitea.run_id }}
@@ -221,6 +225,30 @@ jobs:
           docker exec "$GARAGE" /garage bucket allow --read --write --owner \
             "$S3_BUCKET" --key "$CAIRN_TEST_S3_ACCESS_KEY"
 
+      # Fail FAST and LOUDLY if the wiring did not reach the test process.
+      #
+      # This job exists because ~270 tests self-skipped and reported green. That
+      # failure mode is not fixed by standing up a database — it is fixed by
+      # standing one up AND noticing when the tests do not see it. Without this
+      # step a typo in the DSN, a sidecar that died after its readiness probe,
+      # or a future change to how act_runner exports step env would put the
+      # skips straight back and the job would still pass, with the added
+      # confidence of a job named "integration". `-v` because Go prints skip
+      # reasons only in verbose mode; two packages because they carry the DB
+      # and S3 harnesses between them.
+      - name: Assert the DB-gated tests are not self-skipping
+        env:
+          CAIRN_TEST_DATABASE_URL: postgres://cairn:cairn@postgres:5432/cairn?sslmode=disable
+          CAIRN_TEST_S3_ENDPOINT: garage:3900
+          CAIRN_TEST_S3_BUCKET: cairn
+        run: |
+          set -euo pipefail
+          go test ./internal/store/ ./internal/webhook/ -count=1 -v 2>&1 | tee /tmp/probe.log
+          if grep -q 'set CAIRN_TEST_DATABASE_URL' /tmp/probe.log; then
+            echo "::error::the DB-gated tests self-skipped — CAIRN_TEST_DATABASE_URL never reached them"
+            exit 1
+          fi
+
       # `make test`, not `make ci`: the shared build job above already runs
       # fmt-check + vet + build + test-race. This job's job is COVERAGE — the
       # tests that cannot run without a database. Putting -race on top of the
@@ -232,6 +260,24 @@ jobs:
           CAIRN_TEST_S3_ENDPOINT: garage:3900
           CAIRN_TEST_S3_BUCKET: cairn
         run: make test
+
+      # The S3 harnesses are the dangerous half: unlike the DB ones they do not
+      # skip when CAIRN_TEST_S3_ENDPOINT is unusable, they fall back to an
+      # in-memory store and PASS. Nothing on the Go side distinguishes the two
+      # runs, so "tested against Garage" would be an unfalsifiable claim. Ask
+      # Garage instead — after a full suite the bucket must hold the objects the
+      # store and webhook round-trips just wrote.
+      - name: Assert the object-store tests really hit Garage
+        run: |
+          set -euo pipefail
+          docker exec "$GARAGE" /garage bucket info "$S3_BUCKET"
+          objects="$(docker exec "$GARAGE" /garage bucket info "$S3_BUCKET" \
+            | awk '/^Objects:/{print $2; exit}')"
+          if [ "${objects:-0}" -eq 0 ]; then
+            echo "::error::Garage's bucket is empty — the S3-backed tests fell back to the in-memory store"
+            exit 1
+          fi
+          echo "Garage holds $objects objects written by the suite."
 
       # Always: a leaked network or sidecar outlives the job on a shared daemon.
       - name: Tear down
