@@ -10,10 +10,18 @@
 //     keyboard scenario describes;
 //   - HTMX pane swaps (the links carry hx-get) with focus moved into the freshly
 //     loaded pane and the panel relabelled by the active file; and
-//   - member-scoped block reactions: a `＋` inside a member pane posts a
-//     bundle_file reaction (carrying the member name + block id) so it resolves
-//     to that member, not the bundle — intercepted in the capture phase so
-//     markdown.js's md_block handler (an anchor the bundle forbids) never runs.
+//   - the file rail's per-member engagement badge, kept current at click time as
+//     reactions land inside the pane.
+//
+// Reactions THEMSELVES are not implemented here. A markdown member renders the
+// same viewer fragment as a standalone markdown artifact, so markdown.js owns
+// every block/bullet affordance on both surfaces and simply derives a
+// member-scoped bundle_file anchor when its viewer sits inside a member pane
+// (see anchorRefFor there). This file used to carry a second, parallel reaction
+// implementation for the in-bundle case; it drifted from the one beside it —
+// dropping the bullet path so every bullet of a list collapsed onto its block,
+// and rendering no pills at all, so a reaction posted, counted, and then showed
+// the reader nothing. One implementation cannot drift from itself.
 //
 // If this script fails to load the rail links still navigate (full render) and
 // the whole-bundle composer still posts, so core reading degrades gracefully.
@@ -21,16 +29,10 @@
 (function () {
   'use strict';
 
-  var REACTIONS = ['👍', '🎉', '👀', '🚀', '❤️', '🤔'];
-
-  function artifactID() {
-    var seg = window.location.pathname.replace(/^\/+/, '').split('/');
-    return seg[0] || '';
-  }
-
-  function csrfToken() {
-    var m = document.cookie.match(/(?:^|;\s*)cairn_csrf=([^;]+)/);
-    return m ? decodeURIComponent(m[1]) : '';
+  // cssEscape falls back to manual escaping only for engines without
+  // CSS.escape (matching markdown.js's flashTOC helper).
+  function cssEscape(s) {
+    return (window.CSS && window.CSS.escape) ? window.CSS.escape(s) : s.replace(/[^\w-]/g, '\\$&');
   }
 
   // --- file rail (vertical tablist, manual activation) ----------------------
@@ -95,157 +97,17 @@
     // After htmx swaps the pane in, relabel it by the active file and move focus
     // into it so a keyboard/AT user lands on the freshly loaded content
     // (predictable focus on switch, SPEC-0003 a11y). aria-live already announces.
-    // The freshly-swapped pane's triggers are also unhydrated (server-rendered
-    // markup carries no reaction state, ADR-0002) — re-hydrate them the same
-    // way the initial pane is below (#72 follow-up).
+    // The swapped-in pane's own reaction state is re-hydrated by markdown.js,
+    // which listens for the same swap.
     document.body.addEventListener('htmx:afterSwap', function (e) {
       if (!e.target || e.target.id !== 'bundle-pane') return;
       var sel = rail.querySelector('[aria-selected="true"]');
       if (sel) pane.setAttribute('aria-labelledby', sel.id);
       if (focusPaneNext) { pane.focus(); focusPaneNext = false; }
-      hydrateMemberReactions(viewer);
-    });
-
-    // Hydrate the initially server-rendered active pane's own reactions too
-    // (not just the ones loaded after a later HTMX swap), so the "reacted"
-    // marker survives a plain page reload (#72 follow-up).
-    hydrateMemberReactions(viewer);
-  }
-
-  // --- member-scoped block reaction picker ----------------------------------
-  //
-  // Click-time feedback (issue #72, adapting the #66 treatment to the bundle
-  // viewer's per-member ENGAGEMENT-COUNT model rather than markdown.js's
-  // per-block PILL model): the bundle rail never shows a pill per block — it
-  // shows one aggregated `.bundle-file-count` badge per member, sourced
-  // server-side from memberReactionCounts. So "click-time feedback" here means
-  // two things happening synchronously with the click, not on next reload: (1)
-  // the trigger itself flips into a persistent "reacted" visual state (CSS in
-  // bundle.css keyed off [data-reacted], which — pre-#72 — this set but never
-  // styled), and (2) the owning member's rail badge count is bumped in place
-  // (bumpFileEngagement), because that count is otherwise only ever correct
-  // again after a full reload re-runs memberReactionCounts server-side.
-  //
-  // Reacting the same emoji a trigger already shows now toggles it off
-  // (DELETE), matching SPEC-0006 idempotent reactions and the #66 toggle
-  // convention; a different emoji simply reacts again (a bundle_file anchor
-  // permits multiple emoji per actor, same as md_block). A write failure
-  // routes 401 (not signed in) to /login with a return path, exactly like
-  // markdown.js's handleReactError; any other failure surfaces a small inline
-  // toast instead of the click silently doing nothing.
-  //
-  // hydrateMemberReactions ports markdown.js's loadReactions (a #66 fix) to
-  // this trigger's single data-reacted slot: without it, a reload drops the
-  // marker even though the server still has the viewer's reaction, so (a) the
-  // "on" CSS/aria state vanishes, (b) toggle-off (DELETE) becomes unreachable
-  // until the viewer reacts again in this session, and (c) that re-react hits
-  // the POST branch with already=false, so the server correctly no-ops
-  // (200, created=false) while the click handler still bumps the rail badge —
-  // a client-only over-count that heals only on the NEXT reload. Fixing the
-  // marker closes that gap at its source.
-
-  var openPicker = null;
-
-  function closePicker(restoreFocus) {
-    if (!openPicker) return;
-    var trigger = openPicker.trigger;
-    openPicker.el.remove();
-    openPicker = null;
-    if (restoreFocus && trigger) trigger.focus();
-  }
-
-  // reactMemberFetch posts or removes (toggles) a bundle_file reaction scoped
-  // to one member (+ optional block). Never throws — onDone(ok, status) always
-  // fires so the caller can route a 401 (not signed in) apart from any other
-  // failure (#66's contract, mirrored from markdown.js's reactionFetch).
-  function reactMemberFetch(method, member, blockID, emoji, onDone) {
-    var id = artifactID();
-    if (!id) { onDone(false, 0); return; }
-    var ref = { name: member };
-    if (blockID) ref.block_id = blockID;
-    fetch('/v1/artifacts/' + encodeURIComponent(id) + '/reactions', {
-      method: method,
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
-      body: JSON.stringify({ anchor_type: 'bundle_file', anchor_ref: ref, emoji: emoji })
-    }).then(function (resp) {
-      onDone(resp.ok, resp.status);
-    }).catch(function () {
-      onDone(false, 0);
     });
   }
 
-  // handleMemberReactError is the shared failure path: a signed-out write
-  // 401s → route to login with a return path (mirroring markdown.js/#66, #41);
-  // any other failure surfaces a small inline toast rather than the click
-  // silently appearing to do nothing.
-  function handleMemberReactError(trigger, status) {
-    if (status === 401) {
-      window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
-      return;
-    }
-    var el = document.createElement('span');
-    el.className = 'md-react-error';
-    el.setAttribute('role', 'status');
-    el.textContent = 'Could not react — try again.';
-    var parent = trigger.parentNode;
-    parent.insertBefore(el, trigger.nextSibling);
-    setTimeout(function () { if (el.parentNode) el.remove(); }, 3500);
-  }
-
-  // baseReactLabel returns (and caches, on first touch, in data-base-label)
-  // the trigger's own aria-label as server/markdown.js rendered it ("React to
-  // this block" for a block trigger, "React to this item" for a md.js-injected
-  // bullet trigger) so reactedLabel can restore it verbatim on toggle-off
-  // instead of hardcoding one trigger kind's wording.
-  function baseReactLabel(trigger) {
-    var base = trigger.getAttribute('data-base-label');
-    if (!base) {
-      base = trigger.getAttribute('aria-label') || 'React to this block';
-      trigger.setAttribute('data-base-label', base);
-    }
-    return base;
-  }
-
-  // cssEscape falls back to manual escaping only for engines without
-  // CSS.escape (matching markdown.js's flashTOC helper).
-  function cssEscape(s) {
-    return (window.CSS && window.CSS.escape) ? window.CSS.escape(s) : s.replace(/[^\w-]/g, '\\$&');
-  }
-
-  // hydrateMemberReactions fetches the artifact's current per-anchor tallies
-  // (the same GET markdown.js's loadReactions draws from, #66) and marks every
-  // bundle_file trigger the viewer has already reacted to, so the "reacted"
-  // marker — and the CSS "on" state and aria-label it drives — survives a
-  // reload instead of only ever existing until the next navigation (#72
-  // follow-up). Every block trigger on the page shares the same markup
-  // (data-anchor-type="md_block", internal/markdown/viewer.go) regardless of
-  // whether it sits in a bundle member pane, so a tally is matched back to its
-  // trigger by member (the anchor_key's `name`, matched against the owning
-  // pane's data-member) plus block id — not by data-anchor-type, which the
-  // bundle_file tally does not carry.
-  function hydrateMemberReactions(viewer) {
-    var id = artifactID();
-    if (!id) return;
-    fetch('/v1/artifacts/' + encodeURIComponent(id) + '/reactions', { credentials: 'same-origin' })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (data) {
-        if (!data || !data.reactions) return;
-        data.reactions.forEach(function (t) {
-          if (t.anchor_type !== 'bundle_file' || !t.reacted) return;
-          var key;
-          try { key = JSON.parse(t.anchor_key); } catch (e) { return; }
-          if (!key || !key.name || !key.block_id) return;
-          var pane = viewer.querySelector('[data-member="' + cssEscape(key.name) + '"]');
-          if (!pane) return;
-          var trigger = pane.querySelector('.md-react[data-block-id="' + cssEscape(key.block_id) + '"]');
-          if (!trigger) return;
-          trigger.setAttribute('data-reacted', t.emoji);
-          trigger.setAttribute('aria-label', baseReactLabel(trigger) + ' — reacted ' + t.emoji);
-        });
-      })
-      .catch(function () { /* reactions are progressive enhancement; a failed fetch just leaves markers unset */ });
-  }
+  // --- per-member engagement badge ------------------------------------------
 
   // bumpFileEngagement adjusts the file rail's per-member engagement badge in
   // place by `delta` reactions, so the count the rail shows updates at
@@ -280,98 +142,13 @@
     }
   }
 
-  function showMemberPicker(trigger, member) {
-    closePicker(false);
-    var blockID = trigger.getAttribute('data-block-id') || '';
-    var pop = document.createElement('div');
-    pop.className = 'md-sel-toolbar md-react-picker';
-    pop.setAttribute('role', 'menu');
-    pop.setAttribute('aria-label', 'Choose a reaction');
-
-    REACTIONS.forEach(function (emoji) {
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.setAttribute('role', 'menuitem');
-      b.setAttribute('aria-label', 'React ' + emoji);
-      b.textContent = emoji;
-      // A single, clean click path (#66, matching markdown.js/the trajectory
-      // viewer's fix): close the picker WITH focus restore first, then post
-      // and update the trigger + rail badge on success — no competing
-      // handlers racing to tear down the popover.
-      //
-      // The rail badge bump is gated on the exact status the server used to
-      // report whether anything actually changed (SPEC-0006 "Idempotent
-      // Reactions": POST returns 201 on a real create, 200 on a no-op repeat;
-      // DELETE always 204). Bumping on every ok POST — not just a 201 — is
-      // exactly the drift a reload can otherwise reintroduce: the trigger's
-      // marker only tracks the LAST emoji reacted, so reacting emojiA then
-      // emojiB then emojiA again re-POSTs an emoji the server already has on
-      // file for this viewer/anchor, the server correctly 200/no-ops it, and
-      // an unconditional bump would still count it. Checking status is a
-      // second, independent guard against that over-count even when the
-      // marker itself (hydrateMemberReactions) is out of sync.
-      b.addEventListener('click', function () {
-        var already = trigger.getAttribute('data-reacted') === emoji;
-        closePicker(true);
-        reactMemberFetch(already ? 'DELETE' : 'POST', member, blockID, emoji, function (ok, status) {
-          if (!ok) { handleMemberReactError(trigger, status); return; }
-          if (already) {
-            trigger.removeAttribute('data-reacted');
-            trigger.setAttribute('aria-label', baseReactLabel(trigger));
-            if (status === 204) bumpFileEngagement(member, -1);
-          } else {
-            trigger.setAttribute('data-reacted', emoji);
-            trigger.setAttribute('aria-label', baseReactLabel(trigger) + ' — reacted ' + emoji);
-            if (status === 201) bumpFileEngagement(member, 1);
-          }
-        });
-      });
-      pop.appendChild(b);
-    });
-
-    document.body.appendChild(pop);
-    var r = trigger.getBoundingClientRect();
-    pop.style.top = (window.scrollY + r.bottom + 6) + 'px';
-    pop.style.left = (window.scrollX + r.left) + 'px';
-
-    openPicker = { el: pop, trigger: trigger };
-    var items = pop.querySelectorAll('button');
-    if (items.length) items[0].focus();
-
-    // Focus trap: Tab/Shift+Tab cycle within, Escape closes and restores focus.
-    pop.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') { e.preventDefault(); closePicker(true); return; }
-      if (e.key !== 'Tab') return;
-      var idx = Array.prototype.indexOf.call(items, document.activeElement);
-      e.preventDefault();
-      var nxt = e.shiftKey ? idx - 1 : idx + 1;
-      if (nxt < 0) nxt = items.length - 1;
-      if (nxt >= items.length) nxt = 0;
-      items[nxt].focus();
-    });
-  }
-
-  // Capture-phase interception: a `＋` inside a member pane posts a member-scoped
-  // bundle_file reaction. Stopping propagation here keeps markdown.js's bubble
-  // handler (which would post an md_block anchor the bundle rejects) from firing.
-  document.addEventListener('click', function (e) {
-    var trigger = e.target.closest ? e.target.closest('.md-react') : null;
-    if (!trigger) {
-      if (openPicker && !(e.target.closest && e.target.closest('.md-react-picker'))) {
-        closePicker(false);
-      }
-      return;
-    }
-    var member = trigger.closest('[data-member]');
-    if (!member) return; // not a bundle pane — leave markdown.js to handle it
-    e.preventDefault();
-    e.stopPropagation();
-    if (openPicker && openPicker.trigger === trigger) {
-      closePicker(true);
-    } else {
-      showMemberPicker(trigger, member.getAttribute('data-member'));
-    }
-  }, true);
+  // markdown.js announces every reaction it lands inside a member pane, already
+  // gated on the status the server used to report whether anything actually
+  // changed, so a repeat react never over-counts the badge.
+  document.addEventListener('cairn:member-reaction', function (e) {
+    if (!e.detail || !e.detail.member || !e.detail.delta) return;
+    bumpFileEngagement(e.detail.member, e.detail.delta);
+  });
 
   function init() { initRail(); }
 

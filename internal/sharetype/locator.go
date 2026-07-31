@@ -203,16 +203,25 @@ func imageRegionLocator(ref json.RawMessage) error {
 }
 
 // bundleFileLocator validates {"name":"notes.md"} with an optional member-scoped
-// "block_id" — the in-bundle member name (required) plus, for a markdown member,
-// the deterministic block id a reaction pins inside it. The name scopes every
-// per-file annotation to a specific member so the aggregated COMMENTS panel and
-// per-file engagement counts resolve to the right file (SPEC-0003 REQ "Bundle
-// Viewer"). Member-internal comment selections stay their own text_selection
-// anchor; this locator carries only whole-member and block-level scope.
+// "block_id" and, inside a list block, an optional ordinal "path" — the
+// in-bundle member name (required) plus, for a markdown member, the
+// deterministic block id a reaction pins inside it and the path into that
+// block's bullet tree. The name scopes every per-file annotation to a specific
+// member so the aggregated COMMENTS panel and per-file engagement counts
+// resolve to the right file (SPEC-0003 REQ "Bundle Viewer").
+//
+// block_id + path mirror the md_block / md_bullet locators exactly, because a
+// markdown member in a bundle renders the same blocks and bullets as the
+// standalone viewer and must anchor them just as finely. Without the path every
+// bullet of a list collapsed onto its block's anchor, so reacting to the second
+// bullet re-posted the first one's anchor and the server (correctly) no-oped it
+// — the reaction simply never appeared. Member-internal comment selections stay
+// their own text_selection anchor.
 func bundleFileLocator(ref json.RawMessage) error {
 	var loc struct {
 		Name    *string `json:"name"`
 		BlockID *string `json:"block_id"`
+		Path    []int   `json:"path"`
 	}
 	if err := decodeStrict(AnchorBundleFile, ref, &loc); err != nil {
 		return err
@@ -222,6 +231,21 @@ func bundleFileLocator(ref json.RawMessage) error {
 	}
 	if loc.BlockID != nil && *loc.BlockID == "" {
 		return errs.Validationf("sharetype: %q anchor_ref block_id, when present, must be non-empty", AnchorBundleFile)
+	}
+	if loc.Path == nil {
+		return nil
+	}
+	// A path names a bullet WITHIN a block, so it is meaningless on its own.
+	if loc.BlockID == nil {
+		return errs.Validationf("sharetype: %q anchor_ref path requires a block_id", AnchorBundleFile)
+	}
+	if len(loc.Path) == 0 {
+		return errs.Validationf("sharetype: %q anchor_ref path, when present, must be a non-empty ordinal path", AnchorBundleFile)
+	}
+	for _, ord := range loc.Path {
+		if ord < 0 {
+			return errs.Validationf("sharetype: %q anchor_ref path ordinals must be >= 0", AnchorBundleFile)
+		}
 	}
 	return nil
 }
