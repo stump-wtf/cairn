@@ -393,7 +393,7 @@ func TestBinChromeRendersTabsFilterPush(t *testing.T) {
 		">Bin<", ">Shared<", ">Agents<",
 		`data-bin-filter`,
 		`aria-label="Filter artifacts by title or provenance"`,
-		"push",
+		"how to push",
 		`aria-label="How to push an artifact"`,
 	} {
 		if !strings.Contains(html, frag) {

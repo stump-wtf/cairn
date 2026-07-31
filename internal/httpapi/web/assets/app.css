@@ -328,12 +328,12 @@ body.landing { display: flex; flex-direction: column; align-items: center; justi
 .bin-push { position: relative; }
 .bin-push-btn {
   list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
-  background: var(--well); border: 1px solid var(--border); border-radius: 8px;
-  color: var(--green-3); font: 600 12px var(--mono); padding: 7px 13px;
+  background: transparent; border: 1px solid transparent; border-radius: 8px;
+  color: var(--t5); font: 500 12px var(--mono); padding: 7px 13px;
 }
 .bin-push-btn::-webkit-details-marker { display: none; }
-.bin-push-btn:hover { border-color: var(--green-3); color: var(--green-2); }
-.bin-push[open] .bin-push-btn { border-color: var(--green-3); }
+.bin-push-btn:hover { color: var(--t1); border-color: var(--border); }
+.bin-push[open] .bin-push-btn { color: var(--t1); border-color: var(--border); }
 .bin-push-pop {
   position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; width: 320px;
   background: var(--card); border: 1px solid var(--border); border-radius: 10px;
