@@ -129,6 +129,13 @@
   // mid-scroll this anchor coincides with the centre visible row, so the
   // span-you-are-looking-at-is-on-screen property survives everywhere the old
   // maths actually delivered it.
+  //
+  // The anchor is a MONOTONE time envelope over the rows (monotoneAnchors),
+  // not the raw row midpoint: a depth-first waterfall emits a sub-agent parent
+  // BEFORE its children, while the parent's midpoint sorts AFTER every child's
+  // — so raw anchors briefly walk backwards inside every sub-agent. The
+  // envelope keeps the row→time relation non-decreasing, which is what makes
+  // the inverse lookup (scrollTopForTime) well-defined.
   function syncPan(root) {
     var rows = root.querySelector('[data-wf-rows]');
     if (!rows) return;
@@ -137,25 +144,70 @@
     var items = rows.children;
     if (!items.length) return;
     var vMax = rows.scrollHeight - rows.clientHeight;
-    // Clamped because macOS rubber-banding reports scrollTop outside [0, vMax]
-    // mid-bounce, which would index past the row array.
-    var fi = Math.min(Math.max((vMax > 0 ? rows.scrollTop / vMax : 0) * (items.length - 1), 0), items.length - 1);
+    // The pin is the live-run invariant (keepPan): when the reader has parked
+    // at the bottom of a still-streaming run, each appended span RE-ANCHORS
+    // the pan to the newest row rather than letting the fractional row index
+    // their scrollTop resolves to drift backwards as the list grows.
+    var fi;
+    if (rows._panPin && vMax > 0 && rows.scrollHeight - rows.clientHeight - rows.scrollTop <= 48) {
+      fi = items.length - 1;
+    } else {
+      // Clamped because macOS rubber-banding reports scrollTop outside
+      // [0, vMax] mid-bounce, which would index past the row array.
+      fi = Math.min(Math.max((vMax > 0 ? rows.scrollTop / vMax : 0) * (items.length - 1), 0), items.length - 1);
+    }
     var i0 = Math.floor(fi);
-    var t0 = anchorNear(items, i0, -1);
-    var t1 = anchorNear(items, Math.min(i0 + 1, items.length - 1), 1);
+    var anchors = monotoneAnchors(items);
+    // Walk to the nearest ANCHORED row rather than reading anchors[i0] flat:
+    // live-appended rows carry no posMs (appendWaterfallRow has only the raw
+    // SSE start, never the server's collapsed position), so on a streaming run
+    // the last rows are all null — and those are exactly the rows _panPin aims
+    // fi at. Reading flat made both t0 and t1 null there and syncPan returned
+    // without panning, which silently turned the pin into a no-op (#61).
+    var t0 = anchorAt(anchors, i0, -1);
+    var t1 = anchorAt(anchors, Math.min(i0 + 1, items.length - 1), 1);
     if (t0 === null) t0 = t1;
     if (t1 === null) t1 = t0;
     if (t0 === null) return;
     var t = t0 + (t1 - t0) * (fi - i0);
-    var target = (t / collapsedWallMS(root)) * rows.scrollWidth - rows.clientWidth / 2;
+    // Over the TRACK axis, not the whole row: `scrollWidth`/`clientWidth` here
+    // put the forward map on a different scale from the box and the ruler
+    // (trackViewport), so the thing the pan centred and the thing the box
+    // claimed were on screen drifted apart by a label column (#61).
+    var ax = trackAxis(rows);
+    var target = timeToScrollLeft(t, collapsedWallMS(root), ax.axisW, ax.viewW);
     rows.scrollLeft = Math.min(Math.max(target, 0), hMax);
     layoutRuler(root);
   }
 
-  // A row's time on the collapsed axis: its span's midpoint — except a prompt
-  // marker, whose duration is off the axis (it collapses like idle time), so
-  // centring on posMs + dur/2 would aim far past where the marker actually
-  // sits. Anchor prompts on their position alone.
+  // The nearest anchored row from `i` walking in `step`, over the monotone
+  // envelope. An unanchored row (see anchorTime) pins the pan to its closest
+  // real neighbour instead of cancelling the pan.
+  function anchorAt(anchors, i, step) {
+    for (var j = i; j >= 0 && j < anchors.length; j += step) {
+      if (anchors[j] !== null && anchors[j] !== undefined) return anchors[j];
+    }
+    return null;
+  }
+
+  // A row's time on the collapsed axis: its span's START (posMs), the point in
+  // the run the row marks in reading order.
+  //
+  // Two earlier anchors were wrong in opposite directions. Midpoint
+  // (posMs + dur/2) aimed the pan at a span's optical centre, but a sub-agent
+  // parent outlasts its children, so its midpoint sorted AFTER theirs while
+  // the depth-first walk emits its row BEFORE them — the raw anchor sequence
+  // walked time backward inside every sub-agent, and the first-crossing
+  // inverse (scrollTopForTime) collapsed the whole excursion onto one row
+  // step. Clamping that sequence monotone with a carry-forward-max only moved
+  // the collapse to the forward direction: scrolling through the sub-agent
+  // froze the pan until the last row.
+  //
+  // A start anchor sorts a parent BEFORE its children, which is where its row
+  // actually sits, so the raw sequence is monotone for the nesting case and
+  // the envelope below only has to resolve genuine time OVERLAPS (a span whose
+  // start precedes an already-emitted deeper row), which it resolves in
+  // reading order — the right answer for a reading-order-driven pan.
   //
   // No posMs means no place on the collapsed axis at all, so the row has no
   // anchor rather than an anchor of zero. Live-appended rows are exactly this
@@ -168,18 +220,34 @@
   function anchorTime(item) {
     var bar = item.querySelector('.wf-bar');
     if (!bar || !bar.dataset.posMs) return null;
-    return num(bar.dataset.posMs) + (bar.dataset.cat === 'prompt' ? 0 : num(bar.dataset.durMs) / 2);
+    // Delegates to the top-level anchorTimeFor so the in-page math and the
+    // node-tested math are the same function, not two copies to keep in sync.
+    return anchorTimeFor(num(bar.dataset.posMs));
   }
 
-  // The nearest anchored row from `i` walking in `step`, so an unanchored row
-  // (see anchorTime) pins the pan to its closest real neighbour instead of
-  // cancelling the pan or dragging it to zero.
-  function anchorNear(items, i, step) {
-    for (var j = i; j >= 0 && j < items.length; j += step) {
-      var t = anchorTime(items[j]);
-      if (t !== null) return t;
-    }
-    return null;
+  // The monotone non-decreasing time envelope over the row anchors: each row
+  // keeps its own anchor time unless that would walk backwards from the
+  // previous row's, in which case it inherits the previous value.
+  //
+  // With start anchors (see anchorTime) the raw sequence is already monotone
+  // through a sub-agent (the parent's start precedes its children's). What is
+  // left to resolve is genuine time OVERLAP: a top-level span can start before
+  // an earlier top-level span's deeper child ends, so the depth-first row
+  // order can still emit a row whose start precedes its predecessor's. The
+  // carry-forward-max clamps such a row up to its predecessor's time, in
+  // reading order — which is the order the pan actually walks. Both directions
+  // of the row↔time map (syncPan forward, scrollTopForTime inverse) read this
+  // one envelope, so they can never disagree.
+  //
+  // Rows without an anchor (no posMs — live-appended rows) pass through as
+  // null and do not advance the carrier: they have no place on the collapsed
+  // axis, and inventing one would map scrub positions onto rows the server has
+  // not placed yet. Consumers walk past them instead — syncPan via anchorAt,
+  // scrollTopForTime by skipping nulls in its scan.
+  function monotoneAnchors(items) {
+    var anchors = new Array(items.length);
+    for (var i = 0; i < items.length; i++) anchors[i] = anchorTime(items[i]);
+    return envelopeAnchors(anchors);
   }
 
   // The 95th-percentile work span, matching the server (buildTimeline). A
@@ -205,9 +273,9 @@
     syncTimelineViewport(root);
   }
 
-  // The box marks the TIME window currently on screen — scrollLeft over the
-  // zoomed track — not the vertical row fraction it used to mirror. The ticks
-  // it slides across are laid out on the collapsed time axis, so only a
+  // The box marks the TIME window currently on screen — the visible slice of
+  // the zoomed track — not the vertical row fraction it used to mirror. The
+  // ticks it slides across are laid out on the collapsed time axis, so only a
   // time-window box lines up with them: the ticks inside the box are exactly
   // the spans whose bars are visible. (Row-fraction and time-fraction diverge
   // for real runs — the same non-linearity syncPan exists to absorb.)
@@ -215,13 +283,79 @@
     var rows = root.querySelector('[data-wf-rows]');
     var box = root.querySelector('[data-tl-viewport]');
     if (!rows || !box) return;
-    var sw = rows.scrollWidth || 1;
-    var frac = Math.min(rows.clientWidth / sw, 1);
-    var at = sw > rows.clientWidth ? rows.scrollLeft / (sw - rows.clientWidth) : 0;
-    // The box spans the visible fraction and slides across the remaining width,
-    // so its right edge lands at 100% when the pan reaches the end of the run.
-    box.style.width = (frac * 100) + '%';
-    box.style.left = (at * (1 - frac) * 100) + '%';
+    var geom = trackViewport(rows);
+    box.style.width = (geom.frac * 100) + '%';
+    box.style.left = (geom.at * (1 - geom.frac) * 100) + '%';
+    announceViewport(box, geom);
+  }
+
+  // Keep the slider's accessible value in step with the box: the window's
+  // centre time, in whole seconds (aria-valuemax is CollapsedWallSecs). The
+  // drag and keyboard paths move the box directly, so this runs from
+  // syncTimelineViewport on the echo rather than from those paths.
+  function announceViewport(box, geom) {
+    var total = parseFloat(box.getAttribute('aria-valuemax') || '0');
+    if (!(total > 0)) return;
+    var centre = Math.round((geom.at * (1 - geom.frac) + geom.frac / 2) * total);
+    box.setAttribute('aria-valuenow', String(centre));
+    box.setAttribute('aria-valuetext', centre + 's into the run');
+  }
+
+  // The collapsed time axis, measured once and read by EVERY time↔pixel
+  // conversion in the scrubber (#61) — the viewport box, the ruler labels,
+  // syncPan's forward map, the pointer drag and the keyboard scrub. Mixing
+  // scales across those is what made the box, the ticks and the bars disagree;
+  // routing all five through one measurement is what makes that impossible.
+  //
+  // The 0–100% axis lives on the .wf-track column, NOT the whole .wf-row: the
+  // row is `grid-template-columns: 214px 1fr` with a gap, and the sticky label
+  // column sits to the LEFT of where bar percentages begin (layoutWaterfall
+  // sets bar.style.left as a percentage of the track). Reading
+  // clientWidth/scrollWidth over the whole row brackets the box and the ruler
+  // `from` a label-column width early — measured: at zoom 2 scrolled to the end
+  // the box claimed ticks sp15–sp29 while the bars on screen were sp17–sp29,
+  // 3s of error on a 27s window.
+  //
+  //   inset  content-space x where the axis begins (behind the sticky label).
+  //   axisW  the axis at the CURRENT zoom — the track column's laid-out width,
+  //          which is the full zoomed width, not the visible slice.
+  //   viewW  the slice of the axis actually on screen: the pane minus the label
+  //          column the sticky header parks over it.
+  //
+  // The label column differs at the mobile breakpoint (120px), so the inset is
+  // read from the DOM, never hardcoded. No caching: the callers (scroll, drag)
+  // already run at event rate and a stale inset is worse than a layout read.
+  function trackAxis(rows) {
+    var trackEl = rows.querySelector('.wf-track');
+    var inset = trackInset(rows, trackEl);
+    var axisW = trackEl ? Math.max(trackEl.clientWidth, 1) : Math.max(rows.scrollWidth - inset, 1);
+    var viewW = Math.min(Math.max(rows.clientWidth - inset, 1), axisW);
+    return { inset: inset, axisW: axisW, viewW: viewW };
+  }
+
+  // The horizontal offset from the rows' content-box left edge to the track
+  // column's left edge, in the pane's SCROLLED CONTENT coordinates — the same
+  // space as scrollLeft and scrollWidth.
+  //
+  // Measured off getBoundingClientRect, not offsetLeft: nothing between
+  // .wf-track and <body> is positioned (.wf-rows and .wf-row are both static),
+  // so the track's offsetParent is the body and offsetLeft measures from the
+  // PAGE — it carries the whole left gutter of the shell layout, which on a
+  // wide viewport exceeds the pane's own width and collapsed the axis to
+  // nothing. The rects are viewport-relative and therefore already shifted by
+  // -scrollLeft, so adding scrollLeft back lands in content coordinates; the
+  // inset is a layout constant and must NOT move as the pane pans.
+  function trackInset(rows, trackEl) {
+    if (!trackEl) return 0;
+    var d = trackEl.getBoundingClientRect().left - rows.getBoundingClientRect().left;
+    return Math.max(d + rows.scrollLeft, 0);
+  }
+
+  // The TIME window on screen as a fraction of the axis (`frac`) and how far
+  // its travel is used up (`at`, 0..1) — the box's width and position.
+  function trackViewport(rows) {
+    var ax = trackAxis(rows);
+    return viewportGeom(ax.axisW, ax.viewW, rows.scrollLeft);
   }
 
   function wireTimeline(root) {
@@ -271,6 +405,58 @@
     var rows = root.querySelector('[data-wf-rows]');
     if (!box || !track || !rows) return;
     var drag = null;
+
+    // Keyboard operation: the box is a slider over the run's time axis
+    // (role=slider in the markup). Arrow keys step the pan by one viewport
+    // (PageUp/Down by three), Home/End jump to the start/end of the run. This
+    // is the only pan control a run whose rows all fit the pane has — the
+    // wheel-driven pan cannot move without vertical travel — so the drag being
+    // pointer-only left a keyboard-only reader no route to it (#61).
+    box.addEventListener('keydown', function (e) {
+      var geom = trackViewport(rows);
+      var step = geom.frac > 0 ? geom.frac : 0.05;
+      var at = geom.at;
+      switch (e.key) {
+        case 'ArrowLeft': case 'ArrowDown': at -= step; break;
+        case 'ArrowRight': case 'ArrowUp': at += step; break;
+        case 'PageDown': at -= step * 3; break;
+        case 'PageUp': at += step * 3; break;
+        case 'Home': at = 0; break;
+        case 'End': at = 1; break;
+        default: return;
+      }
+      e.preventDefault();
+      scrubTo(rows, Math.min(Math.max(at, 0), 1));
+    });
+
+    // Drive the pan to a box position `at` (0..1 over the box's travel),
+    // honouring the same vertical-travel fork the pointer drag uses: with
+    // vertical travel the scrub goes through scrollTop so syncPan re-derives
+    // the pan; without, it writes scrollLeft directly. Shared by the keyboard
+    // handler and the pointer move so both scales agree (#61 min-width note).
+    function scrubTo(rowsEl, at) {
+      var geom = trackViewport(rowsEl);
+      var hMax = rowsEl.scrollWidth - rowsEl.clientWidth;
+      if (hMax <= 0) return;
+      var vMax = rowsEl.scrollHeight - rowsEl.clientHeight;
+      if (vMax > 0) {
+        // The window-centre time `at` points at, on the collapsed axis — over
+        // the TRACK, the same scale trackViewport draws the box from. Deriving
+        // it over scrollWidth (which includes the label column) reintroduced
+        // the exact bias this change exists to remove, and put the drag on a
+        // different scale from the box it was dragging (#61).
+        var ax = trackAxis(rowsEl);
+        var tc = centreTimeForScrollLeft(
+          at * Math.max(ax.axisW - ax.viewW, 0), collapsedWallMS(root), ax.axisW, ax.viewW);
+        rowsEl.scrollTop = scrollTopForTime(rowsEl, tc); // scroll listener re-derives the pan
+      } else {
+        rowsEl.scrollLeft = at * hMax;
+        layoutRuler(root);
+      }
+      box.style.left = (at * (1 - geom.frac) * 100) + '%';
+      announceViewport(box, { frac: geom.frac, at: at });
+    }
+
     box.addEventListener('pointerdown', function (e) {
       if (e.button) return; // primary button/touch only
       e.preventDefault();
@@ -289,27 +475,17 @@
       if (!drag) return;
       var dx = e.clientX - drag.x;
       if (Math.abs(dx) > 3) drag.moved = true;
-      var maxLeft = Math.max(track.clientWidth - box.offsetWidth, 0);
+      // Decode the pointer through the SAME fraction the box was drawn from
+      // (trackViewport): CSS min-width can clamp a narrow box on a long run,
+      // and measuring offsetWidth here put the drag on a different scale from
+      // syncTimelineViewport's draw, so the box's resting position decoded to
+      // a different `at` than it was painted with (#61).
+      var geom = trackViewport(rows);
+      var boxPx = geom.frac * track.clientWidth;
+      var maxLeft = Math.max(track.clientWidth - boxPx, 0);
       if (maxLeft <= 0) return;
       var at = Math.min(Math.max(drag.left + dx, 0), maxLeft) / maxLeft;
-      var hMax = rows.scrollWidth - rows.clientWidth;
-      if (hMax <= 0) return;
-      var vMax = rows.scrollHeight - rows.clientHeight;
-      if (vMax > 0) {
-        var tc = ((at * hMax + rows.clientWidth / 2) / rows.scrollWidth) * collapsedWallMS(root);
-        rows.scrollTop = scrollTopForTime(rows, tc); // scroll listener re-derives the pan
-      } else {
-        rows.scrollLeft = at * hMax;
-        layoutRuler(root);
-      }
-      // Draw the box where the POINTER is, rather than waiting for the scroll
-      // event to derive it back from scrollLeft. Both writes above saturate:
-      // past the last row's anchor time scrollTopForTime keeps returning vMax,
-      // the assignment becomes a no-op, no scroll event fires, and the box
-      // froze mid-drag while the cursor kept going — the grabbed thing visibly
-      // detaching from the hand holding it. The scroll path still owns the box
-      // whenever it does fire; this only guarantees it never lags the pointer.
-      box.style.left = (at * maxLeft / track.clientWidth * 100) + '%';
+      scrubTo(rows, at);
     });
     function release(e) {
       if (!drag) return;
@@ -333,19 +509,35 @@
   // The scrollTop whose pan anchor (syncPan) lands nearest the given collapsed-
   // axis time: find where t falls between consecutive rows' anchor times and
   // map that fractional row index back through the anchor's own row↔scroll
-  // relation. Row anchor times are start-ordered, so the walk is effectively
-  // monotone; a linear scan is fine at pointer-move rate.
+  // relation.
+  //
+  // The walk runs over the MONOTONE start-anchor envelope (monotoneAnchors).
+  // The old scan ran a first crossing over raw MIDPOINT anchors, which a
+  // sub-agent breaks (the parent row precedes its children but its midpoint
+  // follows them): the scan stopped on the parent for every t inside the
+  // excursion, collapsing the whole sub-agent onto one row step, then leaping
+  // tens of rows the instant t crossed the parent's midpoint. Over the
+  // envelope the crossing is the nearest anchor, so t inside a sub-agent
+  // resolves to a row inside it, and the map agrees with syncPan's forward
+  // direction by construction.
   function scrollTopForTime(rows, t) {
     var items = rows.children;
     var vMax = rows.scrollHeight - rows.clientHeight;
     if (items.length < 2 || vMax <= 0) return 0;
-    var prev = anchorNear(items, 0, 1);
+    var anchors = monotoneAnchors(items);
+    var prev = null, prevI = -1;
+    for (var i = 0; i < items.length; i++) {
+      if (anchors[i] === null) continue;
+      prev = anchors[i]; prevI = i;
+      break;
+    }
     if (prev === null) return 0;
-    for (var i = 1; i < items.length; i++) {
-      var ti = anchorTime(items[i]);
+    if (t <= prev) return prevI / (items.length - 1) * vMax;
+    for (var j = prevI + 1; j < items.length; j++) {
+      var ti = anchors[j];
       if (ti === null) continue;
       if (ti >= t) {
-        var fi = (i - 1) + (ti > prev ? (t - prev) / (ti - prev) : 0);
+        var fi = (j - 1) + (ti > prev ? (t - prev) / (ti - prev) : 0);
         fi = Math.min(Math.max(fi, 0), items.length - 1);
         return fi / (items.length - 1) * vMax;
       }
@@ -364,12 +556,14 @@
     var pcts = [0, 25, 50, 75, 100];
     if (ticks.length !== pcts.length || !rows) return;
     var total = collapsedWallMS(root);
-    var frac = rows.scrollWidth > 0 ? rows.clientWidth / rows.scrollWidth : 1;
-    var at = rows.scrollWidth > rows.clientWidth
-      ? rows.scrollLeft / (rows.scrollWidth - rows.clientWidth) : 0;
-    var from = at * (1 - frac) * total;
+    // The window comes from trackViewport — the same measurement the timeline
+    // box uses — so the ruler's `from` and the box's left edge label the same
+    // instant. Deriving it here from whole-row fractions (the old code)
+    // carried the label-column bias a second time (#61).
+    var geom = trackViewport(rows);
+    var from = geom.at * (1 - geom.frac) * total;
     ticks.forEach(function (tick, i) {
-      tick.textContent = secs(from + frac * total * pcts[i] / 100) + 's';
+      tick.textContent = secs(from + geom.frac * total * pcts[i] / 100) + 's';
     });
   }
 
@@ -1008,6 +1202,12 @@
       if (!span || seen[span.span_id]) return;
       seen[span.span_id] = true;
       appendWaterfallRow(wfRows, span, runID);
+      // Pin the pan to the bottom BEFORE relayout when the reader is parked
+      // there watching spans stream in: without it each append grows
+      // items.length and scrollHeight, so the fractional row index their
+      // unchanged scrollTop resolves to drifts to an EARLIER point in the run
+      // and the view walks backwards under them (#61 live-run drift).
+      if (wfRows && wfRows.scrollHeight - wfRows.clientHeight - wfRows.scrollTop <= 48) wfRows._panPin = true;
       var wall = layoutWaterfall(root);
       layoutRuler(root);
       if (stream) appendStreamRow(stream, span, runID, canWrite, commentsHandle);
@@ -1388,6 +1588,84 @@
     window.addEventListener('resize', function () { layoutWaterfall(root); });
   }
 
+  if (typeof document === 'undefined') return; // node test harness: exports only, no init
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
+
+// ---- Pure anchor math (exported for the node unit test) --------------------
+// These are the DOM-free core of the scrubber's row↔time map, lifted out of
+// the IIFE so trajectory_js_test.js can exercise them over synthetic row
+// lists. The in-page code calls the same functions, so the test pins the exact
+// behaviour the viewer runs.
+
+// One row's anchor time on the collapsed axis from its raw geometry: the
+// span's START, the point its row marks in reading order. See the long comment
+// over anchorTime inside the IIFE for why start (not midpoint) — a sub-agent
+// parent precedes its children in depth-first order, so a start anchor sorts
+// it before them and the row sequence stays monotone. Rows with no posMs
+// anchor to null.
+function anchorTimeFor(posMs) {
+  return (posMs === null || posMs === undefined) ? null : posMs;
+}
+
+// The monotone non-decreasing envelope over a list of raw anchor times (nulls
+// pass through and do not advance the carrier). See the comment over
+// monotoneAnchors inside the IIFE for the overlap case this resolves.
+function envelopeAnchors(anchors) {
+  var out = new Array(anchors.length);
+  var carry = null;
+  for (var i = 0; i < anchors.length; i++) {
+    var t = anchors[i];
+    if (t !== null && t !== undefined) {
+      carry = (carry === null) ? t : Math.max(carry, t);
+      out[i] = carry;
+    } else {
+      out[i] = null;
+    }
+  }
+  return out;
+}
+
+// ---- Pure axis math (exported for the node unit test) ----------------------
+// The time↔pixel conversions, over the collapsed TRACK axis. `axisW` is the
+// axis at the current zoom, `viewW` the slice of it on screen, `scrollLeft` the
+// pan. Every caller in the viewer routes through these three functions, which
+// is what guarantees the box, the ruler, the drag, the keyboard scrub and
+// syncPan's forward map all describe the same window (#61).
+
+// The box geometry: `frac` is how much of the axis fits on screen (its width),
+// `at` how much of its travel is used up (its position). `at * (1 - frac)`
+// reduces to scrollLeft / axisW — the window's left edge as a fraction of the
+// run — which is what layoutRuler labels.
+function viewportGeom(axisW, viewW, scrollLeft) {
+  var w = Math.max(axisW, 1);
+  var v = Math.min(Math.max(viewW, 1), w);
+  var travel = w - v;
+  var at = travel > 0 ? scrollLeft / travel : 0;
+  return { frac: v / w, at: Math.min(Math.max(at, 0), 1) };
+}
+
+// The scrollLeft that centres time `t` in the visible window. Note it divides
+// into axisW, never scrollWidth: the label column is not part of the axis.
+function timeToScrollLeft(t, total, axisW, viewW) {
+  return (t / Math.max(total, 1)) * Math.max(axisW, 1) - Math.min(viewW, axisW) / 2;
+}
+
+// The exact inverse: the time sitting at the centre of the window at a given
+// scrollLeft. timeToScrollLeft and this must round-trip, or the pointer drag
+// (which goes scrollLeft → time → scrollTop → syncPan → scrollLeft) walks.
+function centreTimeForScrollLeft(scrollLeft, total, axisW, viewW) {
+  var w = Math.max(axisW, 1);
+  return ((scrollLeft + Math.min(viewW, w) / 2) / w) * Math.max(total, 1);
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    anchorTimeFor: anchorTimeFor,
+    envelopeAnchors: envelopeAnchors,
+    viewportGeom: viewportGeom,
+    timeToScrollLeft: timeToScrollLeft,
+    centreTimeForScrollLeft: centreTimeForScrollLeft,
+  };
+}

@@ -3,9 +3,11 @@ package httpapi
 import (
 	"context"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -575,5 +577,30 @@ func TestFormatTokensZeroIsAbsent(t *testing.T) {
 	}
 	if got := formatTokens(900); got != "900" {
 		t.Errorf("formatTokens(900) = %q, want \"900\"", got)
+	}
+}
+
+// The asset directory is embedded wholesale (`//go:embed web/assets`) and
+// served by a FileServer at /assets/*, so anything dropped in it ships inside
+// the production binary and is publicly fetchable. The JS unit tests therefore
+// live in web/jstests/, outside the embed root — this pins that boundary, so a
+// future *_test.js placed beside the code it tests fails here instead of
+// quietly becoming a public endpoint.
+func TestAssetsShipNoTestFiles(t *testing.T) {
+	err := fs.WalkDir(webAssetFS, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(p, "_test.js") || strings.Contains(filepath.Base(p), "_test.") {
+			t.Errorf("test file %s is embedded in the asset FS and would be served at /assets/ — "+
+				"move it to internal/httpapi/web/jstests/", p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the embedded asset FS: %v", err)
 	}
 }

@@ -121,6 +121,11 @@ func TestIntegrationTrajectoryViewerRendersAuditRun(t *testing.T) {
 		// wireTimelineDrag hangs off data-tl-viewport), and the hint tells the
 		// reader it is grabbable.
 		`data-tl-viewport`, `grab the timeline box to scrub`,
+		// The scrubber is keyboard-operable (issue #61): a slider role with a
+		// focus target and an accessible value range over the run's collapsed
+		// seconds, not an aria-hidden span. A run whose rows all fit the pane
+		// has no other pan control, so pointer-only locked keyboard users out.
+		`role="slider"`, `tabindex="0"`, `aria-valuemin="0"`, `aria-valuemax=`,
 	} {
 		if !strings.Contains(html, frag) {
 			t.Errorf("waterfall missing fragment %q", frag)

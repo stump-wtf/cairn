@@ -81,6 +81,10 @@ type trajectoryView struct {
 	// idle and prompt time removed. The client turns each row's PosMS/DurMS into
 	// geometry against it.
 	CollapsedWallMS int
+	// CollapsedWallSecs is CollapsedWallMS rendered as the slider's
+	// aria-valuemax, in whole seconds (the scrubber announces position as a
+	// time, and milliseconds would read as noise to a screen reader).
+	CollapsedWallSecs int
 
 	// Activity stream (the user prompt turn followed by the span rows).
 	Prompt      string
@@ -416,6 +420,7 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 	// Duration-relative bars + the collapsed working-time strip.
 	timeline, longest, longestLabel, collapsedWall := buildTimeline(vm.Waterfall)
 	vm.Timeline, vm.LongestSpan, vm.CollapsedWallMS = timeline, longestLabel, collapsedWall
+	vm.CollapsedWallSecs = collapsedWallSecs(collapsedWall)
 	for i := range vm.Waterfall {
 		vm.Waterfall[i].DurPct = formatPct(ratioPct(vm.Waterfall[i].DurMS, int64(max(longest, 1))))
 		vm.Waterfall[i].Clipped = vm.Waterfall[i].DurMS > longest &&
@@ -528,6 +533,21 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 // completely, so a reader can still see THAT the run paused without the pause
 // dominating. Prompt spans contribute no working time — that is the whole point
 // — but they keep a tick on the strip so the pauses stay visible in context.
+// collapsedWallSecs renders the run's collapsed working time as the scrubber's
+// aria-valuemax, in whole seconds.
+//
+// Rounded UP with a floor of 1, not truncated: any run under a second truncates
+// to 0, and a slider whose max equals its min is a degenerate control that a
+// screen reader announces as unmovable — precisely the outcome giving the
+// viewport box role="slider" was meant to avoid (#61). A run with no working
+// time at all keeps 0, because there is genuinely nothing to scrub.
+func collapsedWallSecs(ms int) int {
+	if ms <= 0 {
+		return 0
+	}
+	return max((ms+999)/1000, 1)
+}
+
 func buildTimeline(rows []waterfallRow) ([]timelineTick, int, string, int) {
 	if len(rows) == 0 {
 		return nil, 0, "", 0
