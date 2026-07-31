@@ -375,8 +375,12 @@ func TestBinRowRendersDesignFacts(t *testing.T) {
 		`class="bin-row-sub"`,         // subtitle slot
 		"claude", "via MCP", "2h ago", // provenance line parts
 		"💬", "🔥", "🎯", // the three engagement icons
-		" comments", " reactions", " pins", // sr-only text cues (not color-only)
+		" comments", " reactions", " image region pins", // sr-only text cues (not color-only)
+		`title="image region pins"`,             // the 🎯 glyph is self-explanatory (#72)
+		`title="live — tails in real time"`,     // the live dot explains itself on hover (#72)
+		`title="comments"`, `title="reactions"`, // the counter glyphs are labelled
 		"in 6d",                             // TTL chip
+		`title="expires in 6d"`,             // the TTL glyph is labelled too
 		`data-agent="1"`, `data-shared="1"`, // tab-lens flags
 		`data-type="trajectory"`, // live-dot / badge data hook (raw key, unchanged)
 		// The reader-facing name is "run" (the #68 taxonomy decision), shown in

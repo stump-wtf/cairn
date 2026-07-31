@@ -122,6 +122,14 @@ func (r *Registry) Registered(key artifact.ShareType) bool {
 // every surface agrees without re-sniffing (SPEC-0002 "Previewability Detection
 // at Ingest").
 func (r *Registry) DecidePreview(declared artifact.ShareType, mediaType string, size, previewMax int64) (artifact.ShareType, bool) {
+	// A body pushed with the generic floor as its declared type still badges by
+	// its CONTENT, not its push path (#72): a `text/markdown` body is MD and a
+	// `text/x-go` body is GO no matter which upload route carried it, so a
+	// declared `file`/empty type is first promoted to whatever rich type the
+	// media type names. A genuine binary still lands on the FILE/GZ floor.
+	if isGenericFloor(declared) {
+		declared = r.classifyByMedia(mediaType)
+	}
 	handler := r.Resolve(declared)
 	previewable := r.Registered(declared) &&
 		handler.PreviewableMedia(mediaType) &&
@@ -130,6 +138,30 @@ func (r *Registry) DecidePreview(declared artifact.ShareType, mediaType string, 
 		return declared, true
 	}
 	return genericFileType(mediaType), false
+}
+
+// isGenericFloor reports whether a declared share type is the generic
+// file-floor default — empty, FILE, or GZ — i.e. the uploader made no real
+// type claim, so the content itself should pick the badge (#72).
+func isGenericFloor(declared artifact.ShareType) bool {
+	return declared == "" || declared == artifact.TypeFile || declared == artifact.TypeGZ
+}
+
+// classifyByMedia maps a (sniffed/declared) media type to the rich share type
+// it names, used to promote a generic-floor declaration to a content-derived
+// type. Markdown is recognized by its `markdown` token (http.DetectContentType
+// reports markdown as text/plain, so this only fires when the client declared
+// the markdown media type); code is delegated to code.Detect so a body and a
+// standalone artifact can never disagree about language. Anything else stays
+// on the generic floor. Mirrored by ClassifyMember for bundle members.
+func (r *Registry) classifyByMedia(mediaType string) artifact.ShareType {
+	if strings.Contains(strings.ToLower(mediaType), "markdown") && r.Registered(KeyMarkdown) {
+		return KeyMarkdown
+	}
+	if r.Registered(KeyCode) && code.Detect("", mediaType, "").Key != code.PlainTextKey {
+		return KeyCode
+	}
+	return genericFileType(mediaType)
 }
 
 // AllowsAnchor reports whether an annotation of the given kind may target the

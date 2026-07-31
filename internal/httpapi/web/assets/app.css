@@ -356,6 +356,11 @@ body.landing { display: flex; flex-direction: column; align-items: center; justi
   padding: 13px 15px; background: var(--card); border: 1px solid var(--border-3);
   border-radius: var(--radius-card); text-decoration: none; color: inherit;
 }
+/* The badge is a fixed-width column so titles start at the same x-position
+   down the list — a narrow `MD` and a wide `BUNDLE` no longer ragged the
+   title column (#72). 64px fits the widest badge (BUNDLE) at the chip's
+   10px mono with its padding; the text centres within it. */
+.bin-row > .type-badge { min-width: 64px; text-align: center; justify-content: center; }
 .bin-row:hover { border-color: var(--border); background: #0F1116; }
 .bin-row[hidden] { display: none; }
 .bin-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

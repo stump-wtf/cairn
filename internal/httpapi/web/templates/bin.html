@@ -90,10 +90,17 @@
     <span class="bin-row-counts">
       <span class="count-chip" title="comments"><span aria-hidden="true">💬</span> <span class="count-n">{{.CommentCount}}</span><span class="sr-only"> comments</span></span>
       <span class="count-chip" title="reactions"><span aria-hidden="true">🔥</span> <span class="count-n">{{.ReactionCount}}</span><span class="sr-only"> reactions</span></span>
-      <span class="count-chip" title="pins"><span aria-hidden="true">🎯</span> <span class="count-n">{{.PinCount}}</span><span class="sr-only"> pins</span></span>
+      {{/* 🎯 counts image-region annotations (region reactions + pinned
+          comments, ADR-0006) — labelled "region pins", not the bare "pins",
+          so the glyph is self-explanatory (#72). */}}
+      <span class="count-chip" title="image region pins"><span aria-hidden="true">🎯</span> <span class="count-n">{{.PinCount}}</span><span class="sr-only"> image region pins</span></span>
     </span>
     <span class="bin-row-life">
-      <span class="live-dot" aria-hidden="true"></span>
+      {{/* The live dot marks a type whose detail page tails live (webhook /
+          trajectory): a title so a sighted hover explains it, while the dot
+          stays aria-hidden and the sr-only "live" label carries the a11y
+          text (#72). */}}
+      <span class="live-dot" title="live — tails in real time" aria-hidden="true"></span>
       <span class="live-label sr-only">live</span>
       {{if .TTL}}<span class="ttl-chip" title="expires {{.TTL}}"><span aria-hidden="true">⧗</span> {{.TTL}}<span class="sr-only"> until expiry</span></span>{{end}}
     </span>
