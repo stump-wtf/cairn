@@ -31,6 +31,21 @@
     return m ? decodeURIComponent(m[1]) : '';
   }
 
+  // memberNameFor returns the bundle member a node lives in, or null when the
+  // markdown viewer is the whole artifact (the standalone page).
+  //
+  // A markdown member of a bundle renders through this exact same viewer
+  // fragment, so every affordance below is shared — only the ANCHOR differs.
+  // The bundle share type forbids md_block/md_bullet (the block ids of two
+  // members would collide on the one artifact), so inside a member pane the
+  // same block and bullet triggers post a member-scoped bundle_file anchor
+  // carrying {name, block_id[, path]} instead (SPEC-0003 REQ "Bundle Viewer",
+  // SPEC-0006 REQ "Registry-Gated Anchor Capabilities").
+  function memberNameFor(node) {
+    var pane = node && node.closest ? node.closest('[data-member]') : null;
+    return pane ? pane.getAttribute('data-member') : null;
+  }
+
   // reactionFetch posts or removes (toggles) a reaction against the annotation
   // API. A session (cookie) caller rides the double-submit CSRF header the
   // server matches; a token caller is exempt. Never throws — onDone(ok, status)
@@ -166,23 +181,35 @@
       var n = parseInt(pill.querySelector('.react-count').textContent, 10) || 0;
       n = on ? Math.max(n - 1, 0) : n + 1;
       setPillCount(pill, n, !on);
+      notifyReaction(trigger, status);
     });
   }
 
   // loadReactions fetches the artifact's current per-anchor tallies (the same
   // GET the trajectory viewer's server-render draws from) and renders a pill
-  // for every md_block/md_bullet anchor matching a trigger on the page, so
-  // reactions show on reload — not just immediately after a click (#66).
+  // for every anchor matching a trigger on the page, so reactions show on
+  // reload — not just immediately after a click (#66).
+  //
+  // Which anchor kind carries this viewer's reactions depends on where it is
+  // rendered (see anchorRefFor): md_block/md_bullet standing alone, bundle_file
+  // scoped to `member` inside a bundle pane. Everything downstream — pills,
+  // counts, whose reaction is "on" — is identical either way, which is the
+  // point: a markdown member reads exactly like the standalone document.
   function loadReactions(viewer) {
     var id = artifactID();
     if (!id) return;
+    var member = memberNameFor(viewer);
     fetch('/v1/artifacts/' + encodeURIComponent(id) + '/reactions', { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) {
         if (!data || !data.reactions) return;
         data.reactions.forEach(function (t) {
-          if (t.anchor_type !== 'md_block' && t.anchor_type !== 'md_bullet') return;
-          var trigger = findTrigger(viewer, t.anchor_type, t.anchor_key);
+          if (member === null) {
+            if (t.anchor_type !== 'md_block' && t.anchor_type !== 'md_bullet') return;
+          } else if (t.anchor_type !== 'bundle_file') {
+            return;
+          }
+          var trigger = findTrigger(viewer, member, t.anchor_key);
           if (!trigger) return;
           setPillCount(pillFor(trigger, t.emoji), t.count, t.reacted);
         });
@@ -191,28 +218,40 @@
   }
 
   // findTrigger resolves a server tally's anchor_key (the canonical
-  // `{"block_id":…}` / `{"block_id":…,"path":[…]}` JSON the annotation core
-  // groups by) back to the react trigger it belongs to, by comparing PARSED
-  // values rather than the raw string (block_id/path round-trip through JSON
-  // identically either way, so this is exact without depending on the server's
-  // exact key formatting).
-  function findTrigger(viewer, anchorType, anchorKeyJSON) {
+  // `{"block_id":…}` / `{"block_id":…,"path":[…]}` / `{"block_id":…,"name":…}`
+  // JSON the annotation core groups by) back to the react trigger it belongs
+  // to, by comparing PARSED values rather than the raw string (the fields
+  // round-trip through JSON identically either way, so this is exact without
+  // depending on the server's key formatting).
+  //
+  // Inside a bundle, `member` is the pane's file name and every tally must
+  // match it — one bundle's reactions cover all its members, and two members
+  // can hold identical blocks, so the name is what keeps a tally on the file it
+  // was left on. A key with a `path` addresses a bullet, one without addresses
+  // the whole block; that is the same discriminator on both surfaces, so it is
+  // read from the key rather than from an anchor type the bundle_file tally
+  // does not carry.
+  function findTrigger(viewer, member, anchorKeyJSON) {
     var key;
     try { key = JSON.parse(anchorKeyJSON); } catch (e) { return null; }
-    var triggers = viewer.querySelectorAll('.md-react[data-anchor-type="' + anchorType + '"]');
+    if (member !== null && key.name !== member) return null;
+    if (!key.block_id) return null;
+    var wantPath = key.path || null;
+    var triggers = viewer.querySelectorAll('.md-react[data-block-id="' + cssEscape(key.block_id) + '"]');
     for (var i = 0; i < triggers.length; i++) {
       var t = triggers[i];
-      if (t.getAttribute('data-block-id') !== key.block_id) continue;
-      if (anchorType === 'md_bullet') {
-        var path;
-        try { path = JSON.parse(t.getAttribute('data-path') || '[]'); } catch (e2) { path = []; }
-        var kp = key.path || [];
-        if (kp.length !== path.length) continue;
-        var match = true;
-        for (var j = 0; j < kp.length; j++) { if (kp[j] !== path[j]) { match = false; break; } }
-        if (!match) continue;
+      var isBullet = t.getAttribute('data-anchor-type') === 'md_bullet';
+      if (!wantPath) {
+        if (!isBullet) return t;
+        continue;
       }
-      return t;
+      if (!isBullet) continue;
+      var path;
+      try { path = JSON.parse(t.getAttribute('data-path') || '[]'); } catch (e2) { path = []; }
+      if (wantPath.length !== path.length) continue;
+      var match = true;
+      for (var j = 0; j < wantPath.length; j++) { if (wantPath[j] !== path[j]) { match = false; break; } }
+      if (match) return t;
     }
     return null;
   }
@@ -229,15 +268,43 @@
     if (restoreFocus && trigger) trigger.focus();
   }
 
+  // anchorRefFor derives a trigger's anchor from where it sits: the md_block /
+  // md_bullet locators on a standalone markdown artifact, and the equivalent
+  // member-scoped bundle_file locator inside a bundle's member pane. The bullet
+  // `path` rides along in BOTH forms — dropping it inside a bundle collapsed
+  // every bullet of a list onto its block, so the second bullet re-posted the
+  // first one's anchor and the server no-oped the write.
   function anchorRefFor(trigger) {
-    var type = trigger.getAttribute('data-anchor-type');
-    if (type === 'md_bullet') {
-      return {
-        type: type,
-        ref: { block_id: trigger.getAttribute('data-block-id'), path: JSON.parse(trigger.getAttribute('data-path')) }
-      };
+    var blockID = trigger.getAttribute('data-block-id');
+    var path = null;
+    if (trigger.getAttribute('data-anchor-type') === 'md_bullet') {
+      try { path = JSON.parse(trigger.getAttribute('data-path') || '[]'); } catch (e) { path = []; }
     }
-    return { type: 'md_block', ref: { block_id: trigger.getAttribute('data-block-id') } };
+    var member = memberNameFor(trigger);
+    if (member !== null) {
+      var ref = { name: member, block_id: blockID };
+      if (path) ref.path = path;
+      return { type: 'bundle_file', ref: ref };
+    }
+    if (path) return { type: 'md_bullet', ref: { block_id: blockID, path: path } };
+    return { type: 'md_block', ref: { block_id: blockID } };
+  }
+
+  // notifyReaction tells the bundle viewer that one of ITS member's reactions
+  // changed, so the file rail's aggregated engagement badge moves at click time
+  // instead of only after a reload re-runs memberReactionCounts server-side
+  // (#72). `delta` is gated on the status the server used to report whether
+  // anything actually changed (SPEC-0006 "Idempotent Reactions": 201 on a real
+  // create, 200 on a no-op repeat, 204 on every delete), so a repeat never
+  // over-counts. A no-op on the standalone page, which has no rail.
+  function notifyReaction(trigger, status) {
+    var member = memberNameFor(trigger);
+    if (member === null) return;
+    var delta = status === 201 ? 1 : (status === 204 ? -1 : 0);
+    if (!delta) return;
+    document.dispatchEvent(new CustomEvent('cairn:member-reaction', {
+      detail: { member: member, delta: delta }
+    }));
   }
 
   function showPicker(trigger) {
@@ -267,6 +334,7 @@
         reactionFetch('POST', anchor.type, anchor.ref, emoji, function (ok, status) {
           if (!ok) { handleReactError(trigger, status); return; }
           setPillCount(pillFor(trigger, emoji), 1, true);
+          notifyReaction(trigger, status);
         });
       });
       pop.appendChild(b);
@@ -490,13 +558,29 @@
 
   // --- init -----------------------------------------------------------------
 
-  function init() {
-    var viewer = document.querySelector('.md-viewer');
+  // hydrateViewer brings one freshly-rendered .md-viewer up to full interactive
+  // state. It runs on load AND after every bundle pane swap: the server sends
+  // annotation-agnostic markup (ADR-0002), so a member swapped in by HTMX
+  // arrives with neither the injected md_bullet affordances nor any reaction
+  // state, and without this a reader could react per-bullet on the member the
+  // page happened to load with but on no other.
+  function hydrateViewer(viewer) {
     if (!viewer) return;
     decorateBullets(viewer);
     // decorateBullets must run first so md_bullet triggers exist on the page
     // for loadReactions to match tallies against (#66).
     loadReactions(viewer);
+  }
+
+  function init() {
+    hydrateViewer(document.querySelector('.md-viewer'));
+    // The listeners below are registered even when this page has no markdown
+    // viewer YET — a bundle whose first member is a non-previewable file still
+    // reaches a markdown member one pane swap later.
+    document.body.addEventListener('htmx:afterSwap', function (e) {
+      if (!e.target || e.target.id !== 'bundle-pane') return;
+      hydrateViewer(e.target.querySelector('.md-viewer'));
+    });
     document.addEventListener('mouseup', onSelection);
     document.addEventListener('keyup', function (e) {
       if (e.shiftKey || e.key === 'Shift') onSelection();
