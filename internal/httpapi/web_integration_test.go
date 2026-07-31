@@ -70,8 +70,8 @@ func TestIntegrationTrajectoryShellAtRunPrefix(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET /run/%s = %d, want 200", run.ID, status)
 	}
-	if !strings.Contains(html, `>TRJ<`) {
-		t.Error("trajectory shell should carry the TRJ badge")
+	if !strings.Contains(html, `>RUN<`) {
+		t.Error("trajectory shell should carry the RUN badge (the #68 reader-facing name)")
 	}
 	if !strings.Contains(html, `mcp://cairn/run/`+run.ID) {
 		t.Error("trajectory shell should surface the /run/ mcp handle")

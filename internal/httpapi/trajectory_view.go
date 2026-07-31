@@ -57,7 +57,8 @@ type trajectoryView struct {
 	ID        string
 	Badge     string
 	Title     string
-	TypeLabel string
+	TypeLabel string // the share-type key, the data-type hook
+	TypeName  string // the reader-facing type name ("run" — #68)
 	WebURL    string
 	MCPHandle string
 	MetaLine  string
@@ -338,6 +339,7 @@ func (s *Server) buildTrajectoryView(ctx context.Context, a *artifact.Artifact, 
 		Badge:         s.reg.BadgeFor(a),
 		Title:         firstNonEmpty(run.Title, a.PublicID),
 		TypeLabel:     string(a.ShareType),
+		TypeName:      s.reg.DisplayNameFor(a.ShareType),
 		WebURL:        s.webURL(a),
 		MCPHandle:     s.mcpHandle(a),
 		MetaLine:      itoa(run.Stats.SpanCount) + " spans · " + formatSeconds(wall),

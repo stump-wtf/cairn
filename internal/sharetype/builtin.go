@@ -271,8 +271,10 @@ func isImage(mediaType string) bool {
 func anyMedia(string) bool { return true }
 
 // Built-in types. Badges follow ADR-0002 (`MD`, lang/`CODE`, `IMG`, `FILE`/`GZ`,
-// `HK`, `TRJ`); anchor capability sets follow the SPEC-0006 annotations design
-// matrix verbatim:
+// `HK`) — except the trajectory badge, which #68 renamed `TRJ` -> `RUN` to match
+// the /run/ route and the run_* MCP tools; ADR-0002 and ADR-0009 still record
+// `TRJ` and want amending. Anchor capability sets follow the SPEC-0006
+// annotations design matrix verbatim:
 //
 //	markdown    reactions: artifact, md_block, md_bullet     comments: artifact, text_selection
 //	code        reactions: artifact, code_line, code_range   comments: artifact, code_line, text_selection
@@ -365,11 +367,14 @@ var (
 	}}
 	// Trajectory: reactions pin moments (turns, tool calls); comment threads
 	// attach to spans and text selections (SPEC-0006 matrix). Both the web URL
-	// and the MCP handle carry the run/ prefix (ADR-0005).
-	trajectoryType = prefixedType{
+	// and the MCP handle carry the run/ prefix (ADR-0005). The reader-facing
+	// NAME is "run" — the badge, the bin-row label, the /run/ route and the
+	// run_create/run_append_spans MCP tools all agree on it (#68); "trajectory"
+	// stays the registry key and the docs-prose term for what a run captures.
+	trajectoryType = trajectoryShareType{prefixedType{
 		simpleType{
 			key:     KeyTrajectory,
-			badge:   "TRJ",
+			badge:   "RUN",
 			preview: anyMedia,
 			anchors: []AnchorSpec{
 				both(AnchorArtifact),
@@ -380,8 +385,18 @@ var (
 			},
 		},
 		URLPrefix{Web: "run", MCP: "run"},
-	}
+	}}
 )
+
+// trajectoryShareType composes prefixedType with the DisplayNamer capability:
+// the flagship artifact type reads as "run" to every reader while keeping
+// "trajectory" as its registry key (see the #68 taxonomy decision).
+type trajectoryShareType struct {
+	prefixedType
+}
+
+// DisplayName implements the DisplayNamer capability.
+func (t trajectoryShareType) DisplayName() string { return "run" }
 
 // defaultRegistry is the process-wide registry, seeded with the built-in types.
 // The generic file handler is both a registered type and the total-resolution

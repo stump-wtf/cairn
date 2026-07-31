@@ -9,13 +9,14 @@ import (
 )
 
 // TestRegistryEntry pins the trajectory's registry affordances (SPEC-0004
-// "Trajectory Annotation Anchors", ADR-0005 URL scheme): badge TRJ, the run/
-// URL + MCP prefix, reactions on turn/toolcall, comments on span/text_selection.
+// "Trajectory Annotation Anchors", ADR-0005 URL scheme): badge RUN (the #68
+// reader-facing name), the run/ URL + MCP prefix, reactions on turn/toolcall,
+// comments on span/text_selection.
 func TestRegistryEntry(t *testing.T) {
 	reg := sharetype.Default()
 	h := reg.Resolve(sharetype.KeyTrajectory)
-	if h.Badge() != "TRJ" {
-		t.Errorf("badge = %q, want TRJ", h.Badge())
+	if h.Badge() != "RUN" {
+		t.Errorf("badge = %q, want RUN", h.Badge())
 	}
 	if pref := reg.URLPrefixFor(sharetype.KeyTrajectory); pref.Web != "run" || pref.MCP != "run" {
 		t.Errorf("URL prefix = %+v, want run/run", pref)

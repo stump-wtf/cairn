@@ -10,7 +10,7 @@
 <header class="app-header" role="banner">
   <a class="brand" href="/bin" aria-label="cairn bin">{{template "stone-logo" .}}<span class="wordmark">cairn</span></a>
   <span class="crumb-sep" aria-hidden="true">▸</span>
-  <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeLabel}}">{{.Badge}}</span>
+  <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeName}}">{{.Badge}}</span>
   <span class="artifact-title">{{.Title}}</span>
   <span class="artifact-meta">{{.MetaLine}}</span>
 
@@ -62,7 +62,7 @@
 
     {{if .PanelFields}}
     <section class="panel-section" aria-labelledby="type-h">
-      <h2 class="panel-h" id="type-h">{{.TypeLabel}}</h2>
+      <h2 class="panel-h" id="type-h">{{.TypeName}}</h2>
       <dl class="facts">
         {{range .PanelFields}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}
       </dl>

@@ -42,7 +42,7 @@ type ShareType interface {
 	// Key is the registry key stored in artifacts.share_type.
 	Key() artifact.ShareType
 	// Badge is the short human/agent-facing label (e.g. "MD", "IMG", "HK",
-	// "TRJ"). A type whose badge depends on the concrete artifact (code's lang
+	// "RUN"). A type whose badge depends on the concrete artifact (code's lang
 	// badge) additionally implements ArtifactBadger; this is the static default.
 	Badge() string
 	// PreviewableMedia reports whether a rich viewer exists for this type paired

@@ -213,8 +213,11 @@ func TestShellBadgeAndURLVaryByType(t *testing.T) {
 	if !strings.Contains(trj, `mcp://cairn/run/abc123`) {
 		t.Error("trajectory mcp handle should carry the /run/ prefix")
 	}
-	if !strings.Contains(trj, `>TRJ<`) {
-		t.Error("trajectory badge should be TRJ")
+	if !strings.Contains(trj, `>RUN<`) {
+		t.Error("trajectory badge should be RUN (the #68 reader-facing name)")
+	}
+	if !strings.Contains(trj, `title="run"`) {
+		t.Error("trajectory badge tooltip should read \"run\" (the #68 reader-facing name)")
 	}
 }
 
@@ -359,7 +362,7 @@ func TestBinRowRendersDesignFacts(t *testing.T) {
 	vm := binPageView{
 		Actor: "joe",
 		Rows: []binRow{{
-			ID: "abc123", Badge: "TRJ", TypeLabel: "trajectory",
+			ID: "abc123", Badge: "RUN", TypeLabel: "trajectory", TypeName: "run",
 			Title: "checkout-web-audit", Subtitle: "trajectory", WebURL: "/run/abc123",
 			Lead: "claude", LeadShort: "claude", Channel: "via MCP", Age: "2h ago", TTL: "in 6d",
 			ReactionCount: 3, CommentCount: 2, PinCount: 1,
@@ -375,7 +378,10 @@ func TestBinRowRendersDesignFacts(t *testing.T) {
 		" comments", " reactions", " pins", // sr-only text cues (not color-only)
 		"in 6d",                             // TTL chip
 		`data-agent="1"`, `data-shared="1"`, // tab-lens flags
-		`data-type="trajectory"`, // live-dot / badge data hook
+		`data-type="trajectory"`, // live-dot / badge data hook (raw key, unchanged)
+		// The reader-facing name is "run" (the #68 taxonomy decision), shown in
+		// the badge tooltip and sr-only cue while data-type keeps the raw key.
+		`>RUN<`, `title="run"`, `<span class="sr-only"> run</span>`,
 	} {
 		if !strings.Contains(html, frag) {
 			t.Errorf("bin row missing %q", frag)

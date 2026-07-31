@@ -299,7 +299,8 @@ func TestAnchorTypeStringsMatchSpec(t *testing.T) {
 }
 
 func TestBadges(t *testing.T) {
-	// Badge codes follow ADR-0002: MD, CODE/lang, IMG, FILE/GZ, HK, TRJ.
+	// Badge codes follow ADR-0002: MD, CODE/lang, IMG, FILE/GZ, HK, RUN (the
+	// trajectory type's reader-facing badge, renamed in #68).
 	want := map[artifact.ShareType]string{
 		artifact.TypeFile:   "FILE",
 		artifact.TypeGZ:     "GZ",
@@ -308,12 +309,33 @@ func TestBadges(t *testing.T) {
 		KeyCode:             "CODE",
 		KeyImage:            "IMG",
 		KeyWebhook:          "HK",
-		KeyTrajectory:       "TRJ",
+		KeyTrajectory:       "RUN",
 	}
 	for key, badge := range want {
 		if b := Default().Resolve(key).Badge(); b != badge {
 			t.Errorf("type %q badge = %q, want %q", key, b, badge)
 		}
+	}
+}
+
+// TestDisplayNames covers the #68 taxonomy decision: the flagship trajectory
+// type reads as "run" to a reader (matching /run/ and the run_create/
+// run_append_spans MCP tools) while keeping "trajectory" as its registry key;
+// every other type's display name is its key.
+func TestDisplayNames(t *testing.T) {
+	r := Default()
+	if got := r.DisplayNameFor(KeyTrajectory); got != "run" {
+		t.Errorf("DisplayNameFor(trajectory) = %q, want %q", got, "run")
+	}
+	for _, key := range []artifact.ShareType{KeyMarkdown, KeyCode, KeyImage, KeyWebhook, artifact.TypeFile} {
+		if got := r.DisplayNameFor(key); got != string(key) {
+			t.Errorf("DisplayNameFor(%q) = %q, want its key", key, got)
+		}
+	}
+	// An unknown key resolves to the fallback, which has no DisplayNamer, so
+	// the raw key is returned unchanged.
+	if got := r.DisplayNameFor("mystery"); got != "mystery" {
+		t.Errorf("DisplayNameFor(mystery) = %q, want the raw key", got)
 	}
 }
 
@@ -329,7 +351,7 @@ func TestBadgeForLangBadges(t *testing.T) {
 		{"python with charset param", &artifact.Artifact{ShareType: KeyCode, MediaType: "text/x-python; charset=utf-8"}, "PY"},
 		{"ts by title extension", &artifact.Artifact{ShareType: KeyCode, MediaType: "text/plain", Title: "deploy.ts"}, "TS"},
 		{"unrecognized lang falls back", &artifact.Artifact{ShareType: KeyCode, MediaType: "text/plain", Title: "notes.xyz"}, "CODE"},
-		{"non-code type uses static badge", &artifact.Artifact{ShareType: KeyTrajectory, MediaType: "application/json"}, "TRJ"},
+		{"non-code type uses static badge", &artifact.Artifact{ShareType: KeyTrajectory, MediaType: "application/json"}, "RUN"},
 		{"unknown type falls back to FILE", &artifact.Artifact{ShareType: "mystery", MediaType: "text/plain"}, "FILE"},
 	}
 	for _, tc := range tests {
