@@ -5,8 +5,11 @@ package httpapi
 // that keep the fixes from regressing as a group, with every failure naming
 // the story it guards (issue #74). Where a behavior is pure client-side JS
 // (bin tab counts/scope, scrubber geometry), the guard is the plain-node unit
-// test wired into `make test-js` (app_js_test.js / trajectory_js_test.js) —
-// referenced here so the two halves of the guard stay discoverable together.
+// test wired into `make test-js` — web/jstests/app_test.js and
+// web/jstests/trajectory_test.js — referenced here so the two halves of the
+// guard stay discoverable together. They sit in web/jstests/ rather than beside
+// the code because web/assets/ is embedded and served at /assets/*, which
+// TestAssetsShipNoTestFiles pins.
 
 import (
 	"strings"
@@ -130,7 +133,7 @@ func TestUXPushHelpReadsAsHelp(t *testing.T) {
 	if !strings.Contains(html, "how to push") {
 		t.Error("#71 push help: the control should read as help (\"how to push\")")
 	}
-	if strings.Contains(html, ">+ push<") || strings.Contains(html, "+ push") {
+	if strings.Contains(html, "+ push") {
 		t.Error("#71 push help: the control must not be `+`-prefixed (that read as create)")
 	}
 }
@@ -177,10 +180,10 @@ func TestUXBadgeDerivesFromContentType(t *testing.T) {
 	}
 }
 
-// #73 — Durations humanize; an absent stat renders "—", not a fabricated 0.
-// The integration suite pins the rendered tiles; this guards the humanize
-// helpers the tiles are built from.
-func TestUXDurationsHumanizeAndAbsentStatsDash(t *testing.T) {
+// #73 — Durations humanize. This guards the humanize helper the RUN STATS
+// tiles are built from; the rendered tiles themselves (including the absent-
+// token dash) are pinned by the trajectory integration suite.
+func TestUXDurationsHumanize(t *testing.T) {
 	for ms, want := range map[int64]string{
 		2200:    "2.2s",   // below 90s: plain seconds
 		260000:  "4m 20s", // 4m20s: humanized
@@ -191,9 +194,15 @@ func TestUXDurationsHumanizeAndAbsentStatsDash(t *testing.T) {
 			t.Errorf("#73 humanize: formatSeconds(%d) = %q, want %q", ms, got, want)
 		}
 	}
-	// An absent token count is "—" with an explanatory tooltip, never "0"
-	// (which would read as "no tokens used").
+	// formatTokens is deliberately NOT where the dash lives — it is a pure
+	// number formatter and renders 0 as "0". buildTrajectoryView substitutes
+	// "—" plus a "not reported by this client" tooltip when the count is zero,
+	// so a client that never reported tokens doesn't read as "used none".
+	//
+	// Pinned here because the substitution only makes sense while this stays
+	// true: if formatTokens ever learned to return the dash itself, the tile
+	// would be applying it twice and this test says where to look.
 	if got := formatTokens(0); got != "0" {
-		t.Errorf("#73 humanize: formatTokens(0) = %q, want \"0\" (the dash is applied at the tile, not here)", got)
+		t.Errorf("#73 humanize: formatTokens(0) = %q, want \"0\" — the dash belongs to the tile, not the formatter", got)
 	}
 }
