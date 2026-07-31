@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -188,6 +189,80 @@ func TestIntegrationBundlePerFileComment(t *testing.T) {
 	// The rail shows notes.md's engagement count (1 comment) as a badge.
 	if !strings.Contains(html, `class="bundle-file-count"`) {
 		t.Error("rail should show a per-file engagement count for the annotated member")
+	}
+}
+
+// TestIntegrationBundleMemberBulletReactionsAreDistinct is the regression for
+// the bug that made reacting inside a bundled markdown file look broken: the
+// bundle_file locator carried only {name, block_id}, so every bullet of a list
+// collapsed onto its BLOCK's anchor. Reacting to the second bullet re-posted
+// the anchor the first one had already created, the server (correctly)
+// no-oped the duplicate with 200, and the reader saw nothing happen.
+//
+// A markdown member renders the same blocks and bullets as the standalone
+// markdown viewer, so it must anchor them just as finely: each bullet is its
+// own {name, block_id, path} anchor, each a real create, each its own tally.
+// Governing: SPEC-0003 REQ "Bundle Viewer", SPEC-0006 REQ "Polymorphic Anchor
+// Model".
+func TestIntegrationBundleMemberBulletReactionsAreDistinct(t *testing.T) {
+	srv := testServer(t, noRateLimit(), storeOpts())
+	id := createBundle(t, srv.URL, "joe", "bullets", []bundleMember{
+		{"notes.md", bundleMD}, // "## Highlights" over a two-item list
+		{"data.bin", "\x00\x01binary blob"},
+	})
+
+	_, html := getHTML(t, srv.URL+"/"+id)
+	listBlock := listBlockIDIn(t, html)
+
+	react := func(ref string) int {
+		resp := do(t, http.MethodPost, srv.URL+"/v1/artifacts/"+id+"/reactions", "alice",
+			jsonReader(t, reactionRequest{AnchorType: "bundle_file", AnchorRef: json.RawMessage(ref), Emoji: "👍"}),
+			"application/json")
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	first := `{"name":"notes.md","block_id":"` + listBlock + `","path":[0]}`
+	second := `{"name":"notes.md","block_id":"` + listBlock + `","path":[1]}`
+	if got := react(first); got != http.StatusCreated {
+		t.Fatalf("react first bullet = %d, want 201", got)
+	}
+	// The pre-fix failure mode lands exactly here: a 200 means the server
+	// treated the second bullet as a repeat of the first.
+	if got := react(second); got != http.StatusCreated {
+		t.Fatalf("react second bullet = %d, want 201 (a 200 means both bullets share one anchor)", got)
+	}
+
+	tallies := decodeTallies(t, do(t, http.MethodGet, srv.URL+"/v1/artifacts/"+id+"/reactions", "alice", nil, ""))
+	if len(tallies.Reactions) != 2 {
+		t.Fatalf("tallies = %+v, want one per bullet", tallies.Reactions)
+	}
+	paths := map[string]bool{}
+	for _, tly := range tallies.Reactions {
+		var key struct {
+			Name    string `json:"name"`
+			BlockID string `json:"block_id"`
+			Path    []int  `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(tly.AnchorKey), &key); err != nil {
+			t.Fatalf("anchor_key %q did not parse as JSON: %v", tly.AnchorKey, err)
+		}
+		if key.Name != "notes.md" || key.BlockID != listBlock {
+			t.Errorf("anchor_key = %+v, want name=notes.md block_id=%q", key, listBlock)
+		}
+		if tly.Count != 1 {
+			t.Errorf("tally %s count = %d, want 1 per bullet", tly.AnchorKey, tly.Count)
+		}
+		paths[fmt.Sprint(key.Path)] = true
+	}
+	if !paths["[0]"] || !paths["[1]"] {
+		t.Errorf("bullet paths = %v, want distinct [0] and [1]", paths)
+	}
+
+	// Both bullets roll up into the member's rail engagement count.
+	_, html = getHTML(t, srv.URL+"/"+id)
+	if !strings.Contains(html, `data-file-name="notes.md" data-reactions="2" data-comments="0"`) {
+		t.Error("rail row should aggregate both bullet reactions")
 	}
 }
 

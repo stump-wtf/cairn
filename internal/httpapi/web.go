@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -817,6 +818,25 @@ func secondsUntil(t time.Time) int64 {
 		return 0
 	}
 	return int64(d.Seconds())
+}
+
+// pseudoVersionSuffix matches the Go module pseudo-version suffix:
+// "-0.YYYYMMDDHHMMSS-hash" or "-YYYYMMDDHHMMSS-hash". The capture group is the
+// base version (e.g. "crush/v0.66.2" from "crush/v0.66.2-0.20260724213111-ccae1f266157").
+var pseudoVersionSuffix = regexp.MustCompile(`^(.+?/v\d+\.\d+\.\d+)-(?:0\.)?\d{14}-[0-9a-f]+$`)
+
+// truncateAgentVersion shortens a Go pseudo-version string to just the base
+// version. "crush/v0.66.2-0.20260724213111-ccae1f266157" becomes
+// "crush/v0.66.2". Plain versions ("claude-code/2.1.219") and bare names pass
+// through unchanged. An empty string returns empty.
+func truncateAgentVersion(s string) string {
+	if s == "" {
+		return ""
+	}
+	if m := pseudoVersionSuffix.FindStringSubmatch(s); m != nil {
+		return m[1]
+	}
+	return s
 }
 
 // subMinute is the bucket humanizeDuration returns below one minute. It is a

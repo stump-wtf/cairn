@@ -46,6 +46,7 @@ type binRow struct {
 	Subtitle      string
 	WebURL        string
 	Lead          string // agent (on-behalf-of) if present, else the human actor
+	LeadShort     string // truncated agent version for display; full string in title tooltip
 	Channel       string
 	Age           string
 	TTL           string // humanized time-to-expiry, e.g. "in 6d"
@@ -90,6 +91,7 @@ func (s *Server) renderBin(w http.ResponseWriter, r *http.Request, p *Principal)
 		vm.CSRFToken = c.Value
 	}
 	for _, a := range page.Artifacts {
+		lead := firstNonEmpty(a.Provenance.OnBehalfOf, a.Provenance.ActorID)
 		vm.Rows = append(vm.Rows, binRow{
 			ID:            a.PublicID,
 			Badge:         s.reg.BadgeFor(a),
@@ -97,7 +99,8 @@ func (s *Server) renderBin(w http.ResponseWriter, r *http.Request, p *Principal)
 			Title:         firstNonEmpty(a.Title, a.PublicID),
 			Subtitle:      metaLine(a),
 			WebURL:        s.webURL(a),
-			Lead:          firstNonEmpty(a.Provenance.OnBehalfOf, a.Provenance.ActorID),
+			Lead:          lead,
+			LeadShort:     truncateAgentVersion(lead),
 			Channel:       string(a.Provenance.Channel),
 			Age:           humanizeSince(a.CreatedAt),
 			TTL:           humanizeUntil(a.ExpiresAt),
