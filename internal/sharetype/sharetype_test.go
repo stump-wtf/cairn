@@ -122,6 +122,53 @@ func TestDecidePreviewZeroBoundDisablesSizeCheck(t *testing.T) {
 	}
 }
 
+// TestDecidePreviewPromotesGenericFloorByContent pins the #72 badge-drift fix:
+// the badge is a function of the CONTENT TYPE, not the push path, so a body
+// declared as the generic floor (file/empty — the uploader made no type claim)
+// is promoted to the rich type its media type names. A real binary still lands
+// on FILE. Bundle and run are declared types (never the floor), so they pass
+// through untouched.
+func TestDecidePreviewPromotesGenericFloorByContent(t *testing.T) {
+	r := Default()
+	const previewMax = 1 << 20
+	tests := []struct {
+		name     string
+		declared artifact.ShareType
+		media    string
+		wantType artifact.ShareType
+		wantPrev bool
+	}{
+		{"markdown declared file", artifact.TypeFile, "text/markdown", KeyMarkdown, true},
+		{"markdown declared empty", "", "text/markdown", KeyMarkdown, true},
+		{"go declared file", artifact.TypeFile, "text/x-go", KeyCode, true},
+		{"go declared empty", "", "text/x-gosrc", KeyCode, true},
+		// An image pushed on the generic route badges IMG and previews, exactly
+		// as the same body declared `image` does — the promotion is asked of
+		// the image type's own PreviewableMedia, so the two routes cannot
+		// diverge. SVG lands on IMAGE, not CODE, despite chroma having an XML
+		// lexer: the ordering in classifyByMedia is what guarantees it.
+		{"png declared file", artifact.TypeFile, "image/png", KeyImage, true},
+		{"jpeg declared empty", "", "image/jpeg", KeyImage, true},
+		{"svg prefers image over the xml lexer", artifact.TypeFile, "image/svg+xml", KeyImage, true},
+		// Plain text is not code: chroma resolves it to its plain-text
+		// sentinel, so a .txt body stays on the floor rather than badging CODE.
+		{"plain text stays file", artifact.TypeFile, "text/plain", artifact.TypeFile, false},
+		{"generic binary stays file", artifact.TypeFile, "application/octet-stream", artifact.TypeFile, false},
+		{"gzip floor stays gz", artifact.TypeGZ, "application/gzip", artifact.TypeGZ, false},
+		{"declared bundle untouched", artifact.TypeBundle, "application/octet-stream", artifact.TypeBundle, true},
+		{"declared markdown kept", KeyMarkdown, "text/markdown", KeyMarkdown, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotType, gotPrev := r.DecidePreview(tc.declared, tc.media, 100, previewMax)
+			if gotType != tc.wantType || gotPrev != tc.wantPrev {
+				t.Fatalf("DecidePreview(%q,%q) = (%q,%v), want (%q,%v)",
+					tc.declared, tc.media, gotType, gotPrev, tc.wantType, tc.wantPrev)
+			}
+		})
+	}
+}
+
 // TestCapabilityMatrix exercises the full reconciled SPEC-0006 anchor
 // capability matrix for every built-in type — reactions and comments — and
 // asserts the declared anchor sets match the annotations design matrix exactly,
