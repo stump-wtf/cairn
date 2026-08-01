@@ -198,7 +198,9 @@ func (s *Server) newMCPServer() *mcp.Server {
 			"artifacts, comment and react on them, and tail live traces and webhook " +
 			"streams — all scoped to what the authorizing human can already reach. Large trace " +
 			"captures do not belong in single MCP calls: open a run and page spans in modest " +
-			"batches, or POST the run JSON to /v1/runs over REST (see the run_capture prompt).",
+			"batches, or POST the run JSON to /v1/runs over REST (see the run_capture prompt). " +
+			"For A2UI-capable hosts, cairn://run/<id>/a2ui and cairn://bundle/<id>/a2ui serve " +
+			"application/a2ui+json renderings of a trace or a bundle (audience: user).",
 		Logger: s.log,
 		// The SDK holds exactly one Subscribe/UnsubscribeHandler pair for the
 		// whole server, so mcpSubscribeResource dispatches by URI prefix
@@ -303,6 +305,58 @@ func (s *Server) newMCPServer() *mcp.Server {
 				"receive a notification each time a new span lands. Requires artifacts:read.",
 			MIMEType: "application/json",
 		}, s.mcpReadRun)
+
+		// A2UI projection of the same run: the trace header, derived stats
+		// and the span waterfall as an updateComponents message. Read-only at
+		// the A2UI layer; buttons render with action names so a host that
+		// supports a2ui_action can wire them up, but Cairn's MCP surface
+		// ignores them until the round-trip lands (joestump-agent/crush#221).
+		// Audience "user" — the model still gets the JSON form via
+		// mcp://cairn/run/{id}.
+		srv.AddResourceTemplate(&mcp.ResourceTemplate{
+			URITemplate: "mcp://cairn/run/{id}/a2ui",
+			Name:        "trace-a2ui",
+			Description: "A trace rendered as an A2UI component tree (header, stats, span waterfall). " +
+				"Read-only at the A2UI layer; mutations stay on the existing tools. Requires artifacts:read.",
+			MIMEType:    a2uiMIME,
+			Annotations: a2uiAudienceUser,
+		}, s.mcpReadRunA2UI)
+		// The cairn:// scheme is what the issue spec calls out and what a
+		// hand-written @-mention would name; the SDK matches templates
+		// literally, so both schemes are registered against the same handler.
+		srv.AddResourceTemplate(&mcp.ResourceTemplate{
+			URITemplate: "cairn://run/{id}/a2ui",
+			Name:        "trace-a2ui-cairn",
+			Description: "Alias for mcp://cairn/run/{id}/a2ui under the cairn:// scheme. " +
+				"Requires artifacts:read.",
+			MIMEType:    a2uiMIME,
+			Annotations: a2uiAudienceUser,
+		}, s.mcpReadRunA2UI)
+	}
+
+	if s.store != nil {
+		// A2UI projection of a bundle's member list: envelope Card plus one
+		// Card per member (name, size, media type). The store gate is the
+		// same one mountMCP applies — the MCP surface only mounts at all
+		// when a store exists, so this is always true here, but the explicit
+		// guard keeps newMCPServer safe to build in unit tests that wire a
+		// storeless Server.
+		srv.AddResourceTemplate(&mcp.ResourceTemplate{
+			URITemplate: "mcp://cairn/bundle/{id}/a2ui",
+			Name:        "bundle-a2ui",
+			Description: "A bundle rendered as an A2UI component tree (envelope + one Card per member). " +
+				"Read-only at the A2UI layer. Requires artifacts:read.",
+			MIMEType:    a2uiMIME,
+			Annotations: a2uiAudienceUser,
+		}, s.mcpReadBundleA2UI)
+		srv.AddResourceTemplate(&mcp.ResourceTemplate{
+			URITemplate: "cairn://bundle/{id}/a2ui",
+			Name:        "bundle-a2ui-cairn",
+			Description: "Alias for mcp://cairn/bundle/{id}/a2ui under the cairn:// scheme. " +
+				"Requires artifacts:read.",
+			MIMEType:    a2uiMIME,
+			Annotations: a2uiAudienceUser,
+		}, s.mcpReadBundleA2UI)
 	}
 
 	if s.hook != nil {
