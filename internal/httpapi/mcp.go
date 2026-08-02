@@ -338,8 +338,9 @@ func (s *Server) newMCPServer() *mcp.Server {
 		// A2UI projection of the same run: the trace header, derived stats
 		// (time-by-category bar + hot spots) and the span flame graph as an
 		// updateComponents message. Read-only at the A2UI layer, and
-		// text-only — no buttons or actions are emitted until the
-		// a2ui_action round-trip lands (joestump-agent/crush#221).
+		// text-only — unlike the bundle surface, no buttons or actions
+		// are emitted here yet: the a2ui_action round-trip currently
+		// speaks open_member only (joestump-agent/crush#221).
 		// Audience "user" — the model still gets the JSON form via
 		// mcp://cairn/run/{id}.
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{

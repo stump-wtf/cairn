@@ -31,6 +31,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/url"
 	"sort"
@@ -187,11 +188,11 @@ func matchA2UIURI(uri, kind string) (string, bool) {
 // path segment of a cairn://bundle/{id}/{name}/a2ui URI. The SDK's URI-template
 // {name} variable matches a single segment only — a literal "/" in the URI
 // fails to match — so a nested member name (dir/file.md) must travel with "/"
-// escaped to %2F. url.PathEscape leaves "/" alone, so we escape then fold the
-// remaining separators. Spaces become %20 (not '+': this is a path segment,
-// not a query). This is the inverse of the decode in matchA2UIMemberURI.
+// escaped to %2F. url.PathEscape encodes exactly for a path segment: "/"
+// becomes %2F and spaces become %20 (not '+': that is query encoding). This is
+// the inverse of the decode in matchA2UIMemberURI.
 func a2uiMemberURIEscape(name string) string {
-	return strings.ReplaceAll(url.PathEscape(name), "/", "%2F")
+	return url.PathEscape(name)
 }
 
 // matchA2UIMemberURI extracts the bundle id and member name from a resolved
@@ -251,9 +252,19 @@ func a2uiMemberIDSanitize(name string) string {
 
 // a2uiMemberSurfaceID names the surface for one bundle member. Distinct from
 // the bundle surface (a2uiBundleSurfaceID) so a host's navigation stack can
-// tell "the bundle list" from "the open member" apart.
+// tell "the bundle list" from "the open member" apart. The sanitized slug
+// keeps the id readable; the fnv-1a suffix keeps it unique when two member
+// names differ only in punctuation ("a.b.md" and "a-b.md" both slug to
+// "a-b-md"). Hosts treat the id as opaque — the open_member context carries
+// the raw name, so nothing ever parses this back apart.
 func a2uiMemberSurfaceID(bundleID, memberName string) string {
-	return "cairn-bundle-" + bundleID + "-member-" + a2uiMemberIDSanitize(memberName)
+	h := fnv.New32a()
+	h.Write([]byte(memberName))
+	slug := a2uiMemberIDSanitize(memberName)
+	if slug != "" {
+		slug += "-"
+	}
+	return fmt.Sprintf("cairn-bundle-%s-member-%s%08x", bundleID, slug, h.Sum32())
 }
 
 // a2uiRequestedWidth reads the run template's optional ?w=N width hint: the
