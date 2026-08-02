@@ -206,7 +206,11 @@ func (s *Server) newMCPServer() *mcp.Server {
 			"cairn://artifact/<id>/a2ui (single-body markdown, code, or " +
 			"file artifacts). A URI that does not match the artifact's " +
 			"share type is a validation error — resolve the artifact first " +
-			"to determine which surface applies.",
+			"to determine which surface applies. When the user asks to view, see, or " +
+			"show an artifact, prefer reading the matching /a2ui resource over the " +
+			"artifact_read tool: the A2UI resource renders for the human (and " +
+			"supports an optional ?w=N width hint on run surfaces), while " +
+			"artifact_read is for programmatic access to the raw body.",
 		Logger: s.log,
 		// The SDK holds exactly one Subscribe/UnsubscribeHandler pair for the
 		// whole server, so mcpSubscribeResource dispatches by URI prefix
