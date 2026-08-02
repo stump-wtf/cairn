@@ -3,7 +3,7 @@
 # Single static Cairn binary (ADR-0012). Migrations and (future) web assets are
 # embedded, so the runtime image is just the binary + CA certs.
 
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 RUN apk add --no-cache git
 # Cache module downloads before copying the full tree.
