@@ -1402,3 +1402,79 @@ func (s *Server) mcpReadMemberA2UI(ctx context.Context, req *mcp.ReadResourceReq
 		{URI: req.Params.URI, MIMEType: a2uiMIME, Text: string(out)},
 	}}, nil
 }
+
+// --- action round-trip (#103, story #106) -------------------------------------
+
+// mcpA2UIActionInput is the a2ui_action tool's input per the A2UI-over-MCP
+// contract (https://a2ui.org/guides/a2ui_over_mcp/): the host resolves data
+// bindings in Context against surface state and calls with the action name.
+type mcpA2UIActionInput struct {
+	// Name is the action's event name (e.g. "open_member").
+	Name string `json:"name"`
+	// Context carries the action's ids/names raw (never percent-escaped).
+	Context map[string]any `json:"context,omitempty"`
+}
+
+// a2uiActionOpenMember is the single navigation verb the bundle surface emits.
+const a2uiActionOpenMember = "open_member"
+
+// mcpA2UIAction is the a2ui_action tool handler: the server side of the
+// A2UI-over-MCP action round-trip. It resolves the action and returns the
+// result as an EmbeddedResource (MIME application/a2ui+json) so the host feeds
+// it back into the SAME surface in place (no agent turn), plus a TextContent
+// fallback for non-A2UI callers (spec best practice). Today the only verb is
+// open_member → the member surface; the projection is shared with the member
+// resource (#104) so the round-trip and a direct read return identical
+// components. Reading requires artifacts:read.
+func (s *Server) mcpA2UIAction(ctx context.Context, req *mcp.CallToolRequest, in mcpA2UIActionInput) (*mcp.CallToolResult, any, error) {
+	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsRead] {
+		return nil, nil, s.mcpScopeErr(ctx, "a2ui_action", oauth.ScopeArtifactsRead)
+	}
+	switch in.Name {
+	case a2uiActionOpenMember:
+		bundleID, _ := in.Context["bundle"].(string)
+		memberName, _ := in.Context["member"].(string)
+		if bundleID == "" || memberName == "" {
+			return nil, nil, fmt.Errorf("validation_failed: open_member requires context.bundle and context.member")
+		}
+		out, err := s.renderMemberA2UI(ctx, bundleID, memberName)
+		if err != nil {
+			return nil, nil, s.mcpToolErr(ctx, "a2ui_action", err)
+		}
+		uri := "cairn://bundle/" + bundleID + "/" + a2uiMemberURIEscape(memberName) + "/a2ui"
+		return &mcp.CallToolResult{Content: []mcp.Content{
+			&mcp.EmbeddedResource{
+				Resource: &mcp.ResourceContents{
+					URI:      uri,
+					MIMEType: a2uiMIME,
+					Text:     string(out),
+				},
+				Annotations: a2uiAudienceUser,
+			},
+			&mcp.TextContent{Text: fmt.Sprintf("Opened bundle member %q from %s.", memberName, bundleID)},
+		}}, nil, nil
+	default:
+		return nil, nil, fmt.Errorf("validation_failed: unknown a2ui action %q", in.Name)
+	}
+}
+
+// mcpA2UIErrorInput is the a2ui_error tool's input: the host reports a render
+// failure on an MCP-served surface.
+type mcpA2UIErrorInput struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	SurfaceID string `json:"surfaceId"`
+}
+
+// mcpA2UIError is the a2ui_error tool handler: a sink for host-side render
+// failures on cairn's A2UI surfaces. Registered so the host's "server exposes
+// a2ui_error" capability check passes; cairn only logs — there is nothing to
+// act on server-side. No scope gate beyond the session's: a render error about
+// a surface the host was already shown carries no new authority.
+func (s *Server) mcpA2UIError(ctx context.Context, req *mcp.CallToolRequest, in mcpA2UIErrorInput) (*mcp.CallToolResult, any, error) {
+	s.log.WarnContext(ctx, "mcp: a2ui render error reported by host",
+		"code", in.Code, "message", in.Message, "surface", in.SurfaceID)
+	return &mcp.CallToolResult{Content: []mcp.Content{
+		&mcp.TextContent{Text: "ok"},
+	}}, nil, nil
+}

@@ -237,6 +237,25 @@ func (s *Server) newMCPServer() *mcp.Server {
 		Description: "Read an artifact or a named file within a bundle by its public id or mcp://cairn/<id> handle. Requires artifacts:read.",
 	}, s.mcpReadArtifact)
 
+	// The A2UI-over-MCP action round-trip (https://a2ui.org/guides/a2ui_over_mcp/):
+	// an action-capable host calls a2ui_action when the user interacts with one of
+	// our A2UI surfaces, and reports render failures via a2ui_error. Registered so
+	// the host's capability check flips it from the agent-turn fallback to the
+	// in-place round-trip. Today the only verb is open_member (bundle navigation).
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "a2ui_action",
+		Description: "Handle an interaction on one of this server's A2UI surfaces per the A2UI-over-MCP " +
+			"contract: the host resolves the action's context against surface state and calls with " +
+			"{name, context}. Returns an A2UI EmbeddedResource for in-place surface update (plus a text " +
+			"fallback). Currently supports open_member ({bundle, member}) for bundle navigation. " +
+			"Requires artifacts:read.",
+	}, s.mcpA2UIAction)
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "a2ui_error",
+		Description: "Report a render failure on one of this server's A2UI surfaces ({code, message, " +
+			"surfaceId}). A sink — logged server-side; present so hosts can report per the A2UI-over-MCP contract.",
+	}, s.mcpA2UIError)
+
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "artifact_create",
 		Description: "Create and push a new single-body artifact (file, markdown, or code — share_type " +

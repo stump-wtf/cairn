@@ -611,6 +611,119 @@ func TestIntegrationMCPBundleMemberA2UIUnknown(t *testing.T) {
 	}
 }
 
+// TestIntegrationMCPA2UIActionRoundTrip covers story #106: calling a2ui_action
+// with {name: open_member, context: {bundle, member}} returns an A2UI
+// EmbeddedResource whose decoded envelope is the member surface — identical
+// components to reading the member resource directly (#104) — plus a text
+// fallback. a2ui_error is accepted. Both tools appear in tools/list.
+func TestIntegrationMCPA2UIActionRoundTrip(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	created := callTool(t, sess, "bundle_create", map[string]any{
+		"title":   "the q3 audit",
+		"members": []map[string]any{{"name": "README.md", "body": "# audit\n\n- findings", "media_type": "text/markdown"}},
+	})
+	var createdBundle mcpBundleCreateOutput
+	decodeToolJSON(t, created, &createdBundle)
+
+	// Capability check: both round-trip tools are advertised.
+	tools, err := sess.ListTools(context.Background(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	var sawAction, sawError bool
+	for _, tool := range tools.Tools {
+		switch tool.Name {
+		case "a2ui_action":
+			sawAction = true
+		case "a2ui_error":
+			sawError = true
+		}
+	}
+	if !sawAction || !sawError {
+		t.Fatalf("round-trip tools not advertised: a2ui_action=%v a2ui_error=%v", sawAction, sawError)
+	}
+
+	// The round-trip: open_member returns the member's A2UI payload.
+	res := callTool(t, sess, "a2ui_action", map[string]any{
+		"name":    "open_member",
+		"context": map[string]any{"bundle": createdBundle.ID, "member": "README.md"},
+	})
+	var embedded *mcp.EmbeddedResource
+	var sawTextFallback bool
+	for _, c := range res.Content {
+		switch v := c.(type) {
+		case *mcp.EmbeddedResource:
+			embedded = v
+		case *mcp.TextContent:
+			sawTextFallback = true
+		}
+	}
+	if embedded == nil {
+		t.Fatalf("a2ui_action returned no EmbeddedResource: %+v", res.Content)
+	}
+	if !sawTextFallback {
+		t.Fatal("a2ui_action must include a text fallback for non-A2UI callers")
+	}
+	if got := embedded.Resource.MIMEType; got != a2uiMIME {
+		t.Fatalf("embedded MIME = %q, want %q", got, a2uiMIME)
+	}
+
+	var env a2uiEnvelope
+	if err := json.Unmarshal([]byte(embedded.Resource.Text), &env); err != nil {
+		t.Fatalf("decode embedded a2ui: %v\nbody: %s", err, embedded.Resource.Text)
+	}
+	// Same member surface as a direct resource read.
+	direct := decodeA2UI(t, sess, "cairn://bundle/"+createdBundle.ID+"/README.md/a2ui")
+	if env.UpdateComponents.SurfaceID != direct.UpdateComponents.SurfaceID {
+		t.Fatalf("round-trip surfaceId = %q, want %q (same as resource read)",
+			env.UpdateComponents.SurfaceID, direct.UpdateComponents.SurfaceID)
+	}
+	if _, ok := a2uiIndex(env)["md-text-1"]; !ok {
+		t.Fatal("round-trip member surface missing md-text-1 (markdown heading)")
+	}
+
+	// a2ui_error is accepted as a sink.
+	errRes := callTool(t, sess, "a2ui_error", map[string]any{
+		"code": "render", "message": "boom", "surfaceId": env.UpdateComponents.SurfaceID,
+	})
+	if errRes.IsError {
+		t.Fatalf("a2ui_error reported an error: %+v", errRes.Content)
+	}
+}
+
+// TestIntegrationMCPA2UIActionValidation proves the unhappy paths: unknown
+// action name, missing context keys, and unknown member each fail cleanly.
+func TestIntegrationMCPA2UIActionValidation(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	created := callTool(t, sess, "bundle_create", map[string]any{
+		"title":   "the q3 audit",
+		"members": []map[string]any{{"name": "README.md", "body": "# audit", "media_type": "text/markdown"}},
+	})
+	var createdBundle mcpBundleCreateOutput
+	decodeToolJSON(t, created, &createdBundle)
+
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"unknown action", map[string]any{"name": "delete_member", "context": map[string]any{"bundle": createdBundle.ID, "member": "README.md"}}},
+		{"missing member key", map[string]any{"name": "open_member", "context": map[string]any{"bundle": createdBundle.ID}}},
+		{"missing bundle key", map[string]any{"name": "open_member", "context": map[string]any{"member": "README.md"}}},
+		{"unknown member", map[string]any{"name": "open_member", "context": map[string]any{"bundle": createdBundle.ID, "member": "nosuch.md"}}},
+	} {
+		res := callTool(t, sess, "a2ui_action", tc.args)
+		if !res.IsError {
+			t.Fatalf("%s: expected an error result, got %+v", tc.name, res.Content)
+		}
+	}
+}
+
 // TestIntegrationMCPBundleA2UIRejectsNonBundle proves the unhappy path for a
 // wrong share type: reading the bundle a2ui resource against a single-body
 // artifact id is a validation failure naming the actual share type, not a
