@@ -1,4 +1,4 @@
-.PHONY: build test test-race test-js vet fmt fmt-check lint tidy up down migrate ci
+.PHONY: build test test-race test-js vet fmt fmt-check lint check tidy up down migrate ci
 
 GO ?= go
 PKGS ?= ./...
@@ -39,6 +39,11 @@ fmt:
 fmt-check:
 	@out="$$(gofmt -l $$(find . -name '*.go' -not -path './vendor/*'))"; \
 	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
+
+# Uniform entry points: every repo answers to `make lint` / `make check`.
+lint: fmt-check vet
+
+check: lint test
 
 tidy:
 	$(GO) mod tidy

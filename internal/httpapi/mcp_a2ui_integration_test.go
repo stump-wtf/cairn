@@ -423,6 +423,55 @@ func TestIntegrationMCPBundleA2UI(t *testing.T) {
 	if m0Name["text"] != "README.md" || m1Name["text"] != "main.go" {
 		t.Fatalf("member names = %v, %v; want README.md and main.go", m0Name["text"], m1Name["text"])
 	}
+
+	// Story #105: each member row is a Button carrying an open_member action
+	// whose context is {bundle, member} raw, wrapping the same content column.
+	// The members-list references the button ids, and every button child
+	// resolves (no dangling refs).
+	assertMemberButton := func(i int, wantName string) {
+		t.Helper()
+		btnID := fmt.Sprintf("member-%d-btn", i)
+		btn, ok := idx[btnID]
+		if !ok {
+			t.Fatalf("missing %s: %+v", btnID, idx)
+		}
+		if got := btn["component"]; got != "Button" {
+			t.Fatalf("%s component = %v, want Button", btnID, got)
+		}
+		if got := btn["child"]; got != fmt.Sprintf("member-%d-col", i) {
+			t.Fatalf("%s child = %v, want member-%d-col", btnID, got, i)
+		}
+		action, _ := btn["action"].(map[string]any)
+		event, _ := action["event"].(map[string]any)
+		if got := event["name"]; got != "open_member" {
+			t.Fatalf("%s action.event.name = %v, want open_member", btnID, got)
+		}
+		ctx, _ := event["context"].(map[string]any)
+		if got := ctx["bundle"]; got != createdBundle.ID {
+			t.Fatalf("%s context.bundle = %v, want %q", btnID, got, createdBundle.ID)
+		}
+		if got := ctx["member"]; got != wantName {
+			t.Fatalf("%s context.member = %v, want %q", btnID, got, wantName)
+		}
+		// The child column must resolve to a real component (no dangling ref).
+		if _, ok := idx[btn["child"].(string)]; !ok {
+			t.Fatalf("%s child %v dangles (no such component)", btnID, btn["child"])
+		}
+	}
+	assertMemberButton(0, "README.md")
+	assertMemberButton(1, "main.go")
+	if list, ok := idx["members-list"]; ok {
+		raw, _ := list["children"].([]any)
+		children := make([]string, 0, len(raw))
+		for _, c := range raw {
+			children = append(children, fmt.Sprintf("%v", c))
+		}
+		if len(children) != 2 || children[0] != "member-0-btn" || children[1] != "member-1-btn" {
+			t.Fatalf("members-list children = %v, want [member-0-btn member-1-btn]", children)
+		}
+	} else {
+		t.Fatal("missing members-list")
+	}
 	m0Meta, ok := idx["member-0-meta"]
 	if !ok {
 		t.Fatalf("missing member-0-meta: %+v", idx)
@@ -461,6 +510,216 @@ func TestIntegrationMCPBundleA2UI(t *testing.T) {
 		env := decodeA2UI(t, sess, uri)
 		if _, ok := a2uiIndex(env)["member-0-name"]; !ok {
 			t.Fatalf("width-hinted read %s missing member-0-name", uri)
+		}
+	}
+}
+
+// TestIntegrationMCPBundleMemberA2UI covers the bundle-member navigation
+// target (story #104): reading cairn://bundle/{id}/{name}/a2ui renders one
+// member as its own A2UI surface — header (member name, size, badge, media
+// type) plus the markdown body via md2a2ui — under a per-member surfaceId
+// distinct from the bundle surface. Both schemes and the ?w= width hint are
+// accepted; nested member names travel percent-encoded (%2F).
+func TestIntegrationMCPBundleMemberA2UI(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	created := callTool(t, sess, "bundle_create", map[string]any{
+		"title": "the q3 audit",
+		"members": []map[string]any{
+			{"name": "README.md", "body": "# audit\n\n- findings", "media_type": "text/markdown"},
+			{"name": "dir/main.go", "body": "package main", "media_type": "text/x-go"},
+		},
+	})
+	var createdBundle mcpBundleCreateOutput
+	decodeToolJSON(t, created, &createdBundle)
+	if createdBundle.ID == "" {
+		t.Fatalf("bundle_create returned no id: %+v", createdBundle)
+	}
+
+	env := decodeA2UI(t, sess, "cairn://bundle/"+createdBundle.ID+"/README.md/a2ui")
+	if env.Version != a2uiVersion {
+		t.Fatalf("envelope version = %q, want %q", env.Version, a2uiVersion)
+	}
+	// Per-member surface id, distinct from the bundle surface id.
+	if got, want := env.UpdateComponents.SurfaceID, a2uiMemberSurfaceID(createdBundle.ID, "README.md"); got != want {
+		t.Fatalf("surfaceId = %q, want %q (distinct from bundle surface)", got, want)
+	}
+
+	idx := a2uiIndex(env)
+	if got := idx["hdr-title"]["text"]; got != "README.md" {
+		t.Fatalf("hdr-title = %v, want the member name", got)
+	}
+	// The markdown body is structured: the "# audit" heading becomes an h1.
+	h1, ok := idx["md-text-1"]
+	if !ok {
+		t.Fatalf("missing md-text-1 (markdown heading): %+v", idx)
+	}
+	if v := h1["variant"]; v != "h1" {
+		t.Fatalf("md-text-1 variant = %v, want h1", v)
+	}
+
+	// The mcp:// alias works too, as does the ?w= width hint on both schemes.
+	for _, uri := range []string{
+		"mcp://cairn/bundle/" + createdBundle.ID + "/README.md/a2ui",
+		"cairn://bundle/" + createdBundle.ID + "/README.md/a2ui?w=120",
+		"mcp://cairn/bundle/" + createdBundle.ID + "/README.md/a2ui?w=80",
+	} {
+		env := decodeA2UI(t, sess, uri)
+		if _, ok := a2uiIndex(env)["md-text-1"]; !ok {
+			t.Fatalf("read %s missing md-text-1 (markdown heading)", uri)
+		}
+	}
+
+	// A nested member name travels percent-encoded (dir/main.go → dir%2Fmain.go);
+	// a non-markdown member renders the plain-text body path.
+	env = decodeA2UI(t, sess, "cairn://bundle/"+createdBundle.ID+"/dir%2Fmain.go/a2ui")
+	idx = a2uiIndex(env)
+	if got := idx["hdr-title"]["text"]; got != "dir/main.go" {
+		t.Fatalf("nested member hdr-title = %v, want dir/main.go (percent-decoded)", got)
+	}
+	body, ok := idx["body-text"]
+	if !ok || !strings.Contains(body["text"].(string), "package main") {
+		t.Fatalf("nested member body-text = %v, want the Go source", body)
+	}
+}
+
+// TestIntegrationMCPBundleMemberA2UIUnknown proves the member surface returns
+// the store's uniform not-found for an unknown member name (and does not
+// distinguish it from an unknown bundle), rather than an internal error.
+func TestIntegrationMCPBundleMemberA2UIUnknown(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	created := callTool(t, sess, "bundle_create", map[string]any{
+		"title":   "the q3 audit",
+		"members": []map[string]any{{"name": "README.md", "body": "# audit", "media_type": "text/markdown"}},
+	})
+	var createdBundle mcpBundleCreateOutput
+	decodeToolJSON(t, created, &createdBundle)
+
+	_, err := sess.ReadResource(context.Background(), &mcp.ReadResourceParams{
+		URI: "cairn://bundle/" + createdBundle.ID + "/nosuch.md/a2ui",
+	})
+	if err == nil {
+		t.Fatal("reading an unknown member must fail")
+	}
+	if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "not_found") {
+		t.Fatalf("unknown member error = %v, want a uniform not-found", err)
+	}
+}
+
+// TestIntegrationMCPA2UIActionRoundTrip covers story #106: calling a2ui_action
+// with {name: open_member, context: {bundle, member}} returns an A2UI
+// EmbeddedResource whose decoded envelope is the member surface — identical
+// components to reading the member resource directly (#104) — plus a text
+// fallback. a2ui_error is accepted. Both tools appear in tools/list.
+func TestIntegrationMCPA2UIActionRoundTrip(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	created := callTool(t, sess, "bundle_create", map[string]any{
+		"title":   "the q3 audit",
+		"members": []map[string]any{{"name": "README.md", "body": "# audit\n\n- findings", "media_type": "text/markdown"}},
+	})
+	var createdBundle mcpBundleCreateOutput
+	decodeToolJSON(t, created, &createdBundle)
+
+	// Capability check: both round-trip tools are advertised.
+	tools, err := sess.ListTools(context.Background(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	var sawAction, sawError bool
+	for _, tool := range tools.Tools {
+		switch tool.Name {
+		case "a2ui_action":
+			sawAction = true
+		case "a2ui_error":
+			sawError = true
+		}
+	}
+	if !sawAction || !sawError {
+		t.Fatalf("round-trip tools not advertised: a2ui_action=%v a2ui_error=%v", sawAction, sawError)
+	}
+
+	// The round-trip: open_member returns the member's A2UI payload.
+	res := callTool(t, sess, "a2ui_action", map[string]any{
+		"name":    "open_member",
+		"context": map[string]any{"bundle": createdBundle.ID, "member": "README.md"},
+	})
+	var embedded *mcp.EmbeddedResource
+	var sawTextFallback bool
+	for _, c := range res.Content {
+		switch v := c.(type) {
+		case *mcp.EmbeddedResource:
+			embedded = v
+		case *mcp.TextContent:
+			sawTextFallback = true
+		}
+	}
+	if embedded == nil {
+		t.Fatalf("a2ui_action returned no EmbeddedResource: %+v", res.Content)
+	}
+	if !sawTextFallback {
+		t.Fatal("a2ui_action must include a text fallback for non-A2UI callers")
+	}
+	if got := embedded.Resource.MIMEType; got != a2uiMIME {
+		t.Fatalf("embedded MIME = %q, want %q", got, a2uiMIME)
+	}
+
+	var env a2uiEnvelope
+	if err := json.Unmarshal([]byte(embedded.Resource.Text), &env); err != nil {
+		t.Fatalf("decode embedded a2ui: %v\nbody: %s", err, embedded.Resource.Text)
+	}
+	// Same member surface as a direct resource read.
+	direct := decodeA2UI(t, sess, "cairn://bundle/"+createdBundle.ID+"/README.md/a2ui")
+	if env.UpdateComponents.SurfaceID != direct.UpdateComponents.SurfaceID {
+		t.Fatalf("round-trip surfaceId = %q, want %q (same as resource read)",
+			env.UpdateComponents.SurfaceID, direct.UpdateComponents.SurfaceID)
+	}
+	if _, ok := a2uiIndex(env)["md-text-1"]; !ok {
+		t.Fatal("round-trip member surface missing md-text-1 (markdown heading)")
+	}
+
+	// a2ui_error is accepted as a sink.
+	errRes := callTool(t, sess, "a2ui_error", map[string]any{
+		"code": "render", "message": "boom", "surfaceId": env.UpdateComponents.SurfaceID,
+	})
+	if errRes.IsError {
+		t.Fatalf("a2ui_error reported an error: %+v", errRes.Content)
+	}
+}
+
+// TestIntegrationMCPA2UIActionValidation proves the unhappy paths: unknown
+// action name, missing context keys, and unknown member each fail cleanly.
+func TestIntegrationMCPA2UIActionValidation(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	created := callTool(t, sess, "bundle_create", map[string]any{
+		"title":   "the q3 audit",
+		"members": []map[string]any{{"name": "README.md", "body": "# audit", "media_type": "text/markdown"}},
+	})
+	var createdBundle mcpBundleCreateOutput
+	decodeToolJSON(t, created, &createdBundle)
+
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"unknown action", map[string]any{"name": "delete_member", "context": map[string]any{"bundle": createdBundle.ID, "member": "README.md"}}},
+		{"missing member key", map[string]any{"name": "open_member", "context": map[string]any{"bundle": createdBundle.ID}}},
+		{"missing bundle key", map[string]any{"name": "open_member", "context": map[string]any{"member": "README.md"}}},
+		{"unknown member", map[string]any{"name": "open_member", "context": map[string]any{"bundle": createdBundle.ID, "member": "nosuch.md"}}},
+	} {
+		res := callTool(t, sess, "a2ui_action", tc.args)
+		if !res.IsError {
+			t.Fatalf("%s: expected an error result, got %+v", tc.name, res.Content)
 		}
 	}
 }

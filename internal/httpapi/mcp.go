@@ -237,6 +237,25 @@ func (s *Server) newMCPServer() *mcp.Server {
 		Description: "Read an artifact or a named file within a bundle by its public id or mcp://cairn/<id> handle. Requires artifacts:read.",
 	}, s.mcpReadArtifact)
 
+	// The A2UI-over-MCP action round-trip (https://a2ui.org/guides/a2ui_over_mcp/):
+	// an action-capable host calls a2ui_action when the user interacts with one of
+	// our A2UI surfaces, and reports render failures via a2ui_error. Registered so
+	// the host's capability check flips it from the agent-turn fallback to the
+	// in-place round-trip. Today the only verb is open_member (bundle navigation).
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "a2ui_action",
+		Description: "Handle an interaction on one of this server's A2UI surfaces per the A2UI-over-MCP " +
+			"contract: the host resolves the action's context against surface state and calls with " +
+			"{name, context}. Returns an A2UI EmbeddedResource for in-place surface update (plus a text " +
+			"fallback). Currently supports open_member ({bundle, member}) for bundle navigation. " +
+			"Requires artifacts:read.",
+	}, s.mcpA2UIAction)
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "a2ui_error",
+		Description: "Report a render failure on one of this server's A2UI surfaces ({code, message, " +
+			"surfaceId}). A sink — logged server-side; present so hosts can report per the A2UI-over-MCP contract.",
+	}, s.mcpA2UIError)
+
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "artifact_create",
 		Description: "Create and push a new single-body artifact (file, markdown, or code — share_type " +
@@ -319,8 +338,9 @@ func (s *Server) newMCPServer() *mcp.Server {
 		// A2UI projection of the same run: the trace header, derived stats
 		// (time-by-category bar + hot spots) and the span flame graph as an
 		// updateComponents message. Read-only at the A2UI layer, and
-		// text-only — no buttons or actions are emitted until the
-		// a2ui_action round-trip lands (joestump-agent/crush#221).
+		// text-only — unlike the bundle surface, no buttons or actions
+		// are emitted here yet: the a2ui_action round-trip currently
+		// speaks open_member only (joestump-agent/crush#221).
 		// Audience "user" — the model still gets the JSON form via
 		// mcp://cairn/run/{id}.
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
@@ -372,6 +392,28 @@ func (s *Server) newMCPServer() *mcp.Server {
 			MIMEType:    a2uiMIME,
 			Annotations: a2uiAudienceUser,
 		}, s.mcpReadBundleA2UI)
+		// A2UI projection of one bundle member — the navigation target a host
+		// lands on when the user opens a member from the bundle list. The
+		// {name} variable is a single percent-encoded path segment (a nested
+		// member name travels with "/" escaped to %2F). {?w} accepted for
+		// uniformity though this surface ignores the width value.
+		srv.AddResourceTemplate(&mcp.ResourceTemplate{
+			URITemplate: "mcp://cairn/bundle/{id}/{name}/a2ui{?w}",
+			Name:        "bundle-member-a2ui",
+			Description: "A single bundle member rendered as an A2UI component tree (header + body " +
+				"text; markdown members as structured components). The navigation target for the " +
+				"bundle list's open_member action. Read-only at the A2UI layer. Requires artifacts:read.",
+			MIMEType:    a2uiMIME,
+			Annotations: a2uiAudienceUser,
+		}, s.mcpReadMemberA2UI)
+		srv.AddResourceTemplate(&mcp.ResourceTemplate{
+			URITemplate: "cairn://bundle/{id}/{name}/a2ui{?w}",
+			Name:        "bundle-member-a2ui-cairn",
+			Description: "Alias for mcp://cairn/bundle/{id}/{name}/a2ui under the cairn:// scheme. " +
+				"Requires artifacts:read.",
+			MIMEType:    a2uiMIME,
+			Annotations: a2uiAudienceUser,
+		}, s.mcpReadMemberA2UI)
 
 		// A2UI projection of a single-body artifact (markdown, code, file):
 		// a header Card (title, provenance, media type) wrapping the body
