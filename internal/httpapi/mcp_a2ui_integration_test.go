@@ -669,21 +669,38 @@ func TestIntegrationMCPArtifactA2UI(t *testing.T) {
 		t.Fatal("hdr-title must NOT carry usageHint")
 	}
 
-	// Body card carries the text content.
-	bodyText, ok := idx["body-text"]
+	// Body card carries the text content. For markdown artifacts, the body
+	// is rendered through md2a2ui as structured components — the heading
+	// "# Gaps" becomes an h1 Text with the heading text, and each list item
+	// becomes a body Text inside a List.
+	h1, ok := idx["md-text-1"]
 	if !ok {
-		t.Fatalf("missing body-text component: %+v", idx)
+		t.Fatalf("missing md-text-1 (markdown heading component): %+v", idx)
 	}
-	text, _ := bodyText["text"].(string)
-	if !strings.Contains(text, "OpenBao HA missing") {
-		t.Fatalf("body-text = %q, want it to contain the artifact body", text)
+	if v, ok := h1["variant"]; !ok || v != "h1" {
+		t.Fatalf("md-text-1 variant = %v, want %q", v, "h1")
+	}
+	h1Text, _ := h1["text"].(string)
+	if !strings.Contains(h1Text, "Gaps") {
+		t.Fatalf("md-text-1 = %q, want it to contain the heading text", h1Text)
+	}
+	// At least one list item body text carries "OpenBao HA missing".
+	found := false
+	for _, c := range idx {
+		if text, _ := c["text"].(string); strings.Contains(text, "OpenBao HA missing") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("no component contains 'OpenBao HA missing': %+v", idx)
 	}
 
 	// The cairn:// alias works too.
 	env2 := decodeA2UI(t, sess, "cairn://artifact/"+artOut.ID+"/a2ui")
 	idx2 := a2uiIndex(env2)
-	if _, ok := idx2["body-text"]; !ok {
-		t.Fatalf("cairn:// alias missing body-text")
+	if _, ok := idx2["md-text-1"]; !ok {
+		t.Fatalf("cairn:// alias missing md-text-1 (markdown heading)")
 	}
 }
 

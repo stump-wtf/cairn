@@ -39,6 +39,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/joestump/md2a2ui"
+
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/errs"
 	"github.com/joestump/cairn/internal/oauth"
@@ -1003,6 +1005,41 @@ func a2uiArtifactView(art *artifact.Artifact, body string) a2uiEnvelope {
 		"expires " + art.ExpiresAt.UTC().Format("2006-01-02"),
 	})...)
 
+	// For markdown artifacts, convert the body to structured A2UI components
+	// (headings, lists, tables, code blocks, blockquotes) via md2a2ui.
+	// Falls through to plain text if the conversion fails or the media type
+	// is not markdown.
+	if isMarkdownMediaType(art.MediaType) {
+		msg, err := md2a2ui.ConvertWithSurface(body, surfaceID+"-md")
+		if err == nil && msg != nil && msg.UpdateComponents != nil && len(msg.UpdateComponents.Components) > 0 {
+			for _, mc := range msg.UpdateComponents.Components {
+				mc.ID = "md-" + mc.ID
+				for i := range mc.Children {
+					mc.Children[i] = "md-" + mc.Children[i]
+				}
+				if mc.Child != "" {
+					mc.Child = "md-" + mc.Child
+				}
+				components = append(components, convertMDComponent(mc))
+			}
+			// The root component from md2a2ui is a Column named "md-root";
+			// its children become the body card's children.
+			components = append(components,
+				a2uiCard("body", "md-root"),
+			)
+			root := []string{"hdr", "body"}
+			components = append(components, a2uiColumn("root", root))
+			return a2uiEnvelope{
+				Version: a2uiVersion,
+				UpdateComponents: a2uiUpdateComponents{
+					SurfaceID:  surfaceID,
+					CatalogID:  a2uiCatalog,
+					Components: components,
+				},
+			}
+		}
+	}
+
 	bodyText := body
 	if len(bodyText) > a2uiMaxBodyBytes {
 		bodyText = a2uiTruncate(bodyText, a2uiMaxBodyBytes) + "\n\n…(truncated — read the full artifact via artifact_read)"
@@ -1025,6 +1062,45 @@ func a2uiArtifactView(art *artifact.Artifact, body string) a2uiEnvelope {
 			Components: components,
 		},
 	}
+}
+
+// isMarkdownMediaType reports whether the media type is markdown and should
+// be rendered through md2a2ui.
+func isMarkdownMediaType(mt string) bool {
+	return mt == "text/markdown" || mt == "text/x-markdown" || strings.HasSuffix(mt, "+markdown")
+}
+
+// convertMDComponent converts an md2a2ui.Component to an a2uiComponent map.
+func convertMDComponent(c md2a2ui.Component) a2uiComponent {
+	m := a2uiComponent{
+		"id":        c.ID,
+		"component": c.Component,
+	}
+	if c.Text != "" {
+		m["text"] = c.Text
+	}
+	if c.Variant != "" {
+		m["variant"] = c.Variant
+	}
+	if len(c.Children) > 0 {
+		m["children"] = c.Children
+	}
+	if c.Child != "" {
+		m["child"] = c.Child
+	}
+	if c.Axis != "" {
+		m["axis"] = c.Axis
+	}
+	if c.URL != "" {
+		m["url"] = c.URL
+	}
+	if c.AltText != "" {
+		m["altText"] = c.AltText
+	}
+	if c.Direction != "" {
+		m["direction"] = c.Direction
+	}
+	return m
 }
 
 // a2uiBodylessHint names the surface that actually renders a bodyless share
