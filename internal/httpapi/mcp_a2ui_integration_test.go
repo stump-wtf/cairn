@@ -423,6 +423,55 @@ func TestIntegrationMCPBundleA2UI(t *testing.T) {
 	if m0Name["text"] != "README.md" || m1Name["text"] != "main.go" {
 		t.Fatalf("member names = %v, %v; want README.md and main.go", m0Name["text"], m1Name["text"])
 	}
+
+	// Story #105: each member row is a Button carrying an open_member action
+	// whose context is {bundle, member} raw, wrapping the same content column.
+	// The members-list references the button ids, and every button child
+	// resolves (no dangling refs).
+	assertMemberButton := func(i int, wantName string) {
+		t.Helper()
+		btnID := fmt.Sprintf("member-%d-btn", i)
+		btn, ok := idx[btnID]
+		if !ok {
+			t.Fatalf("missing %s: %+v", btnID, idx)
+		}
+		if got := btn["component"]; got != "Button" {
+			t.Fatalf("%s component = %v, want Button", btnID, got)
+		}
+		if got := btn["child"]; got != fmt.Sprintf("member-%d-col", i) {
+			t.Fatalf("%s child = %v, want member-%d-col", btnID, got, i)
+		}
+		action, _ := btn["action"].(map[string]any)
+		event, _ := action["event"].(map[string]any)
+		if got := event["name"]; got != "open_member" {
+			t.Fatalf("%s action.event.name = %v, want open_member", btnID, got)
+		}
+		ctx, _ := event["context"].(map[string]any)
+		if got := ctx["bundle"]; got != createdBundle.ID {
+			t.Fatalf("%s context.bundle = %v, want %q", btnID, got, createdBundle.ID)
+		}
+		if got := ctx["member"]; got != wantName {
+			t.Fatalf("%s context.member = %v, want %q", btnID, got, wantName)
+		}
+		// The child column must resolve to a real component (no dangling ref).
+		if _, ok := idx[btn["child"].(string)]; !ok {
+			t.Fatalf("%s child %v dangles (no such component)", btnID, btn["child"])
+		}
+	}
+	assertMemberButton(0, "README.md")
+	assertMemberButton(1, "main.go")
+	if list, ok := idx["members-list"]; ok {
+		raw, _ := list["children"].([]any)
+		children := make([]string, 0, len(raw))
+		for _, c := range raw {
+			children = append(children, fmt.Sprintf("%v", c))
+		}
+		if len(children) != 2 || children[0] != "member-0-btn" || children[1] != "member-1-btn" {
+			t.Fatalf("members-list children = %v, want [member-0-btn member-1-btn]", children)
+		}
+	} else {
+		t.Fatal("missing members-list")
+	}
 	m0Meta, ok := idx["member-0-meta"]
 	if !ok {
 		t.Fatalf("missing member-0-meta: %+v", idx)

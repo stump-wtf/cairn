@@ -954,6 +954,7 @@ func a2uiBundleView(bundleID string, art *artifact.Artifact, members []a2uiMembe
 	}
 	for i, m := range capped {
 		colID := fmt.Sprintf("member-%d-col", i)
+		btnID := fmt.Sprintf("member-%d-btn", i)
 		nameID := fmt.Sprintf("member-%d-name", i)
 		metaID := fmt.Sprintf("member-%d-meta", i)
 
@@ -973,12 +974,22 @@ func a2uiBundleView(bundleID string, art *artifact.Artifact, members []a2uiMembe
 			metaBits = append(metaBits, fmt.Sprintf("♥ %d", m.Reactions))
 		}
 
+		// Each member row is a Button wrapping the same name+meta content, so
+		// the list looks identical but the row is clickable on an
+		// A2UI-action-capable host (joestump-agent/crush#221). The open_member
+		// action's context carries {bundle, member} raw so the server's
+		// a2ui_action round-trip (#106) is self-contained — no host-side
+		// surfaceId parsing needed.
 		components = append(components,
 			a2uiText(nameID, m.Name, "h5"),
 			a2uiText(metaID, strings.Join(metaBits, " · "), "caption"),
 			a2uiColumn(colID, []string{nameID, metaID}),
+			a2uiButton(btnID, colID, "open_member", map[string]any{
+				"bundle": bundleID,
+				"member": m.Name,
+			}),
 		)
-		memberIDs = append(memberIDs, colID)
+		memberIDs = append(memberIDs, btnID)
 	}
 	if overflow > 0 {
 		memberIDs = append(memberIDs, "members-overflow")
