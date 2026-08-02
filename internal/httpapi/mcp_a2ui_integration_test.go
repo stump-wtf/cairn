@@ -411,3 +411,111 @@ func TestIntegrationMCPRunA2UICairnScheme(t *testing.T) {
 		t.Fatalf("cairn:// run a2ui hdr-title = %v", got)
 	}
 }
+
+// TestIntegrationMCPArtifactA2UI covers the single-body artifact view: a
+// markdown artifact created via artifact_create renders as an A2UI envelope
+// with a header card (title, media type, visibility) and a body card carrying
+// the artifact's text content.
+func TestIntegrationMCPArtifactA2UI(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	created := callTool(t, sess, "artifact_create", map[string]any{
+		"title":      "gap analysis",
+		"body":       "# Gaps\n\n- OpenBao HA missing\n- Cert renewal untracked",
+		"media_type": "text/markdown",
+	})
+	var artOut mcpCreateOutput
+	decodeToolJSON(t, created, &artOut)
+	if artOut.ID == "" {
+		t.Fatalf("artifact_create returned no id: %+v", artOut)
+	}
+
+	env := decodeA2UI(t, sess, "mcp://cairn/artifact/"+artOut.ID+"/a2ui")
+	if env.Version != a2uiVersion {
+		t.Fatalf("envelope version = %q, want %q", env.Version, a2uiVersion)
+	}
+
+	idx := a2uiIndex(env)
+
+	// Header carries the title.
+	title, ok := idx["hdr-title"]
+	if !ok || title["text"] != "gap analysis" {
+		t.Fatalf("hdr-title = %+v, want the artifact title", title)
+	}
+
+	// Header title uses the spec-defined "variant" field, not "usageHint".
+	if v, ok := idx["hdr-title"]["variant"]; !ok || v != "h2" {
+		t.Fatalf("hdr-title variant = %v, want %q", v, "h2")
+	}
+	if _, ok := idx["hdr-title"]["usageHint"]; ok {
+		t.Fatal("hdr-title must NOT carry usageHint")
+	}
+
+	// Body card carries the text content.
+	bodyText, ok := idx["body-text"]
+	if !ok {
+		t.Fatalf("missing body-text component: %+v", idx)
+	}
+	text, _ := bodyText["text"].(string)
+	if !strings.Contains(text, "OpenBao HA missing") {
+		t.Fatalf("body-text = %q, want it to contain the artifact body", text)
+	}
+
+	// The cairn:// alias works too.
+	env2 := decodeA2UI(t, sess, "cairn://artifact/"+artOut.ID+"/a2ui")
+	idx2 := a2uiIndex(env2)
+	if _, ok := idx2["body-text"]; !ok {
+		t.Fatalf("cairn:// alias missing body-text")
+	}
+}
+
+// TestIntegrationMCPArtifactA2UIRejectsBodyless proves the unhappy path:
+// reading a bundle via the artifact a2ui surface is a validation failure
+// naming the actual share type, directing the caller to the correct surface.
+func TestIntegrationMCPArtifactA2UIRejectsBodyless(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	created := callTool(t, sess, "bundle_create", map[string]any{
+		"members": []map[string]any{{"name": "a.txt", "body": "hi"}},
+	})
+	var bundleOut mcpBundleCreateOutput
+	decodeToolJSON(t, created, &bundleOut)
+
+	_, err := sess.ReadResource(context.Background(), &mcp.ReadResourceParams{
+		URI: "mcp://cairn/artifact/" + bundleOut.ID + "/a2ui",
+	})
+	if err == nil {
+		t.Fatal("reading a bundle via the artifact a2ui surface must fail")
+	}
+	if !strings.Contains(err.Error(), "validation_failed") {
+		t.Fatalf("bodyless artifact error = %v, want validation_failed", err)
+	}
+}
+
+// TestIntegrationMCPArtifactA2UIRequiresRead proves the artifact surface
+// honours the same single artifacts:read scope as every other read.
+func TestIntegrationMCPArtifactA2UIRequiresRead(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	writeToken := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, writeToken, nil, "a2ui-agent")
+
+	created := callTool(t, sess, "artifact_create", map[string]any{
+		"title": "scoped probe",
+		"body":  "hi",
+	})
+	var artOut mcpCreateOutput
+	decodeToolJSON(t, created, &artOut)
+
+	writeOnly := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:write"})
+	writeSess := mcpClient(t, srv, writeOnly, nil, "writeonly-agent")
+	_, err := writeSess.ReadResource(context.Background(), &mcp.ReadResourceParams{
+		URI: "mcp://cairn/artifact/" + artOut.ID + "/a2ui",
+	})
+	if err == nil {
+		t.Fatal("write-only token must not read the a2ui artifact resource")
+	}
+}

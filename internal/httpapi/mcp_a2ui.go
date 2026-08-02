@@ -7,8 +7,9 @@
 // on the existing MCP tools; the buttons on these surfaces are placeholders
 // until the `a2ui_action` round-trip lands in joestump-agent/crush#221):
 //
-//	cairn://run/{id}/a2ui     — trace header + span waterfall + stats
-//	cairn://bundle/{id}/a2ui  — bundle envelope + one Card per member
+//	cairn://run/{id}/a2ui       — trace header + span waterfall + stats
+//	cairn://bundle/{id}/a2ui    — bundle envelope + one Card per member
+//	cairn://artifact/{id}/a2ui   — single-body artifact (markdown, code, file)
 //
 // Both follow the A2UI-over-MCP transport contract:
 // https://a2ui.org/guides/a2ui_over_mcp/. The wire shape is the same
@@ -25,6 +26,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -524,6 +526,134 @@ func (s *Server) mcpReadBundleA2UI(ctx context.Context, req *mcp.ReadResourceReq
 // cairn://bundle/<id>/a2ui URI.
 func matchBundleA2UIURI(uri string) (string, bool) {
 	for _, prefix := range []string{"mcp://cairn/bundle/", "cairn://bundle/"} {
+		if strings.HasPrefix(uri, prefix) {
+			rest := strings.TrimPrefix(uri, prefix)
+			id, found := strings.CutSuffix(rest, "/a2ui")
+			if !found || id == "" || strings.Contains(id, "/") {
+				return "", false
+			}
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// --- single-body artifact view ------------------------------------------------
+
+// a2uiMaxBodyBytes caps how much of the artifact body is rendered as A2UI text.
+// A host that wants the full body reads the JSON/REST resource; the A2UI surface
+// is a readable card, not a dump.
+const a2uiMaxBodyBytes = 8192
+
+// a2uiArtifactSurfaceID names the surface for a given artifact resource.
+func a2uiArtifactSurfaceID(publicID string) string { return "cairn-art-" + publicID }
+
+// a2uiArtifactView renders a single-body artifact as an A2UI component tree:
+// a header Card (title, media type, size, visibility, expiry) and a body Card
+// containing the text content.
+func a2uiArtifactView(art *artifact.Artifact, body string) a2uiEnvelope {
+	surfaceID := a2uiArtifactSurfaceID(art.PublicID)
+	components := []a2uiComponent{}
+
+	title := art.Title
+	if title == "" {
+		title = "(untitled artifact)"
+	}
+
+	headerChildren := []string{"hdr-title", "hdr-meta"}
+	components = append(components,
+		a2uiText("hdr-title", title, "h2"),
+	)
+
+	metaBits := []string{
+		a2uiHumanBytes(art.Size),
+		art.MediaType,
+		"visibility: " + string(art.Access.Visibility),
+		"expires " + art.ExpiresAt.UTC().Format("2006-01-02"),
+	}
+	components = append(components,
+		a2uiText("hdr-meta", strings.Join(metaBits, " · "), "caption"),
+		a2uiColumn("hdr-col", headerChildren),
+		a2uiCard("hdr", "hdr-col"),
+	)
+
+	bodyText := body
+	if len(bodyText) > a2uiMaxBodyBytes {
+		bodyText = bodyText[:a2uiMaxBodyBytes] + "\n\n…(truncated — read the full artifact via artifact_read)"
+	}
+
+	components = append(components,
+		a2uiText("body-text", bodyText, "body"),
+		a2uiColumn("body-col", []string{"body-text"}),
+		a2uiCard("body", "body-col"),
+	)
+
+	root := []string{"hdr", "body"}
+	components = append(components, a2uiColumn("root", root))
+
+	return a2uiEnvelope{
+		Version: a2uiVersion,
+		UpdateComponents: a2uiUpdateComponents{
+			SurfaceID:  surfaceID,
+			CatalogID:  a2uiCatalog,
+			Components: components,
+		},
+	}
+}
+
+// artifactIsBodyless reports whether the share type carries no single
+// content-addressed body. Mirrors artifact.Artifact.bodyless() but is callable
+// from this package (bodyless is unexported).
+func artifactIsBodyless(t artifact.ShareType) bool {
+	return t == artifact.TypeBundle || t == artifact.TypeTrajectory || t == artifact.TypeWebhook
+}
+
+// mcpReadArtifactA2UI is the ResourceHandler for cairn://artifact/{id}/a2ui:
+// reads a single-body artifact and projects it onto A2UI components. Rejects
+// bodyless types (bundle, trajectory, webhook) — those have their own surfaces.
+// Reading requires artifacts:read.
+func (s *Server) mcpReadArtifactA2UI(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsRead] {
+		return nil, s.mcpScopeErr(ctx, "resources/read artifact/a2ui", oauth.ScopeArtifactsRead)
+	}
+	id, ok := matchArtifactA2UIURI(req.Params.URI)
+	if !ok {
+		return nil, fmt.Errorf("validation_failed: %q is not an artifact a2ui resource URI", req.Params.URI)
+	}
+	art, err := s.store.GetByPublicID(ctx, id)
+	if err != nil {
+		return nil, s.mcpToolErr(ctx, "resources/read artifact/a2ui", err)
+	}
+	if artifactIsBodyless(art.ShareType) {
+		return nil, s.mcpToolErr(ctx, "resources/read artifact/a2ui",
+			errs.Validationf("%s is a %s, not a single-body artifact; use the %s a2ui surface instead",
+				id, art.ShareType, art.ShareType))
+	}
+
+	rc, _, err := s.store.OpenBody(ctx, id)
+	if err != nil {
+		return nil, s.mcpToolErr(ctx, "resources/read artifact/a2ui", err)
+	}
+	defer rc.Close()
+	body, err := io.ReadAll(io.LimitReader(rc, a2uiMaxBodyBytes+1))
+	if err != nil {
+		return nil, s.mcpToolErr(ctx, "resources/read artifact/a2ui", fmt.Errorf("read body: %w", err))
+	}
+
+	env := a2uiArtifactView(art, string(body))
+	out, err := json.Marshal(env)
+	if err != nil {
+		return nil, s.mcpToolErr(ctx, "resources/read artifact/a2ui", fmt.Errorf("encode a2ui artifact: %w", err))
+	}
+	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{
+		{URI: req.Params.URI, MIMEType: a2uiMIME, Text: string(out)},
+	}}, nil
+}
+
+// matchArtifactA2UIURI extracts the artifact id from a resolved
+// cairn://artifact/<id>/a2ui URI.
+func matchArtifactA2UIURI(uri string) (string, bool) {
+	for _, prefix := range []string{"mcp://cairn/artifact/", "cairn://artifact/"} {
 		if strings.HasPrefix(uri, prefix) {
 			rest := strings.TrimPrefix(uri, prefix)
 			id, found := strings.CutSuffix(rest, "/a2ui")
