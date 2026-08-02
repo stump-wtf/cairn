@@ -1,5 +1,6 @@
-// Integration coverage for the A2UI MCP resources (issue #90): both surfaces
-// (run, bundle), happy and unhappy paths. These run against the real
+// Integration coverage for the A2UI MCP resources (issue #90): all three
+// surfaces (run, bundle, artifact), happy and unhappy paths. These run
+// against the real
 // streamable-HTTP MCP transport with a real OAuth-minted token over real
 // Postgres — the same shape as the rest of the MCP integration suite, so
 // every assertion exercises what an A2UI-capable host will actually speak.
@@ -8,8 +9,10 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -287,6 +290,72 @@ func TestIntegrationMCPRunA2UIEmptyRun(t *testing.T) {
 	}
 }
 
+// a2uiSpanBatch builds n flat root-level spans for run_create, enough to
+// probe the a2uiMaxRunSpans cap.
+func a2uiSpanBatch(n int) []map[string]any {
+	spans := make([]map[string]any, 0, n)
+	for i := 0; i < n; i++ {
+		spans = append(spans, map[string]any{
+			"span_id":         fmt.Sprintf("s%d", i),
+			"category":        "exec",
+			"name":            fmt.Sprintf("step %d", i),
+			"start_offset_ms": i,
+			"duration_ms":     1,
+		})
+	}
+	return spans
+}
+
+// TestIntegrationMCPRunA2UISpanCap covers both sides of the a2uiMaxRunSpans
+// boundary: a run holding exactly the cap renders every span and NO overflow
+// row (the "…0 more spans" regression), while one span over the cap renders
+// the cap plus an overflow row counting exactly the omitted spans.
+func TestIntegrationMCPRunA2UISpanCap(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	// Exactly at the cap: all spans render, no bogus overflow row.
+	created := callTool(t, sess, "run_create", map[string]any{
+		"title": "exactly the cap",
+		"spans": a2uiSpanBatch(a2uiMaxRunSpans),
+	})
+	var atCap mcpRunOutput
+	decodeToolJSON(t, created, &atCap)
+
+	env := decodeA2UI(t, sess, "mcp://cairn/run/"+atCap.ID+"/a2ui")
+	idx := a2uiIndex(env)
+	if _, ok := idx[fmt.Sprintf("span-%d", a2uiMaxRunSpans)]; !ok {
+		t.Fatalf("exactly-at-cap run must render all %d spans", a2uiMaxRunSpans)
+	}
+	if _, ok := idx["span-overflow"]; ok {
+		t.Fatalf("exactly-at-cap run must NOT render the overflow row: %v", idx["span-overflow"])
+	}
+
+	// One over the cap: the cap renders, plus an overflow row naming the
+	// single omitted span.
+	created = callTool(t, sess, "run_create", map[string]any{
+		"title": "one over the cap",
+		"spans": a2uiSpanBatch(a2uiMaxRunSpans + 1),
+	})
+	var overCap mcpRunOutput
+	decodeToolJSON(t, created, &overCap)
+
+	env = decodeA2UI(t, sess, "mcp://cairn/run/"+overCap.ID+"/a2ui")
+	idx = a2uiIndex(env)
+	overflow, ok := idx["span-overflow"]
+	if !ok {
+		t.Fatal("over-cap run must render the overflow row")
+	}
+	text, _ := overflow["text"].(string)
+	if !strings.Contains(text, "…1 more spans") {
+		t.Fatalf("overflow row = %q, want it to count exactly 1 omitted span", text)
+	}
+	if _, ok := idx[fmt.Sprintf("span-%d", a2uiMaxRunSpans+1)]; ok {
+		t.Fatalf("over-cap run must stop rendering at %d spans", a2uiMaxRunSpans)
+	}
+}
+
 // TestIntegrationMCPBundleA2UI covers the bundle view end-to-end: a bundle
 // created via bundle_create renders as an envelope header Card (member
 // count, total size, type mix) plus a member list row per member, each
@@ -462,6 +531,30 @@ func TestIntegrationMCPBundleA2UISingleMemberBundle(t *testing.T) {
 	}
 }
 
+// TestIntegrationMCPRunA2UINotSubscribable proves subscribing to an a2ui
+// surface fails with an error naming the actual limitation and the JSON
+// resource to subscribe to instead — not the run matcher's misleading "not a
+// run resource URI" complaint about a URI the server itself advertises.
+func TestIntegrationMCPRunA2UINotSubscribable(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	runID := openRunViaMCP(t, srv, token)
+
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+	for _, uri := range []string{
+		"mcp://cairn/run/" + runID + "/a2ui",
+		"cairn://run/" + runID + "/a2ui",
+	} {
+		err := sess.Subscribe(context.Background(), &mcp.SubscribeParams{URI: uri})
+		if err == nil {
+			t.Fatalf("subscribe %s must fail: a2ui surfaces are not subscribable", uri)
+		}
+		if !strings.Contains(err.Error(), "not subscribable") {
+			t.Fatalf("subscribe %s error = %v, want it to say the surface is not subscribable", uri, err)
+		}
+	}
+}
+
 // TestIntegrationMCPRunA2UICairnScheme proves the cairn:// alias the issue
 // spec calls out resolves to the same handler as the advertised mcp://
 // template — a hand-written @-mention naming cairn://run/<id>/a2ui gets the
@@ -546,6 +639,91 @@ func TestIntegrationMCPArtifactA2UI(t *testing.T) {
 	}
 }
 
+// TestIntegrationMCPA2UIUnknownIDs proves the artifact and bundle surfaces
+// surface the store's uniform not-found for an unknown id — matching what the
+// run surface already asserts — rather than an internal error or a confusing
+// validation complaint.
+func TestIntegrationMCPA2UIUnknownIDs(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	for _, uri := range []string{
+		"mcp://cairn/artifact/unknownid999/a2ui",
+		"mcp://cairn/bundle/unknownid999/a2ui",
+	} {
+		_, err := sess.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: uri})
+		if err == nil {
+			t.Fatalf("read %s must fail for an unknown id", uri)
+		}
+		if !strings.Contains(err.Error(), "not_found") {
+			t.Fatalf("read %s error = %v, want the uniform not_found", uri, err)
+		}
+	}
+}
+
+// TestIntegrationMCPArtifactA2UITruncatesBody covers the a2uiMaxBodyBytes
+// boundary: a body one byte over the cap is truncated with the marker, the cut
+// never splits a multi-byte rune (no U+FFFD on the card), and a body exactly
+// at the cap renders whole with no marker.
+func TestIntegrationMCPArtifactA2UITruncatesBody(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	const marker = "…(truncated — read the full artifact via artifact_read)"
+
+	// "é" (2 bytes) straddles the cap: bytes 8191..8192. A byte-index slice
+	// at 8192 would tear it into invalid UTF-8; the rune-safe cut drops it.
+	body := strings.Repeat("a", a2uiMaxBodyBytes-1) + "é" + strings.Repeat("b", 64)
+	created := callTool(t, sess, "artifact_create", map[string]any{
+		"title":      "big body",
+		"body":       body,
+		"media_type": "text/plain",
+	})
+	var artOut mcpCreateOutput
+	decodeToolJSON(t, created, &artOut)
+	if artOut.ID == "" {
+		t.Fatalf("artifact_create returned no id: %+v", artOut)
+	}
+
+	env := decodeA2UI(t, sess, "mcp://cairn/artifact/"+artOut.ID+"/a2ui")
+	idx := a2uiIndex(env)
+	text, _ := idx["body-text"]["text"].(string)
+	if !strings.Contains(text, marker) {
+		t.Fatalf("body-text does not carry the truncation marker; len=%d", len(text))
+	}
+	if !utf8.ValidString(text) {
+		t.Fatal("truncated body-text is not valid UTF-8")
+	}
+	if strings.ContainsRune(text, utf8.RuneError) {
+		t.Fatal("truncated body-text carries U+FFFD — the cut split a rune")
+	}
+	if strings.ContainsRune(text, 'é') {
+		t.Fatalf("the straddling rune must be dropped by the rune-safe cut")
+	}
+
+	// Exactly at the cap: no truncation, no marker.
+	exact := strings.Repeat("x", a2uiMaxBodyBytes)
+	created = callTool(t, sess, "artifact_create", map[string]any{
+		"title":      "exact body",
+		"body":       exact,
+		"media_type": "text/plain",
+	})
+	var exactOut mcpCreateOutput
+	decodeToolJSON(t, created, &exactOut)
+
+	env = decodeA2UI(t, sess, "mcp://cairn/artifact/"+exactOut.ID+"/a2ui")
+	idx = a2uiIndex(env)
+	text, _ = idx["body-text"]["text"].(string)
+	if text != exact {
+		t.Fatalf("exactly-at-cap body must render whole; got len=%d want len=%d", len(text), len(exact))
+	}
+	if strings.Contains(text, marker) {
+		t.Fatal("exactly-at-cap body must not carry the truncation marker")
+	}
+}
+
 // TestIntegrationMCPArtifactA2UIRejectsBodyless proves the unhappy path:
 // reading a bundle via the artifact a2ui surface is a validation failure
 // naming the actual share type, directing the caller to the correct surface.
@@ -568,6 +746,31 @@ func TestIntegrationMCPArtifactA2UIRejectsBodyless(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "validation_failed") {
 		t.Fatalf("bodyless artifact error = %v, want validation_failed", err)
+	}
+}
+
+// TestIntegrationMCPArtifactA2UIRejectsBinaryBody proves the registered
+// contract ("Binary artifacts (images, gz) are rejected — they have no text
+// to render"): an image artifact created via the REST web upload path (the
+// binary-body route MCP's artifact_create lacks) is refused with a validation
+// failure rather than rendered as mojibake text.
+func TestIntegrationMCPArtifactA2UIRejectsBinaryBody(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+
+	// The OAuth access token authenticates on /v1 through the same bearer
+	// chain the MCP endpoint uses, so the upload happens as the same human.
+	id := createImageArtifact(t, srv.URL, token, "screenshot.png", onePxPNG)
+
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+	_, err := sess.ReadResource(context.Background(), &mcp.ReadResourceParams{
+		URI: "mcp://cairn/artifact/" + id + "/a2ui",
+	})
+	if err == nil {
+		t.Fatal("reading a binary-body artifact via the a2ui surface must fail")
+	}
+	if !strings.Contains(err.Error(), "validation_failed") {
+		t.Fatalf("binary body a2ui error = %v, want validation_failed", err)
 	}
 }
 

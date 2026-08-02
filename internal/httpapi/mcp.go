@@ -314,11 +314,11 @@ func (s *Server) newMCPServer() *mcp.Server {
 
 		// A2UI projection of the same run: the trace header, derived stats
 		// (time-by-category bar + hot spots) and the span flame graph as an
-		// updateComponents message. Read-only at the A2UI layer; buttons
-		// render with action names so a host that supports a2ui_action can
-		// wire them up, but Cairn's MCP surface ignores them until the
-		// round-trip lands (joestump-agent/crush#221). Audience "user" — the
-		// model still gets the JSON form via mcp://cairn/run/{id}.
+		// updateComponents message. Read-only at the A2UI layer, and
+		// text-only — no buttons or actions are emitted until the
+		// a2ui_action round-trip lands (joestump-agent/crush#221).
+		// Audience "user" — the model still gets the JSON form via
+		// mcp://cairn/run/{id}.
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
 			URITemplate: "mcp://cairn/run/{id}/a2ui",
 			Name:        "trace-a2ui",
@@ -1660,6 +1660,13 @@ func matchHookURI(uri string) (string, bool) {
 func (s *Server) mcpSubscribeResource(ctx context.Context, req *mcp.SubscribeRequest) error {
 	uri := req.Params.URI
 	switch {
+	case strings.HasSuffix(uri, "/a2ui"):
+		// The a2ui surfaces are advertised as resource templates, so a host
+		// wanting a live waterfall will plausibly try to subscribe here.
+		// Without this arm the run matcher would blame the URI's syntax
+		// ("not a run resource URI") for a URI the server itself advertises;
+		// say what is actually unsupported and where live updates come from.
+		return fmt.Errorf("validation_failed: a2ui surfaces are not subscribable; subscribe to the JSON resource (e.g. mcp://cairn/run/{id}) and re-read the a2ui surface on each update")
 	case strings.HasPrefix(uri, "mcp://cairn/run/"):
 		return s.mcpSubscribeRun(ctx, req)
 	case strings.HasPrefix(uri, "mcp://cairn/hook/"):

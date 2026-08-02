@@ -3,9 +3,10 @@
 // A2UI-capable MCP host (Crush once joestump-agent/crush#217 lands) draws the
 // view inline instead of asking the model to re-render raw JSON.
 //
-// Two resources ship in v1, both read-only at the A2UI layer (mutations stay
-// on the existing MCP tools; the buttons on these surfaces are placeholders
-// until the `a2ui_action` round-trip lands in joestump-agent/crush#221):
+// Three resources ship, all read-only at the A2UI layer (mutations stay on
+// the existing MCP tools; the surfaces are text-only — no buttons or actions
+// are emitted — until the `a2ui_action` round-trip lands in
+// joestump-agent/crush#221):
 //
 //	cairn://run/{id}/a2ui       — trace header + stats (category bar, hot
 //	                              spots) + a span flame graph: per-span
@@ -13,9 +14,9 @@
 //	cairn://bundle/{id}/a2ui    — bundle envelope (totals, type mix) + a
 //	                              member list with badges, relative size
 //	                              bars and engagement counts
-//	cairn://artifact/{id}/a2ui   — single-body artifact (markdown, code, file)
+//	cairn://artifact/{id}/a2ui  — single-body artifact (markdown, code, file)
 //
-// Both follow the A2UI-over-MCP transport contract:
+// All follow the A2UI-over-MCP transport contract:
 // https://a2ui.org/guides/a2ui_over_mcp/. The wire shape is the same
 // `{"version":"v0.9","updateComponents":{...}}` envelope the Crush inline
 // <a2ui-json> scanner consumes, so the payload is directly spliceable into
@@ -33,13 +34,13 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/errs"
 	"github.com/joestump/cairn/internal/oauth"
-	"github.com/joestump/cairn/internal/trajectory"
 )
 
 // a2uiMIME is the registered media type for A2UI payloads over MCP (per
@@ -119,23 +120,37 @@ func a2uiList(id string, children []string) a2uiComponent {
 	return a2uiComponent{"id": id, "component": "List", "children": children}
 }
 
-// a2uiDivider emits a horizontal rule.
-func a2uiDivider(id string) a2uiComponent {
-	return a2uiComponent{"id": id, "component": "Divider"}
+// a2uiHeaderCard builds the header Card the bundle and artifact surfaces lead
+// with: an h2 title plus a caption row of metadata bits, wrapped in a Column
+// inside a Card under the shared hdr-* component ids. (The run surface builds
+// its header separately — its meta row and prompt are both optional.)
+func a2uiHeaderCard(title string, metaBits []string) []a2uiComponent {
+	return []a2uiComponent{
+		a2uiText("hdr-title", title, "h2"),
+		a2uiText("hdr-meta", strings.Join(metaBits, " · "), "caption"),
+		a2uiColumn("hdr-col", []string{"hdr-title", "hdr-meta"}),
+		a2uiCard("hdr", "hdr-col"),
+	}
 }
 
-// a2uiButton emits a labelled Button with an action name. The action payload
-// is opaque to the catalog; the receiving host wires it back to the server
-// (the a2ui_action round-trip — joestump-agent/crush#221).
-func a2uiButton(id, labelID, actionName string, actionContext map[string]any) a2uiComponent {
-	action := map[string]any{"name": actionName}
-	if len(actionContext) > 0 {
-		action["context"] = actionContext
+// matchA2UIURI extracts the id from a resolved <scheme>://<kind>/<id>/a2ui
+// URI, where kind is "run", "bundle" or "artifact". Both the bare
+// mcp://cairn/<kind>/<id>/a2ui form and the cairn://<kind>/<id>/a2ui alias
+// are accepted (the registered templates advertise the mcp:// form; the
+// cairn:// form is what the issue spec calls out and what a hand-written
+// @-mention would name).
+func matchA2UIURI(uri, kind string) (string, bool) {
+	for _, prefix := range []string{"mcp://cairn/" + kind + "/", "cairn://" + kind + "/"} {
+		if strings.HasPrefix(uri, prefix) {
+			rest := strings.TrimPrefix(uri, prefix)
+			id, found := strings.CutSuffix(rest, "/a2ui")
+			if !found || id == "" || strings.Contains(id, "/") {
+				return "", false
+			}
+			return id, true
+		}
 	}
-	return a2uiComponent{
-		"id": id, "component": "Button",
-		"child": labelID, "action": action,
-	}
+	return "", false
 }
 
 // --- shared rendering helpers -------------------------------------------------
@@ -169,6 +184,21 @@ func a2uiHumanBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// a2uiTruncate cuts s at max bytes, walking the cut back so it never splits a
+// multi-byte UTF-8 rune (json.Marshal coerces a torn sequence to U+FFFD, which
+// would end the user-facing card in a replacement glyph). Returns s unchanged
+// when it already fits.
+func a2uiTruncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 // a2uiIndent prefixes a span label with two non-breaking spaces per depth
@@ -403,9 +433,11 @@ func a2uiRunWall(stats statsView, spans []spanView) int64 {
 	return wall
 }
 
-// a2uiRunSurfaceID names the surface for a given run resource. Each read
-// gets a fresh surface (the MCP transport is request/response; subscriptions
-// layer updates on top via resources/updated).
+// a2uiRunSurfaceID names the surface for a given run resource. Each read gets
+// a fresh surface — the MCP transport is request/response, and the a2ui
+// surfaces themselves are not subscribable (mcpSubscribeResource rejects
+// them). A host that wants live updates subscribes to the JSON run resource
+// and re-reads this surface on each resources/updated notification.
 func a2uiRunSurfaceID(runID string) string { return "cairn-run-" + runID }
 
 // a2uiBundleSurfaceID names the surface for a given bundle resource.
@@ -427,17 +459,18 @@ func a2uiBundleSurfaceID(bundleID string) string { return "cairn-bundle-" + bund
 //	                 output stays behind the existing JSON resource (lazy by
 //	                 design)
 //
-// The tree is capped at a2uiMaxRunSpans components — a run that big should
-// be paged over the existing run JSON resource, not squeezed into a single
-// surface.
+// The surface is text-only — no buttons or actions are emitted — until the
+// a2ui_action round-trip lands (joestump-agent/crush#221). The tree is
+// capped at a2uiMaxRunSpans components — a run that big should be paged over
+// the existing run JSON resource, not squeezed into a single surface.
 const a2uiMaxRunSpans = 200
 
-func a2uiRunView(run *trajectory.Run, resp runResponse) a2uiEnvelope {
-	surfaceID := a2uiRunSurfaceID(run.PublicID)
+func a2uiRunView(resp runResponse) a2uiEnvelope {
+	surfaceID := a2uiRunSurfaceID(resp.ID)
 	components := []a2uiComponent{}
 	headerChildren := []string{}
 
-	title := run.Title
+	title := resp.Title
 	if title == "" {
 		title = "(untitled run)"
 	}
@@ -445,25 +478,25 @@ func a2uiRunView(run *trajectory.Run, resp runResponse) a2uiEnvelope {
 	components = append(components, a2uiText("hdr-title", title, "h2"))
 
 	metaBits := []string{}
-	if run.Model != "" {
-		metaBits = append(metaBits, run.Model)
+	if resp.Model != "" {
+		metaBits = append(metaBits, resp.Model)
 	}
-	if run.Status != "" {
-		metaBits = append(metaBits, "status: "+string(run.Status))
+	if resp.Status != "" {
+		metaBits = append(metaBits, "status: "+resp.Status)
 	}
-	if !run.StartedAt.IsZero() {
-		metaBits = append(metaBits, "started "+run.StartedAt.UTC().Format("2006-01-02 15:04:05Z"))
+	if !resp.StartedAt.IsZero() {
+		metaBits = append(metaBits, "started "+resp.StartedAt.UTC().Format("2006-01-02 15:04:05Z"))
 	}
 	if len(metaBits) > 0 {
 		headerChildren = append(headerChildren, "hdr-meta")
 		components = append(components, a2uiText("hdr-meta", strings.Join(metaBits, " · "), "caption"))
 	}
 
-	if run.Prompt != "" {
-		prompt := run.Prompt
+	if resp.Prompt != "" {
+		prompt := resp.Prompt
 		const maxPrompt = 240
 		if len(prompt) > maxPrompt {
-			prompt = prompt[:maxPrompt] + "…"
+			prompt = a2uiTruncate(prompt, maxPrompt) + "…"
 		}
 		headerChildren = append(headerChildren, "hdr-prompt")
 		components = append(components, a2uiText("hdr-prompt", prompt, "body"))
@@ -576,7 +609,10 @@ func a2uiRunView(run *trajectory.Run, resp runResponse) a2uiEnvelope {
 		}
 	}
 	walk(resp.Spans)
-	if len(resp.Spans) > 0 && spanCount >= a2uiMaxRunSpans {
+	// Only when spans were actually omitted: a tree holding exactly the cap
+	// renders whole, and a "…0 more spans" row would falsely claim data is
+	// missing.
+	if stats.SpanCount > spanCount {
 		rowIDs = append(rowIDs, "span-overflow")
 		components = append(components,
 			a2uiText("span-overflow",
@@ -615,7 +651,7 @@ func (s *Server) mcpReadRunA2UI(ctx context.Context, req *mcp.ReadResourceReques
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsRead] {
 		return nil, s.mcpScopeErr(ctx, "resources/read run/a2ui", oauth.ScopeArtifactsRead)
 	}
-	id, ok := matchRunA2UIURI(req.Params.URI)
+	id, ok := matchA2UIURI(req.Params.URI, "run")
 	if !ok {
 		return nil, fmt.Errorf("validation_failed: %q is not a run a2ui resource URI", req.Params.URI)
 	}
@@ -623,7 +659,7 @@ func (s *Server) mcpReadRunA2UI(ctx context.Context, req *mcp.ReadResourceReques
 	if err != nil {
 		return nil, s.mcpToolErr(ctx, "resources/read run/a2ui", err)
 	}
-	env := a2uiRunView(run, s.toRunResponse(run))
+	env := a2uiRunView(s.toRunResponse(run))
 	body, err := json.Marshal(env)
 	if err != nil {
 		return nil, s.mcpToolErr(ctx, "resources/read run/a2ui", fmt.Errorf("encode a2ui run: %w", err))
@@ -631,25 +667,6 @@ func (s *Server) mcpReadRunA2UI(ctx context.Context, req *mcp.ReadResourceReques
 	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{
 		{URI: req.Params.URI, MIMEType: a2uiMIME, Text: string(body)},
 	}}, nil
-}
-
-// matchRunA2UIURI extracts the run id from a resolved cairn://run/<id>/a2ui
-// URI. Both the bare mcp://cairn/run/<id>/a2ui form and the cairn:// alias
-// are accepted (the registered template advertises the mcp:// form; the
-// cairn:// form is what the issue spec calls out and what a hand-written
-// @-mention would name).
-func matchRunA2UIURI(uri string) (string, bool) {
-	for _, prefix := range []string{"mcp://cairn/run/", "cairn://run/"} {
-		if strings.HasPrefix(uri, prefix) {
-			rest := strings.TrimPrefix(uri, prefix)
-			id, found := strings.CutSuffix(rest, "/a2ui")
-			if !found || id == "" || strings.Contains(id, "/") {
-				return "", false
-			}
-			return id, true
-		}
-	}
-	return "", false
 }
 
 // --- bundle view --------------------------------------------------------------
@@ -698,7 +715,8 @@ func a2uiSizeBar(size, largest int64, width int) string {
 // type badge, media type, and comment/reaction counts when the member has
 // engagement. Members render inside one List — the host bullets each row —
 // rather than a bordered Card each, which buried a ten-file bundle in
-// chrome.
+// chrome. Like the trace view, the surface is text-only — no actions on the
+// cards — until the a2ui_action round-trip lands (joestump-agent/crush#221).
 func a2uiBundleView(bundleID string, art *artifact.Artifact, members []a2uiMemberView) a2uiEnvelope {
 	surfaceID := a2uiBundleSurfaceID(bundleID)
 	components := []a2uiComponent{}
@@ -843,7 +861,7 @@ func (s *Server) mcpReadBundleA2UI(ctx context.Context, req *mcp.ReadResourceReq
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsRead] {
 		return nil, s.mcpScopeErr(ctx, "resources/read bundle/a2ui", oauth.ScopeArtifactsRead)
 	}
-	id, ok := matchBundleA2UIURI(req.Params.URI)
+	id, ok := matchA2UIURI(req.Params.URI, "bundle")
 	if !ok {
 		return nil, fmt.Errorf("validation_failed: %q is not a bundle a2ui resource URI", req.Params.URI)
 	}
@@ -891,22 +909,6 @@ func (s *Server) mcpReadBundleA2UI(ctx context.Context, req *mcp.ReadResourceReq
 	}}, nil
 }
 
-// matchBundleA2UIURI extracts the bundle id from a resolved
-// cairn://bundle/<id>/a2ui URI.
-func matchBundleA2UIURI(uri string) (string, bool) {
-	for _, prefix := range []string{"mcp://cairn/bundle/", "cairn://bundle/"} {
-		if strings.HasPrefix(uri, prefix) {
-			rest := strings.TrimPrefix(uri, prefix)
-			id, found := strings.CutSuffix(rest, "/a2ui")
-			if !found || id == "" || strings.Contains(id, "/") {
-				return "", false
-			}
-			return id, true
-		}
-	}
-	return "", false
-}
-
 // --- single-body artifact view ------------------------------------------------
 
 // a2uiMaxBodyBytes caps how much of the artifact body is rendered as A2UI text.
@@ -929,26 +931,16 @@ func a2uiArtifactView(art *artifact.Artifact, body string) a2uiEnvelope {
 		title = "(untitled artifact)"
 	}
 
-	headerChildren := []string{"hdr-title", "hdr-meta"}
-	components = append(components,
-		a2uiText("hdr-title", title, "h2"),
-	)
-
-	metaBits := []string{
+	components = append(components, a2uiHeaderCard(title, []string{
 		a2uiHumanBytes(art.Size),
 		art.MediaType,
 		"visibility: " + string(art.Access.Visibility),
 		"expires " + art.ExpiresAt.UTC().Format("2006-01-02"),
-	}
-	components = append(components,
-		a2uiText("hdr-meta", strings.Join(metaBits, " · "), "caption"),
-		a2uiColumn("hdr-col", headerChildren),
-		a2uiCard("hdr", "hdr-col"),
-	)
+	})...)
 
 	bodyText := body
 	if len(bodyText) > a2uiMaxBodyBytes {
-		bodyText = bodyText[:a2uiMaxBodyBytes] + "\n\n…(truncated — read the full artifact via artifact_read)"
+		bodyText = a2uiTruncate(bodyText, a2uiMaxBodyBytes) + "\n\n…(truncated — read the full artifact via artifact_read)"
 	}
 
 	components = append(components,
@@ -970,6 +962,22 @@ func a2uiArtifactView(art *artifact.Artifact, body string) a2uiEnvelope {
 	}
 }
 
+// a2uiBodylessHint names the surface that actually renders a bodyless share
+// type. The a2ui surfaces are keyed by resource kind, not share type — a
+// trajectory renders at cairn://run/{id}/a2ui, and a webhook stream has no
+// a2ui surface at all — so interpolating the share type into a "use the X
+// a2ui surface" hint would send the caller to a URI no matcher accepts.
+func a2uiBodylessHint(id string, t artifact.ShareType) string {
+	switch t {
+	case artifact.TypeTrajectory:
+		return fmt.Sprintf("use cairn://run/%s/a2ui instead", id)
+	case artifact.TypeBundle:
+		return fmt.Sprintf("use cairn://bundle/%s/a2ui instead", id)
+	default: // webhook
+		return fmt.Sprintf("webhook streams have no a2ui surface; read mcp://cairn/hook/%s instead", id)
+	}
+}
+
 // artifactIsBodyless reports whether the share type carries no single
 // content-addressed body. Mirrors artifact.Artifact.bodyless() but is callable
 // from this package (bodyless is unexported).
@@ -985,7 +993,7 @@ func (s *Server) mcpReadArtifactA2UI(ctx context.Context, req *mcp.ReadResourceR
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsRead] {
 		return nil, s.mcpScopeErr(ctx, "resources/read artifact/a2ui", oauth.ScopeArtifactsRead)
 	}
-	id, ok := matchArtifactA2UIURI(req.Params.URI)
+	id, ok := matchA2UIURI(req.Params.URI, "artifact")
 	if !ok {
 		return nil, fmt.Errorf("validation_failed: %q is not an artifact a2ui resource URI", req.Params.URI)
 	}
@@ -995,8 +1003,8 @@ func (s *Server) mcpReadArtifactA2UI(ctx context.Context, req *mcp.ReadResourceR
 	}
 	if artifactIsBodyless(art.ShareType) {
 		return nil, s.mcpToolErr(ctx, "resources/read artifact/a2ui",
-			errs.Validationf("%s is a %s, not a single-body artifact; use the %s a2ui surface instead",
-				id, art.ShareType, art.ShareType))
+			errs.Validationf("%s is a %s, not a single-body artifact; %s",
+				id, art.ShareType, a2uiBodylessHint(id, art.ShareType)))
 	}
 
 	rc, _, err := s.store.OpenBody(ctx, id)
@@ -1009,6 +1017,20 @@ func (s *Server) mcpReadArtifactA2UI(ctx context.Context, req *mcp.ReadResourceR
 		return nil, s.mcpToolErr(ctx, "resources/read artifact/a2ui", fmt.Errorf("read body: %w", err))
 	}
 
+	// A binary body (image, gz — creatable via the web upload path) has no
+	// text to render: refuse it, as the registered template description
+	// promises, instead of marshalling mojibake into a user-facing Text
+	// component. The check mirrors artifact_read's utf8.Valid gate; that tool
+	// falls back to base64, but an A2UI Text card has no binary encoding, so
+	// this surface rejects. Validity is judged on the rune-safe prefix that
+	// would actually render — the read is capped one byte past the render
+	// limit, so a perfectly valid text body can end mid-rune at the cut.
+	if !utf8.ValidString(a2uiTruncate(string(body), a2uiMaxBodyBytes)) {
+		return nil, s.mcpToolErr(ctx, "resources/read artifact/a2ui",
+			errs.Validationf("%s has a binary body (%s) with no a2ui text rendering; read it via artifact_read or the artifact URL",
+				id, art.MediaType))
+	}
+
 	env := a2uiArtifactView(art, string(body))
 	out, err := json.Marshal(env)
 	if err != nil {
@@ -1017,20 +1039,4 @@ func (s *Server) mcpReadArtifactA2UI(ctx context.Context, req *mcp.ReadResourceR
 	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{
 		{URI: req.Params.URI, MIMEType: a2uiMIME, Text: string(out)},
 	}}, nil
-}
-
-// matchArtifactA2UIURI extracts the artifact id from a resolved
-// cairn://artifact/<id>/a2ui URI.
-func matchArtifactA2UIURI(uri string) (string, bool) {
-	for _, prefix := range []string{"mcp://cairn/artifact/", "cairn://artifact/"} {
-		if strings.HasPrefix(uri, prefix) {
-			rest := strings.TrimPrefix(uri, prefix)
-			id, found := strings.CutSuffix(rest, "/a2ui")
-			if !found || id == "" || strings.Contains(id, "/") {
-				return "", false
-			}
-			return id, true
-		}
-	}
-	return "", false
 }

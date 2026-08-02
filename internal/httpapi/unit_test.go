@@ -653,3 +653,24 @@ func TestCollapsedWallSecsNeverDegenerate(t *testing.T) {
 		})
 	}
 }
+
+// TestA2UIBodylessHint pins the redirect hint for each bodyless share type to
+// a surface that actually exists: a trajectory's a2ui surface is keyed "run",
+// and a webhook stream has no a2ui surface at all — a hint naming "the
+// trajectory a2ui surface" or "the webhook a2ui surface" would send a caller
+// to a URI no matcher accepts.
+func TestA2UIBodylessHint(t *testing.T) {
+	cases := []struct {
+		shareType artifact.ShareType
+		want      string
+	}{
+		{artifact.TypeTrajectory, "use cairn://run/abc123/a2ui instead"},
+		{artifact.TypeBundle, "use cairn://bundle/abc123/a2ui instead"},
+		{artifact.TypeWebhook, "webhook streams have no a2ui surface; read mcp://cairn/hook/abc123 instead"},
+	}
+	for _, tc := range cases {
+		if got := a2uiBodylessHint("abc123", tc.shareType); got != tc.want {
+			t.Errorf("a2uiBodylessHint(%s) = %q, want %q", tc.shareType, got, tc.want)
+		}
+	}
+}
