@@ -320,11 +320,12 @@ func (s *Server) newMCPServer() *mcp.Server {
 		// Audience "user" — the model still gets the JSON form via
 		// mcp://cairn/run/{id}.
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
-			URITemplate: "mcp://cairn/run/{id}/a2ui",
+			URITemplate: "mcp://cairn/run/{id}/a2ui{?w}",
 			Name:        "trace-a2ui",
 			Description: "A trace rendered as an A2UI component tree: header, stats (stacked " +
 				"time-by-category bar, hot spots by self time) and a TUI flame graph — per-span " +
-				"timeline bars glyphed by category. Read-only at the A2UI layer; mutations stay " +
+				"timeline bars glyphed and colored by category. Optional ?w=N sizes the flame " +
+				"rows to the host's content width. Read-only at the A2UI layer; mutations stay " +
 				"on the existing tools. Requires artifacts:read.",
 			MIMEType:    a2uiMIME,
 			Annotations: a2uiAudienceUser,
@@ -333,7 +334,7 @@ func (s *Server) newMCPServer() *mcp.Server {
 		// hand-written @-mention would name; the SDK matches templates
 		// literally, so both schemes are registered against the same handler.
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
-			URITemplate: "cairn://run/{id}/a2ui",
+			URITemplate: "cairn://run/{id}/a2ui{?w}",
 			Name:        "trace-a2ui-cairn",
 			Description: "Alias for mcp://cairn/run/{id}/a2ui under the cairn:// scheme. " +
 				"Requires artifacts:read.",

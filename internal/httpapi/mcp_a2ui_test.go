@@ -6,6 +6,7 @@
 package httpapi
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -13,8 +14,22 @@ import (
 	"github.com/joestump/cairn/internal/artifact"
 )
 
+// a2uiANSIPattern strips the ANSI 256-color sequences a2uiColorize emits, so
+// geometry assertions measure display cells, not wire bytes.
+var a2uiANSIPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func a2uiStripANSI(s string) string { return a2uiANSIPattern.ReplaceAllString(s, "") }
+
+// a2uiNoANSI disables color emission for the duration of a test.
+func a2uiNoANSI(t *testing.T) {
+	t.Helper()
+	prev := a2uiANSIOn
+	a2uiANSIOn = false
+	t.Cleanup(func() { a2uiANSIOn = prev })
+}
+
 func TestA2UIRankCategories(t *testing.T) {
-	ranked, glyphs := a2uiRankCategories(map[string]int64{
+	ranked, lookup := a2uiRankCategories(map[string]int64{
 		"exec": 500, "read": 50, "net": 50,
 	})
 	if len(ranked) != 3 {
@@ -27,8 +42,12 @@ func TestA2UIRankCategories(t *testing.T) {
 	if ranked[1].name != "net" || ranked[2].name != "read" {
 		t.Fatalf("tie order = %q, %q; want net then read", ranked[1].name, ranked[2].name)
 	}
-	if glyphs["exec"] != '█' || glyphs["net"] != '▓' || glyphs["read"] != '▒' {
-		t.Fatalf("glyph map = %v, want palette order by rank", glyphs)
+	if lookup["exec"].glyph != '█' || lookup["net"].glyph != '▓' || lookup["read"].glyph != '▒' {
+		t.Fatalf("lookup = %v, want palette order by rank", lookup)
+	}
+	// Each rank gets its own ANSI color from the palette.
+	if lookup["exec"].color != a2uiCategoryColors[0] || lookup["net"].color != a2uiCategoryColors[1] {
+		t.Fatalf("colors = %v, want palette colors by rank", lookup)
 	}
 }
 
@@ -36,7 +55,7 @@ func TestA2UIRankCategoriesFoldsOther(t *testing.T) {
 	byCat := map[string]int64{
 		"a": 700, "b": 600, "c": 500, "d": 400, "e": 300, "f": 20, "g": 10,
 	}
-	ranked, glyphs := a2uiRankCategories(byCat)
+	ranked, lookup := a2uiRankCategories(byCat)
 	if len(ranked) != len(a2uiCategoryPalette)+1 {
 		t.Fatalf("ranked = %+v, want palette cap + one other bucket", ranked)
 	}
@@ -44,44 +63,64 @@ func TestA2UIRankCategoriesFoldsOther(t *testing.T) {
 	if last.name != "other" || last.ms != 30 || last.glyph != a2uiGlyphOther {
 		t.Fatalf("other bucket = %+v, want the folded 30ms remainder", last)
 	}
-	// Folded categories still resolve to a glyph for their flame bars.
-	if glyphs["f"] != a2uiGlyphOther || glyphs["g"] != a2uiGlyphOther {
-		t.Fatalf("folded glyphs = %v, want a2uiGlyphOther for f and g", glyphs)
+	// Folded categories still resolve to a glyph and color for their bars.
+	if lookup["f"].glyph != a2uiGlyphOther || lookup["g"].glyph != a2uiGlyphOther {
+		t.Fatalf("folded lookup = %v, want a2uiGlyphOther for f and g", lookup)
+	}
+	if lookup["f"].color != a2uiColorOther {
+		t.Fatalf("folded color = %v, want a2uiColorOther", lookup["f"])
 	}
 }
 
 func TestA2UIFlameBar(t *testing.T) {
+	a2uiNoANSI(t)
+	gutter := a2uiFlameGutterW
+	cat := a2uiCatShare{glyph: '█'}
 	// Full-range span fills the gutter.
-	if got := a2uiFlameBar(0, 100, 100, '█'); got != strings.Repeat("█", a2uiFlameGutterW) {
+	if got := a2uiFlameBar(0, 100, 100, gutter, cat); got != strings.Repeat("█", gutter) {
 		t.Fatalf("full bar = %q", got)
 	}
 	// A span in the second half starts past the midpoint.
-	half := a2uiFlameBar(50, 50, 100, '▓')
-	if len([]rune(half)) != a2uiFlameGutterW {
-		t.Fatalf("bar = %q, want exactly %d cells", half, a2uiFlameGutterW)
+	half := a2uiFlameBar(50, 50, 100, gutter, a2uiCatShare{glyph: '▓'})
+	if len([]rune(half)) != gutter {
+		t.Fatalf("bar = %q, want exactly %d cells", half, gutter)
 	}
-	if !strings.HasPrefix(half, strings.Repeat(" ", a2uiFlameGutterW/2)+"▓") {
+	if !strings.HasPrefix(half, strings.Repeat(" ", gutter/2)+"▓") {
 		t.Fatalf("second-half bar = %q, want the bar to start at the midpoint", half)
 	}
 	// A tiny span still draws one cell.
-	tiny := a2uiFlameBar(0, 1, 1_000_000, '█')
+	tiny := a2uiFlameBar(0, 1, 1_000_000, gutter, cat)
 	if !strings.Contains(tiny, "█") {
 		t.Fatalf("tiny span bar = %q, want at least one cell", tiny)
 	}
 	// Offsets past the wall clamp inside the gutter instead of overflowing.
-	over := a2uiFlameBar(200, 500, 100, '█')
-	if len([]rune(over)) != a2uiFlameGutterW {
-		t.Fatalf("clamped bar = %q, want exactly %d cells", over, a2uiFlameGutterW)
+	over := a2uiFlameBar(200, 500, 100, gutter, cat)
+	if len([]rune(over)) != gutter {
+		t.Fatalf("clamped bar = %q, want exactly %d cells", over, gutter)
 	}
 	// Negative offsets clamp to the left edge.
-	neg := a2uiFlameBar(-50, 10, 100, '█')
-	if len([]rune(neg)) != a2uiFlameGutterW || !strings.HasPrefix(neg, "█") {
+	neg := a2uiFlameBar(-50, 10, 100, gutter, cat)
+	if len([]rune(neg)) != gutter || !strings.HasPrefix(neg, "█") {
 		t.Fatalf("negative-offset bar = %q, want a left-edge bar", neg)
 	}
 }
 
+// Colorized bars carry the category's ANSI color without changing the
+// display geometry.
+func TestA2UIFlameBarColorized(t *testing.T) {
+	gutter := 30
+	cat := a2uiCatShare{glyph: '█', color: 42}
+	bar := a2uiFlameBar(0, 100, 100, gutter, cat)
+	if !strings.Contains(bar, "\x1b[38;5;42m") {
+		t.Fatalf("colored bar = %q, want the ANSI 256-color code 42", bar)
+	}
+	if got := len([]rune(a2uiStripANSI(bar))); got != gutter {
+		t.Fatalf("stripped bar = %q (%d cells), want exactly %d", bar, got, gutter)
+	}
+}
+
 func TestA2UIFlameAxis(t *testing.T) {
-	axis := a2uiFlameAxis(500)
+	axis := a2uiFlameAxis(500, a2uiFlameGutterW)
 	if len([]rune(axis)) != a2uiFlameGutterW {
 		t.Fatalf("axis = %q (%d runes), want exactly %d", axis, len([]rune(axis)), a2uiFlameGutterW)
 	}
@@ -90,7 +129,40 @@ func TestA2UIFlameAxis(t *testing.T) {
 	}
 }
 
+func TestA2UIRequestedWidth(t *testing.T) {
+	cases := []struct {
+		uri  string
+		want int
+	}{
+		{"mcp://cairn/run/abc/a2ui", a2uiFlameGutterW},
+		// ?w= sizes the total row; the gutter is what's left after the
+		// label, edges and duration column.
+		{"mcp://cairn/run/abc/a2ui?w=120", 120 - a2uiWidthOverhead},
+		// Out-of-range values clamp the TOTAL width — never the gutter,
+		// which would hand back rows wider than the host asked for.
+		{"mcp://cairn/run/abc/a2ui?w=10000", a2uiWidthMax - a2uiWidthOverhead},
+		{"mcp://cairn/run/abc/a2ui?w=2", a2uiWidthMin - a2uiWidthOverhead},
+		// Garbage falls back to the default.
+		{"mcp://cairn/run/abc/a2ui?w=abc", a2uiFlameGutterW},
+	}
+	for _, tc := range cases {
+		if got := a2uiRequestedWidth(tc.uri); got != tc.want {
+			t.Errorf("a2uiRequestedWidth(%q) = %d, want %d", tc.uri, got, tc.want)
+		}
+	}
+}
+
+func TestMatchA2UIURIToleratesQuery(t *testing.T) {
+	if id, ok := matchA2UIURI("mcp://cairn/run/abc123/a2ui?w=120", "run"); !ok || id != "abc123" {
+		t.Fatalf("run URI with ?w= = (%q, %v), want abc123", id, ok)
+	}
+	if _, ok := matchA2UIURI("mcp://cairn/run//a2ui?w=120", "run"); ok {
+		t.Fatal("empty id with a query must still be rejected")
+	}
+}
+
 func TestA2UIDistBar(t *testing.T) {
+	a2uiNoANSI(t)
 	ranked, _ := a2uiRankCategories(map[string]int64{"exec": 500, "read": 50})
 	bar := a2uiDistBar(ranked, a2uiDistBarW)
 	if got := len([]rune(bar)); got != a2uiDistBarW {
@@ -101,6 +173,19 @@ func TestA2UIDistBar(t *testing.T) {
 	}
 	if a2uiDistBar(nil, a2uiDistBarW) != "" {
 		t.Fatal("empty ranking must render no bar")
+	}
+}
+
+// Each dist segment draws in its category's color; the display width is
+// unchanged by the escape sequences.
+func TestA2UIDistBarColorized(t *testing.T) {
+	ranked, _ := a2uiRankCategories(map[string]int64{"exec": 500, "read": 50})
+	bar := a2uiDistBar(ranked, a2uiDistBarW)
+	if got := len([]rune(a2uiStripANSI(bar))); got != a2uiDistBarW {
+		t.Fatalf("stripped dist bar (%d cells), want exactly %d", got, a2uiDistBarW)
+	}
+	if !strings.Contains(bar, "\x1b[38;5;") {
+		t.Fatalf("dist bar = %q, want ANSI color codes", bar)
 	}
 }
 

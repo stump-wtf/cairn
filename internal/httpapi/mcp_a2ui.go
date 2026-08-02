@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -143,7 +144,10 @@ func matchA2UIURI(uri, kind string) (string, bool) {
 	for _, prefix := range []string{"mcp://cairn/" + kind + "/", "cairn://" + kind + "/"} {
 		if strings.HasPrefix(uri, prefix) {
 			rest := strings.TrimPrefix(uri, prefix)
-			id, found := strings.CutSuffix(rest, "/a2ui")
+			// A query string (e.g. the run template's optional ?w= width
+			// hint) must come off before the /a2ui suffix check.
+			path, _, _ := strings.Cut(rest, "?")
+			id, found := strings.CutSuffix(path, "/a2ui")
 			if !found || id == "" || strings.Contains(id, "/") {
 				return "", false
 			}
@@ -151,6 +155,25 @@ func matchA2UIURI(uri, kind string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// a2uiRequestedWidth reads the run template's optional ?w=N width hint: the
+// total flame-row budget the host wants, converted to the gutter width the
+// renderer scales bars against. The TOTAL is clamped to [a2uiWidthMin,
+// a2uiWidthMax] before the fixed overhead comes off — clamping the gutter
+// instead would hand a narrow host rows wider than it asked for, which is
+// the exact wrap ?w= exists to prevent. Absent or malformed values fall
+// back to the default budget.
+func a2uiRequestedWidth(uri string) int {
+	_, query, hasQuery := strings.Cut(uri, "?")
+	if !hasQuery {
+		return a2uiFlameGutterW
+	}
+	w, err := strconv.Atoi(strings.TrimPrefix(query, "w="))
+	if err != nil {
+		return a2uiFlameGutterW
+	}
+	return min(max(w, a2uiWidthMin), a2uiWidthMax) - a2uiWidthOverhead
 }
 
 // --- shared rendering helpers -------------------------------------------------
@@ -215,15 +238,22 @@ func a2uiIndent(depth int) string {
 // --- flame graph helpers ------------------------------------------------------
 
 // Column geometry for the trace flame graph. The server cannot know the
-// host's terminal width, so rows are built to a fixed budget conservative
-// enough to survive an 80-column host: label (26) + gutter edges (2) +
-// gutter (28) + duration (~7) ≈ 64 cells before card chrome.
+// host's terminal width, so rows are built to a fixed budget. The default
+// (~96 cells: label 26 + gutter edges 2 + gutter 60 + duration ~8) fills a
+// wide host's card interior; width-aware hosts can request an exact budget
+// with the ?w= query parameter (clamped to [60, 200] — the ?w value is the
+// TOTAL row width, so a host asking for its own content width never gets
+// rows wider than it asked for).
 const (
 	a2uiFlameLabelW   = 26 // rune width of the span-label column
-	a2uiFlameGutterW  = 28 // rune width of the timeline gutter between ▕ ▏
+	a2uiFlameGutterW  = 60 // rune width of the timeline gutter between ▕ ▏
 	a2uiFlameMaxDepth = 6  // indent cap so deep trees don't consume the label
-	a2uiDistBarW      = 24 // width of the stats time-by-category bar
+	a2uiDistBarW      = 48 // width of the stats time-by-category bar
 	a2uiMaxHotSpots   = 3  // slowest-self-time spans named in the stats card
+
+	a2uiWidthMin      = 60                      // smallest total width a ?w= request can set
+	a2uiWidthMax      = 200                     // largest total width a ?w= request can set
+	a2uiWidthOverhead = a2uiFlameLabelW + 2 + 8 // label + gutter edges + duration column
 )
 
 // a2uiCategoryPalette maps time-share rank onto a bar glyph, densest first,
@@ -233,8 +263,33 @@ const (
 // legend cap: categories past it fold into one "other" bucket.
 var a2uiCategoryPalette = []rune{'█', '▓', '▒', '░', '▞'}
 
+// a2uiCategoryColors maps the same rank onto an ANSI 256-color code, so the
+// glyph a category draws in the dist bar, the legend, and every flame row
+// shares one hue. The v0.9 Text component has no color property, but ANSI
+// sequences survive the wire (JSON), the validator (plain strings), and the
+// host renderers (lipgloss measures cells, not bytes) — so color is emitted
+// inline. Hosts that strip ANSI still get the glyph encoding; nothing else
+// changes.
+var a2uiCategoryColors = []int{42, 45, 178, 111, 203}
+
+// a2uiColorOther is the hue for categories folded past the palette.
+const a2uiColorOther = 244
+
 // a2uiGlyphOther marks categories folded past the palette.
 const a2uiGlyphOther = '▪'
+
+// a2uiANSIOn flips ANSI color emission. Tests disable it so geometry
+// assertions stay byte-exact.
+var a2uiANSIOn = true
+
+// a2uiColorize wraps s in an ANSI 256-color foreground (and reset) when
+// color emission is enabled.
+func a2uiColorize(code int, s string) string {
+	if !a2uiANSIOn {
+		return s
+	}
+	return fmt.Sprintf("\x1b[38;5;%dm%s\x1b[0m", code, s)
+}
 
 // a2uiLabelSanitizer strips the characters that would break a flame row: a
 // newline splits the row across lines, and "|", backticks and "**" can trip
@@ -247,19 +302,20 @@ var a2uiLabelSanitizer = strings.NewReplacer(
 )
 
 // a2uiCatShare is one category's share of the run's summed span time, with
-// its assigned bar glyph.
+// its assigned bar glyph and ANSI color.
 type a2uiCatShare struct {
 	name  string
 	ms    int64
 	glyph rune
+	color int
 }
 
 // a2uiRankCategories orders time-by-category descending (ties break on name
-// so the output is deterministic), assigns palette glyphs to the top
-// entries, and folds the remainder into one synthetic "other" entry. The
-// returned map looks up the bar glyph for any category the run used —
-// including the folded ones, which all draw a2uiGlyphOther.
-func a2uiRankCategories(byCat map[string]int64) ([]a2uiCatShare, map[string]rune) {
+// so the output is deterministic), assigns palette glyphs and colors to the
+// top entries, and folds the remainder into one synthetic "other" entry. The
+// returned map looks up the bar glyph and color for any category the run
+// used — including the folded ones, which all draw a2uiGlyphOther.
+func a2uiRankCategories(byCat map[string]int64) ([]a2uiCatShare, map[string]a2uiCatShare) {
 	ranked := make([]a2uiCatShare, 0, len(byCat))
 	for name, ms := range byCat {
 		ranked = append(ranked, a2uiCatShare{name: name, ms: ms})
@@ -270,23 +326,24 @@ func a2uiRankCategories(byCat map[string]int64) ([]a2uiCatShare, map[string]rune
 		}
 		return ranked[i].name < ranked[j].name
 	})
-	glyphs := make(map[string]rune, len(ranked))
+	lookup := make(map[string]a2uiCatShare, len(ranked))
 	if len(ranked) > len(a2uiCategoryPalette) {
 		var otherMS int64
 		for _, c := range ranked[len(a2uiCategoryPalette):] {
 			otherMS += c.ms
-			glyphs[c.name] = a2uiGlyphOther
+			lookup[c.name] = a2uiCatShare{glyph: a2uiGlyphOther, color: a2uiColorOther}
 		}
 		ranked = append(ranked[:len(a2uiCategoryPalette)],
-			a2uiCatShare{name: "other", ms: otherMS, glyph: a2uiGlyphOther})
+			a2uiCatShare{name: "other", ms: otherMS, glyph: a2uiGlyphOther, color: a2uiColorOther})
 	}
 	for i := range ranked {
 		if ranked[i].glyph == 0 {
 			ranked[i].glyph = a2uiCategoryPalette[i]
+			ranked[i].color = a2uiCategoryColors[i%len(a2uiCategoryColors)]
 		}
-		glyphs[ranked[i].name] = ranked[i].glyph
+		lookup[ranked[i].name] = ranked[i]
 	}
-	return ranked, glyphs
+	return ranked, lookup
 }
 
 // a2uiPadLabel pads (or truncates with an ellipsis) a label to exactly w
@@ -300,12 +357,16 @@ func a2uiPadLabel(s string, w int) string {
 }
 
 // a2uiFlameBar draws one span's gutter: glyph cells covering the span's
-// [start, start+duration) range scaled onto a2uiFlameGutterW cells. Every
-// span draws at least one cell — a 3ms tool call is a real event, not
-// invisible — and the bar is clamped inside the gutter whatever the offsets
-// claim.
-func a2uiFlameBar(startMS, durMS int, wallMS int64, glyph rune) string {
-	gw := int64(a2uiFlameGutterW)
+// [start, start+duration) range scaled onto gutterW cells, in the span
+// category's ANSI color. Every span draws at least one cell — a 3ms tool
+// call is a real event, not invisible — and the bar is clamped inside the
+// gutter whatever the offsets claim.
+func a2uiFlameBar(startMS, durMS int, wallMS int64, gutterW int, cat a2uiCatShare) string {
+	glyph := cat.glyph
+	if glyph == 0 {
+		glyph = a2uiGlyphOther
+	}
+	gw := int64(gutterW)
 	start := 0
 	if wallMS > 0 {
 		start = int(int64(startMS) * gw / wallMS)
@@ -313,26 +374,26 @@ func a2uiFlameBar(startMS, durMS int, wallMS int64, glyph rune) string {
 	if start < 0 {
 		start = 0
 	}
-	if start > a2uiFlameGutterW-1 {
-		start = a2uiFlameGutterW - 1
+	if start > gutterW-1 {
+		start = gutterW - 1
 	}
 	width := int(int64(durMS) * gw / max(wallMS, 1))
 	if width < 1 {
 		width = 1
 	}
-	if start+width > a2uiFlameGutterW {
-		width = a2uiFlameGutterW - start
+	if start+width > gutterW {
+		width = gutterW - start
 	}
 	return strings.Repeat(" ", start) +
-		strings.Repeat(string(glyph), width) +
-		strings.Repeat(" ", a2uiFlameGutterW-start-width)
+		a2uiColorize(cat.color, strings.Repeat(string(glyph), width)) +
+		strings.Repeat(" ", gutterW-start-width)
 }
 
 // a2uiFlameAxis draws the timeline ruler the bars hang under: zero at the
 // left edge, the run's wall time at the right.
-func a2uiFlameAxis(wallMS int64) string {
+func a2uiFlameAxis(wallMS int64, gutterW int) string {
 	right := a2uiMS(wallMS)
-	fill := a2uiFlameGutterW - 1 - len([]rune(right))
+	fill := gutterW - 1 - len([]rune(right))
 	if fill < 1 {
 		fill = 1
 	}
@@ -340,9 +401,10 @@ func a2uiFlameAxis(wallMS int64) string {
 }
 
 // a2uiDistBar renders the ranked category shares as one fixed-width stacked
-// bar. Cell counts come from cumulative rounding so they always sum to the
-// bar width exactly; a category too small for a cell of its own disappears
-// into its neighbour rather than inflating the bar.
+// bar, each segment in its category's ANSI color. Cell counts come from
+// cumulative rounding so they always sum to the bar width exactly; a
+// category too small for a cell of its own disappears into its neighbour
+// rather than inflating the bar.
 func a2uiDistBar(ranked []a2uiCatShare, width int) string {
 	var total int64
 	for _, c := range ranked {
@@ -358,7 +420,7 @@ func a2uiDistBar(ranked []a2uiCatShare, width int) string {
 		cum += c.ms
 		next := int(cum * int64(width) / total)
 		if n := next - cells; n > 0 {
-			b.WriteString(strings.Repeat(string(c.glyph), n))
+			b.WriteString(a2uiColorize(c.color, strings.Repeat(string(c.glyph), n)))
 			cells = next
 		}
 	}
@@ -465,7 +527,7 @@ func a2uiBundleSurfaceID(bundleID string) string { return "cairn-bundle-" + bund
 // the existing run JSON resource, not squeezed into a single surface.
 const a2uiMaxRunSpans = 200
 
-func a2uiRunView(resp runResponse) a2uiEnvelope {
+func a2uiRunView(resp runResponse, gutterW int) a2uiEnvelope {
 	surfaceID := a2uiRunSurfaceID(resp.ID)
 	components := []a2uiComponent{}
 	headerChildren := []string{}
@@ -524,19 +586,22 @@ func a2uiRunView(resp runResponse) a2uiEnvelope {
 		a2uiRow("stats-row", row),
 	)
 
-	ranked, glyphs := a2uiRankCategories(stats.TimeByCategoryMS)
+	ranked, lookup := a2uiRankCategories(stats.TimeByCategoryMS)
 	if len(ranked) > 0 {
 		var total int64
 		for _, c := range ranked {
 			total += c.ms
 		}
-		if bar := a2uiDistBar(ranked, a2uiDistBarW); bar != "" {
+		// The dist bar never renders wider than the flame gutter, so a
+		// narrow ?w= host doesn't get a stats row that wraps while its
+		// flame rows fit.
+		if bar := a2uiDistBar(ranked, min(a2uiDistBarW, gutterW)); bar != "" {
 			statsChildren = append(statsChildren, "stats-dist")
 			components = append(components, a2uiText("stats-dist", bar, "body"))
 		}
 		parts := make([]string, 0, len(ranked))
 		for _, c := range ranked {
-			seg := string(c.glyph) + " " + c.name
+			seg := a2uiColorize(c.color, string(c.glyph)) + " " + c.name
 			if total > 0 {
 				seg += fmt.Sprintf(" %d%%", (c.ms*100+total/2)/total)
 			}
@@ -574,7 +639,7 @@ func a2uiRunView(resp runResponse) a2uiEnvelope {
 	if wall > 0 && len(resp.Spans) > 0 {
 		components = append(components,
 			a2uiText("flame-axis",
-				strings.Repeat(" ", a2uiFlameLabelW)+"▕"+a2uiFlameAxis(wall)+"▏", "caption"))
+				strings.Repeat(" ", a2uiFlameLabelW)+"▕"+a2uiFlameAxis(wall, gutterW)+"▏", "caption"))
 		rowIDs = append(rowIDs, "flame-axis")
 	}
 	spanCount := 0
@@ -593,12 +658,12 @@ func a2uiRunView(resp runResponse) a2uiEnvelope {
 			label = a2uiLabelSanitizer.Replace(label + a2uiSpanName(sp))
 			var line string
 			if wall > 0 {
-				glyph, ok := glyphs[sp.Category]
+				cat, ok := lookup[sp.Category]
 				if !ok {
-					glyph = a2uiGlyphOther
+					cat = a2uiCatShare{glyph: a2uiGlyphOther, color: a2uiColorOther}
 				}
 				line = a2uiPadLabel(label, a2uiFlameLabelW) +
-					"▕" + a2uiFlameBar(sp.StartOffsetMS, sp.DurationMS, wall, glyph) + "▏ " +
+					"▕" + a2uiFlameBar(sp.StartOffsetMS, sp.DurationMS, wall, gutterW, cat) + "▏ " +
 					a2uiMS(int64(sp.DurationMS))
 			} else {
 				line = label + " · " + a2uiMS(int64(sp.DurationMS))
@@ -659,7 +724,7 @@ func (s *Server) mcpReadRunA2UI(ctx context.Context, req *mcp.ReadResourceReques
 	if err != nil {
 		return nil, s.mcpToolErr(ctx, "resources/read run/a2ui", err)
 	}
-	env := a2uiRunView(s.toRunResponse(run))
+	env := a2uiRunView(s.toRunResponse(run), a2uiRequestedWidth(req.Params.URI))
 	body, err := json.Marshal(env)
 	if err != nil {
 		return nil, s.mcpToolErr(ctx, "resources/read run/a2ui", fmt.Errorf("encode a2ui run: %w", err))

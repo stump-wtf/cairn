@@ -131,7 +131,9 @@ func TestIntegrationMCPRunA2UI(t *testing.T) {
 	// The stats card carries the category story: a stacked share bar, a
 	// legend naming both categories with the same glyphs the flame bars
 	// use (exec dominates → densest glyph '█'), and the self-time hot
-	// spots (the root's 500ms minus its child's 50ms ranks first).
+	// spots (the root's 500ms minus its child's 50ms ranks first). Glyph
+	// swatches carry ANSI color, so substring checks run on the stripped
+	// text.
 	dist, ok := idx["stats-dist"]
 	distText, _ := dist["text"].(string)
 	if !ok || !strings.ContainsRune(distText, '█') {
@@ -139,7 +141,8 @@ func TestIntegrationMCPRunA2UI(t *testing.T) {
 	}
 	legend, ok := idx["stats-legend"]
 	legendText, _ := legend["text"].(string)
-	if !ok || !strings.Contains(legendText, "█ exec") || !strings.Contains(legendText, "read") {
+	legendPlain := a2uiStripANSI(legendText)
+	if !ok || !strings.Contains(legendPlain, "█ exec") || !strings.Contains(legendPlain, "read") {
 		t.Fatalf("stats-legend = %q, want glyphed categories", legendText)
 	}
 	hot, ok := idx["stats-hot"]
@@ -577,6 +580,51 @@ func TestIntegrationMCPRunA2UICairnScheme(t *testing.T) {
 	idx := a2uiIndex(env)
 	if got := idx["hdr-title"]["text"]; got != "cairn-scheme probe" {
 		t.Fatalf("cairn:// run a2ui hdr-title = %v", got)
+	}
+}
+
+// TestIntegrationMCPRunA2UIWidthHint proves the ?w= query survives the whole
+// stack — the SDK's {?w} template matching, the query-tolerant URI matcher,
+// and the renderer — by reading the same run at two widths and measuring the
+// axis row (label column + gutter edges + gutter, no ANSI). This is the one
+// place the RFC 6570 form-style template is exercised against a real
+// resources/read, so a regression in SDK matching fails here, not in a
+// host's terminal.
+func TestIntegrationMCPRunA2UIWidthHint(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	created := callTool(t, sess, "run_create", map[string]any{
+		"title": "width probe",
+		"spans": []map[string]any{
+			{"span_id": "s1", "category": "exec", "start_offset_ms": 0, "duration_ms": 100},
+		},
+	})
+	var runOut mcpRunOutput
+	decodeToolJSON(t, created, &runOut)
+
+	axisCells := func(uri string) int {
+		t.Helper()
+		idx := a2uiIndex(decodeA2UI(t, sess, uri))
+		axis, _ := idx["flame-axis"]["text"].(string)
+		if axis == "" {
+			t.Fatalf("read %s: no flame-axis row", uri)
+		}
+		return len([]rune(a2uiStripANSI(axis)))
+	}
+
+	// Default read: label + 2 edges + default gutter.
+	if got, want := axisCells("mcp://cairn/run/"+runOut.ID+"/a2ui"), a2uiFlameLabelW+2+a2uiFlameGutterW; got != want {
+		t.Fatalf("default axis = %d cells, want %d", got, want)
+	}
+	// ?w=120 sizes the total row: axis = 120 minus the duration column.
+	if got, want := axisCells("mcp://cairn/run/"+runOut.ID+"/a2ui?w=120"), a2uiFlameLabelW+2+(120-a2uiWidthOverhead); got != want {
+		t.Fatalf("?w=120 axis = %d cells, want %d", got, want)
+	}
+	// The cairn:// alias takes the hint too.
+	if got, want := axisCells("cairn://run/"+runOut.ID+"/a2ui?w=80"), a2uiFlameLabelW+2+(80-a2uiWidthOverhead); got != want {
+		t.Fatalf("cairn:// ?w=80 axis = %d cells, want %d", got, want)
 	}
 }
 
