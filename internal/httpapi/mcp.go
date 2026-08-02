@@ -199,8 +199,14 @@ func (s *Server) newMCPServer() *mcp.Server {
 			"streams — all scoped to what the authorizing human can already reach. Large trace " +
 			"captures do not belong in single MCP calls: open a run and page spans in modest " +
 			"batches, or POST the run JSON to /v1/runs over REST (see the run_capture prompt). " +
-			"For A2UI-capable hosts, cairn://run/<id>/a2ui and cairn://bundle/<id>/a2ui serve " +
-			"application/a2ui+json renderings of a trace or a bundle (audience: user).",
+			"For A2UI-capable hosts, these resource templates serve " +
+			"application/a2ui+json renderings (audience: user): " +
+			"cairn://run/<id>/a2ui (traces only), " +
+			"cairn://bundle/<id>/a2ui (bundles only), and " +
+			"cairn://artifact/<id>/a2ui (single-body markdown, code, or " +
+			"file artifacts). A URI that does not match the artifact's " +
+			"share type is a validation error — resolve the artifact first " +
+			"to determine which surface applies.",
 		Logger: s.log,
 		// The SDK holds exactly one Subscribe/UnsubscribeHandler pair for the
 		// whole server, so mcpSubscribeResource dispatches by URI prefix
@@ -357,6 +363,28 @@ func (s *Server) newMCPServer() *mcp.Server {
 			MIMEType:    a2uiMIME,
 			Annotations: a2uiAudienceUser,
 		}, s.mcpReadBundleA2UI)
+
+		// A2UI projection of a single-body artifact (markdown, code, file):
+		// a header Card (title, provenance, media type) wrapping the body
+		// text. Text artifacts render their markdown body directly; code and
+		// other text-based media types render inside a body Card. Binary
+		// artifacts (images, gz) are rejected — they have no text to render.
+		srv.AddResourceTemplate(&mcp.ResourceTemplate{
+			URITemplate: "mcp://cairn/artifact/{id}/a2ui",
+			Name:        "artifact-a2ui",
+			Description: "A single-body artifact (markdown, code, file) rendered as an A2UI " +
+				"component tree (header + body text). Read-only at the A2UI layer. Requires artifacts:read.",
+			MIMEType:    a2uiMIME,
+			Annotations: a2uiAudienceUser,
+		}, s.mcpReadArtifactA2UI)
+		srv.AddResourceTemplate(&mcp.ResourceTemplate{
+			URITemplate: "cairn://artifact/{id}/a2ui",
+			Name:        "artifact-a2ui-cairn",
+			Description: "Alias for mcp://cairn/artifact/{id}/a2ui under the cairn:// scheme. " +
+				"Requires artifacts:read.",
+			MIMEType:    a2uiMIME,
+			Annotations: a2uiAudienceUser,
+		}, s.mcpReadArtifactA2UI)
 	}
 
 	if s.hook != nil {
