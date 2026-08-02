@@ -145,6 +145,22 @@ func TestIntegrationMCPRunA2UI(t *testing.T) {
 	if strings.HasPrefix(text1, "  ") {
 		t.Fatalf("root span label = %q, must NOT be indented", text1)
 	}
+
+	// Regression: Text components must use the spec-defined "variant" field
+	// (not the invented "usageHint"). A2UI v0.9 catalog schemas set
+	// unevaluatedProperties: false, so "usageHint" would be silently
+	// dropped by a compliant validator, leaving headings and captions
+	// unstyled. Assert on both the run and bundle title (h2) and the stats
+	// caption row to cover both surfaces.
+	if v, ok := idx["hdr-title"]["variant"]; !ok || v != "h2" {
+		t.Fatalf("hdr-title variant = %v, want %q (must not be usageHint)", v, "h2")
+	}
+	if v, ok := idx["hdr-meta"]["variant"]; !ok || v != "caption" {
+		t.Fatalf("hdr-meta variant = %v, want %q (must not be usageHint)", v, "caption")
+	}
+	if _, ok := idx["hdr-title"]["usageHint"]; ok {
+		t.Fatal("hdr-title must NOT carry usageHint — the spec field is variant")
+	}
 }
 
 // TestIntegrationMCPRunA2UIRejectsBadURI proves the unhappy path: a malformed
