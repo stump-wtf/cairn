@@ -39,7 +39,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/joestump/md2a2ui"
+	"gitea.stump.rocks/stump.wtf/md2a2ui"
 
 	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/errs"

@@ -3,6 +3,7 @@ module github.com/joestump/cairn
 go 1.26.5
 
 require (
+	gitea.stump.rocks/stump.wtf/md2a2ui v0.1.1
 	github.com/BurntSushi/toml v1.6.0
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1
@@ -13,7 +14,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/joestump/md2a2ui v0.1.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/minio/minio-go/v7 v7.2.1
