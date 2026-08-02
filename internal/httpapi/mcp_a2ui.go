@@ -80,11 +80,14 @@ type a2uiUpdateComponents struct {
 // and a closed type would need a new struct per addition.
 type a2uiComponent = map[string]any
 
-// a2uiText builds a Text component (variant via usageHint).
+// a2uiText builds a Text component (variant matches the A2UI v0.9 standard
+// catalog field name; the schema uses unevaluatedProperties: false, so a
+// non-existent field like usageHint would be silently dropped by a compliant
+// validator and the component would render without its intended style).
 func a2uiText(id, text, hint string) a2uiComponent {
 	c := a2uiComponent{"id": id, "component": "Text", "text": text}
 	if hint != "" {
-		c["usageHint"] = hint
+		c["variant"] = hint
 	}
 	return c
 }
