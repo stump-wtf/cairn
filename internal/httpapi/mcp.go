@@ -313,17 +313,19 @@ func (s *Server) newMCPServer() *mcp.Server {
 		}, s.mcpReadRun)
 
 		// A2UI projection of the same run: the trace header, derived stats
-		// and the span waterfall as an updateComponents message. Read-only at
-		// the A2UI layer; buttons render with action names so a host that
-		// supports a2ui_action can wire them up, but Cairn's MCP surface
-		// ignores them until the round-trip lands (joestump-agent/crush#221).
-		// Audience "user" — the model still gets the JSON form via
-		// mcp://cairn/run/{id}.
+		// (time-by-category bar + hot spots) and the span flame graph as an
+		// updateComponents message. Read-only at the A2UI layer; buttons
+		// render with action names so a host that supports a2ui_action can
+		// wire them up, but Cairn's MCP surface ignores them until the
+		// round-trip lands (joestump-agent/crush#221). Audience "user" — the
+		// model still gets the JSON form via mcp://cairn/run/{id}.
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
 			URITemplate: "mcp://cairn/run/{id}/a2ui",
 			Name:        "trace-a2ui",
-			Description: "A trace rendered as an A2UI component tree (header, stats, span waterfall). " +
-				"Read-only at the A2UI layer; mutations stay on the existing tools. Requires artifacts:read.",
+			Description: "A trace rendered as an A2UI component tree: header, stats (stacked " +
+				"time-by-category bar, hot spots by self time) and a TUI flame graph — per-span " +
+				"timeline bars glyphed by category. Read-only at the A2UI layer; mutations stay " +
+				"on the existing tools. Requires artifacts:read.",
 			MIMEType:    a2uiMIME,
 			Annotations: a2uiAudienceUser,
 		}, s.mcpReadRunA2UI)
@@ -341,17 +343,19 @@ func (s *Server) newMCPServer() *mcp.Server {
 	}
 
 	if s.store != nil {
-		// A2UI projection of a bundle's member list: envelope Card plus one
-		// Card per member (name, size, media type). The store gate is the
-		// same one mountMCP applies — the MCP surface only mounts at all
-		// when a store exists, so this is always true here, but the explicit
-		// guard keeps newMCPServer safe to build in unit tests that wire a
-		// storeless Server.
+		// A2UI projection of a bundle's member list: envelope Card (member
+		// count, total size, type mix) plus a member List mirroring the web
+		// viewer's file rail — type badges, relative size bars, engagement
+		// counts. The store gate is the same one mountMCP applies — the MCP
+		// surface only mounts at all when a store exists, so this is always
+		// true here, but the explicit guard keeps newMCPServer safe to build
+		// in unit tests that wire a storeless Server.
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
 			URITemplate: "mcp://cairn/bundle/{id}/a2ui",
 			Name:        "bundle-a2ui",
-			Description: "A bundle rendered as an A2UI component tree (envelope + one Card per member). " +
-				"Read-only at the A2UI layer. Requires artifacts:read.",
+			Description: "A bundle rendered as an A2UI component tree: envelope header (member count, " +
+				"total size, type mix) plus a member list with type badges, relative size bars " +
+				"and engagement counts. Read-only at the A2UI layer. Requires artifacts:read.",
 			MIMEType:    a2uiMIME,
 			Annotations: a2uiAudienceUser,
 		}, s.mcpReadBundleA2UI)

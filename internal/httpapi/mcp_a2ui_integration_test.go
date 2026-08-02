@@ -52,9 +52,10 @@ func a2uiIndex(env a2uiEnvelope) map[string]a2uiComponent {
 }
 
 // TestIntegrationMCPRunA2UI covers the trace view end-to-end: an open run
-// with a seeded span tree renders as an A2UI envelope with a header card,
-// stats card, and a span list whose rows carry the span tree's depth
-// (indented label), category, name and duration.
+// with a seeded span tree renders as an A2UI envelope with a header card, a
+// stats card (category bar + legend + hot spots), and a flame graph whose
+// rows carry the span tree's depth (indented label), category, name,
+// timeline bar and duration.
 func TestIntegrationMCPRunA2UI(t *testing.T) {
 	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
 	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
@@ -124,8 +125,36 @@ func TestIntegrationMCPRunA2UI(t *testing.T) {
 		t.Fatalf("stats-spans text = %v, want %q", got, "2 spans")
 	}
 
-	// Spans list has two rows; the child row is indented relative to the
-	// root row, and both carry the span's category, name and duration.
+	// The stats card carries the category story: a stacked share bar, a
+	// legend naming both categories with the same glyphs the flame bars
+	// use (exec dominates → densest glyph '█'), and the self-time hot
+	// spots (the root's 500ms minus its child's 50ms ranks first).
+	dist, ok := idx["stats-dist"]
+	distText, _ := dist["text"].(string)
+	if !ok || !strings.ContainsRune(distText, '█') {
+		t.Fatalf("stats-dist = %q, want a stacked category bar", distText)
+	}
+	legend, ok := idx["stats-legend"]
+	legendText, _ := legend["text"].(string)
+	if !ok || !strings.Contains(legendText, "█ exec") || !strings.Contains(legendText, "read") {
+		t.Fatalf("stats-legend = %q, want glyphed categories", legendText)
+	}
+	hot, ok := idx["stats-hot"]
+	hotText, _ := hot["text"].(string)
+	if !ok || !strings.Contains(hotText, "go test ./... 450ms") {
+		t.Fatalf("stats-hot = %q, want the root span's 450ms self time first", hotText)
+	}
+
+	// The flame graph opens with a timeline ruler spanning the gutter.
+	axis, ok := idx["flame-axis"]
+	axisText, _ := axis["text"].(string)
+	if !ok || !strings.Contains(axisText, "0┄") || !strings.Contains(axisText, "500ms") {
+		t.Fatalf("flame-axis = %q, want a 0→wall ruler", axisText)
+	}
+
+	// Two flame rows; the child row is indented relative to the root row,
+	// and both carry the span's category, name, a timeline bar in the
+	// category's glyph, and the duration after the gutter.
 	span1, ok1 := idx["span-1"]
 	span2, ok2 := idx["span-2"]
 	if !ok1 || !ok2 {
@@ -144,6 +173,18 @@ func TestIntegrationMCPRunA2UI(t *testing.T) {
 	}
 	if strings.HasPrefix(text1, "  ") {
 		t.Fatalf("root span label = %q, must NOT be indented", text1)
+	}
+	if !strings.ContainsRune(text1, '█') {
+		t.Fatalf("root span row = %q, want a '█' bar (exec is the top category)", text1)
+	}
+	if !strings.ContainsRune(text2, '▓') {
+		t.Fatalf("child span row = %q, want a '▓' bar (read ranks second)", text2)
+	}
+	if !strings.Contains(text1, "▕") || !strings.Contains(text1, "▏") {
+		t.Fatalf("root span row = %q, want gutter edges", text1)
+	}
+	if !strings.Contains(text1, "500ms") || !strings.Contains(text2, "50ms") {
+		t.Fatalf("span rows %q / %q, want durations after the gutter", text1, text2)
 	}
 
 	// Regression: Text components must use the spec-defined "variant" field
@@ -247,8 +288,10 @@ func TestIntegrationMCPRunA2UIEmptyRun(t *testing.T) {
 }
 
 // TestIntegrationMCPBundleA2UI covers the bundle view end-to-end: a bundle
-// created via bundle_create renders as an envelope header Card plus one
-// Card per member, each carrying the member's name, size and media type.
+// created via bundle_create renders as an envelope header Card (member
+// count, total size, type mix) plus a member list row per member, each
+// carrying the member's name and a size-bar + size + badge + media-type
+// caption.
 func TestIntegrationMCPBundleA2UI(t *testing.T) {
 	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
 	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
@@ -283,8 +326,23 @@ func TestIntegrationMCPBundleA2UI(t *testing.T) {
 		t.Fatalf("hdr-title = %v, want the bundle title", got)
 	}
 
-	// Two member cards, each carrying the member's name and a size+media
-	// caption.
+	// The envelope caption aggregates the members: count and total size.
+	hdrMeta, ok := idx["hdr-meta"]
+	hdrMetaText, _ := hdrMeta["text"].(string)
+	if !ok || !strings.Contains(hdrMetaText, "2 members") || !strings.Contains(hdrMetaText, "total") {
+		t.Fatalf("hdr-meta = %q, want member count and total size", hdrMetaText)
+	}
+
+	// The type-mix caption aggregates the rail's badges: one markdown
+	// member (MD) and one Go source member (CODE via ClassifyMember).
+	mix, ok := idx["hdr-mix"]
+	mixText, _ := mix["text"].(string)
+	if !ok || !strings.Contains(mixText, "1 MD") || !strings.Contains(mixText, "1 CODE") {
+		t.Fatalf("hdr-mix = %q, want badge counts (1 MD · 1 CODE)", mixText)
+	}
+
+	// Two member rows, each carrying the member's name and a caption with a
+	// relative-size bar, size, type badge and media type.
 	m0Name, ok0 := idx["member-0-name"]
 	m1Name, ok1 := idx["member-1-name"]
 	if !ok0 || !ok1 {
@@ -300,6 +358,23 @@ func TestIntegrationMCPBundleA2UI(t *testing.T) {
 	metaText, _ := m0Meta["text"].(string)
 	if !strings.Contains(metaText, "text/markdown") {
 		t.Fatalf("member-0-meta = %q, want the media type", metaText)
+	}
+	if !strings.Contains(metaText, "MD") {
+		t.Fatalf("member-0-meta = %q, want the MD type badge", metaText)
+	}
+	if !strings.ContainsRune(metaText, '█') {
+		t.Fatalf("member-0-meta = %q, want a relative-size bar", metaText)
+	}
+
+	// README.md ("# audit", 7 B) is smaller than main.go ("package main",
+	// 12 B), so its bar is partly track ('·' run) while main.go's is full.
+	if !strings.Contains(metaText, "··") {
+		t.Fatalf("member-0-meta = %q, want a partly-empty size bar for the smaller member", metaText)
+	}
+	m1Meta := idx["member-1-meta"]
+	meta1Text, _ := m1Meta["text"].(string)
+	if !strings.Contains(meta1Text, strings.Repeat("█", 8)) {
+		t.Fatalf("member-1-meta = %q, want a full size bar for the largest member", meta1Text)
 	}
 }
 
