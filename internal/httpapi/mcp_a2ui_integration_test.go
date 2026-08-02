@@ -448,6 +448,21 @@ func TestIntegrationMCPBundleA2UI(t *testing.T) {
 	if !strings.Contains(meta1Text, strings.Repeat("█", 8)) {
 		t.Fatalf("member-1-meta = %q, want a full size bar for the largest member", meta1Text)
 	}
+
+	// An A2UI host (Crush's read_mcp_resource) appends a ?w= width hint to
+	// every /a2ui URI it reads. The bundle surface ignores the value, but the
+	// SDK's {?w} template matching must still route the read — a template
+	// registered without {?w} 404s on the hinted URI even though the handler
+	// would strip the query. Both schemes must accept the hint.
+	for _, uri := range []string{
+		"mcp://cairn/bundle/" + createdBundle.ID + "/a2ui?w=120",
+		"cairn://bundle/" + createdBundle.ID + "/a2ui?w=80",
+	} {
+		env := decodeA2UI(t, sess, uri)
+		if _, ok := a2uiIndex(env)["member-0-name"]; !ok {
+			t.Fatalf("width-hinted read %s missing member-0-name", uri)
+		}
+	}
 }
 
 // TestIntegrationMCPBundleA2UIRejectsNonBundle proves the unhappy path for a
@@ -701,6 +716,21 @@ func TestIntegrationMCPArtifactA2UI(t *testing.T) {
 	idx2 := a2uiIndex(env2)
 	if _, ok := idx2["md-text-1"]; !ok {
 		t.Fatalf("cairn:// alias missing md-text-1 (markdown heading)")
+	}
+
+	// An A2UI host (Crush's read_mcp_resource) appends a ?w= width hint to
+	// every /a2ui URI it reads. The artifact surface ignores the value, but
+	// the SDK's {?w} template matching must still route the read — a template
+	// registered without {?w} 404s on the hinted URI even though the handler
+	// would strip the query. Both schemes must accept the hint.
+	for _, uri := range []string{
+		"mcp://cairn/artifact/" + artOut.ID + "/a2ui?w=120",
+		"cairn://artifact/" + artOut.ID + "/a2ui?w=80",
+	} {
+		env := decodeA2UI(t, sess, uri)
+		if _, ok := a2uiIndex(env)["md-text-1"]; !ok {
+			t.Fatalf("width-hinted read %s missing md-text-1 (markdown heading)", uri)
+		}
 	}
 }
 

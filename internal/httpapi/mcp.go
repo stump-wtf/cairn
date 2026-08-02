@@ -356,7 +356,7 @@ func (s *Server) newMCPServer() *mcp.Server {
 		// true here, but the explicit guard keeps newMCPServer safe to build
 		// in unit tests that wire a storeless Server.
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
-			URITemplate: "mcp://cairn/bundle/{id}/a2ui",
+			URITemplate: "mcp://cairn/bundle/{id}/a2ui{?w}",
 			Name:        "bundle-a2ui",
 			Description: "A bundle rendered as an A2UI component tree: envelope header (member count, " +
 				"total size, type mix) plus a member list with type badges, relative size bars " +
@@ -365,7 +365,7 @@ func (s *Server) newMCPServer() *mcp.Server {
 			Annotations: a2uiAudienceUser,
 		}, s.mcpReadBundleA2UI)
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
-			URITemplate: "cairn://bundle/{id}/a2ui",
+			URITemplate: "cairn://bundle/{id}/a2ui{?w}",
 			Name:        "bundle-a2ui-cairn",
 			Description: "Alias for mcp://cairn/bundle/{id}/a2ui under the cairn:// scheme. " +
 				"Requires artifacts:read.",
@@ -379,7 +379,7 @@ func (s *Server) newMCPServer() *mcp.Server {
 		// other text-based media types render inside a body Card. Binary
 		// artifacts (images, gz) are rejected — they have no text to render.
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
-			URITemplate: "mcp://cairn/artifact/{id}/a2ui",
+			URITemplate: "mcp://cairn/artifact/{id}/a2ui{?w}",
 			Name:        "artifact-a2ui",
 			Description: "A single-body artifact (markdown, code, file) rendered as an A2UI " +
 				"component tree (header + body text). Read-only at the A2UI layer. Requires artifacts:read.",
@@ -387,7 +387,7 @@ func (s *Server) newMCPServer() *mcp.Server {
 			Annotations: a2uiAudienceUser,
 		}, s.mcpReadArtifactA2UI)
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
-			URITemplate: "cairn://artifact/{id}/a2ui",
+			URITemplate: "cairn://artifact/{id}/a2ui{?w}",
 			Name:        "artifact-a2ui-cairn",
 			Description: "Alias for mcp://cairn/artifact/{id}/a2ui under the cairn:// scheme. " +
 				"Requires artifacts:read.",
