@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -123,6 +124,27 @@ func a2uiList(id string, children []string) a2uiComponent {
 	return a2uiComponent{"id": id, "component": "List", "children": children}
 }
 
+// a2uiButton wraps a single child in a Button carrying an event action. The
+// v0.9 standard catalog's ButtonComponent requires `action` and `child`
+// (`variant` optional, omitted here). The action's `context` is the semantic
+// payload the host resolves against surface state and sends back to the
+// server's a2ui_action tool — ids and names travel raw (never
+// percent-escaped); any URI encoding is the host's concern when it
+// re-requests a resource. Read-only navigation only: no mutation verbs.
+func a2uiButton(id, childID, actionName string, ctx map[string]any) a2uiComponent {
+	return a2uiComponent{
+		"id":        id,
+		"component": "Button",
+		"action": map[string]any{
+			"event": map[string]any{
+				"name":    actionName,
+				"context": ctx,
+			},
+		},
+		"child": childID,
+	}
+}
+
 // a2uiHeaderCard builds the header Card the bundle and artifact surfaces lead
 // with: an h2 title plus a caption row of metadata bits, wrapped in a Column
 // inside a Card under the shared hdr-* component ids. (The run surface builds
@@ -157,6 +179,81 @@ func matchA2UIURI(uri, kind string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// --- bundle-member navigation (#103) ------------------------------------------
+
+// a2uiMemberURIEscape percent-encodes a member name for the single {name}
+// path segment of a cairn://bundle/{id}/{name}/a2ui URI. The SDK's URI-template
+// {name} variable matches a single segment only — a literal "/" in the URI
+// fails to match — so a nested member name (dir/file.md) must travel with "/"
+// escaped to %2F. url.PathEscape leaves "/" alone, so we escape then fold the
+// remaining separators. Spaces become %20 (not '+': this is a path segment,
+// not a query). This is the inverse of the decode in matchA2UIMemberURI.
+func a2uiMemberURIEscape(name string) string {
+	return strings.ReplaceAll(url.PathEscape(name), "/", "%2F")
+}
+
+// matchA2UIMemberURI extracts the bundle id and member name from a resolved
+// <scheme>://bundle/<id>/<name>/a2ui URI. Both the mcp:// and cairn:// forms
+// are accepted. The member name is percent-decoded after capture (the SDK
+// matches the escaped form; a nested name arrives as %2F). A query string
+// (?w= width hint) is stripped first, as in matchA2UIURI. Returns ok=false for
+// any shape that is not exactly bundle/<id>/<single name segment>/a2ui — a URI
+// whose name segment still contains a literal "/" after decoding is rejected
+// (that shape never matched the registered template anyway).
+func matchA2UIMemberURI(uri string) (id, name string, ok bool) {
+	for _, prefix := range []string{"mcp://cairn/bundle/", "cairn://bundle/"} {
+		if !strings.HasPrefix(uri, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(uri, prefix)
+		path, _, _ := strings.Cut(rest, "?")
+		body, found := strings.CutSuffix(path, "/a2ui")
+		if !found {
+			return "", "", false
+		}
+		// body is "<id>/<name>" with exactly one "/" separating them — the
+		// {name} template var is single-segment, so the raw URI cannot carry
+		// a second "/".
+		idPart, namePart, found := strings.Cut(body, "/")
+		if !found || idPart == "" || namePart == "" || strings.Contains(namePart, "/") {
+			return "", "", false
+		}
+		decoded, err := url.PathUnescape(namePart)
+		if err != nil || decoded == "" {
+			return "", "", false
+		}
+		return idPart, decoded, true
+	}
+	return "", "", false
+}
+
+// a2uiMemberIDSanitize makes a member name safe for a component/surface id:
+// any run of non-alphanumeric bytes becomes a single dash. Member names carry
+// "/", ".", " " and other separators that are illegal in component ids.
+func a2uiMemberIDSanitize(name string) string {
+	var b strings.Builder
+	lastDash := true // collapse leading punctuation into no leading dash
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.TrimSuffix(b.String(), "-")
+}
+
+// a2uiMemberSurfaceID names the surface for one bundle member. Distinct from
+// the bundle surface (a2uiBundleSurfaceID) so a host's navigation stack can
+// tell "the bundle list" from "the open member" apart.
+func a2uiMemberSurfaceID(bundleID, memberName string) string {
+	return "cairn-bundle-" + bundleID + "-member-" + a2uiMemberIDSanitize(memberName)
 }
 
 // a2uiRequestedWidth reads the run template's optional ?w=N width hint: the
@@ -1176,6 +1273,119 @@ func (s *Server) mcpReadArtifactA2UI(ctx context.Context, req *mcp.ReadResourceR
 	out, err := json.Marshal(env)
 	if err != nil {
 		return nil, s.mcpToolErr(ctx, "resources/read artifact/a2ui", fmt.Errorf("encode a2ui artifact: %w", err))
+	}
+	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{
+		{URI: req.Params.URI, MIMEType: a2uiMIME, Text: string(out)},
+	}}, nil
+}
+
+// --- bundle-member navigation view (#103, story #104) --------------------------
+
+// renderMemberA2UI resolves one bundle member and marshals its A2UI envelope.
+// Shared by the member resource handler (mcpReadMemberA2UI) and the a2ui_action
+// round-trip (#106) so both return byte-identical components for the same
+// member. The projection mirrors mcpReadArtifactA2UI: a header Card (member
+// name, media type, size, type badge) plus the body — markdown via md2a2ui,
+// other text in a body Card, binary rejected. Errors are already wrapped for
+// the caller's mcpToolErr (not-found is the store's uniform one).
+func (s *Server) renderMemberA2UI(ctx context.Context, bundleID, memberName string) ([]byte, error) {
+	rc, info, err := s.store.OpenMember(ctx, bundleID, memberName)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	body, err := io.ReadAll(io.LimitReader(rc, a2uiMaxBodyBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read member body: %w", err)
+	}
+
+	// Binary members have no A2UI text rendering, matching the artifact
+	// surface's binary rejection (utf8 judged on the rune-safe render prefix).
+	if !utf8.ValidString(a2uiTruncate(string(body), a2uiMaxBodyBytes)) {
+		return nil, errs.Validationf("member %s/%s has a binary body (%s) with no a2ui text rendering; read it via artifact_read or the artifact URL",
+			bundleID, memberName, info.MediaType)
+	}
+
+	badge := ""
+	if s.reg != nil {
+		badge = s.reg.Resolve(s.reg.ClassifyMember(memberName, info.MediaType)).Badge()
+	}
+
+	surfaceID := a2uiMemberSurfaceID(bundleID, memberName)
+	metaBits := []string{a2uiHumanBytes(info.Size)}
+	if badge != "" {
+		metaBits = append(metaBits, badge)
+	}
+	if info.MediaType != "" {
+		metaBits = append(metaBits, info.MediaType)
+	}
+
+	components := []a2uiComponent{}
+	components = append(components, a2uiHeaderCard(memberName, metaBits)...)
+
+	if isMarkdownMediaType(info.MediaType) {
+		if msg, err := md2a2ui.ConvertWithSurface(string(body), surfaceID+"-md"); err == nil &&
+			msg != nil && msg.UpdateComponents != nil && len(msg.UpdateComponents.Components) > 0 {
+			for _, mc := range msg.UpdateComponents.Components {
+				mc.ID = "md-" + mc.ID
+				for i := range mc.Children {
+					mc.Children[i] = "md-" + mc.Children[i]
+				}
+				if mc.Child != "" {
+					mc.Child = "md-" + mc.Child
+				}
+				components = append(components, convertMDComponent(mc))
+			}
+			components = append(components,
+				a2uiCard("body", "md-root"),
+				a2uiColumn("root", []string{"hdr", "body"}),
+			)
+			return json.Marshal(a2uiEnvelope{
+				Version: a2uiVersion,
+				UpdateComponents: a2uiUpdateComponents{
+					SurfaceID:  surfaceID,
+					CatalogID:  a2uiCatalog,
+					Components: components,
+				},
+			})
+		}
+	}
+
+	bodyText := string(body)
+	if len(bodyText) > a2uiMaxBodyBytes {
+		bodyText = a2uiTruncate(bodyText, a2uiMaxBodyBytes) + "\n\n…(truncated — read the full member via artifact_read)"
+	}
+	components = append(components,
+		a2uiText("body-text", bodyText, "body"),
+		a2uiColumn("body-col", []string{"body-text"}),
+		a2uiCard("body", "body-col"),
+		a2uiColumn("root", []string{"hdr", "body"}),
+	)
+	return json.Marshal(a2uiEnvelope{
+		Version: a2uiVersion,
+		UpdateComponents: a2uiUpdateComponents{
+			SurfaceID:  surfaceID,
+			CatalogID:  a2uiCatalog,
+			Components: components,
+		},
+	})
+}
+
+// mcpReadMemberA2UI is the ResourceHandler for cairn://bundle/{id}/{name}/a2ui:
+// one bundle member rendered as its own A2UI surface — the navigation target a
+// host lands on when the user opens a member from the bundle list. Reading
+// requires artifacts:read.
+func (s *Server) mcpReadMemberA2UI(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsRead] {
+		return nil, s.mcpScopeErr(ctx, "resources/read bundle/member/a2ui", oauth.ScopeArtifactsRead)
+	}
+	id, name, ok := matchA2UIMemberURI(req.Params.URI)
+	if !ok {
+		return nil, fmt.Errorf("validation_failed: %q is not a bundle member a2ui resource URI", req.Params.URI)
+	}
+	out, err := s.renderMemberA2UI(ctx, id, name)
+	if err != nil {
+		return nil, s.mcpToolErr(ctx, "resources/read bundle/member/a2ui", err)
 	}
 	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{
 		{URI: req.Params.URI, MIMEType: a2uiMIME, Text: string(out)},

@@ -372,6 +372,28 @@ func (s *Server) newMCPServer() *mcp.Server {
 			MIMEType:    a2uiMIME,
 			Annotations: a2uiAudienceUser,
 		}, s.mcpReadBundleA2UI)
+		// A2UI projection of one bundle member — the navigation target a host
+		// lands on when the user opens a member from the bundle list. The
+		// {name} variable is a single percent-encoded path segment (a nested
+		// member name travels with "/" escaped to %2F). {?w} accepted for
+		// uniformity though this surface ignores the width value.
+		srv.AddResourceTemplate(&mcp.ResourceTemplate{
+			URITemplate: "mcp://cairn/bundle/{id}/{name}/a2ui{?w}",
+			Name:        "bundle-member-a2ui",
+			Description: "A single bundle member rendered as an A2UI component tree (header + body " +
+				"text; markdown members as structured components). The navigation target for the " +
+				"bundle list's open_member action. Read-only at the A2UI layer. Requires artifacts:read.",
+			MIMEType:    a2uiMIME,
+			Annotations: a2uiAudienceUser,
+		}, s.mcpReadMemberA2UI)
+		srv.AddResourceTemplate(&mcp.ResourceTemplate{
+			URITemplate: "cairn://bundle/{id}/{name}/a2ui{?w}",
+			Name:        "bundle-member-a2ui-cairn",
+			Description: "Alias for mcp://cairn/bundle/{id}/{name}/a2ui under the cairn:// scheme. " +
+				"Requires artifacts:read.",
+			MIMEType:    a2uiMIME,
+			Annotations: a2uiAudienceUser,
+		}, s.mcpReadMemberA2UI)
 
 		// A2UI projection of a single-body artifact (markdown, code, file):
 		// a header Card (title, provenance, media type) wrapping the body

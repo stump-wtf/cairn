@@ -465,6 +465,103 @@ func TestIntegrationMCPBundleA2UI(t *testing.T) {
 	}
 }
 
+// TestIntegrationMCPBundleMemberA2UI covers the bundle-member navigation
+// target (story #104): reading cairn://bundle/{id}/{name}/a2ui renders one
+// member as its own A2UI surface — header (member name, size, badge, media
+// type) plus the markdown body via md2a2ui — under a per-member surfaceId
+// distinct from the bundle surface. Both schemes and the ?w= width hint are
+// accepted; nested member names travel percent-encoded (%2F).
+func TestIntegrationMCPBundleMemberA2UI(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	created := callTool(t, sess, "bundle_create", map[string]any{
+		"title": "the q3 audit",
+		"members": []map[string]any{
+			{"name": "README.md", "body": "# audit\n\n- findings", "media_type": "text/markdown"},
+			{"name": "dir/main.go", "body": "package main", "media_type": "text/x-go"},
+		},
+	})
+	var createdBundle mcpBundleCreateOutput
+	decodeToolJSON(t, created, &createdBundle)
+	if createdBundle.ID == "" {
+		t.Fatalf("bundle_create returned no id: %+v", createdBundle)
+	}
+
+	env := decodeA2UI(t, sess, "cairn://bundle/"+createdBundle.ID+"/README.md/a2ui")
+	if env.Version != a2uiVersion {
+		t.Fatalf("envelope version = %q, want %q", env.Version, a2uiVersion)
+	}
+	// Per-member surface id, distinct from the bundle surface id.
+	if got, want := env.UpdateComponents.SurfaceID, a2uiMemberSurfaceID(createdBundle.ID, "README.md"); got != want {
+		t.Fatalf("surfaceId = %q, want %q (distinct from bundle surface)", got, want)
+	}
+
+	idx := a2uiIndex(env)
+	if got := idx["hdr-title"]["text"]; got != "README.md" {
+		t.Fatalf("hdr-title = %v, want the member name", got)
+	}
+	// The markdown body is structured: the "# audit" heading becomes an h1.
+	h1, ok := idx["md-text-1"]
+	if !ok {
+		t.Fatalf("missing md-text-1 (markdown heading): %+v", idx)
+	}
+	if v := h1["variant"]; v != "h1" {
+		t.Fatalf("md-text-1 variant = %v, want h1", v)
+	}
+
+	// The mcp:// alias works too, as does the ?w= width hint on both schemes.
+	for _, uri := range []string{
+		"mcp://cairn/bundle/" + createdBundle.ID + "/README.md/a2ui",
+		"cairn://bundle/" + createdBundle.ID + "/README.md/a2ui?w=120",
+		"mcp://cairn/bundle/" + createdBundle.ID + "/README.md/a2ui?w=80",
+	} {
+		env := decodeA2UI(t, sess, uri)
+		if _, ok := a2uiIndex(env)["md-text-1"]; !ok {
+			t.Fatalf("read %s missing md-text-1 (markdown heading)", uri)
+		}
+	}
+
+	// A nested member name travels percent-encoded (dir/main.go → dir%2Fmain.go);
+	// a non-markdown member renders the plain-text body path.
+	env = decodeA2UI(t, sess, "cairn://bundle/"+createdBundle.ID+"/dir%2Fmain.go/a2ui")
+	idx = a2uiIndex(env)
+	if got := idx["hdr-title"]["text"]; got != "dir/main.go" {
+		t.Fatalf("nested member hdr-title = %v, want dir/main.go (percent-decoded)", got)
+	}
+	body, ok := idx["body-text"]
+	if !ok || !strings.Contains(body["text"].(string), "package main") {
+		t.Fatalf("nested member body-text = %v, want the Go source", body)
+	}
+}
+
+// TestIntegrationMCPBundleMemberA2UIUnknown proves the member surface returns
+// the store's uniform not-found for an unknown member name (and does not
+// distinguish it from an unknown bundle), rather than an internal error.
+func TestIntegrationMCPBundleMemberA2UIUnknown(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	created := callTool(t, sess, "bundle_create", map[string]any{
+		"title":   "the q3 audit",
+		"members": []map[string]any{{"name": "README.md", "body": "# audit", "media_type": "text/markdown"}},
+	})
+	var createdBundle mcpBundleCreateOutput
+	decodeToolJSON(t, created, &createdBundle)
+
+	_, err := sess.ReadResource(context.Background(), &mcp.ReadResourceParams{
+		URI: "cairn://bundle/" + createdBundle.ID + "/nosuch.md/a2ui",
+	})
+	if err == nil {
+		t.Fatal("reading an unknown member must fail")
+	}
+	if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "not_found") {
+		t.Fatalf("unknown member error = %v, want a uniform not-found", err)
+	}
+}
+
 // TestIntegrationMCPBundleA2UIRejectsNonBundle proves the unhappy path for a
 // wrong share type: reading the bundle a2ui resource against a single-body
 // artifact id is a validation failure naming the actual share type, not a
