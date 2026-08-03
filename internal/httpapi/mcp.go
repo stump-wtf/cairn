@@ -31,6 +31,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -231,6 +232,12 @@ func (s *Server) newMCPServer() *mcp.Server {
 	// Receiving middleware wraps every incoming server-bound method, so this
 	// runs after the tool handler itself has returned.
 	srv.AddReceivingMiddleware(s.mcpActivityMiddleware())
+	// mcpSpansUnwrapMiddleware fixes string-encoded spans arrays before schema
+	// validation (issue #108). Some MCP clients serialize the spans parameter
+	// as a JSON-encoded string instead of a native array; this middleware
+	// detects and unwraps that encoding so the typed schema validation succeeds
+	// without losing the rich field documentation agents rely on.
+	srv.AddReceivingMiddleware(s.mcpSpansUnwrapMiddleware())
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "artifact_read",
@@ -610,6 +617,69 @@ func (s *Server) mcpActivityMiddleware() mcp.Middleware {
 			return result, err
 		}
 	}
+}
+
+// mcpSpansUnwrapMiddleware is receiving middleware that detects and fixes
+// string-encoded spans arrays in tools/call arguments for run_create and
+// run_append_spans (issue #108). Some MCP clients serialize the spans
+// parameter as a JSON-encoded string (e.g. "[{...}]") instead of a native
+// JSON array ([{...}]). This middleware unwraps that encoding before the
+// SDK's schema validation runs, preserving the rich typed schema that agents
+// rely on for field documentation while being tolerant of client bugs.
+func (s *Server) mcpSpansUnwrapMiddleware() mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == "tools/call" {
+				if params, ok := req.GetParams().(*mcp.CallToolParamsRaw); ok && params != nil {
+					switch params.Name {
+					case "run_create", "run_append_spans":
+						params.Arguments = unwrapStringEncodedSpans(params.Arguments)
+					}
+				}
+			}
+			return next(ctx, method, req)
+		}
+	}
+}
+
+// unwrapStringEncodedSpans checks if the raw JSON arguments contain a "spans"
+// field that is a JSON-encoded string rather than a native array, and if so,
+// replaces it with the decoded array. Returns the original arguments unchanged
+// if no fixup is needed.
+func unwrapStringEncodedSpans(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var args map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return raw
+	}
+	spansRaw, ok := args["spans"]
+	if !ok || len(spansRaw) == 0 {
+		return raw
+	}
+	// Check if spans is a string (starts with '"')
+	trimmed := bytes.TrimSpace(spansRaw)
+	if len(trimmed) == 0 || trimmed[0] != '"' {
+		return raw // Already an array or null, no fixup needed
+	}
+	// It's a string — try to decode it as a JSON array
+	var spansStr string
+	if err := json.Unmarshal(spansRaw, &spansStr); err != nil {
+		return raw
+	}
+	// Verify the decoded string is valid JSON array
+	var arr []json.RawMessage
+	if err := json.Unmarshal([]byte(spansStr), &arr); err != nil {
+		return raw // Not a valid array, leave as-is for normal validation to reject
+	}
+	// Replace the string-encoded spans with the actual array
+	args["spans"] = json.RawMessage(spansStr)
+	fixed, err := json.Marshal(args)
+	if err != nil {
+		return raw
+	}
+	return fixed
 }
 
 // recordMCPToolActivity is mcpActivityMiddleware's post-call bookkeeping,
