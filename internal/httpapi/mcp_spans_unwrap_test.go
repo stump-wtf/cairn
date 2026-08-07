@@ -51,6 +51,11 @@ func TestUnwrapStringEncodedSpans(t *testing.T) {
 			input:    `{"id":"test","spans":"not an array"}`,
 			wantSame: true,
 		},
+		{
+			name:     "whitespace-prefixed string still unwrapped",
+			input:    `{"id":"test","spans":  "[{\"span_id\":\"s1\",\"category\":\"exec\"}]"}`,
+			wantSame: false,
+		},
 	}
 
 	for _, tt := range tests {
