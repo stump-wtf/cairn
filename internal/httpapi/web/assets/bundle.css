@@ -74,8 +74,15 @@
 }
 
 /* ---- Member pane ---- */
-.bundle-pane { overflow: auto; min-width: 0; padding: 22px 26px; }
+.bundle-pane { overflow: auto; min-width: 0; padding: 22px 26px; position: relative; }
 .bundle-pane:focus-visible { outline: 2px solid var(--green); outline-offset: -3px; }
+
+/* Loading indicator shown while HTMX fetches a new member pane (#87). */
+.bundle-pane-loading { display: none; align-items: center; justify-content: center; padding: 48px 0; color: var(--muted); font-size: 0.9rem; gap: 8px; }
+.bundle-pane-loading::before { content: ""; width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--green); border-radius: 50%; animation: bundle-spin 0.6s linear infinite; }
+@keyframes bundle-spin { to { transform: rotate(360deg); } }
+.bundle-pane.htmx-request .bundle-pane-loading { display: flex; }
+.bundle-pane.htmx-request .member-pane { opacity: 0.3; pointer-events: none; }
 .member-pane { min-width: 0; }
 .member-pane .generic-card { margin-top: 4px; }
 

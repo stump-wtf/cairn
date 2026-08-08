@@ -192,7 +192,7 @@ Governing: SPEC-0003 (Bundle Viewer, a11y), ADR-0011 (server-rendered + HTMX). *
         <a class="bundle-file{{if .Active}} bundle-file-active{{end}}"
            id="{{.TabID}}" role="tab"
            href="{{.ShellURL}}"
-           hx-get="{{.PaneURL}}" hx-target="#bundle-pane" hx-swap="innerHTML" hx-push-url="{{.ShellURL}}"
+           hx-get="{{.PaneURL}}" hx-target="#bundle-pane" hx-swap="innerHTML" hx-push-url="{{.ShellURL}}" hx-indicator="#bundle-pane"
            aria-selected="{{if .Active}}true{{else}}false{{end}}"
            aria-controls="bundle-pane"
            tabindex="{{if .Active}}0{{else}}-1{{end}}"
@@ -206,6 +206,7 @@ Governing: SPEC-0003 (Bundle Viewer, a11y), ADR-0011 (server-rendered + HTMX). *
     </ul>
   </nav>
   <section id="bundle-pane" class="bundle-pane" role="tabpanel" tabindex="-1" aria-labelledby="{{.Active.TabID}}" aria-live="polite">
+    <div class="bundle-pane-loading" aria-hidden="true">Loading…</div>
     {{template "bundle-pane" .ActivePane}}
   </section>
 </div>
