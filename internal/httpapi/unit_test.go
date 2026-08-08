@@ -401,15 +401,9 @@ func TestRunCapturePrompt(t *testing.T) {
 	}
 
 	// The optional `task` argument is woven in when supplied.
-	withTask, err := s.mcpRunCapturePrompt(context.Background(), &mcp.GetPromptRequest{
-		Params: &mcp.GetPromptParams{Name: "run_capture", Arguments: map[string]string{"task": "port the CSS"}},
-	})
-	if err != nil {
-		t.Fatalf("prompt with task: %v", err)
-	}
-	got := withTask.Messages[0].Content.(*mcp.TextContent).Text
-	if !strings.Contains(got, "port the CSS") {
-		t.Error("run_capture prompt should weave in the task argument when given")
+	// The prompt is self-sufficient — no task argument needed.
+	if !strings.Contains(body, "current session") {
+		t.Error("run_capture prompt should reference the current session as the run to capture")
 	}
 }
 

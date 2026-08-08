@@ -324,11 +324,6 @@ func (s *Server) newMCPServer() *mcp.Server {
 			Name:        "run_capture",
 			Title:       "Capture a trace of a run",
 			Description: "How to record an agent run as a Cairn trace that reads well: span granularity, the category vocabulary, and what to put in each span's output.",
-			Arguments: []*mcp.PromptArgument{{
-				Name:        "task",
-				Title:       "Task",
-				Description: "What the run was about, woven into the guidance. Optional.",
-			}},
 		}, s.mcpRunCapturePrompt)
 
 		srv.AddResourceTemplate(&mcp.ResourceTemplate{
@@ -1102,14 +1097,7 @@ func catList(cats []trajectory.Category) string {
 // Governing: ADR-0004 (MCP as a first-class surface), ADR-0009 (open category
 // set), SPEC-0004 (Trajectory Share), SPEC-0007 REQ "MCP Prompt Surface".
 func (s *Server) mcpRunCapturePrompt(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-	task := ""
-	if req != nil && req.Params != nil {
-		task = req.Params.Arguments["task"]
-	}
-	intro := "You are recording an agent run to Cairn as a trace, using the run_create tool (or run_create followed by run_append_spans for a run you capture as it happens)."
-	if strings.TrimSpace(task) != "" {
-		intro += " The run to capture is: " + task
-	}
+	intro := "You are recording an agent run to Cairn as a trace, using the run_create tool (or run_create followed by run_append_spans for a run you capture as it happens). The run to capture is the current session — you already know what it did."
 
 	body := intro + `
 
@@ -1119,7 +1107,7 @@ A trace is read by a human scrubbing a waterfall and expanding the turns that lo
 
 Go and look before you write a single span. Two confirmed shapes, as worked examples:
   - Claude Code — ` + "`~/.claude/projects/<cwd-slug>/<session-id>.jsonl`" + `, one JSON object per line, each carrying a ` + "`timestamp`" + ` and a ` + "`message`" + ` whose ` + "`content`" + ` holds ` + "`text`" + ` / ` + "`tool_use`" + ` / ` + "`tool_result`" + ` blocks, plus ` + "`usage`" + ` for tokens.
-  - Crush — a SQLite database at ` + "`~/.crush/crush.db`" + `: table ` + "`messages`" + ` with ` + "`role`" + `, millisecond ` + "`created_at`" + ` / ` + "`finished_at`" + `, and a JSON ` + "`parts`" + ` column holding ` + "`reasoning`" + ` and ` + "`tool_call`" + ` parts (each with ` + "`name`" + ` and ` + "`input`" + `).
+  - Crush — a SQLite database at ` + "`<cwd>/.crush/crush.db`" + ` (per-working-directory, not global): table ` + "`messages`" + ` with ` + "`role`" + `, second-precision ` + "`created_at`" + ` / ` + "`finished_at`" + ` (Unix epoch), and a JSON ` + "`parts`" + ` column holding ` + "`reasoning`" + ` and ` + "`tool_call`" + ` parts (each with ` + "`name`" + ` and ` + "`input`" + `). Find your session by querying ` + "`SELECT * FROM sessions ORDER BY created_at DESC LIMIT 1`" + `. **Caveat:** messages are buffered in memory during an active session and may not appear in the DB until the session ends or a checkpoint runs. If your session's messages are missing, capture at session end or reconstruct from what you can verify.
 
 If yours is neither, it still almost certainly exists — find it rather than assuming it does not. Look under the harness's data or state directory (` + "`~/.<harness>/`" + `, ` + "`~/.local/share/<harness>/`" + `, ` + "`~/Library/Application Support/<harness>/`" + `, or a ` + "`.<harness>/`" + ` folder in the project), and prefer the newest file, or the one whose name carries the current session id. A JSONL of turns and a SQLite database are the two common shapes; both are readable with tools you already have.
 
