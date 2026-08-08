@@ -1049,8 +1049,7 @@ func TestIntegrationMCPRunCapturePromptIsDiscoverable(t *testing.T) {
 	}
 
 	got, err := sess.GetPrompt(context.Background(), &mcp.GetPromptParams{
-		Name:      "run_capture",
-		Arguments: map[string]string{"task": "capture this refactor"},
+		Name: "run_capture",
 	})
 	if err != nil {
 		t.Fatalf("prompts/get: %v", err)
@@ -1062,8 +1061,8 @@ func TestIntegrationMCPRunCapturePromptIsDiscoverable(t *testing.T) {
 	if !ok {
 		t.Fatalf("prompt content = %T, want *mcp.TextContent", got.Messages[0].Content)
 	}
-	if !strings.Contains(text.Text, "capture this refactor") {
-		t.Error("prompts/get should weave the task argument into the guidance")
+	if !strings.Contains(text.Text, "current session") {
+		t.Error("prompts/get should reference the current session as the run to capture")
 	}
 	// The guidance an agent most needs, end to end over the wire.
 	for _, want := range []string{"output", "research", "reason", "sub-agent"} {
