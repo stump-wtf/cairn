@@ -232,14 +232,16 @@ func (s *Server) newMCPServer() *mcp.Server {
 	// Receiving middleware wraps every incoming server-bound method, so this
 	// runs after the tool handler itself has returned.
 	srv.AddReceivingMiddleware(s.mcpActivityMiddleware())
-	// mcpSpansUnwrapMiddleware fixes string-encoded spans arrays before schema
-	// validation (issue #108). Some MCP clients serialize the spans parameter
-	// as a JSON-encoded string instead of a native array; this middleware
-	// detects and unwraps that encoding so the typed schema validation succeeds
-	// without losing the rich field documentation agents rely on.
-	srv.AddReceivingMiddleware(s.mcpSpansUnwrapMiddleware())
+	// mcpArrayUnwrapMiddleware fixes string-encoded array parameters before
+	// schema validation (issue #108). Some MCP clients serialize an array
+	// parameter as a JSON-encoded string instead of a native array; this
+	// middleware detects and unwraps that encoding so the typed schema
+	// validation succeeds without losing the rich field documentation agents
+	// rely on. The published-schema fix in mcp_schema.go removes the usual
+	// cause; this stays for clients holding an older, flattened schema.
+	srv.AddReceivingMiddleware(s.mcpArrayUnwrapMiddleware())
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &mcp.Tool{
 		Name:        "artifact_read",
 		Description: "Read an artifact or a named file within a bundle by its public id or mcp://cairn/<id> handle. Requires artifacts:read.",
 	}, s.mcpReadArtifact)
@@ -249,7 +251,7 @@ func (s *Server) newMCPServer() *mcp.Server {
 	// our A2UI surfaces, and reports render failures via a2ui_error. Registered so
 	// the host's capability check flips it from the agent-turn fallback to the
 	// in-place round-trip. Today the only verb is open_member (bundle navigation).
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &mcp.Tool{
 		Name: "a2ui_action",
 		Description: "Handle an interaction on one of this server's A2UI surfaces per the A2UI-over-MCP " +
 			"contract: the host resolves the action's context against surface state and calls with " +
@@ -257,13 +259,13 @@ func (s *Server) newMCPServer() *mcp.Server {
 			"fallback). Currently supports open_member ({bundle, member}) for bundle navigation. " +
 			"Requires artifacts:read.",
 	}, s.mcpA2UIAction)
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &mcp.Tool{
 		Name: "a2ui_error",
 		Description: "Report a render failure on one of this server's A2UI surfaces ({code, message, " +
 			"surfaceId}). A sink — logged server-side; present so hosts can report per the A2UI-over-MCP contract.",
 	}, s.mcpA2UIError)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &mcp.Tool{
 		Name: "artifact_create",
 		Description: "Create and push a new single-body artifact (file, markdown, or code — share_type " +
 			"defaults to file, sniffed/declared media type selects the viewer) owned by the authorizing " +
@@ -272,17 +274,17 @@ func (s *Server) newMCPServer() *mcp.Server {
 			"creatable here — use run_create. Requires artifacts:write.",
 	}, s.mcpCreateArtifact)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &mcp.Tool{
 		Name:        "artifact_comment",
 		Description: "Post a comment on an artifact (or a one-level reply). Requires annotations:write.",
 	}, s.mcpComment)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &mcp.Tool{
 		Name:        "artifact_react",
 		Description: "Add an emoji reaction to an artifact or an anchor within it. Requires annotations:write.",
 	}, s.mcpReact)
 
-	mcp.AddTool(srv, &mcp.Tool{
+	addTool(srv, &mcp.Tool{
 		Name: "bundle_create",
 		Description: "Create a bundle of N named members (each a body plus an optional media type) " +
 			"owned by the authorizing human, with the default link-visibility policy and default TTL " +
@@ -291,7 +293,7 @@ func (s *Server) newMCPServer() *mcp.Server {
 	}, s.mcpCreateBundle)
 
 	if s.traj != nil {
-		mcp.AddTool(srv, &mcp.Tool{
+		addTool(srv, &mcp.Tool{
 			Name: "run_create",
 			Description: "Create and push a trace of an agent run, owned by the authorizing human, with the " +
 				"default link-visibility policy and default TTL — the same ingest POST /v1/runs performs " +
@@ -305,7 +307,7 @@ func (s *Server) newMCPServer() *mcp.Server {
 				"run_append_spans, or POST the JSON to /v1/runs over REST so the payload never enters your context.",
 		}, s.mcpCreateRun)
 
-		mcp.AddTool(srv, &mcp.Tool{
+		addTool(srv, &mcp.Tool{
 			Name: "run_append_spans",
 			Description: "Append one or more spans to a run this human owns — the same incremental ingest " +
 				"POST /v1/runs/{id}/spans performs. Re-posting an already-present span_id is an idempotent " +
@@ -619,21 +621,37 @@ func (s *Server) mcpActivityMiddleware() mcp.Middleware {
 	}
 }
 
-// mcpSpansUnwrapMiddleware is receiving middleware that detects and fixes
-// string-encoded spans arrays in tools/call arguments for run_create and
-// run_append_spans (issue #108). Some MCP clients serialize the spans
-// parameter as a JSON-encoded string (e.g. "[{...}]") instead of a native
-// JSON array ([{...}]). This middleware unwraps that encoding before the
-// SDK's schema validation runs, preserving the rich typed schema that agents
-// rely on for field documentation while being tolerant of client bugs.
-func (s *Server) mcpSpansUnwrapMiddleware() mcp.Middleware {
+// mcpArrayParams names every array-typed tool parameter, so the unwrap
+// middleware below can be tolerant of a client that string-encodes one. It is
+// an explicit table rather than a schema walk because the middleware runs on
+// raw arguments, before the SDK has resolved a schema to consult — and because
+// a list this short is easier to audit than a reflection pass.
+//
+// Adding an array parameter to a tool means adding it here. The schema fix in
+// mcp_schema.go is what stops clients mis-encoding these in the first place;
+// this table is the belt to that pair of braces, for clients already in the
+// wild with the old flattened schema cached.
+var mcpArrayParams = map[string][]string{
+	"run_create":       {"spans"},
+	"run_append_spans": {"spans"},
+	"bundle_create":    {"members"},
+}
+
+// mcpArrayUnwrapMiddleware is receiving middleware that detects and fixes
+// string-encoded arrays in tools/call arguments (issue #108). Some MCP clients
+// serialize an array parameter as a JSON-encoded string (e.g. "[{...}]")
+// instead of a native JSON array ([{...}]) — most often because they could not
+// represent the parameter's published type and fell back to sending a string.
+// This middleware unwraps that encoding before the SDK's schema validation
+// runs, preserving the rich typed schema that agents rely on for field
+// documentation while being tolerant of client bugs.
+func (s *Server) mcpArrayUnwrapMiddleware() mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			if method == "tools/call" {
 				if params, ok := req.GetParams().(*mcp.CallToolParamsRaw); ok && params != nil {
-					switch params.Name {
-					case "run_create", "run_append_spans":
-						params.Arguments = unwrapStringEncodedSpans(params.Arguments)
+					if fields := mcpArrayParams[params.Name]; len(fields) > 0 {
+						params.Arguments = unwrapStringEncodedArrays(params.Arguments, fields...)
 					}
 				}
 			}
@@ -642,39 +660,46 @@ func (s *Server) mcpSpansUnwrapMiddleware() mcp.Middleware {
 	}
 }
 
-// unwrapStringEncodedSpans checks if the raw JSON arguments contain a "spans"
-// field that is a JSON-encoded string rather than a native array, and if so,
-// replaces it with the decoded array. Returns the original arguments unchanged
-// if no fixup is needed.
-func unwrapStringEncodedSpans(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
+// unwrapStringEncodedArrays checks whether any of the named fields in the raw
+// JSON arguments is a JSON-encoded string rather than a native array, and if
+// so, replaces it with the decoded array. Returns the original arguments
+// unchanged if no field needs fixing up.
+func unwrapStringEncodedArrays(raw json.RawMessage, fields ...string) json.RawMessage {
+	if len(raw) == 0 || len(fields) == 0 {
 		return raw
 	}
 	var args map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return raw
 	}
-	spansRaw, ok := args["spans"]
-	if !ok || len(spansRaw) == 0 {
+	var changed bool
+	for _, field := range fields {
+		fieldRaw, ok := args[field]
+		if !ok || len(fieldRaw) == 0 {
+			continue
+		}
+		// Only a string needs unwrapping; an array or null is already
+		// something the SDK's validation can speak to directly.
+		trimmed := bytes.TrimSpace(fieldRaw)
+		if len(trimmed) == 0 || trimmed[0] != '"' {
+			continue
+		}
+		var decoded string
+		if err := json.Unmarshal(fieldRaw, &decoded); err != nil {
+			continue
+		}
+		// Verify the decoded string really is a JSON array before swapping it
+		// in; anything else is left alone for normal validation to reject.
+		var arr []json.RawMessage
+		if err := json.Unmarshal([]byte(decoded), &arr); err != nil {
+			continue
+		}
+		args[field] = json.RawMessage(decoded)
+		changed = true
+	}
+	if !changed {
 		return raw
 	}
-	// Check if spans is a string (starts with '"')
-	trimmed := bytes.TrimSpace(spansRaw)
-	if len(trimmed) == 0 || trimmed[0] != '"' {
-		return raw // Already an array or null, no fixup needed
-	}
-	// It's a string — try to decode it as a JSON array
-	var spansStr string
-	if err := json.Unmarshal(spansRaw, &spansStr); err != nil {
-		return raw
-	}
-	// Verify the decoded string is valid JSON array
-	var arr []json.RawMessage
-	if err := json.Unmarshal([]byte(spansStr), &arr); err != nil {
-		return raw // Not a valid array, leave as-is for normal validation to reject
-	}
-	// Replace the string-encoded spans with the actual array
-	args["spans"] = json.RawMessage(spansStr)
 	fixed, err := json.Marshal(args)
 	if err != nil {
 		return raw
