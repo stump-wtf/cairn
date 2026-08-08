@@ -854,6 +854,42 @@ func (s *Server) mcpReadArtifact(ctx context.Context, req *mcp.CallToolRequest, 
 
 // --- artifact_create -----------------------------------------------------------
 
+// sniffMarkdown checks the first ~500 bytes of body for common markdown
+// signals (headings, list items, bold/italic markers, code fences, links).
+// Returns "text/markdown" if at least two distinct signals are found,
+// otherwise "". This is a heuristic for the MCP artifact_create path where
+// agents omit media_type; it is intentionally conservative to avoid
+// false positives on plain text or code.
+func sniffMarkdown(body string) string {
+	if len(body) == 0 {
+		return ""
+	}
+	sample := body
+	if len(sample) > 512 {
+		sample = sample[:512]
+	}
+	signals := 0
+	for _, pat := range []string{
+		"\n#", "\n##", "\n###",
+		"\n- ", "\n* ",
+		"\n```",
+		"**", "__",
+		"[", "](",
+	} {
+		if strings.Contains(sample, pat) {
+			signals++
+		}
+	}
+	// Also check if the body starts with a heading (no leading newline).
+	if strings.HasPrefix(sample, "#") {
+		signals++
+	}
+	if signals >= 2 {
+		return "text/markdown"
+	}
+	return ""
+}
+
 type mcpCreateInput struct {
 	// Body is the artifact content to store. It is written to the store
 	// VERBATIM as the JSON string's bytes — there is no base64/binary decoding
@@ -919,12 +955,16 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 	if shareType == artifact.TypeBundle || shareType == artifact.TypeTrajectory {
 		return nil, mcpCreateOutput{}, fmt.Errorf("validation_failed: share_type must not be %q; use bundle_create for bundles or run_create for traces", shareType)
 	}
+	mediaType := in.MediaType
+	if mediaType == "" {
+		mediaType = sniffMarkdown(in.Body)
+	}
 	now := s.now()
 	art, err := s.store.CreateArtifact(ctx, store.CreateArtifactInput{
 		ShareType:         shareType,
 		Title:             in.Title,
 		Body:              strings.NewReader(in.Body),
-		DeclaredMediaType: in.MediaType,
+		DeclaredMediaType: mediaType,
 		Provenance: artifact.Provenance{
 			ActorID:    actorID,
 			OnBehalfOf: mcpModelActor(req.Session),
