@@ -237,6 +237,10 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 // handleGet resolves an artifact's metadata + preview info. Unknown/expired ids
 // return a uniform 404 (SPEC-0002 REQ "Artifact Lifecycle — Read").
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	id := chi.URLParam(r, "id")
 	art, err := s.store.GetByPublicID(r.Context(), id)
 	if err != nil {
@@ -248,6 +252,10 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 
 // handleGetBody streams the raw body, re-verifiable against the stored SHA-256.
 func (s *Server) handleGetBody(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	id := chi.URLParam(r, "id")
 	rc, info, err := s.store.OpenBody(r.Context(), id)
 	if err != nil {
@@ -260,6 +268,10 @@ func (s *Server) handleGetBody(w http.ResponseWriter, r *http.Request) {
 
 // handleGetMember streams a bundle member addressed as <id>/<name>.
 func (s *Server) handleGetMember(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	id := chi.URLParam(r, "id")
 	name := chi.URLParam(r, "*")
 	rc, info, err := s.store.OpenMember(r.Context(), id, name)
@@ -328,6 +340,10 @@ func (s *Server) serveInlineBody(w http.ResponseWriter, r *http.Request, rc io.R
 // belt-and-suspenders guard refuses an agent principal even if that middleware
 // were ever unwired, so a delete is never performed as p.ActorID for an agent.
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	p, ok := principalFrom(r.Context())
 	if !ok {
 		s.writeError(w, r, errs.ErrUnauthorized, nil)
@@ -347,6 +363,10 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 // handleBin lists the caller's Bin, keyset-paginated.
 func (s *Server) handleBin(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	p, ok := principalFrom(r.Context())
 	if !ok {
 		s.writeError(w, r, errs.ErrUnauthorized, nil)
