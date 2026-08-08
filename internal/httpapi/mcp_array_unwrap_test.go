@@ -10,74 +10,95 @@ import (
 	"github.com/joestump/cairn/internal/store"
 )
 
-func TestUnwrapStringEncodedSpans(t *testing.T) {
+func TestUnwrapStringEncodedArrays(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
+		field    string
 		wantSame bool // true if output should equal input (no fixup)
 	}{
 		{
 			name:     "native array unchanged",
 			input:    `{"id":"test","spans":[{"span_id":"s1","category":"exec"}]}`,
+			field:    "spans",
 			wantSame: true,
 		},
 		{
 			name:     "string-encoded spans unwrapped",
 			input:    `{"id":"test","spans":"[{\"span_id\":\"s1\",\"category\":\"exec\"}]"}`,
+			field:    "spans",
 			wantSame: false,
 		},
 		{
 			name:     "null spans unchanged",
 			input:    `{"id":"test","spans":null}`,
+			field:    "spans",
 			wantSame: true,
 		},
 		{
 			name:     "missing spans unchanged",
 			input:    `{"id":"test"}`,
+			field:    "spans",
 			wantSame: true,
 		},
 		{
 			name:     "empty object unchanged",
 			input:    `{}`,
+			field:    "spans",
 			wantSame: true,
 		},
 		{
 			name:     "invalid JSON returned as-is",
 			input:    `not json`,
+			field:    "spans",
 			wantSame: true,
 		},
 		{
 			name:     "string that is not valid array left as-is",
 			input:    `{"id":"test","spans":"not an array"}`,
+			field:    "spans",
 			wantSame: true,
 		},
 		{
 			name:     "whitespace-prefixed string still unwrapped",
 			input:    `{"id":"test","spans":  "[{\"span_id\":\"s1\",\"category\":\"exec\"}]"}`,
+			field:    "spans",
 			wantSame: false,
+		},
+		{
+			name:     "string-encoded bundle members unwrapped",
+			input:    `{"title":"t","members":"[{\"name\":\"a.md\",\"body\":\"hi\"}]"}`,
+			field:    "members",
+			wantSame: false,
+		},
+		{
+			name:     "native bundle members unchanged",
+			input:    `{"title":"t","members":[{"name":"a.md","body":"hi"}]}`,
+			field:    "members",
+			wantSame: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := unwrapStringEncodedSpans(json.RawMessage(tt.input))
+			got := unwrapStringEncodedArrays(json.RawMessage(tt.input), tt.field)
 			if tt.wantSame {
 				if string(got) != tt.input {
-					t.Errorf("unwrapStringEncodedSpans() = %s, want unchanged %s", string(got), tt.input)
+					t.Errorf("unwrapStringEncodedArrays() = %s, want unchanged %s", string(got), tt.input)
 				}
 			} else {
-				// Verify the result is valid JSON with spans as an array
+				// Verify the result is valid JSON with the field as an array
 				var args map[string]json.RawMessage
 				if err := json.Unmarshal(got, &args); err != nil {
 					t.Fatalf("result is not valid JSON: %v", err)
 				}
-				spansRaw, ok := args["spans"]
+				fieldRaw, ok := args[tt.field]
 				if !ok {
-					t.Fatal("result missing spans field")
+					t.Fatalf("result missing %s field", tt.field)
 				}
-				// Verify spans is now an array (starts with '[')
-				if len(spansRaw) == 0 || spansRaw[0] != '[' {
-					t.Errorf("spans should be an array, got: %s", string(spansRaw))
+				// Verify the field is now an array (starts with '[')
+				if len(fieldRaw) == 0 || fieldRaw[0] != '[' {
+					t.Errorf("%s should be an array, got: %s", tt.field, string(fieldRaw))
 				}
 			}
 		})
@@ -150,5 +171,43 @@ func TestIntegrationMCPStringEncodedSpansUnwrapped(t *testing.T) {
 	decodeToolJSON(t, after, &idempotent)
 	if idempotent.Stats.SpanCount != 2 {
 		t.Fatalf("span_count after rejected garbage = %d, want the original 2", idempotent.Stats.SpanCount)
+	}
+}
+
+// TestIntegrationMCPStringEncodedMembersUnwrapped is the bundle_create half of
+// the same regression: a client that string-encodes the members array — the
+// shape it falls back to when its schema view has dropped the parameter's
+// type — must still land its bundle. bundle_create was unreachable over MCP
+// until the published schema stopped carrying a ["null","array"] union; this
+// covers the clients still holding that flattened schema.
+func TestIntegrationMCPStringEncodedMembersUnwrapped(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "claude-code")
+
+	created := callTool(t, sess, "bundle_create", map[string]any{
+		"title":   "string-encoded members",
+		"members": `[{"name":"README.md","body":"# hi","media_type":"text/markdown"},{"name":"notes.txt","body":"second"}]`,
+	})
+	var out mcpBundleCreateOutput
+	decodeToolJSON(t, created, &out)
+	if out.ID == "" {
+		t.Fatalf("bundle_create with string-encoded members = %+v, want a created bundle", out)
+	}
+	if len(out.Members) != 2 {
+		t.Fatalf("members = %+v, want 2", out.Members)
+	}
+	if out.Members[0].Name != "README.md" || out.Members[1].Name != "notes.txt" {
+		t.Fatalf("members = %+v, want README.md then notes.txt in bundle order", out.Members)
+	}
+
+	// A string that does not decode to a JSON array must still be rejected
+	// rather than silently swallowed into an empty bundle.
+	res, err := sess.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "bundle_create",
+		Arguments: map[string]any{"title": "junk", "members": "not an array"},
+	})
+	if err == nil && !res.IsError {
+		t.Fatalf("bundle_create with a non-array string succeeded (%s), want a validation error", toolText(t, res))
 	}
 }
