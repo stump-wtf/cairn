@@ -60,6 +60,46 @@ func TestOpenBundleFilesDeduplicatesRelativeAndAbsolute(t *testing.T) {
 	}
 }
 
+// symlinkedDuplicate builds a file reachable by two different path strings —
+// one through a real directory, one through a symlink to it — and returns
+// both spellings. It skips the test on platforms that will not let the test
+// process create a symlink at all (notably unprivileged Windows).
+func symlinkedDuplicate(t *testing.T) (real, viaLink string) {
+	t.Helper()
+	dir := t.TempDir()
+	realDir := filepath.Join(dir, "real")
+	if err := os.Mkdir(realDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	linkDir := filepath.Join(dir, "link")
+	if err := os.Symlink(realDir, linkDir); err != nil {
+		t.Skipf("symlinks unsupported here: %v", err)
+	}
+	real = writeTempFile(t, realDir, "a.log", "hello")
+	return real, filepath.Join(linkDir, "a.log")
+}
+
+// TestOpenBundleFilesDeduplicatesThroughSymlinkedDir pins de-duplication to
+// file identity rather than path strings (SPEC-0008 "Oversize and Duplicate
+// File Handling"). A symlinked parent directory yields two absolute paths for
+// one file, which a string comparison happily uploads twice — and which the
+// relative-vs-absolute test only catches incidentally on macOS, where
+// os.Getwd() resolves /var/... to /private/var/.... This constructs the
+// symlink explicitly so Linux CI catches a regression too.
+func TestOpenBundleFilesDeduplicatesThroughSymlinkedDir(t *testing.T) {
+	real, viaLink := symlinkedDuplicate(t)
+
+	files, closeAll, err := OpenBundleFiles([]string{real, viaLink})
+	if err != nil {
+		t.Fatalf("OpenBundleFiles: %v", err)
+	}
+	defer closeAll()
+
+	if len(files) != 1 {
+		t.Fatalf("OpenBundleFiles returned %d files, want 1 (same file via a symlinked dir)", len(files))
+	}
+}
+
 func TestOpenBundleFilesMissingPathIsError(t *testing.T) {
 	dir := t.TempDir()
 	_, _, err := OpenBundleFiles([]string{filepath.Join(dir, "nope.log")})

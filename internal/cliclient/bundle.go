@@ -100,17 +100,16 @@ func OpenBundleFiles(paths []string) (files []BundleFile, closeAll func(), err e
 		}
 	}
 
-	seen := make(map[string]bool, len(paths))
+	var dedup pathDeduper
 	for _, p := range paths {
-		abs, err := filepath.Abs(p)
+		dup, err := dedup.seen(p)
 		if err != nil {
 			closeAll()
-			return nil, nil, fmt.Errorf("resolve %s: %w", p, err)
+			return nil, nil, err
 		}
-		if seen[abs] {
+		if dup {
 			continue // de-duplicated, not uploaded twice
 		}
-		seen[abs] = true
 
 		f, err := os.Open(p)
 		if err != nil {

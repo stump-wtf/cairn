@@ -66,6 +66,31 @@ func TestPrepareBundleFilesConcurrentDeduplicates(t *testing.T) {
 	}
 }
 
+// TestPrepareBundleFilesConcurrentDeduplicatesThroughSymlinkedDir covers the
+// path `cairn add` actually runs (ValidateBundlePaths →
+// PrepareBundleFilesConcurrent, both via dedupPaths) for the same
+// identity-not-string de-duplication contract asserted in
+// TestOpenBundleFilesDeduplicatesThroughSymlinkedDir.
+func TestPrepareBundleFilesConcurrentDeduplicatesThroughSymlinkedDir(t *testing.T) {
+	real, viaLink := symlinkedDuplicate(t)
+
+	files, err := PrepareBundleFilesConcurrent(context.Background(), []string{real, viaLink}, 4, nil)
+	if err != nil {
+		t.Fatalf("PrepareBundleFilesConcurrent: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("got %d files, want 1 (same file via a symlinked dir)", len(files))
+	}
+
+	deduped, err := ValidateBundlePaths([]string{real, viaLink})
+	if err != nil {
+		t.Fatalf("ValidateBundlePaths: %v", err)
+	}
+	if len(deduped) != 1 {
+		t.Fatalf("ValidateBundlePaths returned %d paths, want 1", len(deduped))
+	}
+}
+
 func TestPrepareBundleFilesConcurrentMissingFileErrors(t *testing.T) {
 	dir := t.TempDir()
 	_, err := PrepareBundleFilesConcurrent(context.Background(), []string{filepath.Join(dir, "nope.log")}, 2, nil)
