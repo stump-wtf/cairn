@@ -441,7 +441,7 @@ jobs:
         # v2.1.0 exactly: the first release where ssh_private_key is a real,
         # delivered input. @v2 was not moved forward to it, so do not "tidy"
         # this back to the major alias without checking what v2 points at.
-        uses: https://gitea.stump.rocks/stumpcloud/ansible-runner@v2.1.0
+        uses: https://gitea.stump.rocks/stumpcloud/ansible-runner@v2.1.1
         with:
           playbook: playbooks/services/cairn.yaml
           inventory: gva.yaml
