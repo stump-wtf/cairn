@@ -13,7 +13,7 @@ COPY . .
 # Static, stripped, reproducible build.
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/cairnd ./cmd/cairnd
 
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates wget \
     && addgroup -S cairn && adduser -S -G cairn cairn
 COPY --from=build /out/cairnd /usr/local/bin/cairnd
