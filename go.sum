@@ -1,5 +1,5 @@
-gitea.stump.rocks/stump.wtf/md2a2ui v0.1.1 h1:pJnJJ046MYxFfz23OpSZfoAhKM3zOHIO+iMtpRFwHic=
-gitea.stump.rocks/stump.wtf/md2a2ui v0.1.1/go.mod h1:1QrRAK2mkO8Y2ZcxYPyZmsrbR307WG/AHj3P+wDhGgA=
+gitea.stump.rocks/stump.wtf/md2a2ui v0.1.2 h1:rqeWK7IfpyQ16G8Y5e2zG2pZPWuRePLK19giKk6JHOs=
+gitea.stump.rocks/stump.wtf/md2a2ui v0.1.2/go.mod h1:1QrRAK2mkO8Y2ZcxYPyZmsrbR307WG/AHj3P+wDhGgA=
 github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/alecthomas/assert/v2 v2.11.0 h1:2Q9r3ki8+JYXvGsDyBXwH3LcJ+WK5D0gc5E8vS6K3D0=
