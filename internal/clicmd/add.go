@@ -67,7 +67,7 @@ func runAdd(cmd *cobra.Command, streams IOStreams, flags *globalFlags, configPat
 		art         *cliclient.Artifact
 		interrupted bool
 	)
-	if isTerminal(streams.ErrOut) && !flags.jsonOut {
+	if IsTerminal(streams.ErrOut) && !flags.jsonOut {
 		art, interrupted, err = runAddInteractive(ctx, streams, client, deduped, opts, concurrency, cancel)
 	} else {
 		var files []cliclient.BundleFile
@@ -92,7 +92,7 @@ func runAdd(cmd *cobra.Command, streams IOStreams, flags *globalFlags, configPat
 		len(deduped), formatSize(art.Size), formatTTL(art.ExpiresAt), formatAccess(art.Visibility))
 	fmt.Fprintln(streams.Out, art.URL)
 
-	if !flags.noCopy && isTerminal(streams.Out) {
+	if !flags.noCopy && IsTerminal(streams.Out) {
 		if err := copyToClipboard(streams.ErrOut, art.URL); err != nil {
 			fmt.Fprintln(streams.ErrOut, "cairn: clipboard unavailable, copy skipped")
 		}

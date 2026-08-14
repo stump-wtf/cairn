@@ -79,7 +79,7 @@ interactive terminal, copied to the clipboard.
 
 cairn carries no domain logic: expiry, access policy, and provenance are
 decided by the server and only ever displayed here (SPEC-0008).`,
-		Version:       versionString(),
+		Version:       VersionString(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.ArbitraryArgs,
@@ -118,13 +118,6 @@ decided by the server and only ever displayed here (SPEC-0008).`,
 	)
 
 	return root
-}
-
-func versionString() string {
-	if Commit == "none" && Date == "unknown" {
-		return Version
-	}
-	return Version + " (" + Commit + ", " + Date + ")"
 }
 
 // resolveConfig applies the standard flag → env → file → default
