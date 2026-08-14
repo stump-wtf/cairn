@@ -3,7 +3,7 @@ module github.com/joestump/cairn
 go 1.26.5
 
 require (
-	gitea.stump.rocks/stump.wtf/md2a2ui v0.1.1
+	gitea.stump.rocks/stump.wtf/md2a2ui v0.1.2
 	github.com/BurntSushi/toml v1.6.0
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1
