@@ -62,15 +62,22 @@ document.addEventListener('alpine:init', () => {
   }));
 });
 
-// Bin filtering (SPEC-0001 The Bin Listing; design turn 6c). The tabs
-// (Bin/Shared/Agents) and the text filter are view-local lenses over the rows
-// the server already rendered — they hide/show `.bin-row` elements, they never
-// re-query. That keeps the keyset pagination invariant intact (the server still
-// owns ordering + the cursor) and means the no-JS page IS the full Bin, so the
-// listing degrades gracefully (SPEC-0001 Progressive Enhancement). Reading DOM
-// data-* attributes needs no eval, so this stays within the shell's 'self'-only
-// CSP. Runs as plain vanilla JS (not Alpine) because it touches an
-// arbitrary-length row list, which the Alpine CSP build cannot express inline.
+// Bin filtering (SPEC-0001 The Bin Listing; design turn 6c). The visibility
+// tabs (All/Shared/Private), the type menu, and the text filter are view-local
+// lenses over the rows the server already rendered — they hide/show `.bin-row`
+// elements, they never re-query. That keeps the keyset pagination invariant
+// intact (the server still owns ordering + the cursor) and means the no-JS page
+// IS the full Bin, so the listing degrades gracefully (SPEC-0001 Progressive
+// Enhancement). Reading DOM data-* attributes needs no eval, so this stays
+// within the shell's 'self'-only CSP. Runs as plain vanilla JS (not Alpine)
+// because it touches an arbitrary-length row list, which the Alpine CSP build
+// cannot express inline.
+//
+// The lenses replaced the old Bin/Shared/From-agents tabs (#136): those
+// three scopes overlapped almost completely — an ordinary bin is agent-pushed
+// and link-shared end to end, so all three tabs showed the same count and
+// filtering by any of them changed nothing. Visibility and type are the two
+// axes that actually partition a bin.
 (function () {
   function initBin() {
     const toolbar = document.querySelector('[data-bin-toolbar]');
@@ -79,9 +86,21 @@ document.addEventListener('alpine:init', () => {
     const tabs = Array.from(toolbar.querySelectorAll('.bin-tab'));
     const filter = toolbar.querySelector('[data-bin-filter]');
     const noMatch = document.querySelector('[data-bin-nomatch]');
+    const typeBox = toolbar.querySelector('[data-bin-types]');
+    const typeList = toolbar.querySelector('[data-bin-types-list]');
+    const typeLabel = toolbar.querySelector('[data-bin-types-label]');
+    const typeReset = toolbar.querySelector('[data-bin-types-reset]');
     let scope = 'all';
+    // The selected type keys. Empty means "all types" — never an enumeration of
+    // everything, so a type that arrives on the next keyset page is included by
+    // default rather than silently filtered out by a stale selection.
+    let types = [];
+    // The option rows currently rendered in the menu, keyed by type key, so a
+    // rebuild after "load more" reuses the existing checkbox (and its focus)
+    // instead of tearing the menu down under the pointer.
+    const typeOptions = new Map();
 
-    // The three scopes are client-side lenses over the loaded rows, so the
+    // The visibility scopes are client-side lenses over the loaded rows, so the
     // per-tab counts count the same loaded rows the tabs filter — both see
     // exactly the loaded page, never a total the lens can't back up. Counts
     // refresh on apply() so an HTMX "load more" keeps them honest.
@@ -91,40 +110,120 @@ document.addEventListener('alpine:init', () => {
     // renders its own empty state instead of a row list. The scope vocabulary
     // lives in binScopeFromHash, the one place that has to validate it.
     const EMPTY_COPY = {
-      shared: 'Nothing shared yet.',
-      agents: 'No agent pushes yet.'
+      shared: 'Nothing shared yet — everything here is private to you.',
+      private: 'Nothing private — everything here has a shareable link.'
     };
     const NO_MATCH_COPY = 'No artifacts match this filter.';
 
-    function rowMatches(row) {
-      if (scope === 'shared' && row.dataset.shared !== '1') return false;
-      if (scope === 'agents' && row.dataset.agent !== '1') return false;
+    function rowType(row) { return row.dataset.type || ''; }
+
+    // rowMatchesText and rowInScope are the two lenses OTHER than type, split
+    // out because the type menu's own counts have to honour them (a facet count
+    // that ignores the active filters is exactly the lie the old tabs told).
+    function rowMatchesText(row) {
       const q = (filter && filter.value ? filter.value : '').trim().toLowerCase();
-      if (q && (row.dataset.search || '').toLowerCase().indexOf(q) === -1) return false;
-      return true;
+      return !q || (row.dataset.search || '').toLowerCase().indexOf(q) !== -1;
     }
 
+    function rowMatches(row) {
+      if (!rowInScope(row, scope)) return false;
+      if (!binTypeAccepts(types, rowType(row))) return false;
+      return rowMatchesText(row);
+    }
+
+    // rowInScope answers "would this row survive the visibility lens alone",
+    // which is what separates "this lens is empty" from "your text/type filter
+    // matched nothing".
     function rowInScope(row, s) {
-      if (s === 'shared') return row.dataset.shared === '1';
-      if (s === 'agents') return row.dataset.agent === '1';
-      return true;
+      return binScopeAccepts(s, row.dataset.shared === '1');
+    }
+
+    // buildTypeMenu renders one checkbox per type present in the loaded rows,
+    // with that type's count. Types come from the rows themselves, so the menu
+    // can never offer a type the bin does not hold — and a "load more" that
+    // brings in a new type adds its option rather than leaving it unreachable.
+    // Checked state lives in `types`, not in the DOM, so a rebuild preserves it.
+    //
+    // The counts are FACET counts: they count only rows that pass the other
+    // active lenses (visibility + text), so "markdown 2" under the Private tab
+    // means two private markdown rows, not two anywhere. They deliberately
+    // ignore the type selection itself — otherwise ticking one type would zero
+    // every other option and you could never widen the filter. An option whose
+    // facet count is 0 stays listed (and dimmed) rather than vanishing, so a
+    // ticked type is always reachable to untick.
+    function buildTypeMenu(rows) {
+      if (!typeList || !typeBox) return;
+      const present = binTypeCounts(rows.map(function (row) {
+        return {
+          type: rowType(row),
+          name: row.dataset.typeName || rowType(row),
+          eligible: rowInScope(row, scope) && rowMatchesText(row)
+        };
+      }));
+      // A single-type bin has nothing to choose between, so the menu stays
+      // hidden rather than offering a filter that can only be a no-op.
+      typeBox.hidden = present.length < 2;
+      if (typeBox.hidden && typeBox.open) typeBox.open = false;
+
+      const seen = new Set();
+      present.forEach(function (t) {
+        seen.add(t.type);
+        let opt = typeOptions.get(t.type);
+        if (!opt) {
+          const label = document.createElement('label');
+          label.className = 'bin-type-opt';
+          const box = document.createElement('input');
+          box.type = 'checkbox';
+          box.value = t.type;
+          const name = document.createElement('span');
+          name.className = 'bin-type-name';
+          const count = document.createElement('span');
+          count.className = 'bin-type-count';
+          label.appendChild(box);
+          label.appendChild(name);
+          label.appendChild(count);
+          box.addEventListener('change', function () {
+            types = binToggleType(types, t.type, box.checked);
+            writeStateToURL();
+            apply();
+          });
+          opt = { label: label, box: box, name: name, count: count };
+          typeOptions.set(t.type, opt);
+        }
+        opt.name.textContent = t.name;
+        opt.count.textContent = String(t.count);
+        opt.box.checked = types.indexOf(t.type) !== -1;
+        opt.label.classList.toggle('bin-type-opt-empty', t.count === 0);
+        typeList.appendChild(opt.label);
+      });
+      // Drop options for types no longer loaded (only reachable if rows are
+      // ever removed), so the menu never outlives its rows.
+      typeOptions.forEach(function (opt, key) {
+        if (!seen.has(key)) {
+          if (opt.label.parentNode) opt.label.parentNode.removeChild(opt.label);
+          typeOptions.delete(key);
+        }
+      });
+      if (typeLabel) typeLabel.textContent = binTypeSummary(types, present);
+      typeBox.classList.toggle('bin-types-active', types.length > 0);
+      if (typeReset) typeReset.disabled = types.length === 0;
     }
 
     function apply() {
       const rows = Array.from(rowsBox.querySelectorAll('.bin-row'));
+      buildTypeMenu(rows);
       let shown = 0;
       rows.forEach(function (row) {
         const ok = rowMatches(row);
         row.hidden = !ok;
         if (ok) shown++;
       });
-      // Refresh each tab's count over the loaded rows, so identical scopes are
-      // VISIBLY identical (Bin 24 · Shared 24 · From agents 24) rather than
-      // mysteriously so (#67). The counting itself is the exported pure helper
-      // (binCountsByScope) so the node test pins the exact figures the tabs
-      // show.
+      // Refresh each tab's count over the loaded rows, so a lens that is empty
+      // says so before you click it. The counting itself is the exported pure
+      // helper (binCountsByScope) so the node test pins the exact figures the
+      // tabs show.
       const flags = rows.map(function (row) {
-        return { agent: row.dataset.agent === '1', shared: row.dataset.shared === '1' };
+        return { shared: row.dataset.shared === '1' };
       });
       const counts = binCountsByScope(flags);
       tabs.forEach(function (tab) {
@@ -133,13 +232,13 @@ document.addEventListener('alpine:init', () => {
         const c = tab.querySelector('[data-tab-count]');
         if (c) c.textContent = String(n);
         // data-label, never textContent: the count span is INSIDE the button,
-        // so textContent already reads "Bin 24" and the fallback would build
-        // "Bin 24 — 24 artifacts".
+        // so textContent already reads "All 24" and the fallback would build
+        // "All 24 — 24 artifacts".
         tab.setAttribute('aria-label', (tab.dataset.label || '') + ' — ' + n + ' artifacts');
       });
       // Per-scope empty state: when the active scope has no rows of its own,
       // say which lens is empty rather than showing a bare "no match"
-      // (distinct from the text filter's "no artifacts match" case).
+      // (distinct from the text/type filters' "no artifacts match" case).
       //
       // The element is role="status" aria-live="polite", so WRITING to it is
       // what announces it. apply() runs on every keystroke in the filter box,
@@ -158,16 +257,11 @@ document.addEventListener('alpine:init', () => {
       }
     }
 
-    // The active scope lives in the URL hash (`#scope=shared`) so a filtered
-    // view is bookmarkable/shareable and survives reload (#67).
-    function writeScopeToURL() {
-      const hash = scope === 'all' ? '' : '#scope=' + encodeURIComponent(scope);
-      const url = window.location.pathname + window.location.search + hash;
+    // The active lenses live in the URL hash (`#scope=private&type=markdown,image`)
+    // so a filtered view is bookmarkable/shareable and survives reload.
+    function writeStateToURL() {
+      const url = window.location.pathname + window.location.search + binHashFromState(scope, types);
       if (window.history && window.history.replaceState) window.history.replaceState(null, '', url);
-    }
-
-    function scopeFromURL() {
-      return binScopeFromHash(window.location.hash || '');
     }
 
     function selectTab(tab, updateURL) {
@@ -177,7 +271,7 @@ document.addEventListener('alpine:init', () => {
         t.setAttribute('aria-selected', on ? 'true' : 'false');
         t.tabIndex = on ? 0 : -1;
       });
-      if (updateURL !== false) writeScopeToURL();
+      if (updateURL !== false) writeStateToURL();
       apply();
     }
 
@@ -196,23 +290,32 @@ document.addEventListener('alpine:init', () => {
       });
     });
     if (filter) filter.addEventListener('input', apply);
+    if (typeReset) {
+      typeReset.addEventListener('click', function () {
+        types = [];
+        writeStateToURL();
+        apply();
+      });
+    }
 
     // Re-apply after an HTMX "load more" swaps the next keyset page in, so the
-    // active tab/filter also govern the newly appended rows.
+    // active lenses also govern the newly appended rows.
     document.body.addEventListener('htmx:afterSwap', function (e) {
       if (rowsBox.contains(e.target) || e.target === rowsBox) apply();
     });
 
-    // Restore the scope from the URL on load, then render. A hash the user
+    // Restore the lenses from the URL on load, then render. A hash the user
     // edited by hand (back/forward) re-selects without re-pushing the hash.
-    const initial = scopeFromURL();
-    const initialTab = tabs.find(function (t) { return (t.dataset.scope || 'all') === initial; });
-    if (initialTab) selectTab(initialTab, false);
-    window.addEventListener('hashchange', function () {
-      const s = scopeFromURL();
-      const t = tabs.find(function (x) { return (x.dataset.scope || 'all') === s; });
-      if (t && (t.dataset.scope || 'all') !== scope) selectTab(t, false);
-    });
+    function readStateFromURL() {
+      const hash = window.location.hash || '';
+      scope = binScopeFromHash(hash);
+      types = binTypesFromHash(hash);
+      const t = tabs.find(function (x) { return (x.dataset.scope || 'all') === scope; });
+      if (t) selectTab(t, false);
+      else apply();
+    }
+    readStateFromURL();
+    window.addEventListener('hashchange', readStateFromURL);
 
     apply();
   }
@@ -224,35 +327,146 @@ document.addEventListener('alpine:init', () => {
   }
 })();
 
-// ---- Bin tab scope/count math (exported for the node unit test) ------------
-// The DOM-free core of the Bin tab lenses (#67), lifted out of the IIFE so
-// app_js_test.js can pin count computation and URL-hash scope restoration
+// ---- Bin lens math (exported for the node unit test) ----------------------
+// The DOM-free core of the Bin lenses, lifted out of the IIFE so app_test.js
+// can pin visibility counts, type-menu construction, and URL-hash round-tripping
 // without a browser. The in-page code calls the same functions.
 
-// binCountsByScope counts loaded rows per tab scope from their {agent, shared}
-// flags, over exactly the rows the client-side lenses filter. `all` counts
-// every loaded row; `shared`/`agents` count rows carrying that flag.
+// BIN_SCOPES is the visibility vocabulary, in one place: `all` (everything
+// loaded), `shared` (link visibility — you plus anyone with the URL, ADR-0007),
+// and `private` (only you). It is exactly the partition the artifact model
+// supports, which is why the old three-overlapping-tabs arrangement could not
+// filter anything.
+const BIN_SCOPES = ['all', 'shared', 'private'];
+
+// binScopeAccepts is the single definition of what each visibility lens admits,
+// shared by the row filter, the per-lens counts, and the empty-state check, so
+// the three can never disagree about which rows a lens holds.
+function binScopeAccepts(scope, shared) {
+  if (scope === 'shared') return !!shared;
+  if (scope === 'private') return !shared;
+  return true;
+}
+
+// binCountsByScope counts loaded rows per visibility lens from their {shared}
+// flags, over exactly the rows the client-side lenses filter. `shared` and
+// `private` are complements, so they always sum to `all` — the counts partition
+// the bin instead of overlapping it.
 function binCountsByScope(flags) {
-  const counts = { all: flags.length, shared: 0, agents: 0 };
+  const counts = { all: flags.length, shared: 0, private: 0 };
   flags.forEach(function (f) {
     if (f && f.shared) counts.shared++;
-    if (f && f.agent) counts.agents++;
+    else counts.private++;
   });
   return counts;
 }
 
-// binScopeFromHash reads the active scope out of the URL hash (`#scope=shared`),
-// defaulting to 'all' for an absent, malformed, or out-of-vocabulary value, so
-// a hand-edited or stale hash can never select a lens that doesn't exist.
+// binTypeAccepts admits a row's type against the selected set. An EMPTY
+// selection means "all types" rather than "none", so a type arriving on a later
+// keyset page is visible by default instead of hidden by a selection made
+// before it loaded.
+function binTypeAccepts(selected, type) {
+  return selected.length === 0 || selected.indexOf(type) !== -1;
+}
+
+// binTypeCounts collapses the loaded rows' {type, name, eligible} triples into
+// the menu's option list: one entry per distinct type LOADED, carrying its
+// reader-facing name, its FACET count (`count` — how many rows of that type
+// survive the other active lenses) and its loaded `total`. `eligible: false`
+// still contributes the option and the total (so a ticked type never disappears
+// out from under the pointer) but not the facet count. Omitting `eligible`
+// counts every row, which is the unfiltered case.
+//
+// Ordered by TOTAL descending then name — deliberately not by the facet count,
+// which changes on every keystroke in the text box and would reshuffle the
+// checkboxes under the pointer while the menu is open. Sorting on the total
+// means the order only moves when a "load more" brings in new rows. Rows
+// missing a type are skipped rather than producing a nameless option.
+function binTypeCounts(rows) {
+  const byType = new Map();
+  rows.forEach(function (r) {
+    if (!r || !r.type) return;
+    const hit = r.eligible === undefined || r.eligible ? 1 : 0;
+    const cur = byType.get(r.type);
+    if (cur) { cur.count += hit; cur.total++; }
+    else byType.set(r.type, { type: r.type, name: r.name || r.type, count: hit, total: 1 });
+  });
+  return Array.from(byType.values()).sort(function (a, b) {
+    if (b.total !== a.total) return b.total - a.total;
+    return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
+  });
+}
+
+// binToggleType adds or removes one type from the selection, keeping it free of
+// duplicates. Returns a new array so callers never mutate state in place.
+function binToggleType(selected, type, on) {
+  const next = selected.filter(function (t) { return t !== type; });
+  if (on) next.push(type);
+  return next;
+}
+
+// binTypeSummary is the menu button's label: "All types" for an empty
+// selection, the type's own name when exactly one is chosen (so the button says
+// what you filtered to, not how many boxes you ticked), and a count beyond
+// that. `present` is the option list, used only to resolve a key to its
+// reader-facing name.
+function binTypeSummary(selected, present) {
+  if (selected.length === 0) return 'All types';
+  if (selected.length === 1) {
+    const hit = present.find(function (p) { return p.type === selected[0]; });
+    return hit ? hit.name : selected[0];
+  }
+  return selected.length + ' types';
+}
+
+// binScopeFromHash reads the active visibility lens out of the URL hash
+// (`#scope=private`), defaulting to 'all' for an absent, malformed, or
+// out-of-vocabulary value, so a hand-edited or stale hash can never select a
+// lens that doesn't exist.
 function binScopeFromHash(hash) {
   const m = (hash || '').match(/(?:^|#|&)scope=([a-z]+)/);
-  return (m && ['all', 'shared', 'agents'].indexOf(m[1]) !== -1) ? m[1] : 'all';
+  return (m && BIN_SCOPES.indexOf(m[1]) !== -1) ? m[1] : 'all';
+}
+
+// binTypesFromHash reads the selected types out of the URL hash
+// (`#type=markdown,image`) as a comma-separated list of registry keys. Keys are
+// NOT validated against a vocabulary here the way scopes are: the share-type
+// registry is extensible (ADR-0002), so the list of valid keys is server data,
+// not a constant the shell may hardcode. An unknown key is harmless — it simply
+// matches no row — while a hardcoded allowlist would silently drop a newly
+// registered type from a shared URL.
+function binTypesFromHash(hash) {
+  const m = (hash || '').match(/(?:^|#|&)type=([^&]*)/);
+  if (!m) return [];
+  const out = [];
+  decodeURIComponent(m[1]).split(',').forEach(function (raw) {
+    const t = raw.trim();
+    if (t && out.indexOf(t) === -1) out.push(t);
+  });
+  return out;
+}
+
+// binHashFromState is the inverse: the hash for the current lenses, empty when
+// both are at their defaults so an unfiltered Bin keeps a clean URL. Round-trips
+// with binScopeFromHash/binTypesFromHash.
+function binHashFromState(scope, types) {
+  const parts = [];
+  if (scope && scope !== 'all') parts.push('scope=' + encodeURIComponent(scope));
+  if (types && types.length) parts.push('type=' + encodeURIComponent(types.join(',')));
+  return parts.length ? '#' + parts.join('&') : '';
 }
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = Object.assign(module.exports || {}, {
+    binScopeAccepts: binScopeAccepts,
     binCountsByScope: binCountsByScope,
-    binScopeFromHash: binScopeFromHash
+    binTypeAccepts: binTypeAccepts,
+    binTypeCounts: binTypeCounts,
+    binToggleType: binToggleType,
+    binTypeSummary: binTypeSummary,
+    binScopeFromHash: binScopeFromHash,
+    binTypesFromHash: binTypesFromHash,
+    binHashFromState: binHashFromState
   });
 }
 
