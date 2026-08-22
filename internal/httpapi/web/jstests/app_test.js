@@ -148,6 +148,24 @@ assert.strictEqual(app.binTypeSummary(['trajectory'], present), 'trace', 'one ty
 assert.strictEqual(app.binTypeSummary(['markdown', 'trajectory'], present), '2 types');
 assert.strictEqual(app.binTypeSummary(['gone'], present), 'gone', 'a type no longer loaded still labels itself');
 
+// 8. The menu hides itself on a bin with nothing to choose between, but NOT
+//    while a selection is active: it holds the only control that clears one, so
+//    hiding it mid-filter leaves every row hidden behind "No artifacts match
+//    this filter" with no visible cause and no way back but editing the URL.
+//    Reachable in normal use — a bookmarked `#type=code` outlives the code
+//    artifact it was made for (TTL expiry), leaving a one-type bin behind it.
+assert.strictEqual(app.binTypeMenuVisible(0, 0), false, 'an empty bin offers no menu');
+assert.strictEqual(app.binTypeMenuVisible(1, 0), false, 'one type is not a choice');
+assert.strictEqual(app.binTypeMenuVisible(2, 0), true, 'two types are');
+assert.strictEqual(
+  app.binTypeMenuVisible(1, 1), true,
+  'a stale selection on a now-single-type bin keeps the menu (and its Reset) reachable'
+);
+assert.strictEqual(
+  app.binTypeMenuVisible(0, 1), true,
+  'a selection that matches nothing loaded still has to be clearable'
+);
+
 // ---- URL hash round-trip --------------------------------------------------
 
 // 9. The hash restores the visibility lens, defaulting to 'all' for an absent,

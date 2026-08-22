@@ -162,7 +162,7 @@ document.addEventListener('alpine:init', () => {
       }));
       // A single-type bin has nothing to choose between, so the menu stays
       // hidden rather than offering a filter that can only be a no-op.
-      typeBox.hidden = present.length < 2;
+      typeBox.hidden = !binTypeMenuVisible(present.length, types.length);
       if (typeBox.hidden && typeBox.open) typeBox.open = false;
 
       const seen = new Set();
@@ -405,6 +405,21 @@ function binToggleType(selected, type, on) {
   return next;
 }
 
+// binTypeMenuVisible decides whether the type menu is shown at all. A bin
+// holding fewer than two types has nothing to choose between, so the menu
+// hides rather than offering a filter that can only be a no-op — UNLESS a
+// selection is already active. The menu holds the only control that can clear
+// one, so hiding it while it filters strands the Bin on "No artifacts match
+// this filter" with no visible cause and no way back except hand-editing the
+// URL. That is reachable in normal use: `#type=code` in a bookmark or a pasted
+// link outlives the code artifact it was made for (TTL expiry, deletion), and
+// what it leaves behind is a bin whose remaining rows are all one other type.
+// Keeping the menu up whenever it filters preserves the same invariant the
+// dimmed zero-count options do — a ticked type is always reachable to untick.
+function binTypeMenuVisible(presentCount, selectedCount) {
+  return presentCount >= 2 || selectedCount > 0;
+}
+
 // binTypeSummary is the menu button's label: "All types" for an empty
 // selection, the type's own name when exactly one is chosen (so the button says
 // what you filtered to, not how many boxes you ticked), and a count beyond
@@ -464,6 +479,7 @@ if (typeof module !== 'undefined' && module.exports) {
     binTypeCounts: binTypeCounts,
     binToggleType: binToggleType,
     binTypeSummary: binTypeSummary,
+    binTypeMenuVisible: binTypeMenuVisible,
     binScopeFromHash: binScopeFromHash,
     binTypesFromHash: binTypesFromHash,
     binHashFromState: binHashFromState
