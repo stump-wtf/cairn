@@ -200,3 +200,51 @@ func TestListBlocksCarryNoBlockLevelReact(t *testing.T) {
 		t.Errorf("md_block trigger count = %d, want 1 (the paragraph only; the list has per-item triggers)", got)
 	}
 }
+
+// TestRenderFencedCodeBlock pins the fenced-block contract the click-to-copy
+// affordances (#133) depend on: a fenced block renders as a bare <pre><code>
+// carrying its language class (so markdown.js can find and decorate it), and
+// the sanitized HTML carries no interactive chrome — a <button> smuggled into
+// the body cannot survive to sit beside the one md.js injects.
+func TestRenderFencedCodeBlock(t *testing.T) {
+	doc := "Intro.\n\n```go\nfmt.Println(\"hi\")\n```\n"
+	r, err := Render([]byte(doc))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	var block string
+	for _, blk := range r.Blocks {
+		if strings.Contains(string(blk.HTML), "<pre>") {
+			block = string(blk.HTML)
+		}
+	}
+	if block == "" {
+		t.Fatal("fenced block did not render a <pre> block")
+	}
+	if !strings.Contains(block, `<pre><code class="language-go">`) {
+		t.Errorf("fenced block should keep its <pre><code> shape and language class, got:\n%s", block)
+	}
+	// Quotes render HTML-escaped (goldmark escapes attr-quote characters),
+	// so assert the escaped form — the copy button copies the DOM's text
+	// content, which the browser un-escapes back to `fmt.Println("hi")`.
+	if !strings.Contains(block, `fmt.Println(&#34;hi&#34;)`) {
+		t.Errorf("fenced block should carry its code text (HTML-escaped), got:\n%s", block)
+	}
+	for _, bad := range []string{"<button", "onclick", "<script"} {
+		if strings.Contains(block, bad) {
+			t.Errorf("sanitized fenced block must not carry %q — md.js injects the copy chrome:\n%s", bad, block)
+		}
+	}
+	// The smuggled-button guarantee, not just the shape: raw HTML inside the
+	// fence body is omitted by goldmark and stripped by bluemonday.
+	evil := "```html\n<button onclick=steal()>x</button>\n```\n"
+	r2, err := Render([]byte(evil))
+	if err != nil {
+		t.Fatalf("render evil: %v", err)
+	}
+	for _, blk := range r2.Blocks {
+		if strings.Contains(string(blk.HTML), "<button") {
+			t.Errorf("button inside a fence body must not survive sanitization, got:\n%s", blk.HTML)
+		}
+	}
+}
