@@ -329,6 +329,52 @@ body.landing { display: flex; flex-direction: column; align-items: center; justi
   font: 400 12px var(--mono); padding: 7px 0; width: 150px;
 }
 .bin-filter-input::placeholder { color: var(--t7); }
+/* ---- Type filter menu ----
+   A <details> popover mirroring .bin-push (same card, same shadow, same
+   offset), holding one checkbox per type present in the loaded rows. It hides
+   itself when the bin holds fewer than two types, so it never offers a filter
+   that can only be a no-op. */
+.bin-types { position: relative; }
+.bin-types[hidden] { display: none; }
+.bin-types-btn {
+  list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  background: var(--well-2); border: 1px solid var(--border-3); border-radius: 8px;
+  color: var(--t5); font: 500 12px var(--mono); padding: 7px 12px;
+}
+.bin-types-btn::-webkit-details-marker { display: none; }
+.bin-types-btn:hover { color: var(--t1); border-color: var(--border); }
+.bin-types[open] .bin-types-btn { color: var(--t1); border-color: var(--border); }
+/* An active selection is a state you must be able to see without opening the
+   menu — otherwise a filtered Bin looks like an empty one. */
+.bin-types.bin-types-active .bin-types-btn { color: var(--t1); border-color: var(--border); background: var(--well); }
+.bin-types-pop {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; width: 232px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px 12px; box-shadow: 0 12px 32px rgba(0,0,0,.5);
+}
+.bin-types-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.bin-types-title { color: var(--t5); font: 500 10.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.bin-types-reset {
+  background: transparent; border: 0; cursor: pointer; padding: 0;
+  color: var(--t5); font: 500 11px var(--mono);
+}
+.bin-types-reset:hover:not(:disabled) { color: var(--t1); }
+.bin-types-reset:disabled { color: var(--t7); cursor: default; }
+.bin-types-list { display: flex; flex-direction: column; gap: 2px; max-height: 280px; overflow-y: auto; }
+.bin-type-opt {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  border-radius: 6px; padding: 6px 7px; color: var(--t3); font: 400 12px var(--mono);
+}
+.bin-type-opt:hover { background: var(--well-2); color: var(--t1); }
+.bin-type-opt input { accent-color: var(--green); margin: 0; }
+.bin-type-opt input:focus-visible { outline: 2px solid var(--green-3); outline-offset: 2px; }
+.bin-type-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bin-type-count { color: var(--t6); font-size: 11px; }
+/* A facet count of 0 under the active visibility/text lenses: the option stays
+   listed (so a ticked type is always reachable to untick) but reads as the
+   dead end it is. */
+.bin-type-opt-empty .bin-type-name, .bin-type-opt-empty .bin-type-count { color: var(--t7); }
+
 .bin-push { position: relative; }
 .bin-push-btn {
   list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;

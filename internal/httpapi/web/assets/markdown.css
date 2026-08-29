@@ -264,7 +264,96 @@
 }
 .md-sel-toolbar button:hover { color: var(--green); border-color: var(--green-3); }
 
+/* Click-to-copy (#133). Fenced code blocks get a `copy` button in their
+   upper-right corner; the document gets a ⋮ kebab in the viewer's upper-right
+   whose menu copies the whole markdown source. Both are injected by md.js —
+   the sanitized block HTML cannot carry interactive chrome — so neither
+   appears with JavaScript off, and the prose reads exactly as before. */
+
+/* The block button rides INSIDE the <pre>, pinned to its top-right; the <pre>
+   keeps its own scrolling, so the button needs position:relative on the pre
+   and must not scroll away horizontally with long lines — absolute against
+   the pre does exactly that. Revealed on hover/focus like the ＋ affordance,
+   but always keyboard-reachable (focus-within covers Tab into the block). */
+.md-prose pre { position: relative; }
+.md-code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--t5);
+  font: 500 10.5px/1.6 var(--mono);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+}
+.md-prose pre:hover > .md-code-copy,
+.md-prose pre:focus-within > .md-code-copy,
+.md-code-copy:focus-visible { opacity: 1; }
+.md-code-copy:hover, .md-code-copy:focus-visible { color: var(--green); border-color: var(--green-3); }
+.md-code-copy.copied { color: var(--green-2); border-color: #244034; }
+
+/* Document ⋮ kebab — pinned to the viewer's own upper-right corner, always
+   visible (a document-level control, not a per-block affordance), sitting
+   clear of the TOC card's right edge. */
+.md-viewer { position: relative; }
+.md-doc-menu {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--t4);
+  font: 600 15px/1 var(--sans);
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+.md-doc-menu:hover, .md-doc-menu:focus-visible, .md-doc-menu[aria-expanded="true"] {
+  color: var(--green);
+  border-color: var(--green-3);
+}
+.md-doc-menu.copied { color: var(--green-2); border-color: #244034; }
+
+/* The kebab's popup menu (md.js appends it to <body> and positions it under
+   the trigger, right-aligned). Same card chrome as the selection toolbar. */
+.md-doc-menu-pop {
+  position: absolute;
+  z-index: 30;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--header);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+.md-doc-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: 600 12px/1 var(--sans);
+  color: var(--t1);
+  background: var(--well);
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.md-doc-menu-item:hover, .md-doc-menu-item:focus-visible { color: var(--green); border-color: var(--green-3); }
+.md-doc-menu-item.copied { color: var(--green-2); border-color: #244034; }
+.md-doc-menu-item.md-doc-menu-failed { color: var(--red, #e05a5a); }
+
 @media (max-width: 720px) {
+  /* The viewer's top padding shrinks here and the right gutter is only 16px,
+     so the 26px kebab would overlap the TOC card's edge — shrink it to fit
+     the gutter and keep it level with the Contents summary row. */
+  .md-doc-menu { top: 0; right: 2px; width: 22px; height: 22px; font-size: 13px; }
   .md-viewer { padding: 18px 16px 48px; }
   /* Narrow screens have no left gutter to hang the block ＋ in, so it moves
      ABOVE its block. Scoped off .md-bullet-react deliberately: a bullet control
