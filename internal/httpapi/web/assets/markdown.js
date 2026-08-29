@@ -9,8 +9,13 @@
 //     reader can react on a single bullet (anchor carries {block_id, path});
 //   - select-text-to-comment: a floating toolbar over a prose selection captures
 //     a text_selection anchor (offsets + quoted substring) and hands it to the
-//     shell's comment composer; and
-//   - a TOC active-item flash on jump.
+//     shell's comment composer;
+//   - a TOC active-item flash on jump;
+//   - click-to-copy on every fenced code block (#133), with the button in the
+//     block's upper-right corner; and
+//   - a document ⋮ menu in the viewer's upper-right whose Copy Markdown item
+//     copies the whole original source (#133), fetched on demand from the
+//     same-origin link-capability body routes.
 //
 // If this script fails to load the prose still reads and the whole-artifact
 // composer still posts, so core reading degrades gracefully. Everything is plain
@@ -22,7 +27,16 @@
   var REACTIONS = ['👍', '🎉', '👀', '🚀', '❤️', '🤔'];
 
   function artifactID() {
-    var seg = window.location.pathname.replace(/^\/+/, '').split('/');
+    return artifactIDFromPath(window.location.pathname);
+  }
+
+  // artifactIDFromPath is the pure half of artifactID(): it picks the artifact
+  // id segment out of a web path (exported for the node unit tests). A bare
+  // `/{id}` share URL yields the id; anything else falls back to the first
+  // segment (the markdown viewer only renders on artifact pages, so in
+  // practice the first segment IS the id).
+  function artifactIDFromPath(pathname) {
+    var seg = (pathname || '').replace(/^\/+/, '').split('/');
     return seg[0] || '';
   }
 
@@ -419,6 +433,193 @@
     });
   }
 
+  // --- click-to-copy (#133) --------------------------------------------------
+  //
+  // Two clipboard affordances, both injected here rather than server-rendered:
+  // the block HTML is bluemonday-sanitized (interactive elements cannot survive
+  // it), and hydrateViewer already re-runs on every bundle pane swap so both
+  // decorations follow the viewer wherever it renders.
+
+  // copyText writes text to the clipboard with the same graceful shape the
+  // header URL control and share dialog use: the async Clipboard API when
+  // available, and the "optimistically notify" fallback otherwise (the label
+  // feedback is the affordance; nothing downstream depends on the write).
+  function copyText(text, done) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(done);
+    } else {
+      done();
+    }
+  }
+
+  // flashCopied swings a control's label to a copied confirmation for the
+  // same 1300ms the other copy buttons use, then restores it.
+  function flashCopied(el, restore, copiedLabel) {
+    var original = el.textContent;
+    el.textContent = copiedLabel || 'copied ✓';
+    el.classList.add('copied');
+    setTimeout(function () {
+      el.textContent = restore || original;
+      el.classList.remove('copied');
+    }, 1300);
+  }
+
+  // decorateCodeBlocks gives every fenced code block in the prose a `copy`
+  // button pinned to its upper-right corner. The button is a child of the
+  // <pre>, so codeTextFor excludes its label from the copied text (a flash
+  // still showing from a previous copy must not ride along), and
+  // isInjectedAffordance keeps that same label out of text_selection
+  // offsets (see proseOffset).
+  function decorateCodeBlocks(viewer) {
+    viewer.querySelectorAll('.md-prose pre').forEach(function (pre) {
+      if (pre.querySelector(':scope > .md-code-copy')) return;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'md-code-copy';
+      btn.textContent = 'copy';
+      btn.setAttribute('aria-label', 'Copy this code block to the clipboard');
+      btn.addEventListener('click', function () {
+        copyText(codeTextFor(pre), function () { flashCopied(btn); });
+      });
+      pre.appendChild(btn);
+    });
+  }
+
+  // codeTextFor extracts a fenced block's code text, excluding the copy
+  // button's own label (a flash still showing from a previous copy would
+  // otherwise ride along in the next one).
+  function codeTextFor(pre) {
+    var clone = pre.cloneNode(true);
+    var btn = clone.querySelector(':scope > .md-code-copy');
+    if (btn) btn.remove();
+    return clone.textContent;
+  }
+
+  // sourceURLFor resolves the same-origin link-capability route that streams
+  // this viewer's ORIGINAL markdown source: the artifact's download route
+  // standalone, or the member's body route inside a bundle pane (the pane's
+  // data-member names it). Pure — exported for the node unit tests.
+  function sourceURLFor(id, member) {
+    if (!id) return '';
+    if (member) {
+      return '/' + encodeURIComponent(id) + '/members/' + encodeURIComponent(member);
+    }
+    return '/' + encodeURIComponent(id) + '/download';
+  }
+
+  // fetchSourceText pulls the source once and hands it to the callback; on any
+  // failure the callback gets null so the menu item can say so instead of
+  // silently copying nothing.
+  function fetchSourceText(url, cb) {
+    if (!url) { cb(null); return; }
+    fetch(url, { credentials: 'same-origin' })
+      .then(function (resp) { return resp.ok ? resp.text() : null; })
+      .then(function (text) { cb(typeof text === 'string' ? text : null); })
+      .catch(function () { cb(null); });
+  }
+
+  // --- document ⋮ menu (#133) ------------------------------------------------
+  //
+  // A kebab in the viewer's upper-right corner opens a small popup menu whose
+  // Copy Markdown item copies the whole original source. Same interaction
+  // contract as the reaction picker: outside-click dismiss, Escape closes and
+  // restores focus, focus lands on the first item.
+
+  var openDocMenu = null;
+
+  function closeDocMenu(restoreFocus) {
+    if (!openDocMenu) return;
+    var trigger = openDocMenu.trigger;
+    openDocMenu.el.remove();
+    openDocMenu = null;
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    if (restoreFocus && trigger) trigger.focus();
+  }
+
+  function showDocMenu(trigger) {
+    closeDocMenu(false);
+    var pop = document.createElement('div');
+    pop.className = 'md-doc-menu-pop';
+    pop.setAttribute('role', 'menu');
+    pop.setAttribute('aria-label', 'Document actions');
+
+    var item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'md-doc-menu-item';
+    item.setAttribute('role', 'menuitem');
+    item.textContent = 'Copy Markdown';
+    item.setAttribute('aria-label', 'Copy the whole markdown document to the clipboard');
+    item.addEventListener('click', function () {
+      var url = sourceURLFor(artifactID(), memberNameFor(trigger));
+      fetchSourceText(url, function (text) {
+        if (text === null) {
+          item.textContent = 'copy failed — try again';
+          item.classList.add('md-doc-menu-failed');
+          setTimeout(function () {
+            item.textContent = 'Copy Markdown';
+            item.classList.remove('md-doc-menu-failed');
+          }, 1300);
+          return;
+        }
+        // Close first (with focus back on the kebab), then flash the KEBAB —
+        // flashing the menu item would be invisible once the popup is gone.
+        copyText(text, function () {
+          closeDocMenu(true);
+          flashCopied(trigger, '⋮', '✓');
+        });
+      });
+    });
+    pop.appendChild(item);
+
+    document.body.appendChild(pop);
+    var r = trigger.getBoundingClientRect();
+    pop.style.top = (window.scrollY + r.bottom + 6) + 'px';
+    // Right-align the popup with the kebab so it grows leftward, staying
+    // inside the viewport rather than hanging past the right edge.
+    pop.style.left = Math.max(8, window.scrollX + r.right - pop.offsetWidth) + 'px';
+
+    openDocMenu = { el: pop, trigger: trigger };
+    item.focus();
+
+    pop.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeDocMenu(true);
+      }
+    });
+  }
+
+  // decorateDocMenu injects the kebab trigger into the viewer's upper-right
+  // corner. Idempotent per viewer (a re-hydrated pane must not grow a second
+  // one), and clicking it toggles the menu.
+  function decorateDocMenu(viewer) {
+    if (viewer.querySelector(':scope > .md-doc-menu')) return;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'md-doc-menu';
+    btn.textContent = '⋮';
+    btn.setAttribute('aria-haspopup', 'menu');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('aria-label', 'Document actions');
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var wasOpen = openDocMenu && openDocMenu.trigger === btn;
+      closeDocMenu(false);
+      if (!wasOpen) showDocMenu(btn);
+    });
+    viewer.appendChild(btn);
+  }
+
+  // Keep the menu honest however it closes, and dismiss on any click outside
+  // both the popup and the kebab itself (the kebab's own handler stops
+  // propagation, so reaching here with a kebab click means a DIFFERENT kebab —
+  // close this menu and let that one open).
+  document.addEventListener('click', function (e) {
+    if (!openDocMenu) return;
+    if (e.target.closest && (e.target.closest('.md-doc-menu-pop') || e.target.closest('.md-doc-menu'))) return;
+    closeDocMenu(false);
+  });
+
   // --- select-text-to-comment ----------------------------------------------
 
   var selToolbar = null;
@@ -458,10 +659,15 @@
   }
 
   // isInjectedAffordance reports whether a text node lives inside one of the
-  // reaction-trigger buttons (`.md-react`, which covers both the block-level
-  // and md_bullet-level ＋ affordances) rather than the rendered prose itself.
+  // viewer's injected controls rather than the rendered prose itself: the
+  // reaction-trigger buttons (`.md-react`, covering both the block-level and
+  // md_bullet-level ＋ affordances) and the code-block copy buttons
+  // (`.md-code-copy`, injected INSIDE the <pre> so its label must not shift
+  // text_selection offsets the way the ＋ glyphs would — same class of bug as
+  // PR #39's review note).
   function isInjectedAffordance(textNode) {
-    return !!(textNode.parentElement && textNode.parentElement.closest('.md-react'));
+    if (!textNode.parentElement) return false;
+    return !!(textNode.parentElement.closest('.md-react') || textNode.parentElement.closest('.md-code-copy'));
   }
 
   function onSelection() {
@@ -567,6 +773,8 @@
   function hydrateViewer(viewer) {
     if (!viewer) return;
     decorateBullets(viewer);
+    decorateCodeBlocks(viewer);
+    decorateDocMenu(viewer);
     // decorateBullets must run first so md_bullet triggers exist on the page
     // for loadReactions to match tallies against (#66).
     loadReactions(viewer);
@@ -598,5 +806,15 @@
     document.addEventListener('DOMContentLoaded', init);
   } else {
     init();
+  }
+
+  // Pure helpers exported for the node unit tests (jstests/markdown_test.js),
+  // mirroring app.js's export guard: requiring the file under node never
+  // reaches a real DOM.
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      artifactIDFromPath: artifactIDFromPath,
+      sourceURLFor: sourceURLFor
+    };
   }
 })();
