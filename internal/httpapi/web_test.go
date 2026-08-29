@@ -381,7 +381,8 @@ func TestBinRowRendersDesignFacts(t *testing.T) {
 		`title="comments"`, `title="reactions"`, // the counter glyphs are labelled
 		"in 6d",                             // TTL chip
 		`title="expires in 6d"`,             // the TTL glyph is labelled too
-		`data-agent="1"`, `data-shared="1"`, // tab-lens flags
+		`data-agent="1"`, `data-shared="1"`, // visibility-lens + provenance flags
+		`data-type-name="trace"`, // the type menu's reader-facing option label
 		`data-type="trajectory"`, // live-dot / badge data hook (raw key, unchanged)
 		// The reader-facing name is "trace" (ADR-0016), shown in the badge
 		// tooltip and sr-only cue while data-type keeps the raw registry key.
@@ -394,19 +395,22 @@ func TestBinRowRendersDesignFacts(t *testing.T) {
 }
 
 // TestBinChromeRendersTabsFilterPush asserts the Bin toolbar exposes the three
-// nav tabs, the filter input, and the `+ push` affordance with accessible
-// labelling (design turn 6c; SPEC-0001 Accessibility).
+// visibility tabs, the type menu, the filter input, and the `+ push` affordance
+// with accessible labelling (design turn 6c; SPEC-0001 Accessibility).
 func TestBinChromeRendersTabsFilterPush(t *testing.T) {
 	s := newWebServer(t)
 	html := renderBinHTML(t, s, "bin", binPageView{Actor: "joe"})
 	for _, frag := range []string{
 		`role="tablist"`,
-		`data-scope="all"`, `data-scope="shared"`, `data-scope="agents"`,
-		// Each tab names its scope and carries a live-count slot (#67); "From
-		// agents" is the truthful label for the agent-pushed lens, not "Agents"
-		// (which reads as a directory of agents).
-		">Bin <span", ">Shared <span", ">From agents <span",
+		`data-scope="all"`, `data-scope="shared"`, `data-scope="private"`,
+		// Each tab names a visibility that actually partitions the bin and
+		// carries a live-count slot (#67, #136): shared and private are
+		// complements, so the counts always sum to All.
+		">All <span", ">Shared <span", ">Private <span",
 		`data-tab-count`,
+		// The type menu is built client-side from the loaded rows, so the
+		// server ships the shell and the row-level data hook only.
+		`data-bin-types`, `data-bin-types-list`,
 		`data-bin-filter`,
 		`aria-label="Filter artifacts by title or provenance"`,
 		"how to push",
