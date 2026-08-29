@@ -19,23 +19,33 @@ import (
 	"github.com/joestump/cairn/internal/sharetype"
 )
 
-// #67 — Bin tabs show counts, scope restores from the URL, per-scope empty
-// states exist. The template half (count slot + truthful "From agents" label)
-// is asserted here; the JS half (count computation, URL-hash restoration,
-// per-scope empty copy) is pinned by app_js_test.js under `make test-js`.
-func TestUXBinTabsRenderCountsAndTruthfulLabels(t *testing.T) {
+// #67 / #136 — The Bin lenses partition the bin instead of overlapping it.
+// #67 gave the tabs live counts; #136 replaced the three overlapping scopes
+// (Bin / Shared / From agents — which showed identical counts on any ordinary
+// bin and filtered nothing) with the two axes that actually split a bin:
+// visibility (All / Shared / Private, a true complement) and share type. The
+// template half (count slot + the visibility labels + the type menu) is
+// asserted here; the JS half (counts, type-menu math, URL-hash round-trip) is
+// pinned by app_test.js under `make test-js`.
+func TestUXBinLensesPartitionTheBin(t *testing.T) {
 	s := newWebServer(t)
 	html := renderBinHTML(t, s, "bin", binPageView{Actor: "joe"})
 	for _, frag := range []string{
-		`data-tab-count`, `data-scope="all"`, `data-scope="shared"`, `data-scope="agents"`,
-		">From agents <span", // the truthful label, not "Agents" (#67)
+		`data-tab-count`, `data-scope="all"`, `data-scope="shared"`, `data-scope="private"`,
+		">All <span", ">Shared <span", ">Private <span",
+		`data-bin-types`, `data-bin-types-list`, `data-bin-types-reset`,
+		`aria-label="Filter artifacts by type"`,
 	} {
 		if !strings.Contains(html, frag) {
-			t.Errorf("#67 bin tabs: missing %q", frag)
+			t.Errorf("#136 bin lenses: missing %q", frag)
 		}
 	}
-	if strings.Contains(html, ">Agents<") {
-		t.Error("#67 bin tabs: the misleading \"Agents\" label should be gone")
+	// The overlapping agent lens is gone: it was never a partition (an agent
+	// push is also shared), so it could only ever duplicate another tab.
+	for _, gone := range []string{`data-scope="agents"`, ">From agents <span", ">Agents<"} {
+		if strings.Contains(html, gone) {
+			t.Errorf("#136 bin lenses: the overlapping %q lens should be gone", gone)
+		}
 	}
 }
 

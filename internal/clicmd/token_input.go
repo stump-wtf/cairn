@@ -21,7 +21,7 @@ func readToken(streams IOStreams, flagToken string) (string, error) {
 		return flagToken, nil
 	}
 
-	if !isTerminal(streams.In) {
+	if !IsTerminal(streams.In) {
 		return readTokenFromPipe(streams.In)
 	}
 	return readTokenFromPrompt(streams)
