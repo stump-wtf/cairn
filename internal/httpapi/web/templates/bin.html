@@ -25,17 +25,39 @@
 
 <main id="bin-main" class="bin-main" role="main" tabindex="-1">
   <div class="bin-toolbar" data-bin-toolbar>
-    <div class="bin-tabs" role="tablist" aria-label="Filter artifacts">
-      {{/* Each tab names its scope AND carries a live count, so identical
-          scopes are visibly identical rather than mysteriously so (#67). The
-          count is filled by app.js over the loaded rows (the same rows the
-          tabs filter); "From agents" — not "Agents" — because the lens is
-          artifacts PUSHED BY agents, not a directory of agents. */}}
-      <button type="button" class="bin-tab" role="tab" data-scope="all" data-label="Bin" aria-selected="true" tabindex="0">Bin <span class="bin-tab-count" data-tab-count aria-hidden="true"></span></button>
-      <button type="button" class="bin-tab" role="tab" data-scope="shared" data-label="Shared" aria-selected="false" tabindex="-1">Shared <span class="bin-tab-count" data-tab-count aria-hidden="true"></span></button>
-      <button type="button" class="bin-tab" role="tab" data-scope="agents" data-label="From agents" aria-selected="false" tabindex="-1">From agents <span class="bin-tab-count" data-tab-count aria-hidden="true"></span></button>
+    {{/* Visibility lens + type filter (#issue: the Bin tabs were three
+        near-identical scopes). Every artifact in a bin is agent-pushed and
+        link-shared far more often than not, so "Bin / Shared / From agents"
+        reliably rendered three identical counts and filtered nothing. The two
+        axes that actually partition a bin are who can reach an artifact
+        (private vs. anyone with the link) and what KIND it is, so those are
+        the lenses now.
+
+        "Shared" — not "Public": link visibility means you plus anyone holding
+        the URL (ADR-0007), which is unlisted, not public, and the label has to
+        keep that promise honest. */}}
+    <div class="bin-tabs" role="tablist" aria-label="Filter artifacts by visibility">
+      <button type="button" class="bin-tab" role="tab" data-scope="all" data-label="All" aria-selected="true" tabindex="0">All <span class="bin-tab-count" data-tab-count aria-hidden="true"></span></button>
+      <button type="button" class="bin-tab" role="tab" data-scope="shared" data-label="Shared" title="you + anyone with the link" aria-selected="false" tabindex="-1">Shared <span class="bin-tab-count" data-tab-count aria-hidden="true"></span></button>
+      <button type="button" class="bin-tab" role="tab" data-scope="private" data-label="Private" title="only you" aria-selected="false" tabindex="-1">Private <span class="bin-tab-count" data-tab-count aria-hidden="true"></span></button>
     </div>
     <div class="bin-toolbar-right">
+      {{/* Type filter: a checkbox menu built by app.js from the types
+           actually present in the loaded rows, so it never offers a type the
+           bin does not contain and never hides one it does. Empty markup here
+           because the option list IS the row list — the server owns the rows,
+           the lens reads them (progressive enhancement: no JS, no menu, full
+           Bin). */}}
+      <details class="bin-types" data-bin-types hidden>
+        <summary class="bin-types-btn" aria-label="Filter artifacts by type"><span aria-hidden="true">▤</span> <span class="bin-types-label" data-bin-types-label>All types</span></summary>
+        <div class="bin-types-pop" role="group" aria-label="Artifact types">
+          <div class="bin-types-head">
+            <span class="bin-types-title">Type</span>
+            <button type="button" class="bin-types-reset" data-bin-types-reset>Reset</button>
+          </div>
+          <div class="bin-types-list" data-bin-types-list></div>
+        </div>
+      </details>
       <label class="bin-filter" for="bin-filter-input">
         <span class="bin-filter-icon" aria-hidden="true">⌕</span>
         <input id="bin-filter-input" class="bin-filter-input" type="search" placeholder="Filter…"
@@ -79,6 +101,7 @@
 
 {{define "bin-rows"}}{{range .Rows}}<a class="bin-row" href="{{.WebURL}}" data-type="{{.TypeLabel}}"
    data-agent="{{if .IsAgent}}1{{else}}0{{end}}" data-shared="{{if .IsShared}}1{{else}}0{{end}}"
+   data-type-name="{{.TypeName}}"
    data-search="{{.Title}} {{.Lead}} {{.Channel}} {{.TypeLabel}} {{.TypeName}}">
   <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeName}}">{{.Badge}}<span class="sr-only"> {{.TypeName}}</span></span>
   <span class="bin-row-main">

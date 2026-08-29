@@ -8,3 +8,13 @@ var (
 	Commit  = "none"
 	Date    = "unknown"
 )
+
+// VersionString is the `--version` payload: the bare version outside a
+// release build, or version+commit+date when ldflags supplied them. main
+// hands it to fang, which owns the root command's Version field.
+func VersionString() string {
+	if Commit == "none" && Date == "unknown" {
+		return Version
+	}
+	return Version + " (" + Commit + ", " + Date + ")"
+}
