@@ -85,3 +85,7 @@ workflow: decisions → specs → tracked issues.
 
 Early design. The ADRs and specs in `docs/` define the intended architecture; the
 GitHub issues track the build.
+
+## Webhook E2E plumbing test
+
+Throwaway change: verifies that org-level `pull_request_review_request` events for this repo produce Switchboard forge-queue todos (cairn repo path). Safe to close without merging once the todo lands.
