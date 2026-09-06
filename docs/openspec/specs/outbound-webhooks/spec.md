@@ -9,8 +9,12 @@ related: [SPEC-0002, SPEC-0005]
 
 ## Graph Edges
 
-- **Implements:** [ADR-0017](../../../docs/adrs/ADR-0017-outbound-webhooks-on-artifact-creation.md) — in-process async fan-out of `artifact.created` events
-- **Related:** [SPEC-0005](../webhook-inspector/spec.md) — inbound webhook capture; naming neighbor, not a dependency
+- **Implements:** **ADR-0017** — in-process async fan-out of `artifact.created` events
+- **Related:** **SPEC-0002** — artifact envelope, provenance, and expiry
+- **Related:** **SPEC-0005** — inbound webhook capture; naming neighbor, not a dependency
+
+(Rendered edges are derived from front-matter; body links to repo paths
+would break on the generated site page.)
 
 ## Overview
 
