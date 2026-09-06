@@ -24,6 +24,7 @@ import (
 	"github.com/joestump/cairn/internal/db"
 	"github.com/joestump/cairn/internal/httpapi"
 	"github.com/joestump/cairn/internal/objectstore"
+	"github.com/joestump/cairn/internal/outboundhook"
 	"github.com/joestump/cairn/internal/store"
 )
 
@@ -66,12 +67,23 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
+	// Outbound webhook emitter (ADR-0017, SPEC-0012): inert unless target URLs
+	// are configured. One hook at the store choke point covers every creation
+	// surface (REST/web/CLI/MCP); delivery runs on its own worker goroutine,
+	// reaper-style, and stops cleanly on shutdown.
+	var emitter *outboundhook.Emitter
+	if len(cfg.OutboundWebhookURLs) > 0 {
+		emitter = outboundhook.New(cfg.OutboundWebhookURLs, cfg.OutboundWebhookSecret, cfg.BaseURL, logger)
+		logger.Info("outbound webhooks enabled", "targets", len(cfg.OutboundWebhookURLs), "signed", cfg.OutboundWebhookSecret != "")
+	}
+
 	// The core service the transport adapters (REST/MCP/CLI) project. The
 	// share-type registry (previewability, anchor affordances) defaults to the
 	// process-wide sharetype.Default().
 	svc := store.New(pool, obj, store.Options{
 		MaxUploadBytes:  cfg.MaxUploadBytes,
 		PreviewMaxBytes: cfg.PreviewMaxBytes,
+		Emitter:         emitter,
 	})
 
 	// Install the staging/ debris lifecycle rule (best-effort defense-in-depth;
@@ -93,6 +105,16 @@ func run(logger *slog.Logger) error {
 			Batch:       cfg.ReapBatch,
 			ObjectGrace: cfg.ReapObjectGrace,
 		}, logger)
+	}()
+
+	// Outbound webhook delivery worker: same lifecycle contract as the reaper
+	// (SPEC-0012 REQ "Graceful Lifecycle").
+	hookDone := make(chan struct{})
+	go func() {
+		defer close(hookDone)
+		if emitter != nil {
+			emitter.Run(ctx)
+		}
 	}()
 
 	// Parse the static API bearer credentials (ADR-0004 MVP token seam) at
@@ -181,6 +203,7 @@ func run(logger *slog.Logger) error {
 		// unwind its current sweep so shutdown is clean (SPEC-0009 REQ "Concurrency
 		// Safety (Expiry Reaper)": graceful shutdown, no orphaned goroutine).
 		<-reaperDone
+		<-hookDone
 		return err
 	case err := <-errCh:
 		return err

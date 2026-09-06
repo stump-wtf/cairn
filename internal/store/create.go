@@ -137,6 +137,7 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("create: commit: %w", err)
 	}
+	s.emitCreated(art)
 	return art, nil
 }
 

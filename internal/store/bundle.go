@@ -143,6 +143,7 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("bundle: commit: %w", err)
 	}
+	s.emitCreated(art)
 	return art, nil
 }
 
