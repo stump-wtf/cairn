@@ -63,11 +63,22 @@ Every surface rides the same app shell and the same core service:
 
 - **Web** — one shell for every type: logo · type · one URL control · share ·
   collapsible metadata + comments panel. Plus **the Bin**.
-- **CLI** (`cairn`) — *pbcopy for cairn*: pipe or add files, browse the Bin in a
-  keyboard-driven TUI.
-- **MCP** — agents read, create, comment, and react over MCP, authorized via OAuth.
+- **CLI** (`cairn`) — *pbcopy for cairn*: pipe or add files, get a link back.
+- **MCP** — agents read, create, comment, and react over MCP, authorized via OAuth or a
+  personal access token.
 
 See **[Surfaces](./product/surfaces.md)**.
+
+## New here?
+
+Start with **[What Cairn is for](./guides/what-cairn-is-for.md)**, then
+[create your first share](./guides/first-share.md) and
+[connect your agent](./guides/connect-your-agent.md). The guides also cover
+[agent handoffs](./guides/agent-handoffs.md),
+[outbound webhooks to Switchboard](./guides/outbound-webhooks.md), the
+[webhook inspector](./guides/webhook-inspector.md),
+[how Harness, Switchboard and Cairn fit together](./guides/how-it-fits.md), and
+[troubleshooting](./guides/troubleshooting.md).
 
 ## How this site is organized
 

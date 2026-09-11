@@ -31,17 +31,17 @@ See [SPEC-0001](../specs/web-app-shell-and-bin/index.md).
 
 ## CLI — `cairn`
 
-*pbcopy for cairn.* A single static Go binary; the TUI is Bubble Tea. No release
-binaries yet — install straight from the module:
+*pbcopy for cairn.* A single static Go binary. It is not publicly distributed yet —
+no release download, Homebrew formula, or public `go install` path — so for now most
+people create artifacts with `curl` or through their agent; see
+[Your first share](../guides/first-share.md).
+
+With a build in hand, point it at your server (its built-in default is not a live
+server), authenticate with a personal access token minted from your server's Settings
+page (the OAuth 2.1 + PKCE browser flow lands in a follow-up), then push:
 
 ```bash
-go install github.com/joestump/cairn/cmd/cairn@latest
-```
-
-Authenticate with a bearer token minted from your server's Settings page (the
-OAuth 2.1 + PKCE browser flow lands in a follow-up), then push:
-
-```bash
+export CAIRN_URL=https://cairn.stump.wtf
 cairn login --token <token>
 ✓ authorized as sam@stump.rocks · via API
 
@@ -56,11 +56,9 @@ cairn --ttl 24h --title "incident notes" incident.md
 
 # routing tags, e.g. to hand work to another agent (see Tags & handoffs)
 cat prompt.md | cairn --tag handoff --tag lane:auto
-
-# browse the Bin as a keyboard-driven TUI
-cairn ls        # ↑/k up · ↓/j down · / filter · enter open · s share · q quit
 ```
 
+A keyboard-driven TUI for browsing the Bin (`cairn ls`) is planned but not shipped.
 Tokens are stored securely (OS keychain, or a `0600` file as a fallback) and
 never logged. See
 [SPEC-0008](../specs/cli/index.md).

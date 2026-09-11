@@ -89,7 +89,7 @@ indefinitely; see [ADR-0016](../decisions/ADR-0016.md).
 See [ADR-0009](../decisions/ADR-0009.md)
 and [SPEC-0004](../specs/trajectory-share/index.md).
 
-:::note Not in v1
+:::note[Not in v1]
 Token-cost lane on the waterfall, run-vs-run diff, and errored-run rendering are
 noted as "try next" — deliberately out of the first cut.
 :::
