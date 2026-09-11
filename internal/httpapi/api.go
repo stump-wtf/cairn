@@ -500,6 +500,10 @@ type artifactResponse struct {
 	Badge       string              `json:"badge"`
 	Provenance  provenanceView      `json:"provenance"`
 	Visibility  artifact.Visibility `json:"visibility"`
+	// Tags are client-asserted routing strings, omitted when none were set. A
+	// sibling of provenance, not a field inside it: nothing here is
+	// server-derived, so nothing here is a trust signal (ADR-0018).
+	Tags []string `json:"tags,omitempty"`
 	// Denormalized annotation rollups, exposed separately — never summed —
 	// so the Bin row (💬 2 · 👀 3) and headers (2 pins · 8 reactions) can
 	// render each figure (SPEC-0006 REQ "Count Aggregation").
@@ -546,6 +550,7 @@ func (s *Server) toArtifactResponse(a *artifact.Artifact) artifactResponse {
 			CapturedAt: a.Provenance.CapturedAt,
 		},
 		Visibility:       a.Access.Visibility,
+		Tags:             a.Tags,
 		ReactionCount:    a.ReactionCount,
 		CommentCount:     a.CommentCount,
 		PinCount:         a.PinCount,

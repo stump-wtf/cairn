@@ -78,6 +78,16 @@
     </section>
     {{end}}
 
+    {{/* Tags get their own section, apart from Provenance: the creator asserts them, the server does not derive them (ADR-0018). */}}
+    {{if .Tags}}
+    <section class="panel-section" aria-labelledby="tags-h">
+      <h2 class="panel-h" id="tags-h">Tags <span class="count">{{len .Tags}}</span></h2>
+      <ul class="tag-list" data-tags>
+        {{range .Tags}}<li class="tag">{{.}}</li>{{end}}
+      </ul>
+    </section>
+    {{end}}
+
     {{if .Bundle}}
     <section class="panel-section" aria-labelledby="contains-h">
       <h2 class="panel-h" id="contains-h">Contains <span class="count">{{.Bundle.FileCount}}</span></h2>

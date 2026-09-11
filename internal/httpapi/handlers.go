@@ -88,6 +88,11 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 		s.writeError(w, r, err, nil)
 		return
 	}
+	var tags tagSet
+	if err := tags.addFromRequest(r); err != nil {
+		s.writeError(w, r, err, tagErrorDetails())
+		return
+	}
 
 	// Guard the raw body; the store additionally enforces the limit incrementally.
 	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes+1)
@@ -100,6 +105,7 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 		Provenance:        artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now},
 		Access:            artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
 		ExpiresAt:         now.Add(ttl),
+		Tags:              tags.tags,
 	})
 	if err != nil {
 		s.writeError(w, r, mapUploadErr(err), nil)
@@ -127,6 +133,11 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		s.writeError(w, r, err, nil)
 		return
 	}
+	var tags tagSet
+	if err := tags.addFromRequest(r); err != nil {
+		s.writeError(w, r, err, tagErrorDetails())
+		return
+	}
 	mr := multipart.NewReader(r.Body, boundary)
 
 	var (
@@ -151,9 +162,16 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			return
 		}
 		if part.FileName() == "" {
-			if part.FormName() == "title" {
+			switch part.FormName() {
+			case "title":
 				b, _ := io.ReadAll(io.LimitReader(part, 4096))
 				title = string(b)
+			case "tag":
+				if err := tags.addFormField(part); err != nil {
+					_ = part.Close()
+					s.writeError(w, r, err, tagErrorDetails())
+					return
+				}
 			}
 			_ = part.Close()
 			continue
@@ -207,6 +225,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			Provenance:        prov,
 			Access:            access,
 			ExpiresAt:         expires,
+			Tags:              tags.tags,
 		})
 		if err != nil {
 			s.writeError(w, r, mapUploadErr(err), nil)
@@ -226,6 +245,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		Provenance: prov,
 		Access:     access,
 		ExpiresAt:  expires,
+		Tags:       tags.tags,
 	})
 	if err != nil {
 		s.writeError(w, r, mapUploadErr(err), nil)
@@ -373,7 +393,15 @@ func (s *Server) handleBin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	page, err := s.store.ListBin(r.Context(), p.ActorID, r.URL.Query().Get("cursor"), limit)
+	// ?tag= narrows the Bin to artifacts carrying every given tag (SPEC-0002
+	// REQ "Artifact Tags"), in the same comma-separated, repeatable form a
+	// create accepts.
+	var filter tagSet
+	if err := filter.addQuery(r); err != nil {
+		s.writeError(w, r, err, tagErrorDetails())
+		return
+	}
+	page, err := s.store.ListBin(r.Context(), p.ActorID, r.URL.Query().Get("cursor"), limit, filter.tags...)
 	if err != nil {
 		s.writeError(w, r, err, nil)
 		return
