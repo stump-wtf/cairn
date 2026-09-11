@@ -88,6 +88,18 @@ type eventData struct {
 	Model     string     `json:"model,omitempty"`
 	ActorID   string     `json:"actor_id,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// Appended after the original fields and omitted when empty, so the event
+	// for an untagged REST/CLI artifact stays byte-identical to the payload
+	// before these existed (pinned by testdata/artifact_created_rest.golden.json).
+	//
+	// OnBehalfOf is recorded by the server from the MCP session handshake, never
+	// from a tool argument, but its content is the client's self-reported
+	// name/version: it names the harness, not a principal. ActorID is the only
+	// authenticated identity. Tags are client-asserted: a consumer routes on
+	// them, never authorizes on them (ADR-0018). They arrive already normalized, in
+	// the stored order, so the signed bytes are deterministic.
+	OnBehalfOf string   `json:"on_behalf_of,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
 }
 
 // New builds an emitter delivering to each target URL. baseURL is the public
@@ -145,13 +157,15 @@ func (e *Emitter) encode(ev store.CreationEvent, eventID string, createdAt time.
 		EventID:   eventID,
 		CreatedAt: createdAt,
 		Data: eventData{
-			ID:        ev.PublicID,
-			ShareType: string(ev.ShareType),
-			Title:     ev.Title,
-			URL:       e.baseURL + ev.WebPath,
-			Channel:   ev.Channel,
-			Model:     ev.Model,
-			ActorID:   ev.ActorID,
+			ID:         ev.PublicID,
+			ShareType:  string(ev.ShareType),
+			Title:      ev.Title,
+			URL:        e.baseURL + ev.WebPath,
+			Channel:    ev.Channel,
+			Model:      ev.Model,
+			ActorID:    ev.ActorID,
+			OnBehalfOf: ev.OnBehalfOf,
+			Tags:       ev.Tags,
 		},
 	}
 	if !ev.ExpiresAt.IsZero() {

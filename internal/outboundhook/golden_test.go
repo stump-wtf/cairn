@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joestump/cairn/internal/artifact"
 	"github.com/joestump/cairn/internal/store"
 )
 
@@ -22,8 +23,8 @@ func goldenEmitter() *Emitter {
 	return New(nil, "", "https://cairn.example", slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
-// restEvent is a creation over REST/CLI: no on-behalf-of, no labels. Its golden
-// was generated before the payload grew on_behalf_of and labels, so a match
+// restEvent is a creation over REST/CLI: no on-behalf-of, no tags. Its golden
+// was generated before the payload grew on_behalf_of and tags, so a match
 // proves that growth is byte-for-byte additive for every existing consumer.
 func restEvent() store.CreationEvent {
 	return store.CreationEvent{
@@ -36,6 +37,26 @@ func restEvent() store.CreationEvent {
 		Channel:   "via API",
 		ExpiresAt: time.Date(2026, 9, 18, 8, 0, 0, 0, time.UTC),
 	}
+}
+
+// handoffEvent is an agent's handoff bundle over MCP: server-derived
+// on_behalf_of plus the full handoff tag convention.
+func handoffEvent() store.CreationEvent {
+	ev := restEvent()
+	ev.ShareType = artifact.TypeBundle
+	ev.Title = "handoff: fix flaky reaper test"
+	ev.Channel = "via MCP"
+	ev.OnBehalfOf = "claude-code/2.1.0"
+	ev.Tags = []string{
+		"handoff",
+		"lane:m",
+		"size:m",
+		"repo:stump.wtf/cairn",
+		"issue:stump.wtf/cairn#42",
+		"source:claude-code/morning-brief-2026-09-11",
+		"reply:cairn-comment",
+	}
+	return ev
 }
 
 // assertGolden compares got against testdata/<name>.golden.json, rewriting the
@@ -67,6 +88,27 @@ var (
 
 func TestGoldenPayloadREST(t *testing.T) {
 	raw, err := goldenEmitter().encode(restEvent(), goldenEventID, goldenCreatedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGolden(t, "artifact_created_rest", raw)
+}
+
+func TestGoldenPayloadHandoff(t *testing.T) {
+	raw, err := goldenEmitter().encode(handoffEvent(), goldenEventID, goldenCreatedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGolden(t, "artifact_created_handoff", raw)
+}
+
+// TestEmptyTagsOmitted: an empty (not just nil) tag slice must not emit
+// "tags":[] — that would break the byte-compat the REST golden pins for any
+// adapter that happens to pass a non-nil empty slice.
+func TestEmptyTagsOmitted(t *testing.T) {
+	ev := restEvent()
+	ev.Tags = []string{}
+	raw, err := goldenEmitter().encode(ev, goldenEventID, goldenCreatedAt)
 	if err != nil {
 		t.Fatal(err)
 	}
