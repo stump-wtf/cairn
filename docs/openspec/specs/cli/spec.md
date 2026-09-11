@@ -84,6 +84,22 @@ clipboard. The CLI MUST let the server assign the share type, provenance channel
 (`via CLI`), access policy, and expiry, and it MUST surface the returned link, expiry,
 and access policy to the user.
 
+A repeatable `--tag` flag MUST attach tags to the created artifact (SPEC-0002 REQ
+"Artifact Tags"). Each flag holds one tag or a comma-separated list. Locally the CLI
+rejects only an empty tag, as a usage error reported before any network call. The tag
+charset, size and count bounds, and deduplication, are the server's to decide.
+
+#### Scenario: Tag a piped artifact
+
+- **WHEN** the user runs `cat prompt.md | cairn --tag handoff --tag lane:auto,size:m`
+- **THEN** the CLI MUST create one artifact carrying `handoff`, `lane:auto`, and
+  `size:m`
+
+#### Scenario: Empty tag flag
+
+- **WHEN** the user passes `--tag ""` or `--tag handoff,,lane:s`
+- **THEN** the CLI MUST exit with a usage error without contacting the server
+
 #### Scenario: Pipe content in
 
 - **WHEN** the user runs `cat notes.md | cairn`
@@ -108,7 +124,9 @@ files (mixed media permitted) via `POST /v1/artifacts`. During upload it SHOULD 
 **summary line** of the form `N files · <total size> · ⧗ expires <ttl> · 🔒 <access>`
 followed by the `cairn.sh/<id>` link. The CLI MUST NOT report success or emit a link
 unless the server confirms the **complete** bundle was created; a failure of any
-constituent file MUST abort the bundle so no partial bundle is shared.
+constituent file MUST abort the bundle so no partial bundle is shared. `cairn add`
+accepts the same repeatable `--tag` flag as the bare command, applying the tags to the
+bundle as a whole.
 
 #### Scenario: Push several files as a bundle
 

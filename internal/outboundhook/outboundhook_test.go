@@ -110,6 +110,43 @@ func TestDeliveryPayloadAndHeaders(t *testing.T) {
 	}
 }
 
+// TestSignatureCoversTaggedBody: the signature scheme is unchanged by the new
+// fields — still HMAC-SHA256 over the exact delivered bytes — and those bytes
+// carry tags and on_behalf_of verbatim.
+func TestSignatureCoversTaggedBody(t *testing.T) {
+	var delivered atomic.Int32
+	var body []byte
+	var hdr http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body, hdr = b, r.Header.Clone()
+		delivered.Add(1)
+		w.WriteHeader(202)
+	}))
+	defer srv.Close()
+
+	const secret = "s3cr3t"
+	e := newEmitter(t, secret, srv.URL)
+	e.EmitArtifactCreated(handoffEvent())
+	runUntil(t, e, &delivered, 1)
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	if got, want := hdr.Get("X-Cairn-Signature"), "sha256="+hex.EncodeToString(mac.Sum(nil)); got != want {
+		t.Fatalf("signature mismatch over tagged body: got %q want %q", got, want)
+	}
+	var got eventBody
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("body not JSON: %v", err)
+	}
+	if got.Data.OnBehalfOf != "claude-code/2.1.0" {
+		t.Fatalf("on_behalf_of = %q", got.Data.OnBehalfOf)
+	}
+	if len(got.Data.Tags) != 7 || got.Data.Tags[0] != "handoff" || got.Data.Tags[4] != "issue:stump.wtf/cairn#42" {
+		t.Fatalf("tags = %q", got.Data.Tags)
+	}
+}
+
 func TestNoSecretOmitsSignature(t *testing.T) {
 	var delivered atomic.Int32
 	var hdr http.Header

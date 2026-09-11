@@ -13,6 +13,7 @@
 package store
 
 import (
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -70,6 +71,13 @@ type CreationEvent struct {
 	Channel   string
 	ExpiresAt time.Time
 	CreatedAt time.Time
+	// OnBehalfOf is the MCP client's self-reported name/version, recorded from
+	// the session handshake (empty for REST/CLI). It names the harness, not a
+	// principal: ActorID is the authenticated identity.
+	OnBehalfOf string
+	// Tags are client-asserted (ADR-0018): carried so a consumer can route on
+	// them, never so it can trust them.
+	Tags []string
 }
 
 // CreationEmitter receives post-commit creation events. Implementations MUST
@@ -141,15 +149,19 @@ func (s *Store) emitCreated(a *artifact.Artifact) {
 		return
 	}
 	s.emitter.EmitArtifactCreated(CreationEvent{
-		PublicID:  a.PublicID,
-		ShareType: a.ShareType,
-		Title:     a.Title,
-		WebPath:   "/" + joinPath(s.registry.URLPrefixFor(a.ShareType).Web, a.PublicID),
-		ActorID:   a.Provenance.ActorID,
-		Model:     a.Provenance.Model,
-		Channel:   string(a.Provenance.Channel),
-		ExpiresAt: a.ExpiresAt,
-		CreatedAt: a.CreatedAt,
+		PublicID:   a.PublicID,
+		ShareType:  a.ShareType,
+		Title:      a.Title,
+		WebPath:    "/" + joinPath(s.registry.URLPrefixFor(a.ShareType).Web, a.PublicID),
+		ActorID:    a.Provenance.ActorID,
+		Model:      a.Provenance.Model,
+		Channel:    string(a.Provenance.Channel),
+		ExpiresAt:  a.ExpiresAt,
+		CreatedAt:  a.CreatedAt,
+		OnBehalfOf: a.Provenance.OnBehalfOf,
+		// Cloned so the emitter never shares a backing array with the
+		// artifact the create call hands back to its caller.
+		Tags: slices.Clone(a.Tags),
 	})
 }
 

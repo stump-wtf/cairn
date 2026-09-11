@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -22,6 +23,8 @@ type Artifact struct {
 	Visibility string    `json:"visibility"`
 	CreatedAt  time.Time `json:"created_at"`
 	ExpiresAt  time.Time `json:"expires_at"`
+	// Tags echo what the server stored (normalized), so `--json` shows them.
+	Tags []string `json:"tags,omitempty"`
 }
 
 // CreateArtifactOptions carries the raw-body single-artifact create request
@@ -44,6 +47,10 @@ type CreateArtifactOptions struct {
 	// forwards what the human explicitly asked for; the server remains
 	// authoritative and may reject an out-of-bounds request).
 	TTLSeconds int64
+	// Tags are client-asserted routing strings (`cairn --tag`, ADR-0018), sent
+	// as one comma-separated X-Cairn-Tags header. No tag may contain a comma, so
+	// the list survives an intermediary folding repeated headers intact.
+	Tags []string
 }
 
 // CreateArtifact streams body to POST /v1/artifacts and decodes the created
@@ -80,6 +87,9 @@ func (c *Client) doCreate(ctx context.Context, path string, body io.Reader, cont
 	}
 	if opts.TTLSeconds > 0 {
 		req.Header.Set("X-Cairn-Ttl-Seconds", strconv.FormatInt(opts.TTLSeconds, 10))
+	}
+	if len(opts.Tags) > 0 {
+		req.Header.Set("X-Cairn-Tags", strings.Join(opts.Tags, ","))
 	}
 	return c.send(req)
 }

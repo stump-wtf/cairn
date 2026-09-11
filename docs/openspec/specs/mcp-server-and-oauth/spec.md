@@ -62,6 +62,17 @@ workspace policy, or otherwise exceed the human's own create permissions. The
 returned artifact MUST carry provenance stamping the model actor and the `via MCP`
 channel (SPEC-0009).
 
+The create tools MUST accept an optional `tags` array (SPEC-0002 REQ "Artifact
+Tags"). Tags never broaden access and never alter provenance. The tool descriptions
+MUST publish the bounds, the handoff tag convention, and the semi-trusted stance a
+receiver takes toward a handoff (ADR-0018), so an agent learns how to request a
+handoff at the point where it creates the artifact.
+
+#### Scenario: Agent creates a handoff
+
+- **WHEN** an agent calls `artifact_create` or `bundle_create` with tags `handoff` and `lane:auto`
+- **THEN** the server MUST create the artifact with the default policy and TTL, stamped `via MCP` and carrying exactly those tags, and its `artifact.created` event MUST carry the tags together with `on_behalf_of`, the client name/version the server recorded from the session's `initialize` (SPEC-0012)
+
 #### Scenario: Agent creates an artifact
 
 - **WHEN** an agent holding `artifacts:write` pushes a new body

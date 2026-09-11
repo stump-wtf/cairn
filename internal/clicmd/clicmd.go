@@ -51,6 +51,7 @@ type globalFlags struct {
 
 	title       string
 	ttl         string
+	tags        []string
 	mediaType   string
 	noCopy      bool
 	concurrency int
@@ -98,6 +99,7 @@ decided by the server and only ever displayed here (SPEC-0008).`,
 	root.PersistentFlags().BoolVarP(&flags.verbose, "verbose", "v", false, "structured diagnostic output on stderr (tokens redacted)")
 	root.PersistentFlags().StringVar(&flags.title, "title", "", "optional display title for the artifact/bundle")
 	root.PersistentFlags().StringVar(&flags.ttl, "ttl", "", "request an expiry (e.g. \"24h\", \"7d\"); the server decides whether to honor it")
+	root.PersistentFlags().StringArrayVar(&flags.tags, "tag", nil, "attach a routing tag; repeatable or comma-separated (e.g. --tag handoff --tag lane:auto)")
 	root.PersistentFlags().StringVar(&flags.mediaType, "type", "", "override the detected Content-Type")
 	root.PersistentFlags().BoolVar(&flags.noCopy, "no-copy", false, "never copy the resulting link to the clipboard")
 	root.PersistentFlags().IntVar(&flags.concurrency, "concurrency", defaultUploadConcurrency, "bounded worker pool size for `cairn add`'s local file preparation")

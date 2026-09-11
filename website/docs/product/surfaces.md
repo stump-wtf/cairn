@@ -54,6 +54,9 @@ cairn add audit.md parse_ledger.py Movies.png dump.sql.gz
 # optional flags: expiry hint and a display title
 cairn --ttl 24h --title "incident notes" incident.md
 
+# routing tags, e.g. to hand work to another agent (see Tags & handoffs)
+cat prompt.md | cairn --tag handoff --tag lane:auto
+
 # browse the Bin as a keyboard-driven TUI
 cairn ls        # ↑/k up · ↓/j down · / filter · enter open · s share · q quit
 ```

@@ -362,6 +362,7 @@ type shellView struct {
 	Provenance    provenanceLine
 	PanelFields   []sharetype.PanelField // type-specific (registry MetadataPanel)
 	Details       []sharetype.PanelField // shell-owned artifact facts
+	Tags          []string               // client-asserted tags, stored order (ADR-0018)
 	Comments      []commentLine
 	ReactionCount int
 	CommentCount  int
@@ -498,6 +499,7 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activ
 		MetaLine:      s.metaLine(a),
 		PanelFields:   s.reg.MetadataPanelFor(a),
 		Details:       detailFields(a),
+		Tags:          a.Tags,
 		ReactionCount: a.ReactionCount,
 		CommentCount:  a.CommentCount,
 		PinCount:      a.PinCount,
