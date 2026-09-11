@@ -119,11 +119,31 @@ func New(targets []string, secret, baseURL string, log *slog.Logger) *Emitter {
 // full queue the event is dropped with a warning — the doorbell is a hint, not
 // a ledger (SPEC-0012 REQ "Bounded Async Delivery with Retry").
 func (e *Emitter) EmitArtifactCreated(ev store.CreationEvent) {
+	eventID, createdAt := uuid.NewString(), time.Now().UTC()
+	raw, err := e.encode(ev, eventID, createdAt)
+	if err != nil {
+		// Marshal of this shape cannot fail; log defensively rather than panic.
+		e.log.Error("outboundhook: marshal event", "error", err)
+		return
+	}
+	select {
+	case e.ch <- envelope{id: eventID, createdAt: createdAt, body: raw}:
+	default:
+		e.log.Warn("outboundhook: queue full, dropping event",
+			"event_id", eventID, "queue_cap", queueCap)
+	}
+}
+
+// encode renders the wire body for one event — the exact bytes
+// X-Cairn-Signature covers. It takes the event id and clock as arguments so
+// golden tests can pin those bytes, which is how a payload change is proven
+// additive rather than merely asserted to be.
+func (e *Emitter) encode(ev store.CreationEvent, eventID string, createdAt time.Time) ([]byte, error) {
 	body := eventBody{
 		Source:    "cairn",
 		Kind:      EventKind,
-		EventID:   uuid.NewString(),
-		CreatedAt: time.Now().UTC(),
+		EventID:   eventID,
+		CreatedAt: createdAt,
 		Data: eventData{
 			ID:        ev.PublicID,
 			ShareType: string(ev.ShareType),
@@ -138,18 +158,7 @@ func (e *Emitter) EmitArtifactCreated(ev store.CreationEvent) {
 		t := ev.ExpiresAt.UTC()
 		body.Data.ExpiresAt = &t
 	}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		// Marshal of this shape cannot fail; log defensively rather than panic.
-		e.log.Error("outboundhook: marshal event", "error", err)
-		return
-	}
-	select {
-	case e.ch <- envelope{id: body.EventID, createdAt: body.CreatedAt, body: raw}:
-	default:
-		e.log.Warn("outboundhook: queue full, dropping event",
-			"event_id", body.EventID, "queue_cap", queueCap)
-	}
+	return json.Marshal(body)
 }
 
 // Run delivers queued events until ctx is cancelled. Start it as a goroutine,
