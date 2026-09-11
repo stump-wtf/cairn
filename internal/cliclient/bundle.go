@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // BundleFile is one member of a bundle create request.
@@ -30,6 +31,9 @@ type CreateBundleOptions struct {
 	// (X-Cairn-Ttl-Seconds), zero meaning "let the server assign the
 	// default TTL" — see CreateArtifactOptions.TTLSeconds for the rationale.
 	TTLSeconds int64
+	// Tags are client-asserted routing strings on the bundle (ADR-0018), sent
+	// as the same comma-separated X-Cairn-Tags header a single create uses.
+	Tags []string
 }
 
 // CreateBundle POSTs all files as a single multipart/form-data request to
@@ -74,6 +78,9 @@ func (c *Client) CreateBundle(ctx context.Context, files []BundleFile, opts Crea
 	}
 	if opts.TTLSeconds > 0 {
 		req.Header.Set("X-Cairn-Ttl-Seconds", strconv.FormatInt(opts.TTLSeconds, 10))
+	}
+	if len(opts.Tags) > 0 {
+		req.Header.Set("X-Cairn-Tags", strings.Join(opts.Tags, ","))
 	}
 	resp, err := c.send(req)
 	if err != nil {

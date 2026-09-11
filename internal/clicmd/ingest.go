@@ -31,6 +31,10 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 	if err != nil {
 		return err
 	}
+	tags, err := parseTagFlags(flags.tags)
+	if err != nil {
+		return err
+	}
 
 	// Determine and validate the body *before* checking auth: an empty
 	// stdin or a bad path is a usage error regardless of authentication
@@ -111,6 +115,7 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 		Title:      title,
 		MediaType:  mediaType,
 		TTLSeconds: ttlSeconds,
+		Tags:       tags,
 	})
 	if sp != nil {
 		sp.Stop()

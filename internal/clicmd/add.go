@@ -35,6 +35,10 @@ func runAdd(cmd *cobra.Command, streams IOStreams, flags *globalFlags, configPat
 	if err != nil {
 		return err
 	}
+	tags, err := parseTagFlags(flags.tags)
+	if err != nil {
+		return err
+	}
 
 	// Local file validation (missing path, duplicate path, a directory) is a
 	// usage error and is checked before auth/network, same as the bare
@@ -61,7 +65,7 @@ func runAdd(cmd *cobra.Command, streams IOStreams, flags *globalFlags, configPat
 	defer cancel()
 
 	client := cliclient.New(cfg.APIBaseURL, cfg.Token)
-	opts := cliclient.CreateBundleOptions{Title: flags.title, TTLSeconds: ttlSeconds}
+	opts := cliclient.CreateBundleOptions{Title: flags.title, TTLSeconds: ttlSeconds, Tags: tags}
 
 	var (
 		art         *cliclient.Artifact
