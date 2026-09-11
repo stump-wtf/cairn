@@ -1,7 +1,7 @@
 ---
 status: draft
 date: 2026-09-06
-implements: [ADR-0017]
+implements: [ADR-0017, ADR-0018]
 related: [SPEC-0002, SPEC-0005]
 ---
 
@@ -23,6 +23,10 @@ web upload, CLI, or MCP — Cairn emits an `artifact.created` event over HTTP to
 configured outbound webhook target. The initial consumer is Switchboard, whose
 generic-trust ingest URLs turn the event into a todo on a scoped queue, ringing a
 doorbell on a live agent session. See ADR-0017 for the decision record.
+
+The event also carries the artifact's client-asserted tags, so a consumer can route it
+without reading the body. The main case is an agent handoff: a work order tagged
+`handoff` that a Switchboard rule sends to a worker lane (ADR-0018).
 
 ## Requirements
 
@@ -56,17 +60,54 @@ change the API response.
 
 ### Requirement: Event Payload
 
-The event body SHALL be a JSON object with at minimum: `source` (`"cairn"`), `kind`
-(`"artifact.created"`), `event_id` (unique per event), `created_at` (RFC 3339), and
-a `data` object carrying the artifact's `id`, `share_type`, `title`, web `url`,
-`channel`, `model` (when present), and `expires_at` (when present). The `url` MUST
-be the public web URL of the artifact.
+The event body SHALL be a JSON object with at minimum:
+
+- `source` (`"cairn"`);
+- `kind` (`"artifact.created"`);
+- `event_id` (unique per event);
+- `created_at` (RFC 3339);
+- a `data` object carrying the artifact's `id`, `share_type`, `title`, web `url`,
+  `channel`, `model` (when present), `actor_id` (when present), `expires_at` (when
+  present), `on_behalf_of` (when present), and `tags` (when the artifact has any).
+
+`on_behalf_of` is the connected MCP client's `initialize` name/version. The server
+records it from the session, never from a request field, but the client reports it
+about itself, and it is empty for REST/CLI creates (SPEC-0007). `tags` is the
+artifact's normalized tag list, in stored order (SPEC-0002 REQ "Artifact Tags"). The
+`url` MUST be the public web URL of the artifact.
+
+Payload changes MUST be additive. An existing field's name, meaning, and encoding MUST
+NOT change. A field that does not apply to an artifact MUST be omitted rather than
+emitted empty, so the event for an artifact without the newer fields is byte-identical
+to the event from before those fields were introduced.
+
+`tags` are client-asserted. A consumer MUST NOT base a trust or authorization
+decision on `data.tags`. `data.actor_id` (the authenticated principal) and
+`data.channel` are the server-derived identity fields; `data.on_behalf_of` is
+self-reported harness context.
 
 #### Scenario: Payload shape
 
 - **WHEN** any event is delivered
 - **THEN** the body parses as JSON and contains the fields above with `source` equal
   to `cairn` and `kind` equal to `artifact.created`
+
+#### Scenario: Tags and on-behalf-of carried
+
+- **WHEN** an agent creates an artifact or a bundle over MCP with tags
+- **THEN** `data.tags` MUST equal the stored tags and `data.on_behalf_of` MUST equal
+  the connected MCP client's `initialize` name/version
+
+#### Scenario: Untagged payload unchanged
+
+- **WHEN** an artifact with no tags and no on-behalf-of is created
+- **THEN** the body MUST contain neither a `tags` nor an `on_behalf_of` key, and MUST
+  be byte-identical to the pre-tags payload for the same field values
+
+#### Scenario: Signature covers tags
+
+- **WHEN** a tagged event is delivered with `CAIRN_OUTBOUND_WEBHOOK_SECRET` set
+- **THEN** `X-Cairn-Signature` MUST verify over the raw body, `data.tags` included
 
 ### Requirement: Delivery Targets from Configuration
 
@@ -141,8 +182,11 @@ window. Restart behavior follows ADR-0017: queued events are not persisted.
 - **Security headers**: Deliveries are POSTs with `Content-Type: application/json`;
   no HTML rendering is involved. TLS is required for non-localhost targets.
 - **Request body size limits**: Event bodies are server-generated and bounded by the
-  artifact metadata they carry (never artifact content); no inbound body limit
-  changes.
+  artifact metadata they carry (never artifact content). Tags add at most 32 × 64
+  bytes plus JSON punctuation. No inbound body limit changes.
+- **Untrusted fields**: `data.tags` is client-asserted and MUST NOT drive a
+  consumer's trust or authorization decision (ADR-0018). A receiver of a handoff
+  treats it as semi-trusted and guards against prompt injection in the artifact body.
 - **CSRF protection**: Not applicable — no browser-facing state change; targets are
   machine consumers with token/HMAC verification.
 - **Redirect validation**: The delivery client MUST NOT follow HTTP redirects to
