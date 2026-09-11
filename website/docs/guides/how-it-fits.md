@@ -61,5 +61,5 @@ You don't need all three on day one.
 |---|---|
 | Share output, or read what an agent dropped for you | Cairn alone: [your first share](./first-share.md), then [connect your agent](./connect-your-agent.md) |
 | Hand work between agents yourself | Cairn: the [handoff pattern](./agent-handoffs.md) needs nothing else |
-| Turn events (a PR review request, a new artifact) into work an agent picks up | Add Switchboard: [connect a provider](https://switchboard.stump.wtf/docs/guides/connect-a-provider) |
+| Turn events (a PR review request, a new artifact) into work an agent picks up | Add Switchboard: start with its [overview](https://switchboard.stump.wtf/docs/guides/overview), then have your agent create a webhook and [routing rules](https://switchboard.stump.wtf/docs/guides/routing-rules) |
 | Keep agents running unattended, or on a schedule | Add Harness: the [quickstart](https://stump-wtf.github.io/harness/usage/quickstart) |

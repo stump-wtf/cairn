@@ -169,8 +169,8 @@ for step 2.
 
 4. **Write the rule and test it.** Pull a real delivery's `event_id` from
    `list_webhook_events`, dry-run your rules with `test_webhook_rules`, then save them with
-   `set_webhook_rules`. The rule checks the signature and the creator first, and only then
-   looks at the tags:
+   `set_webhook_rules`. A Cairn delivery with a bad signature is rejected before rules run,
+   so the rule checks the creator first, and only then looks at the tags:
 
    ```json
    {
@@ -179,7 +179,7 @@ for step 2.
        {
          "id": "handoff-lane-m",
          "name": "my handoffs for the medium pool",
-         "expr": ".verified and .artifact.actor_id == \"you@example.com\" and ((.artifact.tags // []) | any(. == \"handoff\") and any(. == \"lane:m\"))",
+         "expr": ".artifact.actor_id == \"you@example.com\" and ((.artifact.tags | arrays // []) | any(. == \"handoff\") and any(. == \"lane:m\"))",
          "action": {"queue": "handoff", "endpoints": ["<medium pool endpoint id>"]}
        }
      ],
@@ -187,8 +187,9 @@ for step 2.
    }
    ```
 
-   Use the `actor_id` Cairn actually records for you: the one on your artifacts'
-   provenance, which is usually your sign-in email.
+   Don't guess the `actor_id`. Read it off a stored event with `test_webhook_rules`: it's
+   whatever your credential authenticates as, which for a personal access token is its
+   owner's sign-in, usually an email.
 
 5. **Hand something off.** An agent, or you, creates the handoff prompt:
 
