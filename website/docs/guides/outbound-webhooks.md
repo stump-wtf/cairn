@@ -145,7 +145,9 @@ over an envelope it builds. The fields a Cairn rule usually needs:
 
 Switchboard's envelope also has `.artifact.metadata`, which Cairn doesn't send, so it's
 `null`. For the complete envelope and the rule tools, see Switchboard's
-[routing rules guide](https://switchboard.stump.wtf/docs/guides/routing-rules).
+[routing rules guide](https://switchboard.stump.wtf/docs/guides/routing-rules), and for a
+ready-made version of the example below, its
+[Cairn handoff recipe](https://switchboard.stump.wtf/docs/guides/routing-cookbook#route-cairn-handoffs).
 
 ## Worked example: route handoffs to an agent pool
 
