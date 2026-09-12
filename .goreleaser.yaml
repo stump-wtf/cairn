@@ -55,20 +55,23 @@ archives:
       - goos: windows
         formats:
           - zip
-    # Ship the binary and nothing else. Left unset, goreleaser's default picks
-    # up README*/CHANGELOG*/LICENSE* from the repo root — so a publicly
-    # downloadable tarball carried this PRIVATE repo's README, whose links point
-    # at docs/adrs/, docs/openspec/ and docs/DESIGN.md. Those are dead links for
-    # anyone who downloads the archive, and they advertise the shape of a design
-    # record that is deliberately not public. `none*` is the documented idiom for
-    # an empty file set: a glob that matches nothing beats omitting the key,
-    # because omitting it is what re-enables the default.
+    # Ship the binary and the CLI's licence — nothing else. Left unset,
+    # goreleaser's default picks up README*/CHANGELOG*/LICENSE* from the repo
+    # root, and a publicly downloadable tarball then carried this PRIVATE
+    # repo's README, whose links point at docs/adrs/, docs/openspec/ and
+    # docs/DESIGN.md: dead links for whoever downloads it, and an
+    # advertisement for a design record that is deliberately not public. The
+    # list below is explicit for that reason — omitting the key is what
+    # re-enables the default.
     #
-    # When the CLI gets a LICENSE (it has none today — an unlicensed public
-    # binary is "all rights reserved"), add it here. That is the one file that
-    # SHOULD travel with a distributed binary.
+    # LICENSE-CLI travels with the binary because a distributed binary should
+    # carry its grant. It is deliberately NOT a root LICENSE, and that
+    # distinction is the whole point: only the client is MIT. Its first line
+    # names what it covers and says the server and everything else in this
+    # repository are proprietary and not licensed under it. A bare root
+    # LICENSE would read as covering the server that is being sold.
     files:
-      - none*
+      - LICENSE-CLI
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
