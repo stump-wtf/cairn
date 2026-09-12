@@ -117,7 +117,14 @@ curl -sS -H "Authorization: Bearer $TOKEN" https://cairn.example/v1/bin
 
 A healthy instance answers `200` on `/healthz`, returns `201` from step 2, serves
 step 3 with no credential, and produces a checksum in step 4 identical to the one
-step 2 returned. Two useful negative checks: an unregistered bearer token must get
+step 2 returned.
+
+**Check the instance is yours.** The `url` in step 2's response must start with
+*your* `CAIRN_BASE_URL`. If it names somebody else's host, that value is wrong or
+unset, and every link your instance mints — including the ones it sends to any
+outbound webhook target — points at their deployment instead of yours. Fix the
+variable and restart before sharing anything; artifacts already created keep the
+old URL until their id is rotated. Two useful negative checks: an unregistered bearer token must get
 `401`, and an unknown artifact id must get `404 not_found` rather than anything
 that distinguishes "wrong id" from "not yours".
 
