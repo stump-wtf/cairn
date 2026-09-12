@@ -55,20 +55,19 @@ archives:
       - goos: windows
         formats:
           - zip
-    # Ship the binary and nothing else. Left unset, goreleaser's default picks
-    # up README*/CHANGELOG*/LICENSE* from the repo root — so a publicly
-    # downloadable tarball carried this PRIVATE repo's README, whose links point
-    # at docs/adrs/, docs/openspec/ and docs/DESIGN.md. Those are dead links for
-    # anyone who downloads the archive, and they advertise the shape of a design
-    # record that is deliberately not public. `none*` is the documented idiom for
-    # an empty file set: a glob that matches nothing beats omitting the key,
-    # because omitting it is what re-enables the default.
+    # Ship the binary and the licence — nothing else. Left unset, goreleaser's
+    # default sweeps README*/CHANGELOG*/LICENSE* from the repo root, and a
+    # downloadable tarball then carried this repo's README, whose links point at
+    # docs/adrs/, docs/openspec/ and docs/DESIGN.md — dead links for whoever
+    # unpacks it, since none of that travels in the archive. The key stays
+    # explicitly listed for that reason: omitting it is what re-enables the
+    # default, so an empty list and an absent key are not the same thing.
     #
-    # When the CLI gets a LICENSE (it has none today — an unlicensed public
-    # binary is "all rights reserved"), add it here. That is the one file that
-    # SHOULD travel with a distributed binary.
+    # LICENSE travels with the binary because a distributed binary should carry
+    # its grant rather than leave the recipient guessing. Cairn is MIT, and this
+    # is the whole grant — not a subset of one, and not scoped to the client.
     files:
-      - none*
+      - LICENSE
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
