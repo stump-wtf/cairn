@@ -108,13 +108,8 @@ There's no release download or Homebrew formula for the CLI yet, but you can ins
 straight from the module:
 
 ```bash
-go install github.com/stump-wtf/cairn/cmd/cairn@main
+go install github.com/stump-wtf/cairn/cmd/cairn@latest
 ```
-
-`@main`, not `@latest`: the newest tag predates the module's move to
-`github.com/stump-wtf/cairn`, so `@latest` resolves to a version whose `go.mod` declares
-the old path and the install fails. The first tag cut after the move fixes that, and this
-note goes away with it.
 
 If you'd rather not build anything, `curl` and your agent work against the hosted service
 just as well.
