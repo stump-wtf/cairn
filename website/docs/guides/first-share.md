@@ -109,11 +109,9 @@ there is, use `curl` or your agent. If someone has given you a build, the comman
 work against the hosted service.
 :::
 
-The CLI's built-in default server isn't the hosted service, so point it at Cairn first:
+The CLI already points at the hosted service, so sign in and push:
 
 ```bash
-export CAIRN_URL=https://cairn.stump.wtf
-
 cairn login          # paste your token at the hidden prompt
 cairn whoami
 

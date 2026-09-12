@@ -66,9 +66,9 @@ func NewRootCmd(streams IOStreams, configPathOverride string) *cobra.Command {
 
 	root := &cobra.Command{
 		Use:   "cairn [file...]",
-		Short: "cairn is pbcopy for cairn.sh: pipe or pass files in, get a shareable link back",
+		Short: "cairn is pbcopy for Cairn: pipe or pass files in, get a shareable link back",
 		Long: `cairn pipes or passes content and files in and prints a shareable,
-agent-native cairn.sh/<id> link back — printed to stdout and, on an
+agent-native short link back — printed to stdout and, on an
 interactive terminal, copied to the clipboard.
 
   cat notes.md | cairn        create one artifact from stdin
