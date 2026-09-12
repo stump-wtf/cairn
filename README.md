@@ -30,8 +30,20 @@ Cross-platform release binaries aren't published yet (tracked for a future
 `goreleaser` job); until then, install straight from the module:
 
 ```bash
-go install github.com/stump-wtf/cairn/cmd/cairn@latest
+go install github.com/stump-wtf/cairn/cmd/cairn@main
 ```
+
+`@main`, not `@latest`, and the distinction currently matters. The newest tag is
+`v0.0.4`, which predates this module moving to `github.com/stump-wtf/cairn`, so
+its `go.mod` still declares the old path and `@latest` fails:
+
+```
+module declares its path as: github.com/joestump/cairn
+        but was required as: github.com/stump-wtf/cairn
+```
+
+The first tag cut after the move makes `@latest` work, and this note should go
+away with it.
 
 This puts a `cairn` binary in `$(go env GOPATH)/bin` (make sure that's on your
 `PATH`). Building from a checkout instead:
