@@ -4,13 +4,21 @@ Cairn is a single static Go binary (`cairnd`) plus **PostgreSQL** for metadata a
 an **S3-compatible object store** for artifact bodies (ADR-0008, ADR-0012). This
 directory ships a compose bring-up behind Caddy with automatic HTTPS.
 
-> **Can you run this today?** Not yet, if you are outside the network this repo
-> lives on. `docker-compose.prod.yml` *builds* the image from source, and the
-> build needs both this repository and `gitea.stump.rocks/stump.wtf/md2a2ui`,
-> which is not reachable from the public internet. There is also no published
-> container image to pull instead. Until either a public image or a public build
-> exists, this file describes a deployment only someone with network access can
-> perform.
+> **There is no image to pull.** The compose file *builds* `cairnd` from this
+> repository, which works from anywhere — but nothing is published to a public
+> container registry, and there are no tagged releases or prebuilt binaries yet.
+> Building from source is the only route today.
+
+## Get the source
+
+```sh
+git clone https://github.com/stump-wtf/cairn.git
+cd cairn
+```
+
+No credentials needed: the repository is public and MIT-licensed. The build
+pulls its dependencies from the public Go module proxy, so nothing here depends
+on access to a private network.
 
 ## What it needs
 
