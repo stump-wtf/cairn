@@ -24,9 +24,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/id"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/id"
 )
 
 // Category is an OPEN set of span categories: any non-empty string is accepted

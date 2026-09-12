@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/joestump/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/artifact"
 )
 
 // TestArtifactTagsConstraintMatchesDomain pins the tag-count ceiling to one

@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/joestump/cairn/internal/trajectory"
+	"github.com/stump-wtf/cairn/internal/trajectory"
 )
 
 // handleRunStream is the live span SSE endpoint (GET /v1/runs/{id}/stream,

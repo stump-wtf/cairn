@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/session"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/session"
 )
 
 // TestSafeNext proves the open-redirect defense: only single-slash-rooted

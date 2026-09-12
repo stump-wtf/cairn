@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joestump/cairn/internal/outboundhook"
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/outboundhook"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // Governing: ADR-0017 (Outbound Webhooks), SPEC-0012 REQ "Event Emission on

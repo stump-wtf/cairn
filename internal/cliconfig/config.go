@@ -18,7 +18,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/joestump/cairn/internal/cliexit"
+	"github.com/stump-wtf/cairn/internal/cliexit"
 )
 
 // DefaultAPIBaseURL is the built-in default server, used when no flag,

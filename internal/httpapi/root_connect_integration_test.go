@@ -158,7 +158,7 @@ func TestIntegrationSettingsPageRequiresAuth(t *testing.T) {
 		"annotations:write",
 		"http://cairn.test/mcp",
 		"OAuth 2.1",
-		"go install github.com/joestump/cairn/cmd/cairn@latest",
+		"go install github.com/stump-wtf/cairn/cmd/cairn@latest",
 		"cairn login",
 		"API tokens",
 		"Account",

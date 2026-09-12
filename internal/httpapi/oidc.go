@@ -26,7 +26,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"github.com/joestump/cairn/internal/session"
+	"github.com/stump-wtf/cairn/internal/session"
 )
 
 const (

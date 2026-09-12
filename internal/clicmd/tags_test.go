@@ -9,8 +9,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/joestump/cairn/internal/cliclient"
-	"github.com/joestump/cairn/internal/cliexit"
+	"github.com/stump-wtf/cairn/internal/cliclient"
+	"github.com/stump-wtf/cairn/internal/cliexit"
 )
 
 // Governing: ADR-0018 (Client-Asserted Artifact Tags), SPEC-0008 REQ "Pipe and

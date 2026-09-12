@@ -17,8 +17,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/joestump/cairn/internal/outboundhook"
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/outboundhook"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // Governing: ADR-0018 (Client-Asserted Artifact Tags), SPEC-0002 REQ "Artifact

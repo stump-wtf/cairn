@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // tagHeader carries a comma-separated tag list on a REST create. The comma is a

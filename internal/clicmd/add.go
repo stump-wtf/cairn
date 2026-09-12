@@ -7,8 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/joestump/cairn/internal/cliclient"
-	"github.com/joestump/cairn/internal/cliexit"
+	"github.com/stump-wtf/cairn/internal/cliclient"
+	"github.com/stump-wtf/cairn/internal/cliexit"
 )
 
 // newAddCmd builds `cairn add f1 f2 ...` (SPEC-0008 "Bundle Creation").

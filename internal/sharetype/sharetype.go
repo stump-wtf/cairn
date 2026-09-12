@@ -24,10 +24,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
 
-	"github.com/joestump/cairn/internal/code"
+	"github.com/stump-wtf/cairn/internal/code"
 )
 
 // ShareType is the single base interface every kind satisfies. A type sees only

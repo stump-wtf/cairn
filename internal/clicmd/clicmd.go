@@ -26,7 +26,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/joestump/cairn/internal/cliconfig"
+	"github.com/stump-wtf/cairn/internal/cliconfig"
 )
 
 // IOStreams lets tests substitute stdin/stdout/stderr instead of the

@@ -12,10 +12,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/db"
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/db"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/objectstore"
 )
 
 // newTestStore returns a Store backed by the Postgres DSN in

@@ -30,14 +30,14 @@ Cross-platform release binaries aren't published yet (tracked for a future
 `goreleaser` job); until then, install straight from the module:
 
 ```bash
-go install github.com/joestump/cairn/cmd/cairn@latest
+go install github.com/stump-wtf/cairn/cmd/cairn@latest
 ```
 
 This puts a `cairn` binary in `$(go env GOPATH)/bin` (make sure that's on your
 `PATH`). Building from a checkout instead:
 
 ```bash
-git clone https://github.com/joestump/cairn && cd cairn
+git clone https://github.com/stump-wtf/cairn && cd cairn
 go build -o cairn ./cmd/cairn
 ```
 

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/session"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/session"
 )
 
 // The minimal web session surface (SPEC-0001, ADR-0004). A browser logs in once

@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/joestump/cairn/internal/cliconfig"
+	"github.com/stump-wtf/cairn/internal/cliconfig"
 )
 
 // newLogoutCmd builds `cairn logout` (SPEC-0008 "Authentication and Session

@@ -30,9 +30,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/joestump/cairn/internal/clicmd.Version={{.Version}}
-      - -X github.com/joestump/cairn/internal/clicmd.Commit={{.Commit}}
-      - -X github.com/joestump/cairn/internal/clicmd.Date={{.Date}}
+      - -X github.com/stump-wtf/cairn/internal/clicmd.Version={{.Version}}
+      - -X github.com/stump-wtf/cairn/internal/clicmd.Commit={{.Commit}}
+      - -X github.com/stump-wtf/cairn/internal/clicmd.Date={{.Date}}
     hooks:
       # Gate publication itself, not just CI. cairn's source is private and the
       # hosted service may be sold, so a release carrying the server would be

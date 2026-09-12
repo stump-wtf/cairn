@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // ttlPattern loosely matches web.go's humanizeUntil output ("in 29d", "in

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // TestUpdateVisibilityOwnerOnly exercises the SPEC-0009 REQ "Owner-Only

@@ -57,7 +57,7 @@ test('a bundle that links nowhere external passes', () => {
 test('a link to a repository host fails, naming the page and the URL', () => {
   const outDir = bundle({
     'docs/decisions/ADR-0009.html':
-      '<a href="https://github.com/joestump/cairn/blob/main/docs/adrs/ADR-0009.md">Source</a>',
+      '<a href="https://github.com/stump-wtf/cairn/blob/main/docs/adrs/ADR-0009.md">Source</a>',
   });
   assert.throws(
     () => assertNoRepositoryLinks({outDir, siteUrl: SITE_URL}),
@@ -126,7 +126,7 @@ test('`src` is scanned as well as `href`', () => {
 test('non-HTML files are ignored', () => {
   const {files, violations} = scan({
     'index.html': '<a href=/cairn/>Home</a>',
-    'sitemap.xml': '<loc>https://github.com/joestump/cairn</loc>',
+    'sitemap.xml': '<loc>https://github.com/stump-wtf/cairn</loc>',
   });
   assert.equal(files, 1);
   assert.deepEqual(violations, []);
@@ -149,7 +149,7 @@ test('externalLinksIn ignores relative, anchor, data and mailto targets', () => 
 
 test('externalLinksIn reads meta content, so a forge URL cannot hide in a meta tag', () => {
   const found = externalLinksIn(
-    '<meta property="og:see_also" content="https://github.com/joestump/cairn">',
+    '<meta property="og:see_also" content="https://github.com/stump-wtf/cairn">',
   );
   assert.deepEqual(
     found.map((link) => [link.attr, link.host]),
@@ -191,7 +191,7 @@ test('an editUrl on the docs preset fails, naming the configuration key', () => 
         presets: [
           [
             'classic',
-            {docs: {editUrl: 'https://github.com/joestump/cairn/tree/main/website/'}},
+            {docs: {editUrl: 'https://github.com/stump-wtf/cairn/tree/main/website/'}},
           ],
         ],
       }),

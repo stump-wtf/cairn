@@ -20,12 +20,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/joestump/cairn/internal/config"
-	"github.com/joestump/cairn/internal/db"
-	"github.com/joestump/cairn/internal/httpapi"
-	"github.com/joestump/cairn/internal/objectstore"
-	"github.com/joestump/cairn/internal/outboundhook"
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/config"
+	"github.com/stump-wtf/cairn/internal/db"
+	"github.com/stump-wtf/cairn/internal/httpapi"
+	"github.com/stump-wtf/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/outboundhook"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 func main() {

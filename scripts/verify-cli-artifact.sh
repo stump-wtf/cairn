@@ -37,7 +37,7 @@
 
 set -euo pipefail
 
-MODULE="github.com/joestump/cairn"
+MODULE="github.com/stump-wtf/cairn"
 
 # The complete set of this module's packages the CLI is allowed to reach.
 # Adding a line here is a deliberate act: it must be client-only code.

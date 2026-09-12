@@ -3,7 +3,7 @@ package artifact
 import (
 	"strings"
 
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // Tags are short, flat strings a creator attaches to an artifact so a

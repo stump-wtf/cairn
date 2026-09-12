@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joestump/cairn/internal/oauth"
-	"github.com/joestump/cairn/internal/objectstore"
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/oauth"
+	"github.com/stump-wtf/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // The OAuth 2.1 authorization-server integration suite (SPEC-0007, ADR-0004,

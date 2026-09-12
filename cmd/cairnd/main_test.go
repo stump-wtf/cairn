@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/joestump/cairn/internal/config"
+	"github.com/stump-wtf/cairn/internal/config"
 )
 
 // Governing: ADR-0017 (Outbound Webhooks), SPEC-0012 REQ "Event Emission on

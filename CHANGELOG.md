@@ -148,8 +148,8 @@ The MVP: trajectory shares end to end on a composable share-type SDK.
   slot, the Bin listing, generic-file viewer, CSRF protection. (#10, #12)
 - **Minimal web session auth and login.** (#11)
 
-[Unreleased]: https://github.com/joestump/cairn/compare/v0.0.4...HEAD
-[0.0.4]: https://github.com/joestump/cairn/compare/v0.0.3...v0.0.4
-[0.0.3]: https://github.com/joestump/cairn/compare/v0.0.2...v0.0.3
-[0.0.2]: https://github.com/joestump/cairn/compare/v0.0.1...v0.0.2
-[0.0.1]: https://github.com/joestump/cairn/releases/tag/v0.0.1
+[Unreleased]: https://github.com/stump-wtf/cairn/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/stump-wtf/cairn/compare/v0.0.3...v0.0.4
+[0.0.3]: https://github.com/stump-wtf/cairn/compare/v0.0.2...v0.0.3
+[0.0.2]: https://github.com/stump-wtf/cairn/compare/v0.0.1...v0.0.2
+[0.0.1]: https://github.com/stump-wtf/cairn/releases/tag/v0.0.1

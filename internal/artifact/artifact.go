@@ -16,7 +16,7 @@ package artifact
 import (
 	"time"
 
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // ShareType classifies an artifact and (via the registry in SPEC-0002 story #9)

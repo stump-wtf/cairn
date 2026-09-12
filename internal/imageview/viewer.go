@@ -39,7 +39,7 @@ import (
 	"html/template"
 	"strings"
 
-	"github.com/joestump/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/artifact"
 )
 
 // fragmentTmpl is the whole fragment: the image inside its pin-drop frame (an

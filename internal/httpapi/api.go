@@ -11,16 +11,16 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/joestump/cairn/internal/annotation"
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/mcpsession"
-	"github.com/joestump/cairn/internal/oauth"
-	"github.com/joestump/cairn/internal/pat"
-	"github.com/joestump/cairn/internal/session"
-	"github.com/joestump/cairn/internal/sharetype"
-	"github.com/joestump/cairn/internal/store"
-	"github.com/joestump/cairn/internal/trajectory"
-	"github.com/joestump/cairn/internal/webhook"
+	"github.com/stump-wtf/cairn/internal/annotation"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/mcpsession"
+	"github.com/stump-wtf/cairn/internal/oauth"
+	"github.com/stump-wtf/cairn/internal/pat"
+	"github.com/stump-wtf/cairn/internal/session"
+	"github.com/stump-wtf/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/trajectory"
+	"github.com/stump-wtf/cairn/internal/webhook"
 )
 
 // Config tunes the REST adapter.

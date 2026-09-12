@@ -33,7 +33,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joestump/cairn/internal/oauth"
+	"github.com/stump-wtf/cairn/internal/oauth"
 )
 
 // The three grantable scopes, re-exported from internal/oauth so callers

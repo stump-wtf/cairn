@@ -15,8 +15,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
 // #67 / #136 — The Bin lenses partition the bin instead of overlapping it.

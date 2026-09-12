@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // Governing: ADR-0018 (Client-Asserted Artifact Tags), SPEC-0002 REQ "Artifact
