@@ -160,9 +160,12 @@ func TestIntegrationSettingsPageRequiresAuth(t *testing.T) {
 		"OAuth 2.1",
 		// The card used to advertise `go install github.com/joestump/cairn/...`,
 		// a module that is not public and never resolved, alongside a link to a
-		// README that 404s. It now points at the install guide, which is served
-		// from this same origin (#184).
-		"CLI install guide",
+		// README that 404s. It now deep-links the guide's CLI section, served
+		// from this same origin (#184). Labelled "cairn CLI guide" rather than
+		// "install guide": until the binaries are published that section still
+		// says the CLI is not publicly distributed, and a link must not promise
+		// what its target does not yet deliver.
+		"cairn CLI guide",
 		"cairn login",
 		"API tokens",
 		"Account",
