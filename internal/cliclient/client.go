@@ -116,7 +116,7 @@ type envelope struct {
 // business logic: callers build request bodies and decode success payloads;
 // Client only attaches auth, performs the round trip, and maps failures.
 type Client struct {
-	// BaseURL is the resolved API origin, e.g. https://cairn.sh (no
+	// BaseURL is the resolved API origin, e.g. https://cairn.stump.wtf (no
 	// trailing slash, no /v1 suffix — request paths supply that).
 	BaseURL string
 	// Token is the bearer credential attached to every request

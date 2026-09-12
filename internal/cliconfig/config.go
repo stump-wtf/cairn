@@ -63,7 +63,7 @@ type Config struct {
 
 // fileConfig is the on-disk TOML shape at ~/.config/cairn/config.toml:
 //
-//	url = "https://cairn.sh"
+//	url = "https://cairn.stump.wtf"
 //	token = "..."
 type fileConfig struct {
 	URL   string `toml:"url"`
