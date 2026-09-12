@@ -33,6 +33,19 @@ builds:
       - -X github.com/joestump/cairn/internal/clicmd.Version={{.Version}}
       - -X github.com/joestump/cairn/internal/clicmd.Commit={{.Commit}}
       - -X github.com/joestump/cairn/internal/clicmd.Date={{.Date}}
+    hooks:
+      # Gate publication itself, not just CI. cairn's source is private and the
+      # hosted service may be sold, so a release carrying the server would be
+      # the entire exposure in one artifact. goreleaser aborts the release if a
+      # post hook fails, which makes this the last place the check can still
+      # prevent bytes from leaving rather than merely reporting on them.
+      #
+      # Note the -s -w above: the symbol table is stripped, so a `go tool nm`
+      # check here would report "no server symbols" for a binary containing the
+      # whole server. The script uses the import graph plus `strings` with a
+      # positive control for exactly that reason.
+      post:
+        - scripts/verify-cli-artifact.sh "{{ .Path }}"
 
 archives:
   - id: default
@@ -76,9 +89,17 @@ changelog:
       - Merge branch
 
 release:
+  # The CLI publishes to stump-wtf/cairn-cli, a PUBLIC repo that carries only a
+  # README, a LICENSE and release assets — never source. This repo's own GitHub
+  # mirror (stump-wtf/cairn) is private and had zero releases, so the archives
+  # goreleaser built were addressed somewhere nobody outside the org could read
+  # them. That is the whole reason the CLI had no install path (#183).
+  #
+  # goreleaser publishing to a repo other than the one it builds from is the
+  # point: the binaries become downloadable without the source moving.
   github:
     owner: stump-wtf
-    name: cairn
+    name: cairn-cli
   # Releases are cut from v* tags and named by the tag (release.yml creates the
   # release from the CHANGELOG section; goreleaser attaches binaries to it).
   draft: false

@@ -557,3 +557,162 @@ jobs:
       # same value as its default, so a local build is not wrong either.
       site_url: https://stump-wtf.pages.stump.rocks
     secrets: inherit
+
+  # ---- 11. tag gate --------------------------------------------------------
+  # The release counterpart to main-only above: stated once as a job, so the
+  # two release stages just `needs: [tag-only]` and the fence cannot drift
+  # between them. A tag can be pushed at any commit, so both stages sit behind
+  # the same build + integration graph the rest of the pipeline uses rather
+  # than releasing on trust.
+  tag-only:
+    needs: [build, integration]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate
+        run: echo "tagged build is green — releasing ${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---- 12. release ---------------------------------------------------------
+  # Builds the cross-platform `cairn` CLI and publishes it to the PUBLIC
+  # stump-wtf/cairn-cli repo (see .goreleaser.yaml). Only the client ships:
+  # the server is a container image built by the image job above.
+  #
+  # This runs on Gitea, not the GitHub mirror, because this runner is the only
+  # host that can reach both sides — Gitea over the LAN and github.com
+  # outbound. stump.wtf/msgbrowse learned that the expensive way: the same step
+  # on a GitHub-hosted runner died at curl exit 28 on every tag for six
+  # releases, and nobody noticed because the release itself went green.
+  release:
+    needs: [tag-only]
+    runs-on: ubuntu-latest
+    env:
+      GH_RELEASE_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
+    steps:
+      - name: Require the release token
+        # Deliberately fatal, and deliberately not a job-level `if:` — secrets
+        # are not available there, so the env indirection is the only way to
+        # test one. The image job above skips quietly when unconfigured; this
+        # one must not. A tag that publishes nothing and still reports green is
+        # the failure mode that leaves `brew` serving a stale version for weeks.
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_RELEASE_TOKEN:-}" ]; then
+            echo "::error::GH_RELEASE_TOKEN is not set. Create a GitHub PAT with" \
+                 "contents:write on stump-wtf/cairn-cli and add it as an org or" \
+                 "repo Actions secret named GH_RELEASE_TOKEN. Without it the tag" \
+                 "lands but nothing is published."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          # goreleaser derives the version and changelog from tag history, so a
+          # shallow clone degrades rather than failing: it logs "running against
+          # a shallow clone" and computes an empty changelog.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify the CLI imports no server code
+        # The import-graph gate, run before anything is built. goreleaser also
+        # runs this script as a post-build hook against each compiled binary
+        # (.goreleaser.yaml), so the artifact is checked as well as the graph.
+        run: make verify-cli
+
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          # goreleaser reads GITHUB_TOKEN; the value is the cairn-cli PAT.
+          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
+
+  # ---- 13. Homebrew tap bump ----------------------------------------------
+  # Bumps stump.wtf/homebrew-tap from the assets the release job just
+  # published. cairn's formula is a BINARY formula — unlike harness, msgbrowse
+  # and reduit, which build from a public source tarball, an option cairn does
+  # not have — so the formula pins four url/sha256 pairs and this job rewrites
+  # all of them.
+  tap-bump:
+    needs: [release]
+    runs-on: ubuntu-latest
+    env:
+      TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
+      GH_REPO_URL: https://github.com/stump-wtf/cairn-cli
+    steps:
+      - name: Require the tap push token
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_PUSH_TOKEN:-}" ]; then
+            echo "::error::TAP_PUSH_TOKEN is not set. Create a Gitea PAT with" \
+                 "write:repository on stump.wtf/homebrew-tap and add it as an" \
+                 "org or repo Actions secret named TAP_PUSH_TOKEN."
+            exit 1
+          fi
+
+      - name: Wait for the published assets
+        # HEAD the download URLs rather than the API: asset URLs are not
+        # subject to the unauthenticated API rate limit, and a 200 means the
+        # bytes are actually fetchable, which is what the tap needs to be true.
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          { echo "TAG=$TAG"; echo "VER=$VER"; } >> "$GITHUB_ENV"
+          for i in $(seq 1 40); do
+            ok=1
+            for pair in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
+              url="${GH_REPO_URL}/releases/download/${TAG}/cairn_${VER}_${pair}.tar.gz"
+              curl -sfIL --max-time 30 -o /dev/null "$url" || ok=0
+            done
+            [ "$ok" -eq 1 ] && { echo "all four archives present"; exit 0; }
+            sleep 15
+          done
+          echo "::error::${TAG} assets never appeared on ${GH_REPO_URL} after 10m."
+          exit 1
+
+      - name: Download, checksum, and bump the tap
+        run: |
+          set -euo pipefail
+          git clone -q "https://gitea.stump.rocks/stump.wtf/homebrew-tap.git" tap
+          F="tap/Formula/cairn.rb"
+
+          # The formula interpolates v#{version} into its urls, so a bump only
+          # has to rewrite the version line and the four sha256 lines. Each
+          # sha256 carries a trailing arch marker (`# darwin_arm64`), so a
+          # rewrite cannot land on the wrong architecture — which is exactly
+          # what a positional edit would get wrong, silently, and ship.
+          sed -i -E "s|^(  version \")[^\"]+(\")|\1${VER}\2|" "$F"
+          grep -q "version \"${VER}\"" "$F"
+
+          for pair in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
+            url="${GH_REPO_URL}/releases/download/${TAG}/cairn_${VER}_${pair}.tar.gz"
+            sha="$(curl -sfL --retry 3 --retry-all-errors "$url" | sha256sum | cut -d' ' -f1)"
+            if [ -z "$sha" ]; then
+              echo "::error::empty checksum for ${pair} — refusing to write the formula"
+              exit 1
+            fi
+            sed -i -E "s|^([[:space:]]*sha256 \")[0-9a-f]{64}(\" # ${pair})\$|\1${sha}\2|" "$F"
+            # sed exits 0 when its pattern misses, so assert the edit landed
+            # rather than trusting it. A missed rewrite leaves the previous
+            # release's bytes pinned, and `brew install` then fails the
+            # checksum for every user rather than for us.
+            grep -q "sha256 \"${sha}\" # ${pair}" "$F"
+          done
+
+          cd tap
+          git config user.name "joestump-agent"
+          git config user.email "joestump-agent@noreply.stump.rocks"
+          if git diff --quiet; then
+            echo "tap already at v${VER} — nothing to push"
+          else
+            git commit -aqm "toil(cairn): bump formula to v${VER} (automated tap bump)"
+            git -c http.extraheader="Authorization: token ${TAP_PUSH_TOKEN}" \
+              push -q origin HEAD:main
+            echo "tap bumped to v${VER}" >> "$GITHUB_STEP_SUMMARY"
+          fi
