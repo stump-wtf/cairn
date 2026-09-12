@@ -113,8 +113,15 @@ git clone https://github.com/stump-wtf/claude-plugin-cairn.git ~/src/claude-plug
 Add to that list rather than replacing it, and note that `~` is expanded for you. Crush
 also scans a few directories with no configuration at all, among them
 `~/.config/crush/skills` and `~/.agents/skills`, plus `.crush/skills` and `.agents/skills`
-inside the project you're working in. Putting the skill's folder in one of those works
+inside the project you're working in. Copying the skill's folder into one of those works
 too, and the project ones are handy when only one repo should get it.
+
+Copy it, though — don't symlink it. Crush resolves symlinks before deciding whether a file
+sits inside a configured skills directory, so a symlinked skill still loads, while the
+files it wants to read resolve back to wherever you cloned them, outside that directory.
+Those reads then get truncated and ask for permission, which looks like the skill
+misbehaving rather than a path problem. To keep the files where you cloned them, add that
+path to `skills_paths` instead.
 
 ## Did the skill load?
 
