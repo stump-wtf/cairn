@@ -88,26 +88,39 @@ changelog:
       - Merge branch
 
 release:
-  # The CLI publishes to stump-wtf/cairn-cli, a PUBLIC repo that carries only a
-  # README, a LICENSE and release assets — never source. This repo's own GitHub
-  # mirror (stump-wtf/cairn) is private and had zero releases, so the archives
-  # goreleaser built were addressed somewhere nobody outside the org could read
-  # them. That is the whole reason the CLI had no install path (#183).
+  # Binaries publish to stump-wtf/cairn-cli. goreleaser targeting a repo other
+  # than the one it builds from is the point: archives become downloadable
+  # without depending on where the source lives.
   #
-  # goreleaser publishing to a repo other than the one it builds from is the
-  # point: the binaries become downloadable without the source moving.
+  # ONE TAG, TWO WRITERS, TWO DESTINATIONS:
+  #   * this config, run by the Gitea pipeline -> binaries to cairn-cli, then
+  #     the Homebrew tap bump
+  #   * .github/workflows/release.yml           -> the ghcr.io image, nothing else
+  #
+  # That split replaced a real collision. release.yml used to run goreleaser
+  # against THIS file, and tags propagate to the mirror, so a single v* tag
+  # fired both runners writing identical asset names — with
+  # replace_existing_artifacts below turning the collision into a silent
+  # overwrite rather than an error. Whichever finished last won, and nothing
+  # reported a problem.
   github:
     owner: stump-wtf
     name: cairn-cli
-  # Releases are cut from v* tags and named by the tag (release.yml creates the
-  # release from the CHANGELOG section; goreleaser attaches binaries to it).
   draft: false
   prerelease: auto
   name_template: "v{{.Version}}"
-  # CHANGELOG.md is the single source of release notes — release.yml extracts
-  # the section for the tag and writes it as the body. Stated explicitly rather
-  # than left to the default so a goreleaser default change cannot silently
-  # replace hand-written notes with the generated commit list above.
+  # goreleaser owns the release notes, generated from the changelog block above.
+  #
+  # This previously carried a different justification: that release.yml created
+  # the release first with the matching CHANGELOG.md section as its body, and
+  # goreleaser only attached archives to it. That flow was never possible —
+  # release.yml runs against stump-wtf/cairn while this config targets
+  # stump-wtf/cairn-cli, so the two were never addressing the same release — and
+  # release.yml no longer creates one at all.
+  #
+  # keep-existing stays for a reason that IS real: re-running a tag must not
+  # clobber the notes on a release that already exists (see
+  # replace_existing_artifacts below, which exists for the same retry path).
   mode: keep-existing
   # Re-running the job against a tag that already carries archives is the
   # normal recovery path (a half-finished upload, a re-run after fixing a
