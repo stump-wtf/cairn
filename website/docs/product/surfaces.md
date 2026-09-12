@@ -36,12 +36,12 @@ no release download, Homebrew formula, or public `go install` path — so for no
 people create artifacts with `curl` or through their agent; see
 [Your first share](../guides/first-share.md).
 
-With a build in hand, point it at your server (its built-in default is not a live
-server), authenticate with a personal access token minted from your server's Settings
-page (the OAuth 2.1 + PKCE browser flow lands in a follow-up), then push:
+With a build in hand, authenticate with a personal access token minted from your
+server's Settings page (the OAuth 2.1 + PKCE browser flow lands in a follow-up), then
+push. The CLI defaults to the hosted service; `--url` or `CAIRN_URL` targets a
+different deployment:
 
 ```bash
-export CAIRN_URL=https://cairn.stump.wtf
 cairn login --token <token>
 ✓ authorized as sam@stump.rocks · via API
 
