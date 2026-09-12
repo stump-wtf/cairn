@@ -31,8 +31,8 @@ import (
 // "ADR-0005's public origin" — authority ADR-0005 does not grant. That ADR
 // decides the identifier scheme (base62 alphabet, entropy, collision retry);
 // it does not pick the host the service is deployed at, and no ADR or spec
-// picks one. If cairn.sh is ever pointed at a live deployment, changing this
-// line back is a one-word edit.
+// picks one. Nor is cairn.sh coming back: it was never acquired, so there is
+// no future in which this line reverts.
 const DefaultAPIBaseURL = "https://cairn.stump.wtf"
 
 // Source names where a resolved field's value came from, exposed for
