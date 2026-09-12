@@ -31,10 +31,10 @@ See [SPEC-0001](../specs/web-app-shell-and-bin/index.md).
 
 ## CLI — `cairn`
 
-*pbcopy for cairn.* A single static Go binary. It is not publicly distributed yet —
-no release download, Homebrew formula, or public `go install` path — so for now most
-people create artifacts with `curl` or through their agent; see
-[Your first share](../guides/first-share.md).
+*pbcopy for cairn.* A single static Go binary. There's no release download or Homebrew
+formula yet, but it installs from the module with `go install` — see
+[Your first share](../guides/first-share.md) for the exact command and why it pins a
+branch rather than a tag. `curl` and your agent work against the hosted service too.
 
 With a build in hand, authenticate with a personal access token minted from your
 server's Settings page (the OAuth 2.1 + PKCE browser flow lands in a follow-up), then
