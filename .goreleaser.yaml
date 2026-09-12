@@ -34,11 +34,23 @@ builds:
       - -X github.com/stump-wtf/cairn/internal/clicmd.Commit={{.Commit}}
       - -X github.com/stump-wtf/cairn/internal/clicmd.Date={{.Date}}
     hooks:
-      # Gate publication itself, not just CI. cairn's source is private and the
-      # hosted service may be sold, so a release carrying the server would be
-      # the entire exposure in one artifact. goreleaser aborts the release if a
-      # post hook fails, which makes this the last place the check can still
-      # prevent bytes from leaving rather than merely reporting on them.
+      # The cairn archive ships the cairn CLI and nothing else. goreleaser
+      # aborts the release if a post hook fails, so this is the last place the
+      # check can still stop a bad artifact rather than merely report on it.
+      #
+      # This gate was written under a premise that no longer holds: that cairn's
+      # source was private and a release carrying the server would be the whole
+      # exposure in one artifact. Both cairn and switchboard are MIT and open
+      # now, so a binary containing the server discloses nothing.
+      #
+      # It stays anyway, because secrecy was never what it actually enforced. A
+      # cairn archive containing cairnd is a packaging defect on its own terms:
+      # it doubles the download, ships a server under a CLI's name to someone
+      # who asked for a CLI, and can only happen because a CLI package picked up
+      # an import edge into a server package. That edge is the real quarry, and
+      # it is just as wrong in an open repo as a closed one. Deleting a working
+      # check because its stated justification changed is how the regression it
+      # was catching ships quietly.
       #
       # Note the -s -w above: the symbol table is stripped, so a `go tool nm`
       # check here would report "no server symbols" for a binary containing the

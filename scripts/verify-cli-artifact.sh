@@ -2,11 +2,18 @@
 #
 # The Shipped CLI Must Not Contain The Server
 #
-# cairn's source is private and the hosted service may be sold, so the only
-# artifact that goes out publicly is the `cairn` CLI. This script fails the
-# build if the server ever ends up inside it. It runs in CI on every tag, not
-# as a one-off inspection, because the way this breaks is a future import in
-# a CLI package quietly pulling a server package behind it.
+# The `cairn` archive ships the CLI. This script fails the build if the server
+# ends up inside it. It runs in CI on every tag, not as a one-off inspection,
+# because the way this breaks is a future import in a CLI package quietly
+# pulling a server package behind it.
+#
+# It was written when the source was private, to stop a release leaking the
+# server. That reason is gone -- cairn is MIT and open -- and the check is kept
+# deliberately, because the leak was only ever the loudest consequence. The
+# defect it detects is an unintended dependency edge from the CLI into the
+# server, which is equally wrong in a public repo: it bloats the download,
+# ships a server to someone who asked for a CLI, and couples two binaries that
+# are meant to be separable.
 #
 # Two independent gates, because each catches what the other cannot:
 #
@@ -34,6 +41,12 @@
 # @joestump 09/12/2026 - Created. Gate 1 written as an allowlist and gate 2
 # given a positive control after an nm-based check returned a clean bill of
 # health on a stripped binary — including for packages known to be present.
+#
+# @joestump 09/12/2026 - Reframed the rationale after cairn and switchboard
+# went MIT and open. The gates are unchanged; only the reason they exist is
+# restated, from "do not leak private source" to "do not ship a server inside
+# the CLI". Kept rather than deleted: the import edge it catches is a defect
+# in an open repo too.
 
 set -euo pipefail
 
