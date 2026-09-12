@@ -93,6 +93,41 @@ export `CAIRN_TOKEN` wherever Crush runs:
 Crush expands `$CAIRN_TOKEN` when it loads the config, so the token itself never lands in
 the file.
 
+### Add the Cairn skill (optional)
+
+Crush finds skills by path instead of installing a plugin. Clone the plugin, then add its
+`skills` directory to `options.skills_paths` in the same `crush.json`:
+
+```bash
+git clone https://github.com/stump-wtf/claude-plugin-cairn.git ~/src/claude-plugin-cairn
+```
+
+```json
+{
+  "options": {
+    "skills_paths": ["~/src/claude-plugin-cairn/skills"]
+  }
+}
+```
+
+Add to that list rather than replacing it, and note that `~` is expanded for you. Crush
+also scans a few directories with no configuration at all, among them
+`~/.config/crush/skills` and `~/.agents/skills`, plus `.crush/skills` and `.agents/skills`
+inside the project you're working in. Putting the skill's folder in one of those works
+too, and the project ones are handy when only one repo should get it.
+
+## Did the skill load?
+
+Ask the agent to share something: *put this on cairn*. With the skill loaded it reaches
+for `artifact_create` and answers with the link it got back, instead of pasting the
+content into the conversation or reaching for some other paste service.
+
+The skill is guidance, not access. It grants nothing — scopes come from the OAuth grant or
+the token, and installing it doesn't widen what the agent can reach. It isn't required
+either, since the MCP tools work without it. What it changes is judgement: which create
+tool fits, that a bundle beats stitching files together, that bodies stay out of the
+conversation, and that a link expires and that's worth saying out loud.
+
 ## Any other MCP client
 
 Point the client at `https://cairn.stump.wtf/mcp` over Streamable HTTP, then do one of
