@@ -42,6 +42,20 @@ archives:
       - goos: windows
         formats:
           - zip
+    # Ship the binary and nothing else. Left unset, goreleaser's default picks
+    # up README*/CHANGELOG*/LICENSE* from the repo root — so a publicly
+    # downloadable tarball carried this PRIVATE repo's README, whose links point
+    # at docs/adrs/, docs/openspec/ and docs/DESIGN.md. Those are dead links for
+    # anyone who downloads the archive, and they advertise the shape of a design
+    # record that is deliberately not public. `none*` is the documented idiom for
+    # an empty file set: a glob that matches nothing beats omitting the key,
+    # because omitting it is what re-enables the default.
+    #
+    # When the CLI gets a LICENSE (it has none today — an unlicensed public
+    # binary is "all rights reserved"), add it here. That is the one file that
+    # SHOULD travel with a distributed binary.
+    files:
+      - none*
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
