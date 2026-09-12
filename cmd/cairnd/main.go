@@ -36,6 +36,56 @@ func main() {
 	}
 }
 
+// newOutboundEmitter builds the outbound-webhook emitter, or returns nil when
+// no target URLs are configured (ADR-0017, SPEC-0012: inert unless configured).
+//
+// It returns the CONCRETE *outboundhook.Emitter rather than the
+// store.CreationEmitter interface, deliberately: the delivery worker in run()
+// calls Run(ctx), which the interface does not declare. The typed-nil hazard
+// that caused cairn#201 is handled where it actually arises — at the
+// store.Options boundary, where the concrete pointer enters an interface field.
+//
+// Extracted so main()'s wiring decision is reachable from a test. Every other
+// test in this repo constructs its own emitter, which is why none of them could
+// see that main() was building a broken one.
+func newOutboundEmitter(cfg *config.Config, logger *slog.Logger) *outboundhook.Emitter {
+	if len(cfg.OutboundWebhookURLs) == 0 {
+		return nil
+	}
+	logger.Info("outbound webhooks enabled",
+		"targets", len(cfg.OutboundWebhookURLs),
+		"signed", cfg.OutboundWebhookSecret != "")
+	return outboundhook.New(cfg.OutboundWebhookURLs, cfg.OutboundWebhookSecret, cfg.BaseURL, logger)
+}
+
+// newStoreOptions assembles the store options, assigning the Emitter interface
+// field ONLY when an emitter actually exists.
+//
+// This is the seam cairn#201 lived in. It previously read `Emitter: emitter`
+// unconditionally, and store.Options.Emitter is an INTERFACE
+// (store.CreationEmitter) while emitter is a *outboundhook.Emitter. An
+// unconfigured deployment therefore handed over a non-nil interface wrapping a
+// nil pointer: store's `s.emitter == nil` guard read false and every artifact
+// create dispatched to a nil receiver. The panic landed AFTER the commit, so
+// the row and blob were written and the caller still got a 500.
+//
+// Note the asymmetry with the `emitter != nil` check in the delivery worker:
+// that one compares a concrete pointer and means what it looks like. This one
+// would not, because the destination is an interface. Do not "unify" them.
+//
+// Extracted from run() so the decision is reachable from a test. Inline, it was
+// not, which is why reverting the fix left cmd/cairnd's tests green.
+func newStoreOptions(cfg *config.Config, emitter *outboundhook.Emitter) store.Options {
+	opts := store.Options{
+		MaxUploadBytes:  cfg.MaxUploadBytes,
+		PreviewMaxBytes: cfg.PreviewMaxBytes,
+	}
+	if emitter != nil {
+		opts.Emitter = emitter
+	}
+	return opts
+}
+
 func run(logger *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -71,20 +121,14 @@ func run(logger *slog.Logger) error {
 	// are configured. One hook at the store choke point covers every creation
 	// surface (REST/web/CLI/MCP); delivery runs on its own worker goroutine,
 	// reaper-style, and stops cleanly on shutdown.
-	var emitter *outboundhook.Emitter
-	if len(cfg.OutboundWebhookURLs) > 0 {
-		emitter = outboundhook.New(cfg.OutboundWebhookURLs, cfg.OutboundWebhookSecret, cfg.BaseURL, logger)
-		logger.Info("outbound webhooks enabled", "targets", len(cfg.OutboundWebhookURLs), "signed", cfg.OutboundWebhookSecret != "")
-	}
+	// Kept as the concrete *outboundhook.Emitter, not store.CreationEmitter:
+	// the delivery worker below calls Run, which the interface does not declare.
+	emitter := newOutboundEmitter(cfg, logger)
 
 	// The core service the transport adapters (REST/MCP/CLI) project. The
 	// share-type registry (previewability, anchor affordances) defaults to the
 	// process-wide sharetype.Default().
-	svc := store.New(pool, obj, store.Options{
-		MaxUploadBytes:  cfg.MaxUploadBytes,
-		PreviewMaxBytes: cfg.PreviewMaxBytes,
-		Emitter:         emitter,
-	})
+	svc := store.New(pool, obj, newStoreOptions(cfg, emitter))
 
 	// Install the staging/ debris lifecycle rule (best-effort defense-in-depth;
 	// scoped to staging/ ONLY — never the committed blobs/ prefix, issue #93 §1).

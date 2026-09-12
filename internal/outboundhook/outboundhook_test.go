@@ -40,6 +40,23 @@ func newEmitter(t *testing.T, secret string, targets ...string) *Emitter {
 	return New(targets, secret, "https://cairn.example", slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
+// A nil *Emitter must be safe to call.
+//
+// store.Options.Emitter is an interface field, so a nil *Emitter assigned into
+// it becomes a NON-nil interface wrapping a nil pointer — store's
+// `s.emitter == nil` guard reads false and dispatches to this method anyway.
+// Before cairn#201 that panicked on every artifact create, after the commit, so
+// the artifact was written and the client was told the request failed.
+//
+// This asserts the receiver guard directly. The companion test lives at the
+// wiring seam in cmd/cairnd, because a test that builds its own emitter cannot
+// catch a bug in how main() builds one — which is why the whole suite stayed
+// green while the binary panicked.
+func TestEmitArtifactCreatedOnNilReceiverDoesNotPanic(t *testing.T) {
+	var e *Emitter
+	e.EmitArtifactCreated(testEvent()) // must not panic
+}
+
 // runUntil delivers until n events have been received by the counter, or fails
 // the test on timeout.
 func runUntil(t *testing.T, e *Emitter, delivered *atomic.Int32, n int32) {

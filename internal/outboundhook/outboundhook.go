@@ -131,6 +131,16 @@ func New(targets []string, secret, baseURL string, log *slog.Logger) *Emitter {
 // full queue the event is dropped with a warning — the doorbell is a hint, not
 // a ledger (SPEC-0012 REQ "Bounded Async Delivery with Retry").
 func (e *Emitter) EmitArtifactCreated(ev store.CreationEvent) {
+	// A nil receiver is a no-op rather than a panic. store.Options.Emitter is an
+	// INTERFACE field, so a nil *Emitter assigned into it yields a non-nil
+	// interface wrapping a nil pointer: store's `s.emitter == nil` guard reads
+	// false and dispatches here anyway. That panicked on every artifact create,
+	// post-commit — the row and blob were written and the caller still got a 500
+	// (cairn#201). main() no longer hands over a typed nil, and this guard is the
+	// other half: it keeps the panic unreachable if any future caller does.
+	if e == nil {
+		return
+	}
 	eventID, createdAt := uuid.NewString(), time.Now().UTC()
 	raw, err := e.encode(ev, eventID, createdAt)
 	if err != nil {
