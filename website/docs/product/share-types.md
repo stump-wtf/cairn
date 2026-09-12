@@ -41,7 +41,7 @@ files over MCP. Mixed media welcome — created in one shot:
 
 ```bash
 cairn add audit.md parse_ledger.py Movies.png dump.sql.gz
-# ✓ bundle → cairn.sh/9qz1a   ·   4 files · 43.0 MB · ⧗ expires 7d
+# ✓ bundle → cairn.stump.wtf/9qz1a   ·   4 files · 43.0 MB · ⧗ expires 7d
 ```
 
 ## <span class="chip chip-net">HK</span> Webhook
@@ -59,7 +59,7 @@ artifacts they produce. See
 shareable record of an agent run.
 
 A **trace** is the artifact; a **run** is the execution it records. That is why
-the URL and the tools keep the run noun — `cairn.sh/run/<id>`, `/v1/runs`,
+the URL and the tools keep the run noun — `cairn.stump.wtf/run/<id>`, `/v1/runs`,
 `run_create`/`run_append_spans` — while everything a reader sees says trace. The
 stored `share_type` is still `trajectory` and stays accepted on the wire
 indefinitely; see [ADR-0016](../decisions/ADR-0016.md).

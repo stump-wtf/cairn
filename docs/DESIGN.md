@@ -67,7 +67,7 @@ Badge codes seen in the design: `MD`, `PY`/code, `IMG`, `FILE`/`GZ`, `HK` (webho
 The flagship addition. A trajectory is a captured agent run.
 
 - **Header:** `cairn ▸ TRJ  checkout-web-audit · run · 11 spans · 34.2s · [link ◆ mcp
-  cairn.sh/run/<id>] [copy] [Share]`.
+  cairn.stump.wtf/run/<id>] [copy] [Share]`.
 - **Call-trace waterfall** pinned at the top: OTel-style spans nested by depth, with
   a time ruler (`0s … 34.2s`). Span **categories** (color-coded legend):
   by operation kind `reason · exec · read · net · write · search · plan · tool · analyze · test · fix · fail · meta`, or by workflow phase `research · implementation · review · testing · debug · build · docs · delivery · deploy · wait · prompt`
@@ -117,7 +117,7 @@ URL control · share), same collapsible metadata + comments panel."*
 - **`cat file | cairn`** — "pbcopy for cairn": pipe or pass anything in, get a
   shareable, agent-native link back.
 - **`cairn add f1 f2 f3 …`** — push many artifacts at once as a **bundle**
-  (mixed media): shows per-file upload progress, then `✓ bundle → cairn.sh/<id>
+  (mixed media): shows per-file upload progress, then `✓ bundle → cairn.stump.wtf/<id>
   (copied to clipboard)`, with summary `N files · <size> · ⧗ expires 7d ·
   🔒 you + anyone with link`.
 - **`cairn ls`** — the Bin as a **TUI**: keyboard-driven
@@ -172,8 +172,11 @@ sharing/permissions is an explicit, deliberate action.)
 
 ### Identifiers & URLs
 
-- Human short links: `cairn.sh/<id>` (e.g. `cairn.sh/9qz1a`).
-- Trajectories: `cairn.sh/run/<id>` (e.g. `cairn.sh/run/8kd2p`).
+- Human short links: `<base>/<id>` (e.g. `cairn.stump.wtf/9qz1a`).
+- Trajectories: `<base>/run/<id>` (e.g. `cairn.stump.wtf/run/8kd2p`).
+- `<base>` is the deployment's own origin (`CAIRN_BASE_URL`). This brief was
+  written with `cairn.sh` throughout; that domain was never acquired and never
+  resolved, so the hosted deployment is `cairn.stump.wtf`. See ADR-0005.
 - Agent/MCP handles: `mcp://cairn/hook/<id>` for webhook streams; artifacts carry
   an `◆ mcp` affordance next to their URL.
 - IDs are short, opaque, URL-safe.

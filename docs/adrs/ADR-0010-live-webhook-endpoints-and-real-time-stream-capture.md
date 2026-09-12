@@ -84,10 +84,10 @@ stable per-request row to anchor a reaction to.
 
 ### The webhook endpoint and its two addresses
 
-A `webhook` artifact (URL `cairn.sh/<id>`, `◆ mcp` affordance) exposes two addresses
+A `webhook` artifact (URL `<base>/<id>`, `◆ mcp` affordance) exposes two addresses
 for the *same* endpoint:
 
-* **HTTP ingress** — a public URL (e.g. `hook.cairn.sh/<id>` or `cairn.sh/h/<id>`) that
+* **HTTP ingress** — a public URL (e.g. `hook.<base>/<id>` or `<base>/h/<id>`) that
   accepts inbound requests of any method. The `<id>` is the short, opaque, unguessable
   base62 id of ADR-0005; unguessability is the endpoint's first line of defense.
 * **`mcp://cairn/hook/<id>`** — the MCP handle agents use to read the captured stream.

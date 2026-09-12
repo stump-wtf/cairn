@@ -112,7 +112,7 @@ function Waterfall(): ReactNode {
         <span>
           · trace · {ROWS.length} spans · {secs(TOTAL)}
         </span>
-        <span className={styles.panelLink}>cairn.sh/run/8kd2p</span>
+        <span className={styles.panelLink}>cairn.stump.wtf/run/8kd2p</span>
       </div>
 
       <p className={styles.panelLabel}>Call trace</p>

@@ -169,7 +169,7 @@ recorded on the artifact:
 The SHA-256 and the public base62 id (ADR-0005) are **deliberately decoupled**:
 
 * The **public id** is a short, opaque, randomly minted base62 handle, one per
-  artifact, and is what appears in `cairn.sh/<id>`. It is non-enumerable and reveals
+  artifact, and is what appears in `cairn.stump.wtf/<id>`. It is non-enumerable and reveals
   nothing about the content.
 * The **SHA-256** is the blob's integrity/dedup key and the visible checksum. It is
   *never* the URL.

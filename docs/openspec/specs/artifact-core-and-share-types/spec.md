@@ -63,7 +63,7 @@ server-side from the authenticated surface and MUST NOT be taken from a client c
 #### Scenario: Create returns an addressable artifact
 
 - **WHEN** a client creates an artifact
-- **THEN** the response MUST include the minted public id and the `cairn.sh/<id>` short URL,
+- **THEN** the response MUST include the minted public id and the `cairn.stump.wtf/<id>` short URL,
   and the artifact MUST be immediately resolvable
 
 #### Scenario: Channel is server-derived
@@ -293,7 +293,7 @@ length of 8 characters (~47.6 bits), minted independently of the body's SHA-256 
 internal primary key. Generation MUST be generate → atomic unique insert → regenerate on the
 rare conflict; a retired id MUST NOT be reused within its TTL-plus-grace window. Reserved
 route words (`run`, `hook`, `api`, `settings`, `.well-known`, …) MUST be excluded from the
-generator. The path scheme MUST be: `cairn.sh/<id>` for default artifacts, `cairn.sh/run/<id>`
+generator. The path scheme MUST be: `cairn.stump.wtf/<id>` for default artifacts, `cairn.stump.wtf/run/<id>`
 for trajectories, `mcp://cairn/<id>` (and `mcp://cairn/hook/<id>`, `mcp://cairn/run/<id>`)
 for agent handles; the same id token MUST be reused verbatim across all surfaces.
 

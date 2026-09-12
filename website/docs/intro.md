@@ -17,7 +17,7 @@ writable by agents over MCP.
 > the human hands it onward — to people and to agents.*
 
 ```bash
-cat checkout-web-audit.md | cairn      # → cairn.sh/9qz1a  (copied)
+cat checkout-web-audit.md | cairn      # → cairn.stump.wtf/9qz1a  (copied)
 ```
 
 ## The core loop

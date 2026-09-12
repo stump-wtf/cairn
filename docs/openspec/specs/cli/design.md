@@ -14,7 +14,7 @@ differs (`via CLI` vs `via MCP`).
 
 This design realizes **SPEC-0008** and depends on the API shape, error contract, and
 pagination model of **ADR-0012**, the identifier/URL scheme of **ADR-0005**
-(`cairn.sh/<id>`), and the provenance/access/expiry policy of **ADR-0007** (which the
+(`cairn.stump.wtf/<id>`), and the provenance/access/expiry policy of **ADR-0007** (which the
 CLI displays but never decides). It is not web-facing and renders no HTML/UI in a
 browser, so it carries no Security-headers or WCAG obligations; instead it must be an
 excellent, scriptable, correctly-failing UNIX citizen, which is why this design leans
@@ -24,7 +24,7 @@ hard on exit codes, `--json`, TTY detection, and disciplined error/concurrency h
 
 ### Goals
 
-- Be *pbcopy for cairn*: `cat file | cairn` → a `cairn.sh/<id>` link on stdout and on
+- Be *pbcopy for cairn*: `cat file | cairn` → a `cairn.stump.wtf/<id>` link on stdout and on
   the clipboard, with the terminal/dev-minimal aesthetic.
 - Push many files at once as one **bundle** (`cairn add`) with per-file progress and a
   summary line, uploaded concurrently but reported atomically.
@@ -181,14 +181,14 @@ sequenceDiagram
     P->>API: retry uploads with new token
     API-->>P: 201 created (complete bundle)
     P-->>C: all files confirmed
-    C->>U: summary line + cairn.sh/<id> (copied), exit 0
+    C->>U: summary line + cairn.stump.wtf/<id> (copied), exit 0
     Note over U,C: Ctrl-C at any point → cancel ctx,<br/>abort in-flight, no success link, exit 130
 ```
 
 ### Data the CLI shows but never decides
 
 Provenance channel (`via CLI`), access policy (`🔒 you + anyone with link`), expiry
-(`⧗ expires 7d`), share type, and the `cairn.sh/<id>` identifier all originate
+(`⧗ expires 7d`), share type, and the `cairn.stump.wtf/<id>` identifier all originate
 server-side (ADR-0005, ADR-0007). The CLI's job is faithful display and correct
 exit-code mapping — never recomputation.
 
