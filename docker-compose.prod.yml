@@ -6,8 +6,14 @@
 # Point an A/AAAA record for ${CAIRN_DOMAIN} at this host and open 80/443 so
 # Caddy can obtain a Let's Encrypt certificate automatically.
 #
-# NOTE: this repo's merged code ships a DEV auth stub (any bearer token is
-# accepted as its own user id) and no web UI — see DEPLOY.md before exposing it.
+# Creation requires a credential: set CAIRN_OIDC_* for human sign-in, and/or
+# CAIRN_API_TOKENS ("secret:actor[:role]") for scripts and agents. cairnd refuses
+# to start with no way in at all. Artifact links are read capabilities by design
+# (ADR-0007). See DEPLOY.md.
+#
+# NOTE: this file BUILDS the image from source, which needs this repository and
+# gitea.stump.rocks/stump.wtf/md2a2ui — neither is reachable from the public
+# internet today, and no public image is published to pull instead.
 name: cairn
 
 services:
@@ -59,7 +65,9 @@ services:
       CAIRN_S3_BUCKET: ${CAIRN_S3_BUCKET:-cairn}
       CAIRN_S3_REGION: ${CAIRN_S3_REGION:-us-east-1}
       CAIRN_S3_USE_SSL: "false"
-      CAIRN_BASE_URL: ${CAIRN_BASE_URL:-https://cairn.stump.rocks}
+      # No default: this is baked into every artifact URL the server mints, so a
+      # fallback would make your instance advertise someone else's hostname.
+      CAIRN_BASE_URL: ${CAIRN_BASE_URL:?set CAIRN_BASE_URL in .env}
       CAIRN_DEFAULT_TTL: ${CAIRN_DEFAULT_TTL:-168h}
       CAIRN_MAX_UPLOAD_BYTES: ${CAIRN_MAX_UPLOAD_BYTES:-67108864}
       CAIRN_PREVIEW_MAX_BYTES: ${CAIRN_PREVIEW_MAX_BYTES:-5242880}
@@ -75,7 +83,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      CAIRN_DOMAIN: ${CAIRN_DOMAIN:-cairn.stump.rocks}
+      CAIRN_DOMAIN: ${CAIRN_DOMAIN:?set CAIRN_DOMAIN in .env}
       CAIRN_ACME_EMAIL: ${CAIRN_ACME_EMAIL:-}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro

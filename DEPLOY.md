@@ -1,96 +1,153 @@
 # Deploying Cairn (self-host)
 
-Cairn is a single static Go binary + PostgreSQL + an S3-compatible object store
-(ADR-0012). This directory ships a one-command bring-up behind Caddy with
-automatic HTTPS.
+Cairn is a single static Go binary (`cairnd`) plus **PostgreSQL** for metadata and
+an **S3-compatible object store** for artifact bodies (ADR-0008, ADR-0012). This
+directory ships a compose bring-up behind Caddy with automatic HTTPS.
 
-> **Read this first — current scope of the merged code.** `main` today is the
-> SPEC-0002 foundation: the **`/v1` JSON API** (paste/read/download/list/delete,
-> bundles). There is **no web UI, no CLI, no MCP server, and no trajectory
-> viewer yet** (those are later specs / the fork's MVP milestone). And auth is a
-> **development stub**: any `Authorization: Bearer <token>` is accepted as its
-> own user id — it is *not* an access-control boundary. Do not expose this to
-> untrusted users until real OAuth (SPEC-0007) lands; gate it (see Security).
+> **Can you run this today?** Not yet, if you are outside the network this repo
+> lives on. `docker-compose.prod.yml` *builds* the image from source, and the
+> build needs both this repository and `gitea.stump.rocks/stump.wtf/md2a2ui`,
+> which is not reachable from the public internet. There is also no published
+> container image to pull instead. Until either a public image or a public build
+> exists, this file describes a deployment only someone with network access can
+> perform.
 
-## Prerequisites
+## What it needs
 
-- A host with Docker + Docker Compose.
-- DNS: an `A`/`AAAA` record for your domain (e.g. `cairn.stump.rocks`) pointing
-  at the host, with ports **80** and **443** reachable (Caddy needs them for
-  Let's Encrypt).
+- A host with Docker and Docker Compose.
+- **PostgreSQL.** Not optional: all queryable metadata lives there, and `cairnd`
+  applies its embedded migrations to it on boot.
+- **An S3-compatible object store.** Not optional: artifact bodies are
+  content-addressed blobs. The compose file runs MinIO; Garage, Ceph or AWS S3
+  work the same way.
+- **DNS + ports 80/443** if you want Caddy to obtain a Let's Encrypt certificate:
+  an `A`/`AAAA` record for your domain pointing at the host.
+
+## Configure
+
+```sh
+cp .env.example .env
+```
+
+Then edit `.env`. Three things are genuinely mandatory:
+
+| Variable | Why it is mandatory |
+|---|---|
+| `CAIRN_BASE_URL` | **No safe default.** It is baked into every artifact URL the server mints. Set it to your own public origin, with no trailing slash. If you leave it unset, your instance advertises someone else's hostname on your artifacts (cairn#198). |
+| `POSTGRES_PASSWORD` | The compose file refuses to start without it. |
+| `CAIRN_S3_ACCESS_KEY` / `CAIRN_S3_SECRET_KEY` | Object-store credentials. Never ship the `minioadmin` development defaults on a reachable host. |
+
+Everything else has a working default; `.env.example` documents the common knobs
+(TTL, upload and preview size caps, rate limits) and `internal/config/config.go`
+is the full list.
+
+## Choose how people sign in
+
+Configure at least one. `cairnd` will **start without any of them**, logging
+`no API tokens (CAIRN_API_TOKENS), no OIDC (CAIRN_OIDC_ISSUER), and no dev web
+login (CAIRN_DEV_LOGIN_PASSWORD) configured: all authenticated endpoints will
+reject every caller` — so the instance comes up healthy, serves reads, and
+refuses every create. If that is what you are seeing, this is why.
+
+- **OIDC (recommended for humans).** Set `CAIRN_OIDC_ISSUER`,
+  `CAIRN_OIDC_CLIENT_ID` and `CAIRN_OIDC_CLIENT_SECRET`. Humans then sign in
+  through your identity provider, and agents authorize over OAuth.
+- **Static API tokens (fine for scripts and agents).** `CAIRN_API_TOKENS` takes a
+  comma-separated list of `secret:actor[:role]` entries, where `role` is `human`
+  (default) or `agent`:
+
+  ```sh
+  CAIRN_API_TOKENS="s3cret-one:you@example.com,s3cret-two:bot@example.com:agent"
+  ```
+
+  Secrets are held as SHA-256 digests and a presented token must hash to a
+  registered secret. An `agent` token is additionally barred from human-only
+  operations such as deleting an artifact.
+- **A shared web-login password**, for a single-user or development instance:
+  `CAIRN_DEV_LOGIN_PASSWORD`. If `CAIRN_OIDC_ISSUER` is also set, OIDC wins and
+  this login is disabled (ADR-0013); `cairnd` warns at startup when both are
+  configured.
+
+**What `actor_id` guarantees.** It is the identity Cairn authenticated: the actor
+a static token was minted for, or the OIDC subject. It is the only field on an
+artifact that is not client-asserted. `on_behalf_of` is an MCP client's
+self-reported name, and tags and titles are whatever the creator sent — useful
+context, never proof. Route on them if you like; never authorize on them.
+
+`CAIRN_DEV_INSECURE_BEARER_AUTH` exists for local development only. It makes the
+API trust a raw bearer token *as* an actor id without verification. It defaults
+to **off**, and turning it on logs a warning at startup. Never set it on a host
+anyone else can reach.
 
 ## Bring it up
 
 ```sh
-cp .env.example .env
-# edit .env: set CAIRN_DOMAIN, CAIRN_BASE_URL, and strong POSTGRES_PASSWORD /
-# CAIRN_S3_ACCESS_KEY / CAIRN_S3_SECRET_KEY (do NOT keep the change-me defaults)
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 On boot `cairnd` applies its embedded migrations and creates the object-storage
-bucket automatically. Check health:
+bucket if it is missing.
+
+## Verify it works
+
+Replace `https://cairn.example` with your `CAIRN_BASE_URL`.
 
 ```sh
-docker compose -f docker-compose.prod.yml ps
-curl -fsS https://cairn.stump.rocks/healthz     # -> ok
-```
+# 1. liveness
+curl -fsS https://cairn.example/healthz            # -> ok
 
-## Paste some Markdown (the API today)
-
-```sh
-BASE=https://cairn.stump.rocks
-TOKEN=you@example.com     # dev stub: the token becomes the actor id
-
-# Paste
-curl -sS -XPOST "$BASE/v1/artifacts?type=markdown&title=hello.md" \
+# 2. create something (use one of your CAIRN_API_TOKENS secrets)
+export TOKEN=s3cret-one
+curl -sS -X POST https://cairn.example/v1/artifacts \
   -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: text/markdown" \
+  -H 'Content-Type: text/markdown' \
+  -H 'X-Cairn-Title: hello.md' \
   --data-binary $'# Hello from Cairn\n\nThis is **markdown**.\n'
+# -> 201 with {"id":"…","url":"https://cairn.example/…","checksum":"…", …}
 
-# -> {"id":"r4gbcBnH","url":"https://cairn.stump.rocks/r4gbcBnH","badge":"MD",
-#     "previewable":true,"checksum":"262cc1…","share_type":"markdown", …}
+# 3. read it back anonymously — a link grants read, by design
+curl -sS https://cairn.example/v1/artifacts/<id>
 
-# Read it back (public, link-capability) and re-verify the bytes
-curl -sS "$BASE/v1/artifacts/r4gbcBnH"
-curl -sS "$BASE/v1/artifacts/r4gbcBnH/body" | sha256sum   # == checksum above
+# 4. prove the bytes survived: this must equal the checksum above
+curl -sS https://cairn.example/v1/artifacts/<id>/body | shasum -a 256
 
-# Your Bin (authenticated)
-curl -sS -H "Authorization: Bearer $TOKEN" "$BASE/v1/bin"
+# 5. your Bin (authenticated)
+curl -sS -H "Authorization: Bearer $TOKEN" https://cairn.example/v1/bin
 ```
 
-Bundles: `POST /v1/artifacts` as `multipart/form-data` with N file parts creates
-one bundle; members read at `/v1/artifacts/<id>/members/<name>`.
+A healthy instance answers `200` on `/healthz`, returns `201` from step 2, serves
+step 3 with no credential, and produces a checksum in step 4 identical to the one
+step 2 returned. Two useful negative checks: an unregistered bearer token must get
+`401`, and an unknown artifact id must get `404 not_found` rather than anything
+that distinguishes "wrong id" from "not yours".
 
-## Security (important while auth is a stub)
+## Security
 
-Because any bearer is accepted, **anyone who can reach the host can create
-artifacts**, and reads are public-by-link by design. Until SPEC-0007 (OAuth) and
-SPEC-0009 (access policy) land, do one of:
-
-- Keep the instance on a private network / VPN, **or**
-- Enable Caddy `basic_auth` (uncomment the block in `deploy/Caddyfile`) so only
-  you can reach it. Generate a hash with
-  `docker run --rm caddy:2-alpine caddy hash-password --plaintext '…'`.
-
-The app already sets `nosniff`, serves bodies as non-executable
-`attachment` downloads, rate-limits per IP, and enforces upload size limits.
-Caddy terminates TLS and adds HSTS on HTTPS.
+- **Links are capabilities.** Anyone holding an artifact's URL can read it. That
+  is the design (ADR-0007), not a gap — but it means a link is a secret.
+- **Creation requires a credential.** An unregistered token is rejected with
+  `401`; only OIDC sessions and registered tokens can create.
+- **Outbound webhooks are instance-wide.** If you set
+  `CAIRN_OUTBOUND_WEBHOOK_URLS`, *every* artifact created on your instance
+  announces its id, title, URL and creator to those targets (ADR-0017, SPEC-0012).
+  The URLs are bearer capabilities: never log or share them.
+- The app sets `nosniff`, serves bodies as non-executable attachment downloads,
+  rate-limits per IP, and caps upload size. Caddy terminates TLS and adds HSTS.
 
 ## Operations
 
 - **Logs:** `docker compose -f docker-compose.prod.yml logs -f cairnd`
-- **Backups:** snapshot the `pgdata` (metadata, the source of truth) and
-  `miniodata` (bodies) volumes.
-- **Config:** every knob is a `CAIRN_*` env var (see `.env.example`); change and
+- **Backups:** snapshot both volumes — `pgdata` (metadata, the source of truth)
+  and `miniodata` (bodies). Neither is sufficient alone.
+- **Config:** every knob is a `CAIRN_*` environment variable; change `.env` and
   `up -d` to apply.
-- **Upgrade:** `git pull && docker compose -f docker-compose.prod.yml up -d --build`.
+- **Retention:** artifacts expire (7 days by default, `CAIRN_DEFAULT_TTL`). A
+  background reaper deletes expired artifacts and garbage-collects orphaned
+  blobs, so storage does not grow without bound.
 
-## Not yet included (roadmap)
+## Known gaps
 
-- Web UI + the Bin browser (SPEC-0001), rich viewers (SPEC-0003), trajectory
-  capture/waterfall (SPEC-0004), webhooks (SPEC-0005), annotations (SPEC-0006),
-  the MCP server + real OAuth (SPEC-0007), the CLI (SPEC-0008), and the retention
-  reaper (SPEC-0009). Track these on the active milestone.
-- A `/readyz` that checks Postgres + object storage (today `/healthz` is a static
-  liveness probe) and boot-time refusal of default dev secrets.
+- `/healthz` is a static liveness probe. It does not check Postgres or object
+  storage, so it answers `ok` even when a dependency is down.
+- There is no boot-time refusal of development defaults: an instance started with
+  `minioadmin` credentials will run.

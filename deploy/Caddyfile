@@ -10,10 +10,17 @@
 {$CAIRN_DOMAIN} {
 	encode gzip
 
-	# --- Optional hardening (STRONGLY recommended while auth is a dev stub) ---
-	# The merged app accepts ANY bearer token as its own user id, so creation is
-	# not really access-controlled. Gate the whole site behind HTTP basic auth
-	# until real OAuth (SPEC-0007) lands. Generate a hash with:
+	# --- Optional: put the whole site behind HTTP basic auth ---
+	# Not needed to make creation safe: creation already requires a credential.
+	# An unregistered bearer token is rejected with 401, and only OIDC sessions
+	# and tokens registered in CAIRN_API_TOKENS can create anything. (The
+	# trust-any-bearer development stub is opt-in via
+	# CAIRN_DEV_INSECURE_BEARER_AUTH, defaults to off, and warns at startup.)
+	#
+	# Reach for this only if you want the instance itself unlisted — remember
+	# that artifact links are read capabilities by design (ADR-0007), so basic
+	# auth is how you stop strangers reaching the site at all, not how you
+	# control who may create. Generate a hash with:
 	#   docker run --rm caddy:2-alpine caddy hash-password --plaintext 'yourpass'
 	# then uncomment:
 	#
