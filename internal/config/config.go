@@ -62,7 +62,7 @@ type Config struct {
 	StagingLifecycleTTL time.Duration
 
 	// BaseURL is the public origin used to build short URLs (ADR-0005),
-	// e.g. https://cairn.sh.
+	// e.g. https://cairn.stump.wtf.
 	BaseURL string
 
 	// Rate limiting for public/ingress endpoints (SPEC-0002 REQ "Rate
@@ -143,7 +143,7 @@ func Load() (*Config, error) {
 		S3SecretKey: env("CAIRN_S3_SECRET_KEY", "minioadmin"),
 		S3Bucket:    env("CAIRN_S3_BUCKET", "cairn"),
 		S3Region:    env("CAIRN_S3_REGION", "us-east-1"),
-		BaseURL:     env("CAIRN_BASE_URL", "https://cairn.sh"),
+		BaseURL:     env("CAIRN_BASE_URL", "https://cairn.stump.wtf"),
 
 		DevLoginPassword: os.Getenv("CAIRN_DEV_LOGIN_PASSWORD"),
 		APITokensRaw:     os.Getenv("CAIRN_API_TOKENS"),

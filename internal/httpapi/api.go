@@ -26,7 +26,7 @@ import (
 // Config tunes the REST adapter.
 type Config struct {
 	// BaseURL is the public origin used to build short URLs, e.g.
-	// https://cairn.sh. No trailing slash.
+	// https://cairn.stump.wtf. No trailing slash.
 	BaseURL string
 	// MaxUploadBytes caps a single request body / upload part (413 above it).
 	MaxUploadBytes int64
@@ -192,7 +192,12 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	if cfg.BaseURL == "" {
-		cfg.BaseURL = "https://cairn.sh"
+		// This fallback is baked into every artifact URL the server hands out,
+		// so it must be a host we actually control. It was https://cairn.sh,
+		// which nobody here owns — meaning an unconfigured deployment minted
+		// links pointing at a domain a stranger could register. A deployment
+		// that is not the hosted service sets CAIRN_BASE_URL.
+		cfg.BaseURL = "https://cairn.stump.wtf"
 	}
 	if cfg.MaxUploadBytes <= 0 {
 		cfg.MaxUploadBytes = 64 << 20

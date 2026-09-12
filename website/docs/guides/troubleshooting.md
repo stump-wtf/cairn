@@ -64,7 +64,7 @@ ids exist:
 | `403 forbidden` when deleting | The token is marked as an agent token | Delete with a token that isn't an agent token |
 | `404` when deleting an artifact you can open | You aren't its owner; only the owner can delete | Ask the owner, or let it expire |
 | Can't change sharing or expiry with a token | Those controls are web-only | Change them from the share dialog, signed in as the owner |
-| The CLI can't reach its server | The CLI's built-in default server isn't the hosted service | `export CAIRN_URL=https://cairn.stump.wtf` |
+| The CLI can't reach its server | It's aimed at a different deployment than you expect — the default is the hosted service | Check `cairn whoami`, then point it with `--url` or `export CAIRN_URL=https://your-cairn.example` |
 
 ## The request was rejected
 
