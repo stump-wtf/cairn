@@ -158,7 +158,11 @@ func TestIntegrationSettingsPageRequiresAuth(t *testing.T) {
 		"annotations:write",
 		"http://cairn.test/mcp",
 		"OAuth 2.1",
-		"go install github.com/joestump/cairn/cmd/cairn@latest",
+		// The card used to advertise `go install github.com/joestump/cairn/...`,
+		// a module that is not public and never resolved, alongside a link to a
+		// README that 404s. It now points at the install guide, which is served
+		// from this same origin (#184).
+		"CLI install guide",
 		"cairn login",
 		"API tokens",
 		"Account",
