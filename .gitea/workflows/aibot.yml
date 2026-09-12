@@ -1,7 +1,7 @@
-# The on-demand author-self-reference modes (review / address / merge) — the
+# The on-demand author-self-reference modes (review / address) — the
 # CONVERSATION half of the bot. Secrets/vars come from the stump.wtf org
-# (AIBOT_ZAI_*, AIBOT_BOT_LOGIN). To enable auto-merge on a clean review, set
-# org/repo var AIBOT_AUTOMERGE=1 and secret AIBOT_MERGE_TOKEN.
+# (AIBOT_ZAI_*, AIBOT_BOT_LOGIN). The bot reviews and comments; it never
+# merges.
 #
 # `pull_request` is deliberately NOT a trigger here. Opening or pushing to a PR
 # is reviewed by the `review` job in pipeline.yaml, which sits behind
@@ -60,8 +60,4 @@ jobs:
           AIBOT_GITEA_HOST:  ${{ github.server_url }}
           AIBOT_GITEA_TOKEN: ${{ github.token }}
           AIBOT_BOT_LOGIN:   ${{ vars.AIBOT_BOT_LOGIN }}
-          # Auto-merge on a clean (APPROVED) review — inert until both are set:
-          AIBOT_AUTOMERGE:     ${{ vars.AIBOT_AUTOMERGE }}
-          AIBOT_MERGE_TOKEN:   ${{ secrets.AIBOT_MERGE_TOKEN }}
-          AIBOT_MERGE_STRATEGY: ${{ vars.AIBOT_MERGE_STRATEGY }}
 
