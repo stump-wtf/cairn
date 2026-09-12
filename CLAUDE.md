@@ -89,3 +89,65 @@ The same reasoning applies to any check: **a test that cannot distinguish
 "the thing is absent" from "I could not measure it" reports success either way.**
 See `scripts/verify-cli-artifact.sh`, whose binary gate carries a positive
 control for exactly this reason.
+
+### A broken test is not a false test — it falls through to `else`
+
+`[ ... ]` does not return "false" when the *expression itself* is invalid. It
+**errors**, and inside an `if` that error lands in the `else` branch:
+
+```bash
+if [ "$a" \> "$b" ]; then    # zsh: "condition expected: >" — the test ERRORS
+  echo "a is newer"
+else
+  echo "b is newer"           # ...so this runs, asserting the inverse
+fi
+```
+
+This happened in this repo while dating the release chain against a tag. The
+comparison was invalid, the `else` fired, and the script printed a fluent,
+plausible, **exactly inverted** conclusion — which was nearly reported as fact.
+
+That makes it the worst member of this family. A masked exit code or an empty
+grep at least *looks* suspicious. A confident wrong verdict does not.
+
+**Validate a comparison against known inputs before trusting it on unknown
+ones**, the same way the binary gate proves it can see before it reports
+absence:
+
+```bash
+later() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort | tail -1)" = "$1" ] && [ "$1" != "$2" ]; }
+later 2026-09-12 2026-07-15 && echo YES || echo NO   # expect YES
+later 2026-07-15 2026-09-12 && echo YES || echo NO   # expect NO
+later 2026-09-12 2026-09-12 && echo YES || echo NO   # expect NO
+```
+
+### `\s`, `\S` and `\d` are GNU extensions, and BSD fails them silently
+
+macOS `grep -E` does not support them. The pattern does not error; it simply
+**matches nothing**:
+
+```bash
+git grep -nE '^\s*var\s+version'                      # macOS: zero hits, even where it exists
+git grep -nE '^[[:space:]]*var[[:space:]]+version'    # portable
+```
+
+This cost a wrong diagnosis here: two probes came back empty, the emptiness was
+blamed on the git pathspec, and the real cause was `\s`. A positive control
+found it — the same query shape matched a string known to be present, which
+proved the method worked and the pattern did not.
+
+Use POSIX classes, `-F` for fixed strings, or `grep -P` where it exists.
+
+### Never print a conclusion you have not checked the data against
+
+Guard text like `(empty above = free to claim)` or `(nothing listed = only X
+changed)` prints unconditionally, so the moment the list is non-empty it
+asserts the opposite of what is on screen. This shipped four times in one
+session, once directly above a list of thirteen counter-examples.
+
+Compute the claim from the data instead of narrating it:
+
+```bash
+n=$(some-command | wc -l | tr -d ' ')
+if [ "$n" -eq 0 ]; then echo "none found"; else echo "$n found:"; some-command; fi
+```
