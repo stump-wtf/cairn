@@ -21,9 +21,19 @@ import (
 	"github.com/joestump/cairn/internal/cliexit"
 )
 
-// DefaultAPIBaseURL is the built-in default server (ADR-0005's public
-// origin) used when no flag, environment variable, or config file sets one.
-const DefaultAPIBaseURL = "https://cairn.sh"
+// DefaultAPIBaseURL is the built-in default server, used when no flag,
+// environment variable, or config file sets one. It is the hosted deployment:
+// a real, public, resolving host.
+//
+// It was previously https://cairn.sh, which has no DNS record at all, so a
+// fresh `cairn login` failed for anyone who had not already been told to set
+// CAIRN_URL or pass --url. That default survived because this comment cited
+// "ADR-0005's public origin" — authority ADR-0005 does not grant. That ADR
+// decides the identifier scheme (base62 alphabet, entropy, collision retry);
+// it does not pick the host the service is deployed at, and no ADR or spec
+// picks one. Nor is cairn.sh coming back: it was never acquired, so there is
+// no future in which this line reverts.
+const DefaultAPIBaseURL = "https://cairn.stump.wtf"
 
 // Source names where a resolved field's value came from, exposed for
 // --verbose diagnostics and tests. It never carries the value itself, so
@@ -53,7 +63,7 @@ type Config struct {
 
 // fileConfig is the on-disk TOML shape at ~/.config/cairn/config.toml:
 //
-//	url = "https://cairn.sh"
+//	url = "https://cairn.stump.wtf"
 //	token = "..."
 type fileConfig struct {
 	URL   string `toml:"url"`
