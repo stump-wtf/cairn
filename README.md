@@ -72,6 +72,13 @@ url=$(cat report.md | cairn)
 See [SPEC-0008](docs/openspec/specs/cli/spec.md) for the full command surface,
 exit-code taxonomy, and `--json` mode.
 
+## Self-hosting
+
+Want your own cairn? The [self-hosting guide](https://cairn.stump.wtf/docs/guides/self-hosting/)
+takes you from nothing to a running instance: Postgres + any S3-compatible
+store, a pasteable compose file, OIDC sign-in, and a verified end-to-end loop.
+The image is `ghcr.io/stump-wtf/cairn`.
+
 ## Project docs
 
 - **[docs/DESIGN.md](docs/DESIGN.md)** — the product design brief (source of truth).
