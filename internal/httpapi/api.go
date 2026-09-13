@@ -13,6 +13,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/httpapi/authprovider"
 	"github.com/stump-wtf/cairn/internal/mcpsession"
 	"github.com/stump-wtf/cairn/internal/oauth"
 	"github.com/stump-wtf/cairn/internal/pat"
@@ -73,6 +74,12 @@ type Config struct {
 	OIDCIssuer       string
 	OIDCClientID     string // defaults to "cairn" when empty
 	OIDCClientSecret string
+	// GitHub human login (SPEC-0012): a second provider beside Pocket ID.
+	// GitHubConfigured() gates EnableGitHub — the provider joins the registry
+	// (and the login page renders its button) only when both are set. The
+	// redirect URI is derived as BaseURL + /auth/callback like OIDC's.
+	GitHubClientID     string
+	GitHubClientSecret string
 	// APITokens are the static bearer credentials the API/MCP surface accepts
 	// (ADR-0004 MVP token seam). Each secret maps to an actor and role; an absent
 	// set means the bearer surface rejects every token (fail closed). A raw
@@ -141,6 +148,10 @@ type Server struct {
 	// configured), gating both the /auth/login|callback routes and whether the
 	// dev-password fallback stays honored (loginEnabled).
 	oidc *oidcRP
+	// gh is the GitHub login provider (SPEC-0012): nil until EnableGitHub
+	// wires it from config (or forever nil when GitHub is not configured),
+	// gating ?provider=github at both /auth routes.
+	gh *authprovider.GitHubProvider
 	// OAuth 2.1 authorization server (SPEC-0007, ADR-0004): the in-process core
 	// service the /oauth endpoints adapt, plus its dedicated tighter rate
 	// limiter. Nil on storeless unit wirings (the AS persists in Postgres).

@@ -35,10 +35,14 @@ var ErrNotFound = errors.New("session: not found")
 // placed in the cookie and returned only at creation (the store persists only
 // its hash); CSRFToken is the double-submit secret bound to this session and
 // echoed in the readable cairn_csrf cookie so a same-origin script can prove the
-// request came from Cairn's own origin.
+// request came from Cairn's own origin. Issuer/Subject record the auth
+// provenance (SPEC-0012): which provider established the session and the
+// subject that provider asserted. Both are empty for the dev-password login.
 type Session struct {
 	Token     string
 	ActorID   string
+	Issuer    string
+	Subject   string
 	CSRFToken string
 	CreatedAt time.Time
 	ExpiresAt time.Time
@@ -48,10 +52,14 @@ type Session struct {
 // running server; the in-memory implementation backs unit tests. OAuth (#22)
 // adds no new method — it mints sessions through Create like the dev login does.
 type Store interface {
-	// Create mints a new session for actorID living for ttl, returning it with
-	// its raw Token and CSRFToken populated (both are shown to the caller exactly
-	// once, then only their derivations are retained).
-	Create(ctx context.Context, actorID string, ttl time.Duration) (*Session, error)
+	// Create mints a new session living for ttl, returning it with its raw
+	// Token and CSRFToken populated (both are shown to the caller exactly once,
+	// then only their derivations are retained). issuer/subject record the
+	// session's auth provenance (SPEC-0012): the provider that established it
+	// and the subject that provider asserted — empty for the dev-password
+	// login, the OIDC issuer and ID-token subject for Pocket ID, and the
+	// GitHub origin and login for GitHub.
+	Create(ctx context.Context, issuer, subject, actorID string, ttl time.Duration) (*Session, error)
 	// Get resolves a raw session token to its live session, or ErrNotFound when
 	// the token is unknown, expired, or revoked.
 	Get(ctx context.Context, token string) (*Session, error)
