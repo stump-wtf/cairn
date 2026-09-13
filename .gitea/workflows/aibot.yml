@@ -41,7 +41,11 @@ jobs:
       - name: Checkout PR head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref || github.head_ref }}
+          # Check out the head SHA, not the branch ref. A merge can delete the
+          # head branch while this job is queued; the SHA survives the deletion,
+          # the ref does not, so a ref checkout dies with "could not be found"
+          # and, where aibot is a required check, leaves the merged PR red.
+          ref: ${{ github.event.pull_request.head.sha }}
           # The head branch lives in the head REPO, which is not this repo when the
           # PR comes from a fork. Without `repository:` the checkout resolves the
           # branch name against the base repo, does not find it, and the job dies in
