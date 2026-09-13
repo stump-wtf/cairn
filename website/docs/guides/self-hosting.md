@@ -76,6 +76,9 @@ Three settings are easy to get wrong:
   development seams.** The dev password loses to OIDC the moment
   `CAIRN_OIDC_ISSUER` is set; the insecure bearer shortcut defaults off and
   has no production reason to exist. Leave both alone on a real deployment.
+  Deliberately **not** wired through the compose file above — setting them in
+  `.env` does nothing on the Docker path; they are for running the binary
+  directly in a shell.
 
 ## Get the image
 
@@ -137,6 +140,7 @@ services:
       CAIRN_S3_BUCKET: ${CAIRN_S3_BUCKET:-cairn}
       CAIRN_S3_REGION: ${CAIRN_S3_REGION:-us-east-1}
       CAIRN_S3_USE_SSL: "false"
+      CAIRN_API_TOKENS: ${CAIRN_API_TOKENS:-}
       CAIRN_BASE_URL: https://${CAIRN_DOMAIN:?set CAIRN_DOMAIN in .env}
       CAIRN_OIDC_ISSUER: ${CAIRN_OIDC_ISSUER:-}
       CAIRN_OIDC_CLIENT_ID: ${CAIRN_OIDC_CLIENT_ID:-cairn}
@@ -179,14 +183,20 @@ and next to it a three-line `Caddyfile`:
 Then:
 
 ```bash
-cat > .env <<'EOF'
-CAIRN_DOMAIN=cairn.example.com
-CAIRN_ACME_EMAIL=you@example.com
-POSTGRES_PASSWORD=$(openssl rand -hex 24)
-CAIRN_S3_ACCESS_KEY=$(openssl rand -hex 16)
-CAIRN_S3_SECRET_KEY=$(openssl rand -hex 24)
-EOF
+{
+  echo "CAIRN_DOMAIN=cairn.example.com"
+  echo "CAIRN_ACME_EMAIL=you@example.com"
+  printf 'POSTGRES_PASSWORD=%s\n'   "$(openssl rand -hex 24)"
+  printf 'CAIRN_S3_ACCESS_KEY=%s\n' "$(openssl rand -hex 16)"
+  printf 'CAIRN_S3_SECRET_KEY=%s\n' "$(openssl rand -hex 24)"
+} > .env
 docker compose up -d
+```
+
+Check the secrets were generated, not written as literal command strings:
+
+```bash
+grep POSTGRES_PASSWORD .env   # 48 hex characters, not a $(…)
 ```
 
 Point an A/AAAA record for `CAIRN_DOMAIN` at the host with 80 and 443 open, and
