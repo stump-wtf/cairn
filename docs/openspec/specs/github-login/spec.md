@@ -2,15 +2,15 @@
 status: draft
 date: 2026-09-13
 implements: [ADR-0019]
-extends: [SPEC-0001]
+requires: [SPEC-0001]
 ---
 
 # SPEC-0013: GitHub Login for the Web App Shell
 
 ## Graph Edges
 
-- **Implements:** [ADR-0019](../../adrs/ADR-0019-github-as-additional-human-auth-provider.md) — GitHub as an additional human auth provider behind a minimal provider interface.
-- **Extends:** [SPEC-0001](../web-app-shell-and-bin/spec.md) — the web app shell whose login page and session model this capability extends.
+- **Implements:** **ADR-0019** — GitHub as an additional human auth provider behind a minimal provider interface.
+- **Extends:** **SPEC-0001** — the web app shell whose login page and session model this capability extends.
 
 ## Overview
 
