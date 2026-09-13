@@ -22,7 +22,7 @@ func NewMemoryStore() *MemoryStore {
 }
 
 // Create mints and stores a session, returning it with its raw secrets.
-func (s *MemoryStore) Create(_ context.Context, actorID string, ttl time.Duration) (*Session, error) {
+func (s *MemoryStore) Create(_ context.Context, issuer, subject, actorID string, ttl time.Duration) (*Session, error) {
 	if actorID == "" {
 		return nil, errors.New("session: actor id is required")
 	}
@@ -41,6 +41,8 @@ func (s *MemoryStore) Create(_ context.Context, actorID string, ttl time.Duratio
 	sess := &Session{
 		Token:     token,
 		ActorID:   actorID,
+		Issuer:    issuer,
+		Subject:   subject,
 		CSRFToken: csrf,
 		CreatedAt: now,
 		ExpiresAt: now.Add(ttl),
