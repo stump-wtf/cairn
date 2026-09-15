@@ -5,7 +5,7 @@ implements: [ADR-0020]
 requires: [SPEC-0010]
 ---
 
-# SPEC-0013: Embedded Documentation Serving
+# SPEC-0015: Embedded Documentation Serving
 
 ## Overview
 

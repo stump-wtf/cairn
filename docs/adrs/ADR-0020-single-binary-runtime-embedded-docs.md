@@ -2,7 +2,7 @@
 status: proposed
 date: 2026-09-13
 decision-makers: [joestump, joestump-agent]
-governs: [SPEC-0013]
+governs: [SPEC-0015]
 related: [ADR-0012, ADR-0014]
 ---
 
@@ -89,7 +89,7 @@ updated in the same PR that lands the serving code.
 
 ### Confirmation
 
-SPEC-0013 scenarios: the binary serves `/docs/` page content (asserted on body
+SPEC-0015 scenarios: the binary serves `/docs/` page content (asserted on body
 text, never status codes — the bundle is an SPA that returns 200 for every
 path); an untagged build serves the stub; the public image contract keeps
 pulling and working. The cloud01 converge shows `cairn-docs` gone and the live
