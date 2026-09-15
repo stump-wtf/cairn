@@ -130,4 +130,5 @@ status-code assertion MUST be treated as unverified.
 ## More Information
 
 - ADR-0020 (this spec's decision), ADR-0014 (site content pipeline).
-- Epic: https://gitea.stump.rocks/stump.wtf/cairn/issues/246
+- Epic: `stump.wtf/cairn#246` (unlinked — repository hosts are excluded from
+  the rendered record by SPEC-0010 REQ "No Repository Links").

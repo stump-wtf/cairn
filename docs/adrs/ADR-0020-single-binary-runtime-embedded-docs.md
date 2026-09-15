@@ -146,7 +146,9 @@ graph TD
 
 ## More Information
 
-* [stump.wtf/cairn#246](https://gitea.stump.rocks/stump.wtf/cairn/issues/246) — the epic this ADR answers.
+* `stump.wtf/cairn#246` — the epic this ADR answers. Not linked: the issue
+  tracker is a repository host, which SPEC-0010 REQ "No Repository Links"
+  excludes from the rendered record.
 * ADR-0014 (the public site is the design record) still governs *content*; this
   ADR changes only *delivery* of the self-host copy. The Pages deployment keeps
   its own pipeline and least-privilege posture.
