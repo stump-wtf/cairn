@@ -15,7 +15,7 @@ they happen.
 `cairn_artifacts_past_ttl` come from aggregate queries run by a custom collector:
 
 ```sql
-SELECT share_type, count(*), coalesce(sum(size),0) FROM artifacts GROUP BY share_type;
+SELECT share_type, count(*), coalesce(sum(size_bytes),0) FROM artifacts GROUP BY share_type;
 SELECT count(*) FROM artifacts WHERE expires_at < now();
 ```
 
