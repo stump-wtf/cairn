@@ -159,7 +159,7 @@ func (g *GitHubProvider) FinishLogin(ctx context.Context, st State, r *http.Requ
 		}
 	}
 	if actor == "" {
-		return Identity{}, fmt.Errorf("github: no primary verified email")
+		return Identity{}, fmt.Errorf("github: user %s has no primary verified email", user.Login)
 	}
 	// tok (the GitHub access token) is deliberately dropped here: it
 	// authenticated nothing but this one profile fetch, and SPEC-0012's token
