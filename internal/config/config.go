@@ -90,6 +90,17 @@ type Config struct {
 	OIDCClientID     string // defaults to "cairn"
 	OIDCClientSecret string
 
+	// GitHub human login (SPEC-0012): a second production provider beside
+	// Pocket ID. OAuth 2.0 authorization-code — GitHub has no OIDC login — so
+	// verification is the code exchange plus REST profile fetch, while routes,
+	// state cookie and session establishment are shared with the OIDC flow.
+	// Enabled iff GitHubClientID and GitHubClientSecret are both non-empty
+	// (GitHubConfigured); the redirect URI is derived as BaseURL +
+	// /auth/callback like OIDC's, never separately configured, so it can never
+	// drift from the public origin the OAuth app was registered against.
+	GitHubClientID     string
+	GitHubClientSecret string
+
 	// Outbound webhooks (ADR-0017, SPEC-0012): comma-separated target URLs
 	// that receive a signed `artifact.created` event after every durable
 	// artifact creation, and an optional HMAC secret for the
@@ -151,6 +162,9 @@ func Load() (*Config, error) {
 		OIDCIssuer:       os.Getenv("CAIRN_OIDC_ISSUER"),
 		OIDCClientID:     env("CAIRN_OIDC_CLIENT_ID", "cairn"),
 		OIDCClientSecret: os.Getenv("CAIRN_OIDC_CLIENT_SECRET"),
+
+		GitHubClientID:     os.Getenv("CAIRN_GITHUB_CLIENT_ID"),
+		GitHubClientSecret: os.Getenv("CAIRN_GITHUB_CLIENT_SECRET"),
 
 		OutboundWebhookSecret: os.Getenv("CAIRN_OUTBOUND_WEBHOOK_SECRET"),
 	}
@@ -243,6 +257,14 @@ func Load() (*Config, error) {
 // Pocket ID (this true) or falls back to dev_login_password (this false).
 func (c *Config) OIDCConfigured() bool {
 	return c.OIDCIssuer != ""
+}
+
+// GitHubConfigured reports whether the GitHub login provider settings are
+// present (SPEC-0012). The provider joins the registry — and the login page
+// renders its button — only when this is true; an unconfigured provider is
+// indistinguishable from an unknown one (404) at the routes.
+func (c *Config) GitHubConfigured() bool {
+	return c.GitHubClientID != "" && c.GitHubClientSecret != ""
 }
 
 func envFloat(key string, def float64) (float64, error) {

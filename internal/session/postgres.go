@@ -27,7 +27,7 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 // Create mints and persists a session, returning it with its raw secrets. The
 // row stores only the token's hash; the raw token is the cookie value the caller
 // sets and never sees again from the store.
-func (s *PostgresStore) Create(ctx context.Context, actorID string, ttl time.Duration) (*Session, error) {
+func (s *PostgresStore) Create(ctx context.Context, issuer, subject, actorID string, ttl time.Duration) (*Session, error) {
 	if actorID == "" {
 		return nil, errors.New("session: actor id is required")
 	}
@@ -46,14 +46,16 @@ func (s *PostgresStore) Create(ctx context.Context, actorID string, ttl time.Dur
 	sess := &Session{
 		Token:     token,
 		ActorID:   actorID,
+		Issuer:    issuer,
+		Subject:   subject,
 		CSRFToken: csrf,
 		CreatedAt: now,
 		ExpiresAt: now.Add(ttl),
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO sessions (token_hash, actor_id, csrf_token, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5)`,
-		hashToken(token), actorID, csrf, sess.CreatedAt, sess.ExpiresAt,
+		INSERT INTO sessions (token_hash, actor_id, issuer, subject, csrf_token, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		hashToken(token), actorID, issuer, subject, csrf, sess.CreatedAt, sess.ExpiresAt,
 	); err != nil {
 		return nil, fmt.Errorf("session: insert: %w", err)
 	}
@@ -69,11 +71,11 @@ func (s *PostgresStore) Get(ctx context.Context, token string) (*Session, error)
 	}
 	sess := &Session{Token: token}
 	err := s.pool.QueryRow(ctx, `
-		SELECT actor_id, csrf_token, created_at, expires_at
+		SELECT actor_id, issuer, subject, csrf_token, created_at, expires_at
 		FROM sessions
 		WHERE token_hash = $1 AND expires_at > now()`,
 		hashToken(token),
-	).Scan(&sess.ActorID, &sess.CSRFToken, &sess.CreatedAt, &sess.ExpiresAt)
+	).Scan(&sess.ActorID, &sess.Issuer, &sess.Subject, &sess.CSRFToken, &sess.CreatedAt, &sess.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
