@@ -39,8 +39,9 @@ The existing machinery constrains the design:
 - Retaining traces or webhook endpoints. Deferred until trace export needs it.
 - Legal hold, WORM storage, or object-lock integration. A permanent artifact is still
   deletable by its owner, and that is deliberate.
-- An operator HTTP admin API. The host-side `cairnd` subcommands are the operator surface
-  until ADR-0029 defines an operator credential.
+- An operator HTTP admin API. The host-side `cairnd` subcommands are the operator surface.
+  ADR-0029 makes the operator an instance role (`CAIRN_OPERATORS`) that may bound tenant
+  data but never read, route or copy it. Every command here only bounds data.
 - Dedup-aware quota accounting. Quotas count logical bytes, so that users can predict them.
 - Changing the ephemeral TTL maximum. Permanent is not a TTL.
 
@@ -124,8 +125,9 @@ today. `cairnd retention …` connects with the same `CAIRN_DATABASE_URL` and ru
 operation.
 
 **Rationale.** The operator is whoever holds the host and the database. There is no
-operator credential yet (ADR-0029 defines one), and a host-side command needs no new
-network surface.
+operator credential yet. ADR-0029 defines the operator as an instance role, and a
+host-side command needs no new network surface. Quota changes are audited in
+`retention_quota_audit`.
 
 ## Architecture
 
@@ -149,7 +151,7 @@ sequenceDiagram
     S->>DB: INSERT retention_events (retain)
     S->>DB: COMMIT
     S-->>A: artifact (retention.mode=permanent)
-    S->>E: emit artifact.retained (if allowlisted)
+    S->>E: emit artifact.retained (routed by owning workspace, ADR-0022/0029)
     A-->>C: 200 artifact
 ```
 
@@ -259,7 +261,21 @@ CREATE TABLE retention_quota_overrides (
 );
 ```
 
-When ADR-0029 lands, `owner_id` becomes whatever owner key it defines. The partial index
+```sql
+-- Operator quota changes are audited (ADR-0029: per-owner overrides are audited).
+CREATE TABLE retention_quota_audit (
+    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    owner_kind TEXT        NOT NULL,
+    owner_id   TEXT        NOT NULL,
+    old_count  BIGINT, new_count BIGINT,
+    old_bytes  BIGINT, new_bytes BIGINT,
+    operator   TEXT        NOT NULL,   -- CAIRN_OPERATORS identity, or host user for cairnd
+    reason     TEXT        NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+When ADR-0029 lands, `owner_id` becomes its `owner_user_id` XOR `owner_team_id` split. The partial index
 and the advisory-lock key follow that key.
 
 ### Configuration
@@ -396,7 +412,7 @@ need adding there before a routing rule can match on them. That is a cross-repo 
 | MCP | `internal/httpapi/mcp.go` (`artifact_retain`) |
 | CLI | `internal/clicmd/retain.go`, `release.go`, `retention.go` (new); `internal/cliclient` |
 | Web | `internal/httpapi/web.go`, `templates/shell.html` (panel controls, badge), `templates/error.html` or a new `tombstone.html` |
-| Events | `internal/outboundhook` (three kinds, opt-in through the ADR-0022 allowlist) |
+| Events | `internal/outboundhook` (three kinds, registered in the ADR-0022 kind registry, routed by owner) |
 | Operator | `cmd/cairnd/main.go` (subcommand dispatch), `internal/retentionadmin` (new) |
 | Config | `internal/config/config.go` |
 | Metrics | the SPEC-0014 collector package, when it lands (cairn#256) |

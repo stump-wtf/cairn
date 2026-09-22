@@ -150,9 +150,12 @@ A retain MUST be refused, with no state change, when any of these holds:
 - the owner's total permanent bytes would exceed its byte quota. Reason
   `retention_quota_exceeded`, `409`.
 
-The owner is the artifact's owner: a user or, under ADR-0029, a team. A team-owned
-artifact MUST count against the team's quota and never against the member who retained
-it.
+The owner is the artifact's owner: a user or, under ADR-0029, a team (`owner_user_id` XOR
+`owner_team_id`). A team-owned artifact MUST count against the team's quota and never
+against the member who retained it. Moving a permanent artifact from one owner to another
+(for example, into a team under ADR-0029) MUST re-charge it to the new owner, in the same
+transaction as the move. The move MUST fail with `retention_quota_exceeded` if the new
+owner is over quota.
 
 The quota check and the mode change MUST be atomic per owner: two concurrent retains MUST
 NOT both succeed when only one fits. Lowering a quota below current usage MUST NOT release
@@ -173,6 +176,11 @@ anything; it MUST only refuse further retains.
 - **WHEN** a team member retains a team-owned artifact
 - **THEN** the team's usage MUST increase and the member's personal usage MUST NOT
 
+#### Scenario: Moving into a full team
+
+- **WHEN** a user moves their permanent artifact into a team that is at its count quota
+- **THEN** the move MUST fail with `retention_quota_exceeded`, and the artifact MUST stay user-owned and permanent
+
 #### Scenario: Oversize artifact
 
 - **WHEN** the owner retains an artifact larger than the per-artifact maximum
@@ -181,9 +189,10 @@ anything; it MUST only refuse further retains.
 ### Requirement: REQ-6 Who May Retain and Release
 
 Retain and release MUST be owner policy actions. For a user-owned artifact that means the
-owner. For a team-owned artifact it means a member holding the team role that ADR-0029
-authorizes to change a team artifact's policy. An authenticated non-owner MUST receive the
-distinct `403` of SPEC-0009, not a `404`.
+owner. For a team-owned artifact it means a team admin, one of ADR-0029's `owner` or
+`admin` roles. A plain team `member` MUST NOT retain or release team artifacts, even ones
+they created. An authenticated non-owner MUST receive the distinct `403` of SPEC-0009, not
+a `404`.
 
 **Release MUST be human-only.** It requires `sharing:manage`, which no agent grant carries.
 
@@ -212,6 +221,11 @@ Scopes": the three default scopes are unchanged, and one opt-in scope is added.
 
 - **WHEN** any agent token, including one with `retention:write`, calls release
 - **THEN** the server MUST refuse with `403` and the artifact MUST stay permanent
+
+#### Scenario: Team member without admin role
+
+- **WHEN** a team `member` retains a team-owned artifact they created
+- **THEN** the server MUST return `403` and the artifact MUST stay ephemeral
 
 #### Scenario: Non-owner human
 
@@ -407,8 +421,11 @@ Cairn MUST emit these event kinds on the ADR-0017 envelope, as extended by ADR-0
 - `artifact.deleted`, on removal of an ever-retained artifact, whether by delete or
   rotation.
 
-Each MUST be delivered only when its kind is listed in ADR-0022's kind allowlist
-(`CAIRN_OUTBOUND_WEBHOOK_EVENTS`). Each MUST carry `data.checksum` and `data.retention`,
+Each MUST be routed as ADR-0022 routes every kind: by the artifact's owning workspace, to
+that workspace's subscriptions under ADR-0029. Each MUST reach the instance env targets only
+when its kind is listed in ADR-0022's allowlist (`CAIRN_OUTBOUND_WEBHOOK_EVENTS`), and only
+for artifacts ADR-0029 still routes there. This capability MUST NOT add a fan-out path of
+its own. Each MUST carry `data.checksum` and `data.retention`,
 plus ADR-0022's common actor fields. `artifact.deleted` MUST carry `data.tombstone` with its
 kind and removal time. It MUST NOT carry `title` or `tags`.
 
@@ -422,8 +439,8 @@ ephemeral, so there is nothing retention-specific to carry at creation.
 
 #### Scenario: Not allowlisted
 
-- **WHEN** the allowlist holds only `artifact.created`
-- **THEN** retain, release and delete MUST emit nothing
+- **WHEN** the env allowlist holds only `artifact.created`
+- **THEN** retain, release and delete MUST send nothing to the env targets
 
 #### Scenario: Created payload unchanged
 
@@ -489,8 +506,8 @@ pool with bounded timeouts.
 
 | Endpoint | Method | Purpose | Auth |
 |---|---|---|---|
-| `/v1/artifacts/{id}/retain` | POST | Make permanent | Required: owner (or team policy role); agents need `retention:write` plus the operator gate |
-| `/v1/artifacts/{id}/release` | POST | Return to ephemeral with a bounded TTL | Required: owner (or team policy role); `sharing:manage`, human-only |
+| `/v1/artifacts/{id}/retain` | POST | Make permanent | Required: owner (or team admin); agents need `retention:write` plus the operator gate |
+| `/v1/artifacts/{id}/release` | POST | Return to ephemeral with a bounded TTL | Required: owner (or team admin); `sharing:manage`, human-only |
 | `/v1/artifacts/{id}` | DELETE | Delete; tombstones when ever-retained | Required: owner, human-only (unchanged) |
 | `/v1/retention/usage` | GET | Caller's (or a team's) usage and limits | Required |
 | `/v1/artifacts/{id}` | GET | Read; `410` + tombstone for a tombstoned id | **Public**: the capability URL is the read token (ADR-0007); a tombstone discloses only to a link holder |
@@ -501,7 +518,7 @@ pool with bounded timeouts.
 ### Requirement: Authentication & Authorization
 
 Retain, release, delete and usage MUST require authentication. Retain and release MUST
-require ownership (or the team policy role). Release and delete MUST refuse every agent
+require ownership (or the team admin role). Release and delete MUST refuse every agent
 token. Agent retain MUST require `retention:write` and the operator gate (REQ-6). Reads of
 tombstones follow the capability-URL rule.
 

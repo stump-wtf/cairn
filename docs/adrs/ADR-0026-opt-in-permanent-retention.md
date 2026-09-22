@@ -180,8 +180,8 @@ as deletion instead of being a one-click side door:
 
 ### Deletion leaves a tombstone
 
-The owner, or for a team-owned artifact the team role ADR-0029 authorizes to change its
-policy, may delete a permanent artifact. Agents still cannot delete (ADR-0004). Deletion
+The owner, or for a team-owned artifact a team admin (ADR-0029's `owner` and `admin`
+roles), may delete a permanent artifact. Agents still cannot delete (ADR-0004). Deletion
 removes the body reference, the metadata, and the annotations, because a right to delete
 that keeps the content would not be one.
 
@@ -229,8 +229,10 @@ Three new kinds ride the envelope that ADR-0017 defined and that ADR-0022 extend
 * `artifact.released`
 * `artifact.deleted`, emitted only for an artifact that was ever retained
 
-Each is opt-in through ADR-0022's kind allowlist, so existing consumers are not surprised.
-Each carries `data.checksum` and `data.retention`, and the actor fields ADR-0022 makes
+They are routed exactly like every ADR-0022 kind: by the artifact's owning workspace, to
+that workspace's subscriptions under ADR-0029. They reach the instance env targets only
+where ADR-0022's kind allowlist and ADR-0029's narrowing of those targets still send
+anything, and this ADR adds no fan-out path of its own. Each carries `data.checksum` and `data.retention`, and the actor fields ADR-0022 makes
 common to every kind. This ADR adds nothing to `artifact.created`: a new artifact is always
 ephemeral, so it has no retention fields to carry (SPEC-0012).
 
@@ -342,11 +344,15 @@ stateDiagram-v2
   needs both the operator's gate and a human's explicit `retention:write` grant.
 * **Tombstones disclose little.** A link holder sees the id, the share type, the checksum,
   the dates, and the deleting actor, but never the title, tags, or body.
-* **Events disclose the checksum to the operator's targets.** Until ADR-0029 routes events
-  per owner or team (cairn#185), outbound targets are instance-wide. The new kinds are
-  therefore opt-in through ADR-0022's allowlist, and off unless the operator lists them.
-* **Team-owned records.** Under ADR-0029, retaining, releasing, and deleting a team-owned
-  artifact need the team role authorized to change that artifact's policy. A permanent
+* **Events follow the artifact's workspace.** Under ADR-0029, events route to the owning
+  user's or team's own subscriptions, never through a new instance-wide path. Until that
+  lands (cairn#185), the env targets receive these kinds only if the operator allowlists
+  them (ADR-0022), and ADR-0029 narrows those targets to operator-owned artifacts.
+* **Team-owned records.** Under ADR-0029, team admins (the `owner` and `admin` roles)
+  decide which team artifacts are permanent: retaining, releasing, and deleting a
+  team-owned permanent artifact need one of those roles, and a plain `member` cannot. The
+  cost is charged to the team's quota. Moving an artifact into a team re-charges it to the
+  team, and the move fails if the team is over quota. A permanent
   artifact owned by a user lasts only as long as that user's account. For records an
   organization depends on, team ownership is the recommended shape.
 
