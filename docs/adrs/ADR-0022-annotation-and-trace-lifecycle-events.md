@@ -63,15 +63,16 @@ building a second delivery system?
 * **Multi-tenancy is a hard rule.** Every resource a user creates is owned by that
   user or by a team, never globally. Events about a user's artifact must be
   routable to that owner's subscriptions (Teams, ADR-0029, in flight), and must
-  not quietly widen the operator firehose #185 already calls out.
+  never reach a target the operator chose. ADR-0029 removes that firehose
+  (`CAIRN_OUTBOUND_WEBHOOK_URLS`, #185) outright.
 * **Volume.** Annotation events can outnumber creations by an order of magnitude
   on a busy artifact. They must not starve `artifact.created` in the bounded
   queue, or flood a consumer that never asked for them.
 
 ## Considered Options
 
-* **A. Extend ADR-0017's emitter with new kinds, a per-target kind allowlist, and
-  a server-derived `actor_kind`. Approval-class reactions from non-session
+* **A. Extend ADR-0017's emitter with new kinds, a per-subscription kind filter,
+  and a server-derived `actor_kind`. Approval-class reactions from non-session
   credentials are recorded, but marked `agent` and never counted as approval.**
 * **B. As A, but refuse approval-class reactions from agent credentials
   outright** (403).
@@ -166,15 +167,15 @@ This ADR does not change who receives events.
   audience. Every internal event carries the subject artifact's owner, so
   ADR-0029 routes a comment on Alice's artifact only to Alice's or Alice's team's
   subscriptions. The owner is internal routing data and is not on the wire.
-* **The instance env targets** (`CAIRN_OUTBOUND_WEBHOOK_URLS`) remain the
-  operator firehose #185 describes. A new `CAIRN_OUTBOUND_WEBHOOK_EVENTS`
-  allowlist (default `artifact.created`) selects which kinds they receive, so an
-  existing deployment sees exactly what it saw before. Until Teams lands, an
-  operator who opts into annotation kinds is opting into every user's comments,
-  and the self-hosting guide says so next to the variable. Teams (ADR-0029)
-  narrows these targets to operator-owned artifacts, and later retires them in
-  favour of owned subscriptions. The kind allowlist applies to whatever scope the
-  env targets have at the time.
+* **No instance-wide target.** The new kinds are never sent to
+  `CAIRN_OUTBOUND_WEBHOOK_URLS`. ADR-0029 removes those variables in the change
+  that ships owned subscriptions, superseding ADR-0017's instance-wide delivery,
+  and this ADR adds no kind allowlist, transition or interim path for them (Joe's
+  design review, 2026-09-22: "nuke it 100%"). Each subscription's own event-type
+  filter (ADR-0029) selects the kinds it receives.
+* **Until subscriptions ship (#185), the new kinds have no recipient.** They are
+  emitted internally and counted, and nothing is delivered. `artifact.created`
+  keeps whatever delivery `main` has at the time, and gains the two actor keys.
 * **Never the actor's subscriptions.** An event about Alice's artifact never goes
   to a subscription belonging to Bob just because Bob commented or reacted.
 
@@ -189,8 +190,9 @@ doorbell stays a hint, and the artifact and its annotations stay the record.
 
 * Good, because a human approval becomes a signed, server-derived fact that the
   human's own agents cannot mint, occupy or withdraw.
-* Good, because one emitter, envelope and signer carry every kind, and existing
-  consumers see no new kinds unless an allowlist names them.
+* Good, because one emitter, envelope and signer carry every kind, and a
+  subscription sees only the kinds its filter admits. No operator-chosen target
+  ever sees a comment or reaction.
 * Good, because Switchboard's `.artifact` projection keeps working unchanged for
   every kind: the subject fields sit where they always have.
 * Good, because it resolves #159's uniqueness question with a rule that also
@@ -204,6 +206,9 @@ doorbell stays a hint, and the artifact and its annotations stay the record.
   credential typing cannot see that. The residual risk is recorded, not solved.
 * Bad, because `artifact.created` gains two keys, and the golden fixture pinning
   its bytes is deliberately updated.
+* Bad, because the new kinds reach nobody until ADR-0029's owned subscriptions
+  ship (#185). The instance env targets that could have carried them sooner are
+  being removed, not extended, so the approval signal waits for the tenancy work.
 * Bad, because the reactions uniqueness change needs a migration (a new column,
   plus a unique index rebuilt concurrently).
 * Neutral, because `on_behalf_of` stays self-reported context, as SPEC-0012
@@ -218,13 +223,14 @@ doorbell stays a hint, and the artifact and its annotations stay the record.
   session for the same human. It asserts two rows, `approval: false` on the
   first event and `approval: true` on the second. It then asserts the MCP
   un-react removes only the agent's row.
-* A delivery test asserts `CAIRN_OUTBOUND_WEBHOOK_EVENTS` unset means only
-  `artifact.created` reaches env targets.
+* A delivery test asserts that no new kind is ever sent to an env target while
+  that code still exists, and that each kind reaches only subscriptions of the
+  subject artifact's workspace whose filter admits it.
 * Switchboard's story (below) verifies a signed `reaction.added` end to end.
 
 ## Pros and Cons of the Options
 
-### A. Extend ADR-0017, allowlist kinds, mark agent approvals *(chosen)*
+### A. Extend ADR-0017, filter kinds per subscription, mark agent approvals *(chosen)*
 
 * Good, because no new secret, verifier or queue is needed.
 * Good, because agents that react today keep working; their reactions are simply
@@ -277,10 +283,8 @@ flowchart LR
         S[annotation / trajectory / store services] -- post-commit event<br/>+ owner --> E[outboundhook emitter<br/>one queue, one signer]
         E --> F{route}
     end
-    F -- kind in CAIRN_OUTBOUND_WEBHOOK_EVENTS --> T1[Operator env targets]
-    F -- owner or team subscription<br/>ADR-0029 --> T2[User or team targets]
-    T1 --> SB[Switchboard cairn webhook]
-    T2 --> SB
+    F -- owner or team subscription<br/>whose filter admits the kind<br/>ADR-0029 --> T2[User or team targets]
+    T2 --> SB[Switchboard cairn webhook]
     SB -- rule: reaction.approval == true --> H[Harness one-shot]
 ```
 
@@ -303,4 +307,8 @@ flowchart LR
   `reaction.added` with `approval == true` (Harness ADR-0021, on-demand one-shots).
 * Existing issues: #142 (annotation surface gaps), #158 (comment edit and
   delete), #159 (reaction `on_behalf_of`), #185 (instance-wide targets).
+* Design review, Joe, 2026-09-22: the instance-wide env targets are removed
+  outright by ADR-0029, with no deprecation or dual path, so this ADR drops the
+  `CAIRN_OUTBOUND_WEBHOOK_EVENTS` allowlist it first proposed. Delivery of the new
+  kinds therefore depends on #185.
 * Spec: SPEC-0016 (`docs/openspec/specs/lifecycle-events/`).

@@ -251,30 +251,34 @@ Every internal event MUST carry the subject artifact's owner, so that owner and
 team subscriptions (Cairn ADR-0029) receive only events about artifacts their
 owner or team owns. The owner MUST NOT appear on the wire.
 
-The instance env targets (`CAIRN_OUTBOUND_WEBHOOK_URLS`) MUST receive only the
-kinds listed in `CAIRN_OUTBOUND_WEBHOOK_EVENTS` (comma-separated, default
-`artifact.created`). An unknown kind in that list MUST fail startup with an error
-naming it. When Teams (Cairn ADR-0029) narrows the env targets to operator-owned
-artifacts, or retires them, this allowlist MUST apply within whatever scope they
-then have. Events MUST NOT be routed to subscriptions of the event's actor
+The kinds this capability adds MUST be delivered only to owned subscriptions
+(Cairn ADR-0029) of the workspace that owns the subject artifact, and only to
+those whose event-type filter admits the kind. They MUST NOT be sent to the
+instance env targets (`CAIRN_OUTBOUND_WEBHOOK_URLS`), which ADR-0029 removes in
+the change that ships subscriptions; there is no kind allowlist for env targets
+and no interim path to them. Until subscriptions exist, the new kinds MUST be
+emitted and counted, and MUST NOT be delivered. A subscription filter naming a
+kind that is not in the EV-1 registry MUST be refused with a validation error
+naming it. Events MUST NOT be routed to subscriptions of the event's actor
 unless that actor's workspace owns the subject artifact.
 
-#### Scenario: Existing deployment unchanged
+#### Scenario: No env target receives the new kinds
 
-- **WHEN** a deployment upgrades without setting `CAIRN_OUTBOUND_WEBHOOK_EVENTS`
-- **THEN** its env targets receive `artifact.created` only, exactly as before
+- **GIVEN** a build where `CAIRN_OUTBOUND_WEBHOOK_URLS` is still read
+- **WHEN** a user reacts 👍 to an artifact
+- **THEN** no request carrying `reaction.added` is made to any env target
 
-#### Scenario: Operator opts in
+#### Scenario: Subscription filter selects kinds
 
-- **WHEN** `CAIRN_OUTBOUND_WEBHOOK_EVENTS=artifact.created,reaction.added`
-- **THEN** env targets receive creations and reactions, and no comments or run
-  closures
+- **WHEN** alice's subscription filters to `artifact.created,reaction.added`
+- **THEN** it receives creations and reactions on her artifacts, and no comments
+  or run closures
 
-#### Scenario: Misspelt kind fails startup
+#### Scenario: Misspelt kind in a filter is refused
 
-- **WHEN** `CAIRN_OUTBOUND_WEBHOOK_EVENTS=reaction.add`
-- **THEN** cairnd refuses to start and logs that `reaction.add` is not a known
-  kind
+- **WHEN** a subscription is created with the event type `reaction.add`
+- **THEN** the request is refused with a validation error naming `reaction.add`
+  as an unknown kind
 
 #### Scenario: Another owner's subscription is not notified
 
@@ -369,9 +373,9 @@ All error-producing operations MUST follow structured error handling:
 - **Untrusted fields**: `tags` and `on_behalf_of` remain asserted (ADR-0018,
   SPEC-0012). Consumers MUST gate trust on `actor_kind`, `auth` and `approval`,
   never on `on_behalf_of` or tags.
-- **Privacy**: Opting env targets into annotation kinds sends every user's
-  comments to the operator's targets. The self-hosting guide MUST state this
-  beside `CAIRN_OUTBOUND_WEBHOOK_EVENTS`.
+- **Privacy**: No event kind reaches a target the operator chose. The only
+  recipients are subscriptions owned by the subject artifact's user or team
+  (EV-7, Cairn ADR-0029).
 
 ## Accessibility Requirements
 

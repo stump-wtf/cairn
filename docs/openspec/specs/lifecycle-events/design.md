@@ -246,12 +246,16 @@ Example `reaction.added`:
 Golden fixtures are added for each kind. `testdata/artifact_created_rest.golden.json`
 is regenerated once, and the diff reviewed as two appended keys.
 
-### Env-target kind allowlist and creation priority
+### Per-subscription kind filter and creation priority
 
-**Choice**: Config gains `OutboundWebhookEvents []event.Kind`, parsed from
-`CAIRN_OUTBOUND_WEBHOOK_EVENTS`, defaulting to `[artifact.created]` and
-validated against the registry at startup. `Emitter.Emit` checks the allowlist
-before enqueueing, so an unwanted kind costs nothing.
+**Choice**: There is no instance-level kind setting. ADR-0029's
+`outbound_subscriptions.event_types` is the filter, validated against the
+registry when a subscription is created or edited. `Emitter.Emit` resolves the
+subject workspace's enabled subscriptions whose filter admits the kind before
+enqueueing, so an event nobody asked for costs nothing. New kinds are never
+enqueued for the instance env targets; ADR-0029 deletes those in the change that
+ships subscriptions. Until then, a new-kind event with no subscriber is counted
+in `cairn_outbound_events_dropped_total{kind}` and dropped.
 
 The queue keeps its single channel, cap 256. A non-creation event is enqueued
 only while `len(ch) < cap/2`. Otherwise it is dropped with
@@ -310,9 +314,10 @@ sequenceDiagram
 - **Browser automation over the human's profile looks human.** Server-side typing
   can't see it. Recorded as a residual risk in ADR-0022. A future step-up (a
   passkey assertion on approval) would close it.
-- **Operator firehose privacy.** Opting env targets into annotation kinds exposes
-  every user's comments to the operator. Mitigation: the default excludes them,
-  the docs warn, and ADR-0029 provides the per-owner path.
+- **Annotation events wait for subscriptions.** With no env-target path, the new
+  kinds are undelivered until ADR-0029's owned subscriptions ship (#185).
+  Accepted: the alternative was widening the operator firehose that ADR-0029
+  removes, which the design review ruled out (2026-09-22).
 - **Unique-index swap on a live table.** Mitigation: `CREATE UNIQUE INDEX
   CONCURRENTLY` before dropping the old constraint, and a migration test over
   pre-existing rows.
@@ -324,13 +329,15 @@ sequenceDiagram
 
 1. Ship the migration and the per-kind storage (EV-6). There are no new events
    yet, and behaviour only tightens.
-2. Ship `internal/event`, the principal `Auth`, and emission with the allowlist
-   defaulting to `artifact.created` (EV-1..EV-5, EV-7, EV-8). Existing targets see
-   two new keys on creations.
-3. Switchboard accepts and projects the new kinds (cross-repo story). The
-   operator opts env targets into `reaction.added` and `run.closed`.
-4. Rollback: unset `CAIRN_OUTBOUND_WEBHOOK_EVENTS`. The storage change is
-   forward-only but harmless to older code paths, which ignore the columns.
+2. Ship `internal/event`, the principal `Auth`, and emission (EV-1..EV-5, EV-7,
+   EV-8). New kinds are counted and not delivered until subscriptions exist;
+   creations gain two new keys.
+3. With ADR-0029's owned subscriptions (#185), deliver the new kinds to the
+   subject workspace's subscriptions whose filter admits them.
+4. Switchboard accepts and projects the new kinds (cross-repo story). A user
+   subscribes their own Switchboard webhook to `reaction.added` and `run.closed`.
+5. Rollback: deploy the previous build. The storage change is forward-only but
+   harmless to older code paths, which ignore the columns.
 
 ## Open Questions
 
