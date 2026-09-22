@@ -13,7 +13,7 @@ What exists today:
   (`internal/store/create.go`, `bundle.go`). Tags are normalized by
   `artifact.NormalizeTags` and stored as `TEXT[]` (migration 0015).
 * `internal/outboundhook` encodes `artifact.created`. Its golden files pin the bytes of an
-  untagged event. ADR-0022 (in parallel, PR 261) appends `actor_kind` and `auth` to that
+  untagged event. ADR-0022 appends `actor_kind` and `auth` to that
   event and adds a kind registry.
 * MCP tools are registered in `internal/httpapi/mcp.go`, with agent-shaped schemas from
   `mcp_schema.go`.

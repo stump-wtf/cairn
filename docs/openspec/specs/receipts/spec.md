@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 implements: [ADR-0027]
 requires: [SPEC-0002, SPEC-0012]
-related: [SPEC-0003, SPEC-0004, SPEC-0007, SPEC-0008]
+related: [SPEC-0003, SPEC-0004, SPEC-0007, SPEC-0008, SPEC-0016, SPEC-0017, SPEC-0019, SPEC-0020, SPEC-0023]
 ---
 
 # SPEC-0021: Structured Receipts
@@ -34,10 +34,10 @@ SPEC-0012 (the event payload). It links a receipt to its trace through SPEC-0004
 `produced_artifact_id`. It adds a verb to SPEC-0007's MCP tool surface and a command to
 SPEC-0008's closed command list.
 
-Several of the records this spec leans on are being written in parallel: ADR-0022/SPEC-0016
+This spec also leans on these records, linked as front-matter edges: ADR-0022/SPEC-0016
 (events and human-only reactions), ADR-0023/SPEC-0017 (redaction), ADR-0025/SPEC-0019
 (validation error details), ADR-0026/SPEC-0020 (permanent retention) and ADR-0029/SPEC-0023
-(teams). They are cited here in prose only until they merge.
+(teams).
 
 ## Requirements
 

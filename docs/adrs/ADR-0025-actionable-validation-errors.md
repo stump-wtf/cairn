@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 decision-makers: [joestump, joestump-agent]
 extends: [ADR-0012]
-related: [ADR-0003, ADR-0007, ADR-0018]
+related: [ADR-0003, ADR-0007, ADR-0018, ADR-0023]
 ---
 
 # ADR-0025: Validation Errors Say What Failed — Field, Reason, Limit
@@ -184,7 +184,7 @@ limits the server publishes. It never reveals another user's or team's resource.
 Validation runs after authentication and authorization, so an unauthorized
 caller still gets the uniform 401 or 404, never a violation that confirms an
 artifact exists. Limits that become per-owner or per-team under Teams (Cairn
-ADR-0029, in flight), for example a team's maximum TTL or quota, are reported
+ADR-0029), for example a team's maximum TTL or quota, are reported
 as the limit **for the caller's workspace**. They never disclose another
 workspace's settings.
 
@@ -289,7 +289,7 @@ flowchart LR
   every other code.
 * **Narrowly amends SPEC-0008** (CLI): case folding of `--tag` is now a CLI
   decision. Nothing else about "data the CLI shows but never decides" changes.
-* **Parallel record, cited in prose until it merges:** Cairn ADR-0023 /
+* **Related record** (front-matter edge): Cairn ADR-0023 /
   SPEC-0017 (redaction), whose rejections use this contract with
   `secret_detected` and `too_large_to_scan`, and never echo the value.
 * Spec: SPEC-0019 (`docs/openspec/specs/validation-errors/`).

@@ -19,8 +19,8 @@ The existing machinery constrains the design:
   window. `freshPublicID` (`store/create.go`) excludes those ids.
 * Scopes: `agentScopes()` grants `artifacts:read`, `artifacts:write` and
   `annotations:write`. `sharing:manage` is human-only (`httpapi/auth.go`).
-* Events: `internal/outboundhook` builds the ADR-0017 envelope. ADR-0022 (in parallel)
-  adds kinds and the common `actor_kind` / `auth` fields; ADR-0029 (in parallel) replaces
+* Events: `internal/outboundhook` builds the ADR-0017 envelope. ADR-0022
+  adds kinds and the common `actor_kind` / `auth` fields; ADR-0029 replaces
   the env target list with owned subscriptions that filter by event type.
 
 ## Goals / Non-Goals

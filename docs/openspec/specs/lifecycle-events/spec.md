@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 implements: [ADR-0022]
 requires: [SPEC-0012, SPEC-0006]
-related: [SPEC-0004, SPEC-0009, SPEC-0007]
+related: [SPEC-0004, SPEC-0009, SPEC-0007, SPEC-0017, SPEC-0023]
 ---
 
 # SPEC-0016: Annotation and Trace Lifecycle Events
@@ -17,7 +17,9 @@ related: [SPEC-0004, SPEC-0009, SPEC-0007]
 - **Requires:** **SPEC-0006**: the reactions and comments whose lifecycle is
   announced.
 - **Related:** **SPEC-0004** (run lifecycle), **SPEC-0009** (actor provenance),
-  **SPEC-0007** (MCP tool surface).
+  **SPEC-0007** (MCP tool surface), **SPEC-0017** (redaction runs before
+  persist, so an event never carries an unredacted body), **SPEC-0023** (owned
+  subscriptions that deliver these kinds).
 
 ## Overview
 

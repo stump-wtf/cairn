@@ -3,6 +3,7 @@ status: accepted
 date: 2026-09-13
 implements: [ADR-0019, ADR-0024]
 requires: [SPEC-0001]
+related: [SPEC-0023]
 ---
 
 # SPEC-0013: GitHub Login for the Web App Shell
@@ -12,6 +13,7 @@ requires: [SPEC-0001]
 - **Implements:** **ADR-0019** — GitHub as an additional human auth provider behind a minimal provider interface.
 - **Implements:** **ADR-0024** — enrollment is an operator mode (`allowlist`, `invite`, `open`), and GitHub sign-in fails closed.
 - **Extends:** **SPEC-0001** — the web app shell whose login page and session model this capability extends.
+- **Related:** **SPEC-0023** — Teams and tenancy: the users, identities and invitations the `invite` enrollment mode reads.
 
 ## Overview
 

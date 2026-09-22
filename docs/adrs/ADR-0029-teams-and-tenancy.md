@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 decision-makers: Joe Stump
 extends: [ADR-0001, ADR-0007]
-related: [ADR-0004, ADR-0005, ADR-0006, ADR-0010, ADR-0013, ADR-0017, ADR-0018, ADR-0019, ADR-0021]
+related: [ADR-0004, ADR-0005, ADR-0006, ADR-0010, ADR-0013, ADR-0017, ADR-0018, ADR-0019, ADR-0021, ADR-0022, ADR-0023, ADR-0024, ADR-0026, ADR-0027, ADR-0028]
 ---
 
 # ADR-0029: Teams and Tenancy — Artifacts Belong to a User or a Team, and the Operator Owns None
@@ -92,7 +92,7 @@ subjects, `<issuer>|<subject>`, matched against the session's recorded provenanc
 `CAIRN_OPERATOR_GROUP`. An operator is also a user, and owns their own artifacts as one.
 
 Operator surfaces are instance configuration and governance only: login policy (the enrollment mode
-and allowlist of ADR-0024, `CAIRN_ENROLLMENT_MODE`, cited by number while it is in flight), per-user and per-team quotas, retention bounds,
+and allowlist of ADR-0024, `CAIRN_ENROLLMENT_MODE`), per-user and per-team quotas, retention bounds,
 suspending a user or team (which revokes their sessions, personal access tokens and OAuth grants in
 one step), the metrics scrape credential ADR-0021 assumed but never defined, and a directory of users
 and teams with **counts**. No operator surface returns an artifact's body, title, link, annotations
@@ -174,7 +174,7 @@ webhook does), or minted by Cairn; either way it is shown once and stored encryp
 
 **A workspace's events go only to that workspace's subscriptions.** `artifact.created` for a
 personal artifact reaches its owner's subscriptions; for a team artifact, the team's. Annotation and
-trace events (ADR-0022, SPEC-0016, cited by number while in flight) follow the **artifact's**
+trace events (ADR-0022, SPEC-0016) follow the **artifact's**
 workspace, not the commenter's, so a friend's comment on your artifact reaches your automation and
 never theirs. Nothing reaches the operator unless the operator owns the artifact.
 
@@ -212,7 +212,7 @@ says so.
 ### 8. Quotas for permanent retention
 
 Permanent storage is opt-in per artifact and off for the whole instance until the operator enables
-it (ADR-0026, SPEC-0020, cited by number while in flight). Permanent artifacts count against their
+it (ADR-0026, SPEC-0020). Permanent artifacts count against their
 **owner's** quota. Quotas are configurable, not mandatory: the operator may set one per user and one
 per team, and may override either for one owner (audited). **Where no quota is set, none applies.**
 Team admins decide which team artifacts are permanent. Moving an artifact into a team re-charges it
@@ -344,10 +344,9 @@ flowchart TB
   same slug and role, invited twice or synced from the same IdP group. The handoff path between them
   is owned end to end: a Cairn team subscription posts to a Switchboard webhook owned by the
   Switchboard team, which lands todos on that team's queue.
-* Records in flight that compose with this one, cited by number: ADR-0022 and SPEC-0016 (annotation
+* Records that compose with this one (front-matter edges): ADR-0022 and SPEC-0016 (annotation
   and trace events), ADR-0023 (redaction at ingest), ADR-0024 (GitHub allowlist), ADR-0026 and
-  SPEC-0020 (permanent retention), ADR-0027 (receipts), ADR-0028 (search). Front-matter edges to them
-  are added once they merge.
+  SPEC-0020 (permanent retention), ADR-0027 (receipts), ADR-0028 (search).
 * Issues folded in: #182 ("you only" not enforced) and #185 (instance-wide outbound webhooks).
 * **Supersedes ADR-0017's instance-wide delivery** (section 6). ADR-0017 stays the record for the
   event envelope, signing and retry; the env-configured target list is removed by this ADR.

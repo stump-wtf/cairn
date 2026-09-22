@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 decision-makers: [joestump, joestump-agent]
 extends: [ADR-0018]
-related: [ADR-0002, ADR-0003, ADR-0007, ADR-0009, ADR-0017]
+related: [ADR-0002, ADR-0003, ADR-0007, ADR-0009, ADR-0017, ADR-0022, ADR-0023, ADR-0025, ADR-0026, ADR-0028, ADR-0029]
 ---
 
 # ADR-0027: Structured Receipts — a Typed Metadata Schema, a Card, and a Dedicated Verb
@@ -275,8 +275,8 @@ sequenceDiagram
 
 * **Client-asserted content.** Receipt fields carry the same trust as tags: a consumer may
   route on them and must never authorize on them. `actor_id` stays the only identity.
-* **Redaction.** Metadata strings are persisted text, so the ingest scanner (ADR-0023,
-  being written in parallel) MUST scan them as it scans bodies. That covers the rendered
+* **Redaction.** Metadata strings are persisted text, so the ingest scanner (ADR-0023)
+  MUST scan them as it scans bodies. That covers the rendered
   body and the raw fields.
 * **Link safety.** Evidence URLs are rendered as plain links (`rel="noopener noreferrer"`,
   no preview fetch). Only `https`, `http` and `mcp://cairn/` schemes are accepted. The
@@ -309,7 +309,7 @@ sequenceDiagram
 * Extends ADR-0018 (tags stay routing hints; metadata is the structured sibling ADR-0018
   deliberately did not build) and ADR-0017's event payload (via SPEC-0012 REQ "Event
   Payload").
-* Parallel records cited in prose only, until they merge: ADR-0022 (events, human-only
+* Related records (front-matter edges): ADR-0022 (events, human-only
   reactions), ADR-0023 (redaction), ADR-0025 (validation error details), ADR-0026
   (permanent retention), ADR-0028 (search and export), ADR-0029 (teams).
 * `produced_artifact_id` is specified in SPEC-0004 and implemented in

@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 implements: [ADR-0028]
 requires: [SPEC-0002, SPEC-0009]
-related: [SPEC-0001, SPEC-0007, SPEC-0008, SPEC-0014]
+related: [SPEC-0001, SPEC-0007, SPEC-0008, SPEC-0014, SPEC-0017, SPEC-0020, SPEC-0021, SPEC-0023]
 ---
 
 # SPEC-0022: Search, Semantic Search, and Export by Tag
@@ -23,9 +23,9 @@ It builds on SPEC-0002 (artifact core, tags and the Bin query) and SPEC-0009 (ac
 expiry). It adds a tool to SPEC-0007's MCP surface, adds commands to SPEC-0008's closed
 command list, and adds a search box to SPEC-0001's Bin.
 
-Several records are being written in parallel: ADR-0023/SPEC-0017 (redaction),
+It also leans on these records, linked as front-matter edges: ADR-0023/SPEC-0017 (redaction),
 ADR-0026/SPEC-0020 (retention), ADR-0027/SPEC-0021 (receipt metadata) and ADR-0029/SPEC-0023
-(teams). This spec cites them in prose only until they merge.
+(teams).
 
 ## Requirements
 

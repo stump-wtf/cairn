@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 decision-makers: [joestump, joestump-agent]
 extends: [ADR-0007]
-related: [ADR-0004, ADR-0005, ADR-0006, ADR-0008, ADR-0017, ADR-0018]
+related: [ADR-0004, ADR-0005, ADR-0006, ADR-0008, ADR-0017, ADR-0018, ADR-0022, ADR-0023, ADR-0027, ADR-0028, ADR-0029]
 ---
 
 # ADR-0026: Opt-In Permanent Retention for Evidence Artifacts
@@ -68,8 +68,7 @@ giving up ephemeral-by-default for everything else?
 * **Agents can never make evidence less durable.** ADR-0004 keeps delete and policy
   changes human-only. Retention must not open a path around that.
 * **Tenancy.** Every resource belongs to a user or a team, never to the instance.
-  Permanent artifacts, quotas, and tombstones follow ownership (Teams, ADR-0029, is being
-  written in parallel).
+  Permanent artifacts, quotas, and tombstones follow ownership (Teams, ADR-0029).
 * **Events change additively** (SPEC-0012 REQ "Event Payload"). The `artifact.created`
   bytes for an ordinary artifact must not change.
 
@@ -218,7 +217,7 @@ comply with a legal takedown, and that purge is logged.
 Comments and reactions on a permanent artifact are kept for as long as the artifact is,
 because they cascade with it (SPEC-0006). SPEC-0006's edit and soft-delete rules stay as
 they are, so a thread keeps its shape. Annotations on a retained record become more
-valuable once ADR-0022 (annotation events, being written in parallel) lands its human-only
+valuable once ADR-0022 (annotation events) lands its human-only
 reaction class: an approval an agent cannot forge, on a record that cannot expire, is the
 combination the customer's plan asks for.
 
@@ -348,7 +347,7 @@ stateDiagram-v2
   never retained, and no listing all stay in place. Search (ADR-0028) returns only what
   the caller owns or shares through a team.
 * **A secret must not become permanent.** Retaining re-runs the ingest scanner from
-  ADR-0023 (redaction, being written in parallel) on the retained bodies, and refuses on a
+  ADR-0023 (redaction) on the retained bodies, and refuses on a
   finding. An artifact created before redaction shipped therefore cannot be made permanent
   with a token inside it.
 * **Quota is the denial-of-service bound, and it is the operator's to set.** It is per
@@ -396,10 +395,9 @@ stateDiagram-v2
   "Uniform 404 / No Enumeration" and "Object-Storage Lifecycle Backstop", and SPEC-0007's
   Requirement "Exactly Three Consent Scopes". SPEC-0020 states each change.
 * Builds on ADR-0008 (content addressing; the checksum is the existing `body_sha256`).
-* Parallel records cited here only in prose, because the record generator rejects
-  front-matter edges to records not yet merged: ADR-0022 (annotation and lifecycle events),
+* Related records (front-matter edges): ADR-0022 (annotation and lifecycle events),
   ADR-0023 (redaction at ingest), ADR-0027 (receipts), ADR-0028 (search), and ADR-0029
-  (teams and tenancy). Add them as front-matter edges once they land.
+  (teams and tenancy).
 * Prerequisite for the leak story: cairn#182 ("you only" visibility is not enforced on any
   read path).
 * Design review, Joe, 2026-09-22: permanent retention stays off by default behind one

@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 decision-makers: [joestump, joestump-agent]
 extends: [ADR-0017, ADR-0006]
-related: [ADR-0004, ADR-0009, ADR-0018]
+related: [ADR-0004, ADR-0009, ADR-0018, ADR-0023, ADR-0029]
 ---
 
 # ADR-0022: Annotation and Trace Lifecycle Events, With a Server-Derived Actor Kind
@@ -62,7 +62,7 @@ building a second delivery system?
   and agents run shells. "Human token" is not "human presence".
 * **Multi-tenancy is a hard rule.** Every resource a user creates is owned by that
   user or by a team, never globally. Events about a user's artifact must be
-  routable to that owner's subscriptions (Teams, ADR-0029, in flight), and must
+  routable to that owner's subscriptions (Teams, ADR-0029), and must
   never reach a target the operator chose. ADR-0029 removes that firehose
   (`CAIRN_OUTBOUND_WEBHOOK_URLS`, #185) outright.
 * **Volume.** Annotation events can outnumber creations by an order of magnitude
@@ -295,7 +295,7 @@ flowchart LR
   best-effort, three attempts.
 * **Extends ADR-0006.** Reactions and comments gain a stored `actor_kind`, and
   reaction idempotency becomes per-kind.
-* **Parallel records, cited in prose until they merge:** Cairn ADR-0029 / SPEC-0023
+* **Related records** (front-matter edges): Cairn ADR-0029 / SPEC-0023
   (Teams and tenancy; owner and team webhook subscriptions, folding in #185);
   Cairn ADR-0023 / SPEC-0017 (secret redaction runs before persist, so an event
   never carries an unredacted comment body).

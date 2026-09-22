@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 decision-makers: [joestump, joestump-agent]
 extends: [ADR-0019]
-related: [ADR-0013, ADR-0004]
+related: [ADR-0013, ADR-0004, ADR-0029]
 ---
 
 # ADR-0024: Enrollment Is an Operator Mode (allowlist, invite, open), and GitHub Sign-in Fails Closed
@@ -29,7 +29,7 @@ now wrong:
 
 1. **Cairn is multi-tenant.** There are two profiles: the operator, who runs the
    instance, and users, whom the operator lets in (Cairn ADR-0029, Teams and
-   tenancy, in flight). An instance open to every GitHub account is one where
+   tenancy). An instance open to every GitHub account is one where
    strangers get an account, create artifacts, consume storage and receive MCP
    grants. The operator chose none of that.
 2. **A self-hosting customer** wants GitHub login for their own organisation,
@@ -38,8 +38,8 @@ now wrong:
    guide, no `.env.example` and no compose file. Documenting them as they stand
    would publish "set these two variables and anyone on GitHub can sign in".
 4. **Switchboard has the same gap and is closing it** with enrollment modes
-   (`SWITCHBOARD_ENROLLMENT_MODE=allowlist|invite|open`, Switchboard SPEC-0033,
-   in flight). An operator running both products should meet one model, not two.
+   (`SWITCHBOARD_ENROLLMENT_MODE=allowlist|invite|open`, Switchboard
+   SPEC-0033). An operator running both products should meet one model, not two.
 
 The question: how does an operator restrict GitHub sign-in to the people they
 intend, and what happens when they enable the provider without saying who?
@@ -323,9 +323,9 @@ flowchart TD
 * SPEC-0013 is the GitHub login spec's number on `main`. The renumbering in
   `fix/spec-0013-collision` merged as #257 and moved embedded docs to
   SPEC-0015, so SPEC-0013 is stable, and it is amended rather than replaced.
-* **Parallel records, cited in prose until they merge:** Cairn ADR-0029 /
-  SPEC-0023 (Teams and tenancy: users, identities, invitations, suspension);
-  Switchboard SPEC-0033 (teams and tenancy, including
+* **Related records** (front-matter edges): Cairn ADR-0029 / SPEC-0023 (Teams
+  and tenancy: users, identities, invitations, suspension). Cross-repo, cited
+  in prose: Switchboard SPEC-0033 (teams and tenancy, including
   `SWITCHBOARD_ENROLLMENT_MODE` and `SWITCHBOARD_ENROLLMENT_ALLOW`, aligned in
   its PR #357).
 * Design review, Joe, 2026-09-22: the mode is operator config,

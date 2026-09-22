@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 implements: [ADR-0025]
 requires: [SPEC-0002]
-related: [SPEC-0006, SPEC-0007, SPEC-0008, SPEC-0004, SPEC-0009]
+related: [SPEC-0006, SPEC-0007, SPEC-0008, SPEC-0004, SPEC-0009, SPEC-0017]
 ---
 
 # SPEC-0019: Actionable Validation Errors
@@ -15,7 +15,9 @@ related: [SPEC-0006, SPEC-0007, SPEC-0008, SPEC-0004, SPEC-0009]
   extends.
 - **Related:** **SPEC-0006** (annotation validation), **SPEC-0007** (MCP tool
   errors), **SPEC-0008** (CLI rendering and tag folding), **SPEC-0004** (span
-  validation), **SPEC-0009** (policy and TTL endpoints).
+  validation), **SPEC-0009** (policy and TTL endpoints), **SPEC-0017**
+  (redaction rejections use this contract with `secret_detected` and
+  `too_large_to_scan`).
 
 ## Overview
 

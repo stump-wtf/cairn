@@ -18,7 +18,7 @@ Current state:
 * Migrations are embedded (`internal/db/migrations/*.sql`) and applied in lexical order at
   startup by `db.Migrate`. There is no mechanism for optional migrations yet.
 * CI and both compose files run `postgres:16-alpine`, which does not ship pgvector.
-* Owner today is `artifacts.owner_id` (TEXT). ADR-0029 (in parallel) moves it to
+* Owner today is `artifacts.owner_id` (TEXT). ADR-0029 moves it to
   `owner_user_id` XOR `owner_team_id` and adds `authorizeRead(principal, artifact)` in the
   store.
 

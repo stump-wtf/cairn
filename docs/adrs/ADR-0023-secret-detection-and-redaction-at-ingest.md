@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 decision-makers: [joestump, joestump-agent]
 extends: [ADR-0008]
-related: [ADR-0006, ADR-0009, ADR-0010, ADR-0012, ADR-0007]
+related: [ADR-0006, ADR-0009, ADR-0010, ADR-0012, ADR-0007, ADR-0022, ADR-0025, ADR-0028]
 ---
 
 # ADR-0023: Secret Detection and Redaction at Ingest, With the Gitleaks Engine
@@ -212,14 +212,14 @@ flags `redacted: true`, so a client comparing hashes knows why they differ.
 
 A rejection uses the ADR-0012 envelope with code `validation_failed`. It also
 carries the structured violation shape that Cairn ADR-0025 / SPEC-0019
-(actionable validation errors, in flight) defines: field (`body`,
+(actionable validation errors) defines: field (`body`,
 `members[3].content`, `spans[12].args`), reason `secret_detected`, rule ID,
 line and column. It never carries the secret or the line containing it.
 
 ### Security and tenancy
 
 * Scanning runs before persist for **every** owner, whether a personal user or a
-  team (Cairn ADR-0029, in flight). No user, team or token can opt its content
+  team (Cairn ADR-0029). No user, team or token can opt its content
   out.
 * The operator's settings (cap, oversize policy, reject types, value allowlist)
   are the instance floor. If per-workspace redaction settings are ever added,
@@ -356,7 +356,7 @@ flowchart TD
   here), Harness PR #345 (durable-log masking), and Harness ADR-0022 /
   SPEC-0015 (telemetry export, which redacts before any byte leaves the process).
   Harness ADR-0022 is the same principle applied to Harness's own egress.
-* **Parallel records, cited in prose until they merge:** Cairn ADR-0025 /
+* **Related records** (front-matter edges): Cairn ADR-0025 /
   SPEC-0019 (the violation shape a rejection uses); Cairn ADR-0022 / SPEC-0016
   (events carry only stored, already-redacted text); Cairn ADR-0028 (search
   embeds only stored text).

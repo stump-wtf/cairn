@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 decision-makers: [joestump, joestump-agent]
 extends: [ADR-0012]
-related: [ADR-0003, ADR-0004, ADR-0005, ADR-0007, ADR-0008, ADR-0018]
+related: [ADR-0003, ADR-0004, ADR-0005, ADR-0007, ADR-0008, ADR-0018, ADR-0023, ADR-0026, ADR-0027, ADR-0029]
 ---
 
 # ADR-0028: Owner-Scoped Search — Postgres Full-Text, Optional pgvector Semantic Search, and Export by Tag
@@ -39,14 +39,14 @@ meaning, without letting anyone discover what they could not already reach?
 ## Decision Drivers
 
 * **Tenancy is the hard rule.** A result MUST be something the caller owns, or shares
-  through a team (ADR-0029, being written in parallel). Search must never turn a
+  through a team (ADR-0029). Search must never turn a
   link-capability into a discovery path: someone else's artifact that you were handed a
   link to is not yours to find.
 * **Self-host friendly.** No new mandatory service. Lexical search has to work on the
   Postgres Cairn already requires. Semantic search must be able to run against a local
   model and must be off by default.
 * **Secrets never leave through the index.** Text is redacted before it is indexed or sent
-  to an embeddings endpoint (ADR-0023, being written in parallel).
+  to an embeddings endpoint (ADR-0023).
 * **The index is as ephemeral as the data.** An expired or deleted artifact's text and
   vectors go with it, in the same transaction.
 * **Parity** (ADR-0003): MCP, REST, CLI, and the web Bin.
@@ -312,7 +312,7 @@ flowchart TB
 
 * Extends ADR-0012's API shape with a ranked, cursor-paginated search resource beside the
   keyset-paginated Bin.
-* Parallel records cited in prose only, until they merge: ADR-0023 (redaction), ADR-0026
+* Related records (front-matter edges): ADR-0023 (redaction), ADR-0026
   (retention filter), ADR-0027 (receipt metadata indexed and exported), and ADR-0029 (team
   scope).
 * `cairn ls` (cairn#154) remains the interactive Bin browser. `cairn search` is the

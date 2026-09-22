@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 implements: [ADR-0026]
 requires: [SPEC-0002, SPEC-0009]
-related: [SPEC-0007, SPEC-0008, SPEC-0012, SPEC-0014]
+related: [SPEC-0007, SPEC-0008, SPEC-0012, SPEC-0014, SPEC-0016, SPEC-0017, SPEC-0019, SPEC-0023]
 ---
 
 # SPEC-0020: Opt-In Permanent Retention
@@ -33,11 +33,9 @@ these requirements:
 * SPEC-0008 REQ "Command Surface and REST-Client Boundary": adds `cairn retain`,
   `cairn release` and `cairn retention` (REQ-11).
 
-Some of the records this spec leans on are being written in parallel: ADR-0022/SPEC-0016
+This spec also leans on these records, linked as front-matter edges: ADR-0022/SPEC-0016
 (the event envelope), ADR-0023/SPEC-0017 (redaction at ingest), ADR-0025/SPEC-0019
-(validation error details) and ADR-0029/SPEC-0023 (teams). They are cited here by number,
-in prose. They are not front-matter edges yet, because the record generator rejects an edge
-to a record that has not merged.
+(validation error details) and ADR-0029/SPEC-0023 (teams).
 
 "Pin" already means an image-region annotation in Cairn (ADR-0006, `pin_count`). Nothing
 in this capability uses that word.

@@ -42,7 +42,7 @@ Facts from `main` at `dea1f0b` this design rests on:
 - Nested teams or an organisation layer.
 - Per-tenant object-store buckets or encryption keys (audit A17 is accepted, not fixed).
 - Login policy itself: who may become a user is ADR-0024's enrollment gate (`CAIRN_ENROLLMENT_MODE`,
-  `allowlist | invite | open`, default `invite` when GitHub login is configured, in flight). This spec supplies the invitations its `invite` mode reads
+  `allowlist | invite | open`, default `invite` when GitHub login is configured). This spec supplies the invitations its `invite` mode reads
   and the `(issuer, subject)` identities its gate is defined over.
 
 ## Decisions
@@ -352,7 +352,7 @@ From `main` at `dea1f0b`. SPEC-0023 REQ "Closing the Audited Surfaces" binds to 
 |---|---|---|---|---|
 | A1 | `private` unenforced on every read path (#182) | `internal/store/read.go:21-52`; `api.go:461-463`; `mcp.go:806-830`; `mcp_a2ui.go`; trajectory and webhook readers | `ResolveReadable` + `authorizeRead` | Read Authorization on Every Surface |
 | A2 | `CAIRN_API_TOKENS` acts as any string, with `sharing:manage` | `auth.go:120-161,198-220`; `auth.go:42-46` | operator users only, agent scopes by default | Static API Tokens Act as an Operator's User |
-| A3 | GitHub sign-in open to every account | `github.go:25-31`; `authprovider.go:128-167` | ADR-0024's `CAIRN_ENROLLMENT_MODE` gate (in flight); its `invite` mode reads this spec's invitations | Team Invitations |
+| A3 | GitHub sign-in open to every account | `github.go:25-31`; `authprovider.go:128-167` | ADR-0024's `CAIRN_ENROLLMENT_MODE` gate; its `invite` mode reads this spec's invitations | Team Invitations |
 | A4 | Instance-wide outbound targets (#185) | `internal/config/config.go:104-109`; `internal/store/store.go:147-166`; `internal/outboundhook/outboundhook.go` | owned subscriptions; env targets removed in the same change | Owned Outbound Subscriptions; Removing the Instance-Wide Outbound Targets |
 | A5 | Identity is an unverified, unnormalised string | `oidc.go:198-202`; `0002_annotations.sql` | `users` + `user_identities` | Users and Identities |
 | A6 | Dev password live on GitHub-only deployments | `session.go:277-279` | disabled whenever a real provider exists | Users and Identities |

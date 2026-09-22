@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 implements: [ADR-0023]
 requires: [SPEC-0002]
-related: [SPEC-0004, SPEC-0005, SPEC-0006, SPEC-0008, SPEC-0012, SPEC-0014]
+related: [SPEC-0004, SPEC-0005, SPEC-0006, SPEC-0008, SPEC-0012, SPEC-0014, SPEC-0016, SPEC-0019]
 ---
 
 # SPEC-0017: Secret Detection and Redaction at Ingest
@@ -16,7 +16,9 @@ related: [SPEC-0004, SPEC-0005, SPEC-0006, SPEC-0008, SPEC-0012, SPEC-0014]
   scan sits inside.
 - **Related:** **SPEC-0004** (trace spans), **SPEC-0005** (webhook captures),
   **SPEC-0006** (comments), **SPEC-0008** (CLI flags and messages), **SPEC-0012**
-  (events carry stored text only), **SPEC-0014** (metrics).
+  (events carry stored text only), **SPEC-0014** (metrics), **SPEC-0016**
+  (lifecycle events carry only stored, redacted text), **SPEC-0019** (the
+  violation shape a rejection uses).
 
 ## Overview
 

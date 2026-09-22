@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 implements: [ADR-0029]
 requires: [SPEC-0001, SPEC-0002, SPEC-0007, SPEC-0009, SPEC-0012, SPEC-0013]
-related: [SPEC-0005, SPEC-0006, SPEC-0008, SPEC-0014]
+related: [SPEC-0005, SPEC-0006, SPEC-0008, SPEC-0014, SPEC-0016, SPEC-0020, SPEC-0021, SPEC-0022]
 ---
 
 # SPEC-0023: Teams and Tenancy
@@ -15,6 +15,7 @@ related: [SPEC-0005, SPEC-0006, SPEC-0008, SPEC-0014]
 - **Requires:** **SPEC-0012** — outbound webhooks, whose delivery targets become owned subscriptions; this spec replaces its REQ "Delivery Targets from Configuration"
 - **Requires:** **SPEC-0001**, **SPEC-0002**, **SPEC-0007**, **SPEC-0013** — the Bin, the artifact core, MCP OAuth and GitHub login, each of which gains an owner or a team argument
 - **Related:** **SPEC-0005**, **SPEC-0006**, **SPEC-0008**, **SPEC-0014** — hooks, annotations, the CLI and metrics, touched by the audit fixes
+- **Related:** **SPEC-0016**, **SPEC-0020**, **SPEC-0021**, **SPEC-0022** — events, permanent retention, receipts and search, which take their owner model and `authorizeRead` from this spec
 
 ## Overview
 
@@ -37,7 +38,7 @@ Cairn is pre-1.0. Nothing this spec replaces gets a deprecation window, a transi
 back-compat path: the old behaviour is removed in the change that ships the new one, and the
 CHANGELOG's upgrade notes say what an operator must do (design review, Joe, 2026-09-22).
 
-Records in flight that take their owner model from this spec, cited by number until they merge:
+Records that take their owner model from this spec (front-matter edges where they are specs):
 ADR-0022 and SPEC-0016 (annotation and trace events), ADR-0023 (redaction), ADR-0024 (GitHub
 allowlist), ADR-0026 and SPEC-0020 (permanent retention), ADR-0027 (receipts), ADR-0028 (search).
 Switchboard's SPEC-0033 defines the same profiles, roles, invites and group sync for that product.
