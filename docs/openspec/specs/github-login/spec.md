@@ -10,7 +10,7 @@ requires: [SPEC-0001]
 ## Graph Edges
 
 - **Implements:** **ADR-0019** — GitHub as an additional human auth provider behind a minimal provider interface.
-- **Implements:** **ADR-0024** — GitHub sign-in is allowlisted by organisation and user, and fails closed.
+- **Implements:** **ADR-0024** — enrollment is an operator mode (`allowlist`, `invite`, `open`), and GitHub sign-in fails closed.
 - **Extends:** **SPEC-0001** — the web app shell whose login page and session model this capability extends.
 
 ## Overview
@@ -28,14 +28,17 @@ primary verified email as the identity anchor. The provider difference is
 confined to one implementation; routes, session establishment, and CSRF are
 shared and unchanged.
 
-**Amended 2026-09-22 (ADR-0024).** Enrollment through GitHub (a GitHub
-identity not yet linked to an active Cairn user) is gated by an enrollment mode
-(`CAIRN_ENROLLMENT=allowlist|invite|open`, default `allowlist`) and an operator
-allowlist of organisations and users (requirements AL-1 to AL-6 below). With the
-default mode and an empty allowlist, nobody can enroll, and the provider is
-treated as unconfigured. Open signup requires the explicit `open` mode. This
-reverses the design's original default of admitting any verified-email GitHub
-account. The GitHub session subject becomes the numeric GitHub account id.
+**Amended 2026-09-22 (ADR-0024).** Enrollment (an identity not yet linked to an
+active Cairn user) is gated by an operator enrollment mode,
+`CAIRN_ENROLLMENT_MODE=allowlist|invite|open`, defaulting to `invite` when GitHub
+login is configured and `open` otherwise, and by an operator allowlist,
+`CAIRN_ENROLLMENT_ALLOW` (requirements AL-1 to AL-6 below). Both match
+Switchboard's `SWITCHBOARD_ENROLLMENT_MODE` and `SWITCHBOARD_ENROLLMENT_ALLOW` in
+values, default and semantics. With GitHub configured and no invitations or
+allowlist entries, nobody can enroll through GitHub, and the provider is treated
+as unconfigured. Open signup requires the explicit `open` mode. This reverses
+the design's original default of admitting any verified-email GitHub account.
+The GitHub session subject becomes the numeric GitHub account id.
 
 ## Requirements
 
@@ -110,49 +113,69 @@ login time only.
 
 ### Requirement: AL-1 Enrollment Mode and Allowlist Configuration
 
-The operator MUST be able to configure GitHub enrollment with:
+The operator MUST be able to configure enrollment with:
 
-- `CAIRN_ENROLLMENT`: `allowlist` (default), `invite` or `open`, with the same
-  names and meanings as Switchboard's `SWITCHBOARD_ENROLLMENT`;
-- `CAIRN_GITHUB_ALLOWED_ORGS`: comma-separated GitHub organisation logins;
-- `CAIRN_GITHUB_ALLOWED_USERS`: comma-separated GitHub logins or
-  `id:<numeric account id>` entries.
+- `CAIRN_ENROLLMENT_MODE`: `allowlist`, `invite` or `open`. When unset it MUST
+  be `invite` if the GitHub provider is configured and `open` otherwise. The
+  names, default and meanings MUST match Switchboard's
+  `SWITCHBOARD_ENROLLMENT_MODE`:
+  - `allowlist`: only identities matching `CAIRN_ENROLLMENT_ALLOW` may enroll;
+  - `invite`: only identities whose verified email holds a pending team
+    invitation, plus operators (Cairn ADR-0029), may enroll;
+  - `open`: any identity the configured providers authenticate may enroll.
+- `CAIRN_ENROLLMENT_ALLOW`: comma-separated entries in the syntax of
+  Switchboard's `SWITCHBOARD_ENROLLMENT_ALLOW`:
+  - `<issuer>|<subject>`, a provider-qualified subject; a GitHub user is
+    `https://github.com|<numeric account id>`;
+  - a verified email address;
+  - `@<domain>`, matching a verified email in that domain;
+  - `github-org:<login>`, matching an active member of that GitHub
+    organisation.
 
-Login and organisation matching MUST be case-insensitive. An `id:` entry MUST
-match GitHub's numeric account `id` from `GET /user`.
+Matching MUST be case-insensitive. A GitHub subject entry MUST match GitHub's
+numeric account `id` from `GET /user`, never the login.
 
 Startup MUST fail, naming the problem, when:
 
-- an `id:` entry is malformed;
-- `open` is combined with a non-empty allowlist;
-- `invite` is selected before invitations exist (Cairn ADR-0029).
+- an allowlist entry is malformed;
+- `open` is combined with a non-empty `CAIRN_ENROLLMENT_ALLOW`.
 
-These settings are operator configuration. No user, team admin, token or request
-may change them.
+Selecting `invite` MUST NOT fail startup, including on a build without team
+invitations; there, `invite` admits nobody (AL-3). These settings are operator
+configuration. No user, team admin, token or request may change them. There is
+no deprecated alias for any earlier variable name.
 
 #### Scenario: Numeric id survives a rename
 
-- **WHEN** `CAIRN_GITHUB_ALLOWED_USERS=id:583231` and that account has renamed its GitHub login since the entry was written
+- **WHEN** `CAIRN_ENROLLMENT_MODE=allowlist`, `CAIRN_ENROLLMENT_ALLOW=https://github.com|583231`, and that account has renamed its GitHub login since the entry was written
 - **THEN** it may enroll, and a different account now holding the old login may not
 
 #### Scenario: Conflicting configuration refused
 
-- **WHEN** `CAIRN_ENROLLMENT=open` and `CAIRN_GITHUB_ALLOWED_ORGS=acme` are both set
+- **WHEN** `CAIRN_ENROLLMENT_MODE=open` and `CAIRN_ENROLLMENT_ALLOW=github-org:acme` are both set
 - **THEN** cairnd refuses to start and names both variables
 
-#### Scenario: Invite mode before invitations exist
+#### Scenario: Default mode with GitHub configured
 
-- **WHEN** `CAIRN_ENROLLMENT=invite` on a build without Teams invitations
-- **THEN** cairnd refuses to start, and says `invite` requires team invitations
+- **WHEN** GitHub credentials are set and `CAIRN_ENROLLMENT_MODE` is unset
+- **THEN** the effective mode is `invite`, and cairnd starts
+
+#### Scenario: Default mode without GitHub
+
+- **WHEN** only the OIDC provider is configured and `CAIRN_ENROLLMENT_MODE` is unset
+- **THEN** the effective mode is `open`, and OIDC sign-in behaves as before
 
 ### Requirement: AL-2 The Gate Applies to Enrollment
 
-A GitHub sign-in is an **enrollment** when its identity (`https://github.com`,
-numeric id) is not linked to an active Cairn user, and its verified, lower-cased
-email does not link it to one. The gate (AL-4) MUST apply to every enrollment,
-and MUST NOT apply to an identity already linked to an active user. Until
-persistent users exist (Cairn ADR-0029), every GitHub sign-in is an enrollment.
-Revoking an existing user's access is suspension (ADR-0029), not the allowlist.
+A sign-in is an **enrollment** when its identity (`<issuer>`, `<subject>`; for
+GitHub, `https://github.com` and the numeric id) is not linked to an active
+Cairn user, and its verified, lower-cased email does not link it to one. The
+gate (AL-4) MUST apply to every enrollment from every provider, and MUST NOT
+apply to an identity already linked to an active user. Until persistent users
+exist (Cairn ADR-0029), every GitHub sign-in is an enrollment, and OIDC
+sign-ins are not gated, because a returning OIDC user cannot yet be told from a
+new one; the gate MUST cover OIDC in the release that adds users. Revoking an
+existing user's access is suspension (ADR-0029), not the allowlist.
 
 #### Scenario: Today every sign-in is checked
 
@@ -166,10 +189,10 @@ Revoking an existing user's access is suspension (ADR-0029), not the allowlist.
 
 ### Requirement: AL-3 Fail Closed Without a Way In
 
-In `allowlist` mode with both allowlists empty, no enrollment may succeed. While
-no GitHub sign-in could succeed at all (that condition holding and no Cairn user
-having a linked GitHub identity), the GitHub provider MUST be treated as
-unconfigured:
+In `allowlist` mode with an empty `CAIRN_ENROLLMENT_ALLOW`, and in `invite` mode
+before team invitations exist, no enrollment may succeed. While no GitHub
+sign-in could succeed at all (such a condition holding and no Cairn user having
+a linked GitHub identity), the GitHub provider MUST be treated as unconfigured:
 
 - no button is rendered;
 - `/auth/login?provider=github` and a GitHub callback return 404,
@@ -178,19 +201,22 @@ unconfigured:
 
 #### Scenario: Credentials alone admit nobody
 
-- **WHEN** only `CAIRN_GITHUB_CLIENT_ID` and `CAIRN_GITHUB_CLIENT_SECRET` are set
-- **THEN** the login page shows no GitHub button, `/auth/login?provider=github` returns 404, and the startup log warns that GitHub enrollment is closed until an allowlist or `CAIRN_ENROLLMENT=open` is set
+- **WHEN** only `CAIRN_GITHUB_CLIENT_ID` and `CAIRN_GITHUB_CLIENT_SECRET` are set, on a build without team invitations
+- **THEN** the effective mode is `invite`, the login page shows no GitHub button, `/auth/login?provider=github` returns 404, and the startup log warns that GitHub enrollment is closed until `CAIRN_ENROLLMENT_MODE=allowlist` with `CAIRN_ENROLLMENT_ALLOW` entries, or `CAIRN_ENROLLMENT_MODE=open`, is set
 
 ### Requirement: AL-4 Enrollment Check Before Session
 
 After the existing identity verification succeeds, and before any session is
 created, an enrollment MUST be admitted only when one of these holds:
 
-1. `CAIRN_ENROLLMENT=open`;
-2. the login or numeric id matches a `CAIRN_GITHUB_ALLOWED_USERS` entry;
-3. `GET /user/memberships/orgs/{org}`, with the user's token, returns 200 with
-   `state == "active"` for some allowed organisation;
-4. in `invite` mode, the verified email holds a pending invitation.
+1. `CAIRN_ENROLLMENT_MODE=open`;
+2. in `invite` mode, the identity is an operator, or its verified email holds a
+   pending team invitation;
+3. in `allowlist` mode, a subject, verified-email or `@<domain>` entry in
+   `CAIRN_ENROLLMENT_ALLOW` matches;
+4. in `allowlist` mode, for a GitHub identity, `GET /user/memberships/orgs/{org}`
+   with the user's token returns 200 with `state == "active"` for some
+   `github-org:` entry.
 
 For each organisation checked:
 
@@ -209,13 +235,19 @@ A denied enrollment MUST:
 
 #### Scenario: Active org member admitted
 
-- **WHEN** `CAIRN_GITHUB_ALLOWED_ORGS=acme` and the enrolling user is an active member of `acme`
+- **WHEN** `CAIRN_ENROLLMENT_MODE=allowlist`, `CAIRN_ENROLLMENT_ALLOW=github-org:acme`, and the enrolling user is an active member of `acme`
 - **THEN** a session is established exactly as for any GitHub login
 
 #### Scenario: Non-member denied without disclosure
 
 - **WHEN** the enrolling user matches no allowlist entry, no organisation, and no invitation
 - **THEN** the response is the generic 403 page, which names no organisation or team, no session cookie is set, and the log reason is `not_allowlisted`
+
+#### Scenario: Invited friend enrolls under the default mode
+
+- **GIVEN** GitHub is configured, `CAIRN_ENROLLMENT_MODE` is unset, and a pending team invitation exists for `friend@example.com` (Cairn ADR-0029)
+- **WHEN** a GitHub account whose primary verified email is `friend@example.com` completes login
+- **THEN** a session is established and no organisation membership call is made
 
 #### Scenario: Pending organisation membership denied
 
@@ -234,13 +266,13 @@ A denied enrollment MUST:
 
 ### Requirement: AL-5 Scope Minimisation
 
-The authorisation request MUST include the `read:org` scope if and only if
-`CAIRN_GITHUB_ALLOWED_ORGS` is non-empty. Otherwise the scopes MUST remain
-`read:user user:email`.
+The authorisation request MUST include the `read:org` scope if and only if the
+mode is `allowlist` and `CAIRN_ENROLLMENT_ALLOW` holds a `github-org:` entry.
+Otherwise the scopes MUST remain `read:user user:email`.
 
-#### Scenario: Users-only instance does not ask for org access
+#### Scenario: Subject-only allowlist does not ask for org access
 
-- **WHEN** only `CAIRN_GITHUB_ALLOWED_USERS` is set
+- **WHEN** `CAIRN_ENROLLMENT_MODE=allowlist` and `CAIRN_ENROLLMENT_ALLOW` holds only `https://github.com|583231`
 - **THEN** the redirect to GitHub requests `read:user user:email` and not `read:org`
 
 ### Requirement: AL-6 Numeric Subject and Login-Time Evaluation
@@ -276,11 +308,12 @@ behavior (SPEC-0001 and ADR-0013):
 - **Authentication**: Per ADR-0013, sessions are HttpOnly, SameSite=Lax,
   signed cookies with server-side revocation. GitHub login reuses that
   machinery verbatim; no new cookie or session format is introduced.
-- **Authorization (enrollment)**: A GitHub identity enrolls only through the
-  operator's enrollment mode and allowlist (AL-1 to AL-4). It fails closed on an
-  empty allowlist and on any membership-check error, and a refusal discloses
-  nothing about organisations, teams or invitations. Mode and allowlist are
-  operator configuration, never user-settable.
+- **Authorization (enrollment)**: An identity enrolls only through the
+  operator's enrollment mode and allowlist (AL-1 to AL-4). GitHub enrollment
+  fails closed on an empty allowlist, on `invite` with no invitation, and on any
+  membership-check error, and a refusal discloses nothing about organisations,
+  teams or invitations. Mode and allowlist are operator configuration, never
+  user-settable.
 - **Rate limiting**: The `/auth/login` and `/auth/callback` routes inherit
   whatever edge limits exist at the reverse proxy. The state cookie's
   single-use, short-TTL property is the primary anti-replay control; per-IP

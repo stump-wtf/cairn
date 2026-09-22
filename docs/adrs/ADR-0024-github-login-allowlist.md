@@ -6,7 +6,7 @@ extends: [ADR-0019]
 related: [ADR-0013, ADR-0004]
 ---
 
-# ADR-0024: GitHub Sign-in Enrollment Is Allowlisted by Organisation and User, and Fails Closed
+# ADR-0024: Enrollment Is an Operator Mode (allowlist, invite, open), and GitHub Sign-in Fails Closed
 
 ## Context and Problem Statement
 
@@ -38,8 +38,8 @@ now wrong:
    guide, no `.env.example` and no compose file. Documenting them as they stand
    would publish "set these two variables and anyone on GitHub can sign in".
 4. **Switchboard has the same gap and is closing it** with enrollment modes
-   (`SWITCHBOARD_ENROLLMENT=open|allowlist|invite`, Switchboard SPEC-0033, in
-   flight). An operator running both products should meet one model, not two.
+   (`SWITCHBOARD_ENROLLMENT_MODE=allowlist|invite|open`, Switchboard SPEC-0033,
+   in flight). An operator running both products should meet one model, not two.
 
 The question: how does an operator restrict GitHub sign-in to the people they
 intend, and what happens when they enable the provider without saying who?
@@ -50,24 +50,31 @@ intend, and what happens when they enable the provider without saying who?
   everyone. The unsafe configuration must require an explicit, greppable setting.
 * **Match how operators think.** "Members of my GitHub org" is the common case,
   and "these specific people" is the other.
-* **One model across Cairn and Switchboard.** The same mode names, and the same
-  rule about whom the gate applies to.
+* **One model across Cairn and Switchboard.** The same variables, mode names,
+  default and semantics, and the same rule about whom the gate applies to. Joe
+  decided this in design review (2026-09-22): the mode is operator config,
+  `CAIRN_ENROLLMENT_MODE`, defaulting to `invite` when GitHub login is
+  configured, aligned with Switchboard's `SWITCHBOARD_ENROLLMENT_MODE`.
+* **No transition machinery.** Cairn is pre-1.0. Nothing here keeps an old
+  behaviour alive behind a deprecation window (design review, 2026-09-22).
 * **Least privilege at GitHub.** Do not request `read:org` unless an
   organisation check is configured.
 * **Identity that does not drift.** GitHub logins can be renamed and later
   reclaimed by someone else. The numeric account id cannot.
 * **No steady-state GitHub traffic.** ADR-0019's token containment stands: the
   access token lives only inside the callback.
-* **Pocket ID and the dev login are untouched.** Pocket ID is operator-provisioned
-  already.
+* **OIDC-only instances are unaffected by default.** Where GitHub login is not
+  configured the mode defaults to `open`, because the IdP already decides who
+  exists. The dev login is untouched.
 
 ## Considered Options
 
-* **A. Enrollment modes (`allowlist` default, `invite`, `open`) with an operator
-  allowlist of GitHub organisations and users.** The gate is checked in the
-  callback before a session exists, applies to **enrollment** (a GitHub
-  identity not yet linked to an active Cairn user), and denies on an empty
-  allowlist or any check error.
+* **A. Enrollment modes (`allowlist`, `invite`, `open`; `invite` by default
+  when GitHub login is configured, otherwise `open`) with one operator
+  allowlist, `CAIRN_ENROLLMENT_ALLOW`, in Switchboard's syntax.** The gate is
+  checked in the callback before a session exists, applies to **enrollment**
+  (an identity not yet linked to an active Cairn user), and denies on any
+  check error.
 * **B. The same allowlist, re-checked on every GitHub sign-in**, so leaving the
   organisation locks the person out at their next login.
 * **C. An email-domain allowlist**, checking the verified primary email against
@@ -83,27 +90,32 @@ Chosen option: **A**.
 
 | Variable | Meaning |
 |---|---|
-| `CAIRN_ENROLLMENT` | `allowlist` (default), `invite`, or `open`. The same names and meanings as Switchboard's `SWITCHBOARD_ENROLLMENT`. |
-| `CAIRN_GITHUB_ALLOWED_ORGS` | comma-separated GitHub organisation logins. Active members may enroll. |
-| `CAIRN_GITHUB_ALLOWED_USERS` | comma-separated GitHub logins, or `id:<numeric account id>` entries |
+| `CAIRN_ENROLLMENT_MODE` | `allowlist`, `invite` or `open`. Default: `invite` when GitHub login is configured, otherwise `open`. The same names, default and meanings as Switchboard's `SWITCHBOARD_ENROLLMENT_MODE`. |
+| `CAIRN_ENROLLMENT_ALLOW` | comma-separated entries, in the same syntax as Switchboard's `SWITCHBOARD_ENROLLMENT_ALLOW`: a provider-qualified subject `<issuer>\|<subject>` (a GitHub user is `https://github.com\|<numeric account id>`); a verified email address; `@<domain>`, matching a verified email in that domain; or `github-org:<login>`, matching an active member of that GitHub organisation. |
 
 The modes:
 
-* **`allowlist`**: a GitHub identity may enroll only if it matches
-  `CAIRN_GITHUB_ALLOWED_USERS`, or is an active member of an organisation in
-  `CAIRN_GITHUB_ALLOWED_ORGS`.
-* **`invite`**: as `allowlist`, **or** the identity's verified email holds a
-  pending invitation. Invitations belong to Teams (ADR-0029). Until they exist,
-  selecting `invite` fails startup with an error naming that dependency. Once
-  they exist, ADR-0029 may make `invite` the default when GitHub is configured,
-  as Switchboard does.
-* **`open`**: any GitHub identity with a verified primary email may enroll. This
-  is the explicit open-signup setting. `open` combined with a non-empty
-  allowlist is a startup error, because the operator's intent is ambiguous.
+* **`allowlist`**: an identity may enroll only if it matches an entry in
+  `CAIRN_ENROLLMENT_ALLOW`.
+* **`invite`**: an identity may enroll only if its verified email holds a
+  pending team invitation, or it is an operator. Invitations and operators
+  belong to Teams (ADR-0029). Before they exist nothing matches, so `invite`
+  admits nobody and GitHub enrollment is closed (see "Fail closed"). Selecting
+  it never fails startup.
+* **`open`**: any identity the configured providers authenticate may enroll.
+  This is the explicit open-signup setting. `open` combined with a non-empty
+  `CAIRN_ENROLLMENT_ALLOW` is a startup error, because the operator's intent is
+  ambiguous.
 
-Logins match case-insensitively. An `id:` entry matches GitHub's numeric account
-id, which `GET /user` already returns. That form is recommended for
-individuals, because a renamed login can be reclaimed by a stranger.
+Entries match case-insensitively. A GitHub user is named by numeric account id,
+which `GET /user` already returns, never by login, because a renamed login can
+be reclaimed by a stranger. An `@<domain>` entry proves control of an address in
+that domain, not membership of anything (option C's weakness); it exists for
+parity with Switchboard, and the operator guide says so next to it.
+
+`CAIRN_ENROLLMENT_MODE` and `CAIRN_ENROLLMENT_ALLOW` replace the
+`CAIRN_ENROLLMENT`, `CAIRN_GITHUB_ALLOWED_ORGS` and `CAIRN_GITHUB_ALLOWED_USERS`
+of this ADR's first draft outright. Those never shipped, and nothing reads them.
 
 The GitHub session's `sub` becomes that numeric id, with the login kept for
 display and logs. This amends SPEC-0013's "subject `login`" and matches the
@@ -112,12 +124,16 @@ by verified, lower-cased email.
 
 ### Enrollment, not every sign-in
 
-The gate decides whether a GitHub identity may **become or join** a Cairn user.
-A sign-in is an enrollment when its GitHub identity is not yet linked to an
-active user, and its verified email does not link it to one.
+The gate decides whether an identity may **become or join** a Cairn user. A
+sign-in is an enrollment when its identity is not yet linked to an active user,
+and its verified email does not link it to one. The mode applies to every
+provider, as Switchboard's does.
 
 * **Until ADR-0029 introduces persistent users**, no identity is ever "already
-  linked", so **every** GitHub sign-in is an enrollment and is checked.
+  linked", so **every** GitHub sign-in is an enrollment and is checked. OIDC
+  sign-ins are not gated until then, because Cairn cannot yet tell a returning
+  OIDC user from a new one. This is build order, not a transition window: the
+  gate covers OIDC in the release that adds users.
 * **Afterwards**, an existing user is never locked out by the allowlist. To
   revoke access, the operator suspends the user (ADR-0029). This matches
   Switchboard. It also means a GitHub API outage cannot lock out people who
@@ -125,9 +141,11 @@ active user, and its verified email does not link it to one.
 
 ### Fail closed
 
-In `allowlist` mode with both lists empty, no GitHub identity can enroll. While
-no GitHub sign-in could succeed (always true before ADR-0029), the provider is
-treated as unconfigured:
+In `allowlist` mode with an empty allowlist, and in `invite` mode before
+invitations exist, no GitHub identity can enroll. While no GitHub sign-in could
+succeed (true before ADR-0029 under the default `invite` mode, unless the
+operator sets `allowlist` with entries, or `open`), the provider is treated as
+unconfigured:
 
 * no login button;
 * `/auth/login?provider=github` returns 404, indistinguishable from an unknown
@@ -140,9 +158,11 @@ After identity verification (unchanged), and **before** a session is created:
 
 1. Is the identity already linked to an active user? Admit. (This applies only
    after ADR-0029.)
-2. Is `CAIRN_ENROLLMENT=open`? Admit.
-3. Does a user entry match the login or the numeric id? Admit.
-4. For each allowed organisation, `GET /user/memberships/orgs/{org}` with the
+2. Is `CAIRN_ENROLLMENT_MODE=open`? Admit.
+3. In `invite` mode: is the identity an operator, or does its verified email
+   hold a pending invitation? Admit. Otherwise deny.
+4. In `allowlist` mode: does a subject, email or `@<domain>` entry match? Admit.
+5. For each `github-org:` entry, `GET /user/memberships/orgs/{org}` with the
    user's token:
    - `200` with `state: "active"` admits;
    - `404` (not a member) or `state: "pending"` means try the next organisation;
@@ -151,7 +171,6 @@ After identity verification (unchanged), and **before** a session is created:
      is an organisation owner approving the app, and the next organisation is
      then tried;
    - any other response, or a network error, **denies**. Fail closed.
-5. In `invite` mode, a pending invitation for the verified email admits.
 6. Otherwise, deny.
 
 A denial returns a generic 403 page ("This GitHub account is not permitted on
@@ -161,9 +180,10 @@ GitHub login, the numeric id and the reason, never the token.
 
 ### Scopes
 
-`read:org` is requested **only when** `CAIRN_GITHUB_ALLOWED_ORGS` is non-empty. A
-users-only, invite-only or open instance keeps `read:user user:email`, so the
-consent screen matches what the instance actually checks.
+`read:org` is requested **only when** the mode is `allowlist` and
+`CAIRN_ENROLLMENT_ALLOW` holds a `github-org:` entry. Every other instance keeps
+`read:user user:email`, so the consent screen matches what the instance
+actually checks.
 
 ### Security and tenancy
 
@@ -181,9 +201,10 @@ consent screen matches what the instance actually checks.
 
 ### How it composes with Switchboard and Harness
 
-* **Switchboard** uses the same three mode names and the same "gate enrollment,
-  suspend to revoke" rule (Switchboard SPEC-0033). An operator configures both
-  products with one mental model. Switchboard's GitHub login design carried the
+* **Switchboard** uses the same variables (`SWITCHBOARD_ENROLLMENT_MODE`,
+  `SWITCHBOARD_ENROLLMENT_ALLOW`), mode names, default and allowlist syntax, and
+  the same "gate enrollment, suspend to revoke" rule (Switchboard SPEC-0033). An
+  operator configures both products with one mental model. Switchboard's GitHub login design carried the
   same "allow-list?" open question, and its SPEC-0033 answers it.
 * **Harness** is unaffected. Harness agents authenticate to Cairn with MCP OAuth
   or tokens, never with GitHub login.
@@ -192,7 +213,8 @@ consent screen matches what the instance actually checks.
 
 * Good, because enabling GitHub login can no longer admit strangers by omission.
   Open signup is an explicit, auditable setting.
-* Good, because "my org" is one variable, and "these people" pins immutable ids.
+* Good, because "my org" is one entry (`github-org:acme`), and "these people"
+  pins immutable ids.
 * Good, because operators meet the same enrollment model in Cairn and
   Switchboard.
 * Good, because `read:org` is asked for only when it is used.
@@ -205,9 +227,12 @@ consent screen matches what the instance actually checks.
   before its members can enroll. The 403 is logged distinctly, and the guide
   explains the fix.
 * Bad, because a deployment that relied on #259's open behaviour stops admitting
-  GitHub users until it sets an allowlist or `CAIRN_ENROLLMENT=open`. No such
-  deployment is documented, because the variables were never published. The
-  startup warning names exactly what to set.
+  GitHub users until it sets `CAIRN_ENROLLMENT_MODE=allowlist` with entries, or
+  `open`. No such deployment is documented, because the variables were never
+  published. The startup warning names exactly what to set.
+* Bad, because once users exist, the default `invite` mode on an instance that
+  offers GitHub also gates new OIDC users. An operator who adds someone to their
+  IdP either invites them or sets another mode. Switchboard has the same rule.
 * Bad, because `sub` changes from the login to the numeric id for new GitHub
   sessions. Sessions are short-lived, and the migration is to let old sessions
   expire.
@@ -216,17 +241,18 @@ consent screen matches what the instance actually checks.
 
 Callback tests run against a fake GitHub. They cover:
 
-* an allowlisted login;
-* an allowlisted `id:` entry after a simulated rename;
+* an allowlisted `https://github.com|<id>` entry after a simulated rename;
+* verified-email and `@<domain>` entries;
 * an active organisation member, a pending member, a non-member (404), and a
   restricted organisation (403);
 * a network error on the membership call, which must deny;
 * `open` mode;
-* `invite` selected before invitations exist, which must be a startup error;
-* `allowlist` mode with empty lists, where the provider must be absent.
+* the default `invite` mode with GitHub configured and no invitations, where
+  the provider must be absent and startup must succeed with a warning;
+* `allowlist` mode with an empty allowlist, where the provider must be absent.
 
 A test also asserts that `read:org` appears in the authorisation URL if and only
-if organisations are configured. The existing token-containment tests must still
+if a `github-org:` entry is configured in `allowlist` mode. The existing token-containment tests must still
 pass, with no token appearing in logs on the denial paths.
 
 ## Pros and Cons of the Options
@@ -257,6 +283,10 @@ pass, with no token appearing in logs on the denial paths.
 * Bad, because a verified email proves control of an address, not membership of
   anything. Former employees keep verified addresses on personal accounts, and
   many organisations' members use personal email addresses on GitHub.
+* Neutral, because it is rejected as *the* mechanism, not forbidden:
+  `CAIRN_ENROLLMENT_ALLOW` accepts `@<domain>` entries for parity with
+  Switchboard, and an operator who uses one accepts this weakness, which the
+  guide states beside it.
 
 ### D. Keep it open
 
@@ -271,17 +301,18 @@ flowchart TD
     CB["/auth/callback?provider=github"] --> V[verify state, exchange code,<br/>GET /user + /user/emails<br/>ADR-0019, unchanged]
     V --> L{identity linked to an<br/>active user? ADR-0029}
     L -- yes --> SESS[create session]
-    L -- no, enrollment --> M{CAIRN_ENROLLMENT}
+    L -- no, enrollment --> M{CAIRN_ENROLLMENT_MODE}
     M -- open --> SESS
-    M -- allowlist / invite --> U{login or id:N in ALLOWED_USERS?}
+    M -- invite --> INV{operator, or a pending<br/>invite for the email?}
+    INV -- yes --> SESS
+    INV -- no --> DENY
+    M -- allowlist --> U{subject, email or @domain<br/>in CAIRN_ENROLLMENT_ALLOW?}
     U -- yes --> SESS
-    U -- no --> ORG{each ALLOWED_ORGS:<br/>GET /user/memberships/orgs/org}
+    U -- no --> ORG{each github-org: entry:<br/>GET /user/memberships/orgs/org}
     ORG -- 200 active --> SESS
     ORG -- 404 / pending / 403 --> ORG
     ORG -- other error --> DENY
-    ORG -- none left --> INV{invite mode and a<br/>pending invite for the email?}
-    INV -- yes --> SESS
-    INV -- no --> DENY[generic 403, no session,<br/>log login + id + reason]
+    ORG -- none left --> DENY[generic 403, no session,<br/>log login + id + reason]
 ```
 
 ## More Information
@@ -294,7 +325,13 @@ flowchart TD
   SPEC-0015, so SPEC-0013 is stable, and it is amended rather than replaced.
 * **Parallel records, cited in prose until they merge:** Cairn ADR-0029 /
   SPEC-0023 (Teams and tenancy: users, identities, invitations, suspension);
-  Switchboard SPEC-0033 (teams and tenancy, including `SWITCHBOARD_ENROLLMENT`).
+  Switchboard SPEC-0033 (teams and tenancy, including
+  `SWITCHBOARD_ENROLLMENT_MODE` and `SWITCHBOARD_ENROLLMENT_ALLOW`, aligned in
+  its PR #357).
+* Design review, Joe, 2026-09-22: the mode is operator config,
+  `CAIRN_ENROLLMENT_MODE`, defaulting to `invite` when GitHub login is
+  configured, with the same values and semantics as Switchboard. There are no
+  deprecation windows or back-compat shims.
 * GitHub REST: "Get an organization membership for the authenticated user"
   (`GET /user/memberships/orgs/{org}`, which returns `state` of `active` or
   `pending`, or 404 when the user is not a member).
