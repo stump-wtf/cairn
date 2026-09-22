@@ -35,7 +35,9 @@ these requirements:
 
 This spec also leans on these records, linked as front-matter edges: ADR-0022/SPEC-0016
 (the event envelope), ADR-0023/SPEC-0017 (redaction at ingest), ADR-0025/SPEC-0019
-(validation error details) and ADR-0029/SPEC-0023 (teams).
+(validation error details) and ADR-0029/SPEC-0023 (teams). It ships after the release that
+enforces `private` and re-identifies existing private artifacts (SPEC-0023 REQ
+"Re-Identifying Existing Private Artifacts"), so no permanent id is ever changed by that step.
 
 "Pin" already means an image-region annotation in Cairn (ADR-0006, `pin_count`). Nothing
 in this capability uses that word.

@@ -332,6 +332,9 @@ flowchart TD
   `CAIRN_ENROLLMENT_MODE`, defaulting to `invite` when GitHub login is
   configured, with the same values and semantics as Switchboard. There are no
   deprecation windows or back-compat shims.
+* Design review, 2026-09-22, resolution: someone who leaves an allowed
+  organisation keeps access until an operator suspends them. That is the v1
+  rule, and it is the same as Switchboard's.
 * GitHub REST: "Get an organization membership for the authenticated user"
   (`GET /user/memberships/orgs/{org}`, which returns `state` of `active` or
   `pending`, or 404 when the user is not a member).

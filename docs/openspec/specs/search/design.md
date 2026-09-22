@@ -224,7 +224,7 @@ embeddings server that returns deterministic vectors.
 |---|---|---|
 | `CAIRN_SEARCH_LANGUAGE` | `english` | Postgres text-search configuration |
 | `CAIRN_SEARCH_MAX_BODY_BYTES` | `262144` | Per-body index cap |
-| `CAIRN_SEARCH_AGENTS` | `true` | Allow agent tokens to search (SPEC-0022 REQ-14) |
+| `CAIRN_SEARCH_AGENTS` | `false` | Allow agent tokens to search (SPEC-0022 REQ-14); WARN at startup when `true` |
 | `CAIRN_SEARCH_RATE_PER_MINUTE` | `60` | Per-principal search rate |
 | `CAIRN_SEARCH_INDEX_WORKERS` | `2` | Indexer pool size |
 | `CAIRN_SEARCH_SEMANTIC` | `false` | Enable semantic search (needs pgvector) |
@@ -331,8 +331,9 @@ gives byte stability.
   relaxed_order`), a raised `ef_search`, and lexical fallback in hybrid mode.
 - **The index copy increases database size.** Mitigation: the per-body cap, no binaries, and a
   `cairn_search_documents` gauge.
-- **A prompt-injected agent searches its human's corpus.** Mitigation: redaction at ingest,
-  the agent switch, rate limits, and the consent copy. The residual risk is stated in
+- **A prompt-injected agent searches its human's corpus.** Mitigation: agent search is off by
+  default, and turning it on logs a WARN; then redaction at ingest, rate limits, and the consent
+  copy. The residual risk is stated in
   ADR-0028.
 - **Query text is sent to a hosted embeddings API.** Mitigation: it is off by default, local
   models are documented first, and the operator docs state the data flow.
@@ -355,6 +356,12 @@ gives byte stability.
 
 - Should comments by other people on an artifact be searchable by its owner in semantic mode
   too, or stay lexical only? The current design keeps them lexical only, to limit what is
-  sent to the embeddings endpoint.
+  sent to the embeddings endpoint. **Resolved (design review 2026-09-22):** lexical only, as
+  proposed.
 - Is a per-workspace switch (a team opting out of semantic indexing) needed at launch, or is
-  the instance switch enough?
+  the instance switch enough? **Resolved (design review 2026-09-22):** the instance switch is
+  enough at launch; a per-workspace switch waits for a team that asks for one.
+- Should agent search be on by default (`CAIRN_SEARCH_AGENTS=true`)? The PR argued yes, because
+  an agent token can already list its human's Bin. **Resolved (design review 2026-09-22):** no.
+  It is off by default and WARNs when enabled (REQ-14), because it widens what a prompt-injected
+  agent can discover. When on, it is scoped to what the human can read.

@@ -69,7 +69,9 @@ ADR-0019's promise that a Pocket ID and a GitHub login for the same person are o
 
 **Choice**: `artifacts.owner_user_id` and `owner_team_id`, both foreign keys, with
 `CHECK (num_nonnulls(owner_user_id, owner_team_id) = 1)`, plus `created_by_user_id`. The legacy
-`owner_id` and `actor_id` strings stay for one release for rollback and display, then are dropped.
+`owner_id` and `actor_id` strings are dropped in the same migration that backfills users from them.
+No release carries both (design review, Joe, 2026-09-22: pre-1.0, remove superseded things
+outright). Display reads the user row.
 
 **Rationale**: the same three lines Switchboard's SPEC-0033 uses, so a reader of either codebase
 recognises the shape, and cascades come from Postgres.
@@ -397,9 +399,12 @@ Switchboard webhook owned by the Switchboard team, which puts todos on that team
 
 ## Risks / Trade-offs
 
-- **The users backfill is the largest migration Cairn has run.** → Additive first (new columns and
-  tables alongside the strings), switch reads, then drop the strings a release later; the backfill is
-  idempotent and verified by comparing every user's Bin before and after.
+- **The users backfill is the largest migration Cairn has run, and it drops the strings it reads.**
+  → One transactional migration: create the tables, backfill, validate the constraints, compare every
+  user's Bin before and after, and only then drop the legacy strings. Any mismatch aborts and rolls
+  the whole migration back, leaving the old schema intact. Rollback after a successful upgrade is a
+  restore from the pre-upgrade database backup, which the CHANGELOG's upgrade note tells the operator
+  to take.
 - **Legacy strings that were raw OIDC subjects** (no email) cannot be claimed by email. → They are
   claimed by the `(issuer, subject)` the session table already recorded for them; any left unclaimed
   are listed in the operator console as legacy owners.
@@ -416,22 +421,33 @@ Switchboard webhook owned by the Switchboard team, which puts todos on that team
 ## Migration Plan
 
 1. `users`, `user_identities`, backfill from `owner_id`, `actor_id` and sessions; `owner_user_id`
-   on artifacts; constraints `NOT VALID` then validated.
+   on artifacts; constraints `NOT VALID` then validated; then, in the same migration, drop the
+   legacy `owner_id` / `actor_id` strings and rebuild any index or uniqueness key that named them
+   (including SPEC-0016 EV-6's reaction key) on the matching `user_id` column.
 2. `authorizeRead` and `ResolveReadable` on every surface; the cross-tenant suite; invert
-   `policy_integration_test.go:178`. (Ships #182 before teams exist.)
+   `policy_integration_test.go:178`; re-identify every existing `private` artifact (REQ
+   "Re-Identifying Existing Private Artifacts"). (Ships #182 before teams exist.)
 3. `outbound_subscriptions`, and the removal of `CAIRN_OUTBOUND_WEBHOOK_URLS` / `_SECRET` with its
    CHANGELOG upgrade note, in one change. (Ships #185.)
 4. Static token resolution; legacy `secret:actor` entries fail boot, with a CHANGELOG note.
 5. Teams, roles, invites, visibility `team`, moves, the Bin team view, MCP and CLI `team`.
 6. Operator console, suspension, quotas, group sync.
 7. Remaining audit fixes (A7–A24), each independently shippable.
-8. Drop the legacy `owner_id` / `actor_id` strings, one release after step 1. This is a rollback
-   safeguard for the backfill inside the database, not a user-facing compatibility path: no read
-   uses the strings after step 1.
+
+There is no later step that drops the legacy strings: step 1 drops them (design review, Joe,
+2026-09-22).
 
 ## Open Questions
 
 - **Team default visibility.** This design makes new team artifacts `team`, unlike personal ones.
   Is that right for agent handoffs inside a team, where a `link` is what the next agent is handed?
+  **Resolved (design review 2026-09-22):** yes. Team artifacts default to `team`; an agent acting
+  for a member reads them without a link, and an admin can still choose `link` per artifact.
 - **Legacy `private` links.** Should the release that enforces `private` also rotate every private
   artifact's id, so links already sent can never resolve even if a later bug reopens reads?
+  **Resolved (design review 2026-09-22):** yes. Existing `private` artifacts were effectively
+  link-visible, so every one gets a new id when `private` is first enforced. SPEC-0023 REQ
+  "Re-Identifying Existing Private Artifacts" makes it normative.
+- **Legacy owner strings.** Keep `owner_id` / `actor_id` for one release as an in-database rollback
+  safeguard (raised on design PR #273)? **Resolved (design review 2026-09-22):** no.
+  They are dropped in the same migration as the users backfill (Migration Plan, step 1).

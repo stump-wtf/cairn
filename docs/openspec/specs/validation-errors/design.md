@@ -228,4 +228,6 @@ sequenceDiagram
 - Should the server publish its limits (maximum TTL, maximum tags, upload cap)
   on an unauthenticated or `whoami`-adjacent endpoint, so the CLI can validate
   before sending? It is deferred. Violations already carry the limit on first
-  failure.
+  failure. **Resolved (design review 2026-09-22):** deferred, as proposed.
+- Should the CLI fold tag case? **Resolved (design review 2026-09-22):** yes. The CLI
+  lowercases tags and warns on stderr (VE-9); the server stays strict.

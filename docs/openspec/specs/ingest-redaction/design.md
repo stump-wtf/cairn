@@ -287,6 +287,11 @@ sequenceDiagram
 - Should `CAIRN_REDACTION_REJECT_TYPES` include `markdown` for handoff artifacts
   (tagged `handoff`), since a handoff is a work order an agent will act on? The
   default here says no, because masking is safe for prose. Joe may prefer strict.
+  **Resolved (design review 2026-09-22):** no. Markdown masks, and only code
+  and bundles reject. An operator who wants handoffs strict adds `markdown` to
+  `CAIRN_REDACTION_REJECT_TYPES`.
 - Should a one-off backfill scan run over artifacts that are still live when
   this ships? Their TTLs (at most 30 days today, before opt-in permanent
-  retention) bound the exposure. Deferred.
+  retention) bound the exposure. Deferred. **Resolved (design review 2026-09-22):** deferred, as
+  proposed. The TTL cap bounds the exposure, and ADR-0026 re-scans on retain, so
+  an old artifact cannot become permanent with a secret inside it.

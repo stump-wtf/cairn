@@ -580,11 +580,59 @@ Existing `link` artifacts MUST remain `link`; existing `private` artifacts MUST 
 become unreadable to everyone but their owner. Every Bin listing for a user with no teams MUST
 return the same artifacts it returned before.
 
+The same migration MUST drop the legacy `owner_id` and `actor_id` string columns it backfilled from,
+and MUST rebuild every index or uniqueness key that named them (including SPEC-0016 EV-6's reaction
+key) on the matching `user_id` column. No release MAY carry both the strings and the user columns.
+The migration MUST run as one transaction: if the per-user Bin comparison differs, it MUST abort and
+leave the previous schema intact. Wire fields named `actor_id` keep their name and are rendered from
+the user row.
+
 #### Scenario: Existing owner signs in
 
 - **GIVEN** artifacts owned by the string `joe@example.com` before the upgrade
 - **WHEN** a user signs in with verified email `joe@example.com`
 - **THEN** those artifacts are theirs, and their Bin is unchanged
+
+#### Scenario: Legacy owner strings are gone
+
+- **WHEN** the migration to explicit ownership completes
+- **THEN** `artifacts.owner_id` and every other backfilled `owner_id` / `actor_id` string column no
+  longer exists, and no query or index names them
+
+#### Scenario: A failed comparison leaves the old schema
+
+- **WHEN** the backfill would change any user's Bin listing
+- **THEN** the migration aborts, nothing is dropped, and `cairnd` refuses to start with an error
+  naming the first mismatched owner
+
+### Requirement: Re-Identifying Existing Private Artifacts
+
+Before this spec, `private` was not enforced on any read path (#182), so every existing `private`
+artifact was effectively link-visible. The release that first enforces `private` MUST give every
+artifact that is `private` at that moment a new id, exactly as SPEC-0009 REQ "Id Rotation as
+Revoke-a-Leaked-Link" rotates one: the old id MUST return the uniform `404`, and MUST NOT be reused
+within TTL-plus-grace. The re-identification MUST run once, in the same release as enforcement, and
+MUST be recorded in the operator audit log with the count of artifacts it re-identified and no ids.
+The owner's Bin MUST list each artifact under its new id.
+
+Opt-in permanent retention (SPEC-0020) MUST NOT ship before this release, so no permanent
+artifact is ever re-identified (SPEC-0020 REQ-8 refuses rotation while permanent).
+
+#### Scenario: A link sent before enforcement stops resolving
+
+- **GIVEN** a `private` artifact whose link was shared before the upgrade
+- **WHEN** anyone, including its owner, opens the old link after the upgrade
+- **THEN** the response is the uniform `404`
+
+#### Scenario: The owner finds it under its new id
+
+- **WHEN** the owner opens their Bin after the upgrade
+- **THEN** the artifact is listed under a new id and renders for them
+
+#### Scenario: Link artifacts keep their ids
+
+- **WHEN** the upgrade runs
+- **THEN** every `link` artifact keeps its id
 
 ### Requirement: Database Operation Standards
 

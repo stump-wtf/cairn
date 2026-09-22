@@ -231,9 +231,16 @@ Switchboard.
 * Every distinct `owner_id` becomes a user (its string as the unverified legacy email), and each
   artifact gets `owner_user_id`. A user's first login with a verified matching email claims that
   row; nothing is reassigned by guesswork.
+* The legacy `owner_id` / `actor_id` strings are dropped **in the same migration** that backfills
+  users from them. No release carries both (design review, Joe, 2026-09-22). The migration is one
+  transaction that aborts if any user's Bin would change; after it succeeds, rollback is a restore
+  from the pre-upgrade backup the upgrade note asks for.
 * No teams exist until someone creates one. Existing visibility values are kept: `link` stays
   `link`; `private` becomes **actually** private, which the release notes and the getting-started
-  guide's current warning both call out.
+  guide's current warning both call out. Because every existing `private` artifact was effectively
+  link-visible, the release that enforces `private` also gives each one a **new id**, so links
+  already sent stop resolving (design review, Joe, 2026-09-22). Opt-in permanent retention
+  (ADR-0026) ships after that release, so no permanent id is ever changed.
 * `CAIRN_OUTBOUND_WEBHOOK_URLS` and `_SECRET` are gone in the release that adds subscriptions;
   `CAIRN_API_TOKENS` entries are checked at boot and legacy `secret:actor` entries fail it. The
   CHANGELOG's upgrade notes say both.
@@ -353,3 +360,7 @@ flowchart TB
 * Design review, Joe, 2026-09-22: remove the env targets in the same change as their replacement,
   with no deprecation window or back-compat shim; quotas are configurable and unset means none;
   risky options are configurable and off by default.
+* Design review, 2026-09-22, resolutions: team artifacts default to `team` visibility; existing
+  `private` artifacts get new ids when `private` is first enforced; the legacy owner strings are
+  dropped in the same migration as the users backfill, not a release later; owned subscriptions
+  (#185) are P0, because they are the only delivery path for ADR-0022's events.

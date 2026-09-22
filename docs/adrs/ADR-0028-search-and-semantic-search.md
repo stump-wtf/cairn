@@ -142,7 +142,8 @@ someone else is never a result, whoever holds its link.
 ### Empty query means list
 
 `artifact_search` with filters and no text lists artifacts newest first. That gives agents
-the listing capability MCP has never had, through one tool rather than two.
+the listing capability MCP has never had, through one tool rather than two, on instances
+whose operator has enabled agent search.
 
 ### Surfaces
 
@@ -182,8 +183,9 @@ It applies the same scope and needs no new server endpoint.
 * Bad, because search changes the agent threat model. Before, an agent could read only what
   it was handed. Now it can discover everything its human owns. A prompt-injected agent
   can search for "token" or "password" across its human's artifacts. Redaction at ingest is
-  the real mitigation. The consent copy for `artifacts:read` says "read and search", and an
-  operator switch can withhold search from agent tokens.
+  the real mitigation. Agent search is therefore off by default: the operator turns it on
+  with `CAIRN_SEARCH_AGENTS=true`, which logs a WARN, and only then does the consent copy for
+  `artifacts:read` say "read and search".
 * Bad, because the index duplicates up to the configured cap of each text body inside
   Postgres. Database size grows with the corpus, bounded by the per-body cap.
 * Bad, because semantic search sends artifact text to whatever endpoint the operator
@@ -277,10 +279,11 @@ flowchart TB
 * **Scope.** Owner-or-team only, as a SQL predicate, on every mode. Link capability never
   confers discoverability. This keeps ADR-0005's no-enumeration property intact across
   users.
-* **Agents.** Reach equals the human's (ADR-0004). The search tool requires
-  `artifacts:read`, and the consent line gains "and search". An operator switch
-  (`CAIRN_SEARCH_AGENTS`, default on) withholds search from agent tokens on instances that
-  want the old "read what you are handed" model.
+* **Agents.** Agent search is a risky capability, so it is **off by default**
+  (`CAIRN_SEARCH_AGENTS=false`) and agents keep the "read what you are handed" model. An
+  operator who enables it gets a startup WARN and a loud callout in the self-hosting guide.
+  When on, reach equals the human's (ADR-0004): the search tool requires `artifacts:read`,
+  and the consent line gains "and search".
 * **Redaction.** Indexed text is the stored, already-redacted text (ADR-0023). Chunks are
   re-scanned before egress to the embeddings endpoint. Webhook captures and binaries are
   never indexed.
@@ -315,5 +318,10 @@ flowchart TB
 * Related records (front-matter edges): ADR-0023 (redaction), ADR-0026
   (retention filter), ADR-0027 (receipt metadata indexed and exported), and ADR-0029 (team
   scope).
+* Design review, 2026-09-22: agent search is configurable and **off by default**
+  (`CAIRN_SEARCH_AGENTS=false`), because it widens what a prompt-injected agent can discover.
+  When enabled, it is scoped to what the human can read. This reverses the first draft's
+  default of on. Comments stay lexical only, and the instance switch for semantic search is
+  enough at launch.
 * `cairn ls` (cairn#154) remains the interactive Bin browser. `cairn search` is the
   non-interactive, scriptable query. They share the scope rule.

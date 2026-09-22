@@ -277,10 +277,14 @@ conditionally rendered button.
 
 ## Open Questions
 
-- ~~Should GitHub logins be allow-listed rather than open to any GitHub
-  account?~~ **Resolved by ADR-0024 (2026-09-22):** yes. Enrollment is gated by
+- Should GitHub logins be allow-listed rather than open to any GitHub
+  account? **Resolved (design review 2026-09-22):** yes, by ADR-0024. Enrollment is gated by
   `CAIRN_ENROLLMENT_MODE` (default `invite` with GitHub configured) and
   `CAIRN_ENROLLMENT_ALLOW`, failing closed, with open signup only as the explicit
   `CAIRN_ENROLLMENT_MODE=open`, matching Switchboard's enrollment modes.
 - Does the CLI (`cairn login`) ever want GitHub as a device-flow option?
-  Deferred — out of scope for this spec.
+  Deferred — out of scope for this spec. **Resolved (design review 2026-09-22):** deferred, as
+  proposed. The CLI keeps authenticating through the browser session.
+- Should a user who leaves an allowed GitHub organisation lose access?
+  **Resolved (design review 2026-09-22):** not automatically. They keep access until an operator
+  suspends them (AL-6), in v1, as in Switchboard.

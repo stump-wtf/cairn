@@ -292,4 +292,6 @@ flowchart LR
 * **Related record** (front-matter edge): Cairn ADR-0023 /
   SPEC-0017 (redaction), whose rejections use this contract with
   `secret_detected` and `too_large_to_scan`, and never echo the value.
+* Design review, 2026-09-22, resolution: the CLI lowercases tags and warns, as
+  decided above.
 * Spec: SPEC-0019 (`docs/openspec/specs/validation-errors/`).

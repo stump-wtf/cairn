@@ -137,6 +137,7 @@ newest first. This is list mode, which gives MCP the listing capability it lacks
 
 #### Scenario: Tag list over MCP
 
+- **GIVEN** the operator has enabled agent search (REQ-14)
 - **WHEN** an agent calls `artifact_search` with `tags: ["learning"]` and no query
 - **THEN** it MUST receive its human's live artifacts tagged `learning`, newest first
 
@@ -345,16 +346,31 @@ body reads, so it inherits REQ-1's scope. It MUST NOT push to any repository.
 
 ### Requirement: REQ-14 Agent Access Switch
 
-`CAIRN_SEARCH_AGENTS` (default `true`) MUST control whether agent tokens may call search.
-When it is `false`, `artifact_search` and agent calls to `GET /v1/search` MUST fail with
-`403` and reason `agent_search_disabled`. Human sessions and human tokens MUST be unaffected.
-The consent screen line for `artifacts:read` MUST read "Read and search artifacts you can
-access" while agent search is enabled.
+Agent search MUST be off unless the operator enables it. `CAIRN_SEARCH_AGENTS` (default
+`false`) MUST control whether agent tokens may call search, including list mode. While it is
+`false`, `artifact_search` and agent calls to `GET /v1/search` MUST fail with `403` and reason
+`agent_search_disabled`. Human sessions and human tokens MUST be unaffected either way.
 
-#### Scenario: Operator withholds agent search
+When the operator sets it to `true`, agent search MUST reach exactly what the agent's human can
+read (REQ-1), and nothing more. `cairnd` MUST log a WARN at startup naming
+`CAIRN_SEARCH_AGENTS` and stating that agents can discover every artifact their human can read.
+The self-hosting guide MUST call the setting out in a warning admonition. The consent screen
+line for `artifacts:read` MUST read "Read and search artifacts you can access" only while agent
+search is enabled, and "Read artifacts you can access" otherwise.
 
-- **WHEN** `CAIRN_SEARCH_AGENTS=false` and an agent calls `artifact_search`
-- **THEN** the call MUST fail with reason `agent_search_disabled`, while `artifact_read` still works
+This is a risky capability, so it ships configurable and off by default (design review,
+2026-09-22): search widens what a prompt-injected agent can discover, from what it is handed to
+everything its human owns.
+
+#### Scenario: Agent search is off by default
+
+- **WHEN** `CAIRN_SEARCH_AGENTS` is unset and an agent calls `artifact_search`
+- **THEN** the call MUST fail with reason `agent_search_disabled`, while `artifact_read` still works and a human's search succeeds
+
+#### Scenario: Operator enables agent search
+
+- **WHEN** the operator sets `CAIRN_SEARCH_AGENTS=true` and starts `cairnd`
+- **THEN** the startup log MUST carry a WARN naming the setting, and an agent's search MUST return only artifacts its human can read
 
 ### Requirement: REQ-15 Metrics
 
@@ -443,7 +459,7 @@ MUST return `429` with `Retry-After`.
 
 #### Scenario: Search flood
 
-- **WHEN** an agent issues 200 searches in a minute
+- **WHEN** an agent, with agent search enabled, issues 200 searches in a minute
 - **THEN** requests beyond the limit MUST receive `429` with `Retry-After`
 
 ### Requirement: Security Headers

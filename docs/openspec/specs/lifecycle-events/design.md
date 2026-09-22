@@ -315,8 +315,8 @@ sequenceDiagram
   can't see it. Recorded as a residual risk in ADR-0022. A future step-up (a
   passkey assertion on approval) would close it.
 - **Annotation events wait for subscriptions.** With no env-target path, the new
-  kinds are undelivered until ADR-0029's owned subscriptions ship (#185).
-  Accepted: the alternative was widening the operator firehose that ADR-0029
+  kinds are undelivered until ADR-0029's owned subscriptions ship (#185, P0 since
+  the 2026-09-22 design review). Accepted: the alternative was widening the operator firehose that ADR-0029
   removes, which the design review ruled out (2026-09-22).
 - **Unique-index swap on a live table.** Mitigation: `CREATE UNIQUE INDEX
   CONCURRENTLY` before dropping the old constraint, and a migration test over
@@ -343,7 +343,10 @@ sequenceDiagram
 
 - Should approval-class reactions from agents render with a distinct marker in
   tallies, or split into separate human and agent counts? The spec says SHOULD
-  distinguish, and the viewer story decides the form.
+  distinguish, and the viewer story decides the form. **Resolved (design review 2026-09-22):** an
+  agent's reaction is recorded and marked `agent`, and approvals count only from
+  browser sessions. The viewer story (#315) picks the visual form.
 - Should `run.closed` fire for a run that expires while still open? No reaper
   closes abandoned runs today. If one is added, it should emit `run.closed` with
-  `auth` of the system actor. Deferred until that reaper exists.
+  `auth` of the system actor. Deferred until that reaper exists. **Resolved (design review 2026-09-22):**
+  deferred, as proposed; the reaper's own change adds the emission.

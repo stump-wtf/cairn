@@ -461,7 +461,14 @@ need adding there before a routing rule can match on them. That is a cross-repo 
 
 - Should the ephemeral maximum (30 days) become an operator setting in the same change?
   It is adjacent, not required. Left out to keep this capability about permanence.
+  **Resolved (design review 2026-09-22):** left out, as proposed.
 - Once ADR-0029 defines an operator credential, should the quota commands also get an
-  HTTP surface for operators who cannot shell into the host?
+  HTTP surface for operators who cannot shell into the host? **Resolved (design review 2026-09-22):** yes,
+  through ADR-0029's operator console, which already covers quotas and audits overrides
+  (SPEC-0023 REQ "Quotas for Permanent Retention"). `cairnd retention quota` stays the CLI.
 - Should retaining a closed trace be allowed with a span-digest checksum? Deferred until
-  Harness trace export (F-H7) produces traces worth keeping.
+  Harness trace export (F-H7) produces traces worth keeping. **Resolved (design review 2026-09-22):**
+  deferred, as proposed.
+- Defaults. **Resolved (design review 2026-09-22):** permanent retention is off by default
+  (`CAIRN_PERMANENT_RETENTION=false`); quotas are configurable and none applies when unset;
+  the opt-in `retention:write` scope and the `410` tombstones stay as written.

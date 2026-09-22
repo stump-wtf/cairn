@@ -362,4 +362,8 @@ flowchart TD
   embeds only stored text).
 * This repository's `.gitleaks.toml` is the precedent for value-only
   allowlisting.
+* Design review, 2026-09-22, resolutions: code and bundle uploads that contain a
+  secret are rejected and everything else is masked; text over the 16 MiB scan cap
+  is rejected rather than stored unscanned; the gitleaks dependency tree is
+  accepted. These are fail-closed safety defaults, not risky options.
 * Spec: SPEC-0017 (`docs/openspec/specs/ingest-redaction/`).

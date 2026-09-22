@@ -207,7 +207,7 @@ doorbell stays a hint, and the artifact and its annotations stay the record.
 * Bad, because `artifact.created` gains two keys, and the golden fixture pinning
   its bytes is deliberately updated.
 * Bad, because the new kinds reach nobody until ADR-0029's owned subscriptions
-  ship (#185). The instance env targets that could have carried them sooner are
+  ship (#185, raised to P0 for this reason). The instance env targets that could have carried them sooner are
   being removed, not extended, so the approval signal waits for the tenancy work.
 * Bad, because the reactions uniqueness change needs a migration (a new column,
   plus a unique index rebuilt concurrently).
@@ -311,4 +311,8 @@ flowchart LR
   outright by ADR-0029, with no deprecation or dual path, so this ADR drops the
   `CAIRN_OUTBOUND_WEBHOOK_EVENTS` allowlist it first proposed. Delivery of the new
   kinds therefore depends on #185.
+* Design review, 2026-09-22, resolutions: #185 (owned subscriptions) is raised to
+  **P0**, because it is the only delivery path for these events and this work is
+  P0. An agent's approval-class reaction is recorded but marked `agent`, and only a
+  browser session's reaction counts as an approval, as decided above.
 * Spec: SPEC-0016 (`docs/openspec/specs/lifecycle-events/`).

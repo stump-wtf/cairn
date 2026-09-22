@@ -336,6 +336,7 @@ A Switchboard rule example (for docs):
 
 - Should the web shell offer a "Create receipt" form for humans? It is left out because
   receipts are an agent and script output, and parity is met by REST and CLI.
+  **Resolved (design review 2026-09-22):** no form, as proposed.
 - Should `outcome.measure_at` also drive a built-in reminder, such as a follow-up event at
   that time? It is left to Switchboard and Harness scheduling, so Cairn does not gain a
-  scheduler.
+  scheduler. **Resolved (design review 2026-09-22):** no built-in reminder, as proposed.
