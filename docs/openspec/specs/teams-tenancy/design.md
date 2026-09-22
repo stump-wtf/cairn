@@ -340,7 +340,7 @@ Error codes introduced: `invalid_visibility`, `move_out_of_team`, `last_owner`,
 | `CAIRN_MAX_TEAMS_PER_USER` | `10` | teams one user may own |
 | `CAIRN_OIDC_GROUPS_CLAIM` | empty (sync off) | claim to request and read |
 | `CAIRN_SUBSCRIPTIONS_PER_USER` / `_PER_TEAM` | `5` / `10` | subscription ceilings |
-| `CAIRN_OUTBOUND_ALLOW_HTTP` | `false` | permit `http://` subscription targets |
+| `CAIRN_OUTBOUND_ALLOW_HTTP` | `false` | permit `http://` subscription targets; WARN at startup when `true` |
 | `CAIRN_PERMANENT_USER_MAX_COUNT` / `_USER_MAX_BYTES` / `_TEAM_MAX_COUNT` / `_TEAM_MAX_BYTES` | unset (no quota) | permanent retention quotas, defined by SPEC-0020; retention itself is off unless `CAIRN_PERMANENT_RETENTION=true` |
 | `CAIRN_HOOK_REQUEST_CAP_MAX` | `5000` | ceiling on a hook's `request_cap` (A15) |
 | `CAIRN_OUTBOUND_WEBHOOK_URLS`, `_SECRET` | **removed** | no longer read; use owned subscriptions (REQ "Removing the Instance-Wide Outbound Targets") |

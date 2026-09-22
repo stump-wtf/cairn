@@ -393,6 +393,10 @@ unique-local addresses refused; the resolved address re-checked at dial time to 
 rebinding. Redirects MUST NOT be followed; a 3xx is a failed delivery. Each attempt MUST time out
 after 5 seconds. Delivery MUST NOT block artifact creation.
 
+`CAIRN_OUTBOUND_ALLOW_HTTP` is a risky option (signed payloads and capability URLs in cleartext),
+so it is off by default and loud when on: `cairnd` MUST log a WARN at startup naming it, and the
+self-hosting guide MUST call it out in a warning admonition.
+
 #### Scenario: Rebinding target
 
 - **WHEN** a target resolves to a public address at creation and to a private (RFC 1918) address at delivery
