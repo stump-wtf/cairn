@@ -160,7 +160,9 @@ decision documents it and renders it. A span that produced a receipt records a
 index (`produced_edges_artifact_idx`). The card lists a producing run **only when the run
 and the receipt have the same owner** (a user, or a team under ADR-0029). Without that
 rule, anyone who can create a run could attach it to a stranger's receipt, because the edge
-checks only that the artifact exists. Since the edge requires the receipt to exist first,
+checks only that the artifact exists. A link is also shown only when the viewer can read the
+run under ADR-0029's `authorizeRead`, so a team-visible run's id never appears to an outside
+reader who holds only the receipt's link. Since the edge requires the receipt to exist first,
 the order is: create the receipt, then append or close the span that names it.
 
 ### Events
@@ -170,7 +172,9 @@ object. The field is appended and omitted for every non-receipt artifact, so tho
 stay byte-identical (SPEC-0012). Switchboard already projects `data.metadata` onto
 `.artifact.metadata`. A rule can therefore route on
 `.artifact.metadata.human_action != "Nothing"` (for example, to a notification sink) or
-schedule on `.artifact.metadata.outcome.measure_at`, with no Switchboard change.
+schedule on `.artifact.metadata.outcome.measure_at`, with no Switchboard change. The event
+is routed like every other kind, by the artifact's owning workspace (ADR-0022, ADR-0029).
+This ADR adds no fan-out path.
 
 ### Consequences
 
@@ -277,7 +281,9 @@ sequenceDiagram
   server fetches nothing from them.
 * **Tenancy.** A receipt is an artifact, owned by a user or a team (ADR-0029). The "Produced
   by run" and "Follows" links are shown only across artifacts with the same owner, so a
-  stranger's run or receipt cannot attach itself to yours.
+  stranger's run or receipt cannot attach itself to yours. They are shown only to a viewer
+  who passes `authorizeRead` on the linked artifact, so a team-visible run or receipt never
+  appears to an outside link holder.
 * **Events.** Metadata travels to the same targets as the rest of the event. The disclosure
   model is therefore exactly as good as cairn#185 and ADR-0029 make it, and no worse than
   the capability URL the event already carries.

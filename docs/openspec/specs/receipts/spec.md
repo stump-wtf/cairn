@@ -207,7 +207,8 @@ owner (a user, or the same team under ADR-0029). Otherwise it MUST be rejected w
 whether the named artifact exists.
 
 The card MUST show "Follows" linking to the earlier receipt. It MUST also show "Followed by",
-linking to later receipts with the same owner.
+linking to later receipts with the same owner. Each link MUST be shown only when the viewer
+passes ADR-0029's `authorizeRead` on the linked receipt.
 
 #### Scenario: Outcome measured later
 
@@ -261,14 +262,20 @@ them.
 
 A trace span whose `produced_artifact_id` names a receipt MUST link the two, as SPEC-0004
 already records in `produced_edges`. The receipt card MUST show "Produced by run" links for
-every producing run **owned by the same owner as the receipt**. Runs with any other owner
-MUST be omitted. The docs MUST describe the ordering: create the receipt first, then append
+every producing run **owned by the same owner as the receipt** that the viewer can read
+(ADR-0029 `authorizeRead`). Runs with any other owner, and runs the viewer cannot read, MUST
+be omitted without any placeholder or count. The docs MUST describe the ordering: create the receipt first, then append
 or close the span that names it.
 
 #### Scenario: Same-owner run shown
 
 - **WHEN** a user's run appends a write span naming that user's receipt
 - **THEN** the receipt card MUST link to the run
+
+#### Scenario: Team run hidden from an outside link holder
+
+- **WHEN** a team-visibility run produced a link-visibility team receipt, and a non-member opens the receipt's link
+- **THEN** the card MUST NOT show the run link, its id or any hint that a run exists
 
 #### Scenario: Foreign run hidden
 
