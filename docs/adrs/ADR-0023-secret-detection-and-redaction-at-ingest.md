@@ -176,7 +176,9 @@ default, with reason `too_large_to_scan` and the limit, because an unscanned
 body is exactly what this decision exists to prevent. An operator who prefers
 availability sets `CAIRN_REDACTION_OVERSIZE=store_unscanned`. The artifact is
 then stored with status `not_scanned_oversize`, visible to its owner and
-counted in metrics.
+counted in metrics. Because that widens what can be stored with a secret in it,
+`cairnd` logs a WARN at startup and on every unscanned store, and the
+self-hosting guide calls the setting out.
 
 ### Operator allowlist
 

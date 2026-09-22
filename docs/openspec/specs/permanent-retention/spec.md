@@ -157,6 +157,10 @@ set, otherwise the instance quota for its kind (`CAIRN_PERMANENT_USER_MAX_COUNT`
 `CAIRN_PERMANENT_TEAM_MAX_BYTES`). When neither is set, that dimension MUST NOT limit
 retains. No quota MAY be applied by default.
 
+When retention is enabled and no instance quota is set for a dimension, `cairnd` MUST log a
+WARN at startup that permanent storage is unbounded in that dimension, and the self-hosting
+guide MUST call this out.
+
 The owner is the artifact's owner: a user or, under ADR-0029, a team (`owner_user_id` XOR
 `owner_team_id`). A team-owned artifact MUST count against the team's quota and never
 against the member who retained it. Moving a permanent artifact from one owner to another
@@ -218,7 +222,8 @@ a `404`.
    explicitly, on the OAuth consent screen or when minting the PAT.
 
 `retention:write` MUST NOT be part of the default agent grant. It MUST NOT confer release,
-delete, TTL, visibility or rotation. This amends SPEC-0007 REQ "Exactly Three Consent
+delete, TTL, visibility or rotation. When `CAIRN_PERMANENT_AGENT_RETAIN=true`, `cairnd` MUST
+log a WARN at startup naming the setting, and the self-hosting guide MUST call it out. This amends SPEC-0007 REQ "Exactly Three Consent
 Scopes": the three default scopes are unchanged, and one opt-in scope is added.
 
 #### Scenario: Agent without the scope

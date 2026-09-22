@@ -170,7 +170,7 @@ argument, or from the CLI's `--redact`. The only accepted value is `mask`.
 | Variable | Default | Meaning |
 |---|---|---|
 | `CAIRN_REDACTION_MAX_SCAN_BYTES` | `16777216` | per-field scan cap (RD-7) |
-| `CAIRN_REDACTION_OVERSIZE` | `reject` | `reject` or `store_unscanned` |
+| `CAIRN_REDACTION_OVERSIZE` | `reject` | `reject` or `store_unscanned` (WARN at startup and on each unscanned store) |
 | `CAIRN_REDACTION_REJECT_TYPES` | `code,bundle` | share types that reject by default |
 | `CAIRN_REDACTION_ALLOWLIST_FILE` | *(empty)* | operator allowlist TOML, by value only |
 

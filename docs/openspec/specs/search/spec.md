@@ -218,6 +218,10 @@ size and timeout MUST all be operator configuration. None of them MUST come from
 - A returned vector whose length differs from `CAIRN_SEARCH_EMBEDDING_DIMENSIONS` MUST be
   rejected as a configuration error, logged once per batch, and counted.
 
+Semantic search sends artifact text to that endpoint. While it is enabled, `cairnd` MUST log
+a WARN at startup naming the endpoint's host and stating that artifact text is sent to it, and
+the self-hosting guide MUST call out the data flow in a warning admonition.
+
 When the endpoint is unavailable, lexical search MUST keep working. The affected chunks MUST
 retry with backoff, and the backlog MUST show in a lag gauge.
 

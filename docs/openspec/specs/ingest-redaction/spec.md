@@ -217,6 +217,12 @@ limit, unless `CAIRN_REDACTION_OVERSIZE=store_unscanned` is set. In that case it
 MUST be stored with status `not_scanned_oversize`, which the owner can see.
 Gitleaks' own size skip MUST never apply (RD-2).
 
+`store_unscanned` is a risky option, so it is off by default and loud when on:
+`cairnd` MUST log a WARN at startup naming `CAIRN_REDACTION_OVERSIZE`, and MUST
+log a WARN each time it stores a field unscanned, carrying the artifact's id and
+the field's size and never its content. The self-hosting guide MUST call the
+setting out in a warning admonition.
+
 #### Scenario: Oversize text rejected by default
 
 - **WHEN** a 20 MiB text body is uploaded with the default cap
@@ -227,8 +233,8 @@ Gitleaks' own size skip MUST never apply (RD-2).
 
 - **WHEN** `CAIRN_REDACTION_OVERSIZE=store_unscanned` and a 20 MiB text body is
   uploaded
-- **THEN** it is stored, its status is `not_scanned_oversize`, and the scan
-  metric counts it
+- **THEN** it is stored, its status is `not_scanned_oversize`, the scan metric
+  counts it, and a WARN naming the artifact and size (not the content) is logged
 
 #### Scenario: Token across a window boundary
 

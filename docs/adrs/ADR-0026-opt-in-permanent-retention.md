@@ -165,7 +165,8 @@ setting (`CAIRN_PERMANENT_RETENTION=true`, default `false`) and may bound it:
 An operator who enables retention and sets no quota has chosen unbounded permanent storage
 for their users. That is a legitimate choice for a small instance, and it is theirs to make:
 risky settings are allowed when they are configurable and off by default (Joe,
-2026-09-22).
+2026-09-22). Both risky settings are loud when on: `cairnd` logs a WARN at startup for
+unbounded retention and for agent retention, and the self-hosting guide calls each out.
 
 Turning retention off, or lowering a quota below current usage, **never releases anything
 already permanent**. It only refuses new retains. A permanent record is a promise that the

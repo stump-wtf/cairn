@@ -143,7 +143,12 @@ Startup MUST fail, naming the problem, when:
 - `open` is combined with a non-empty `CAIRN_ENROLLMENT_ALLOW`.
 
 Selecting `invite` MUST NOT fail startup, including on a build without team
-invitations; there, `invite` admits nobody (AL-3). These settings are operator
+invitations; there, `invite` admits nobody (AL-3).
+
+When the effective mode is `open` and the GitHub provider is configured, anyone
+with a GitHub account can enroll. That is a risky setting, so it is never the
+default with GitHub on: `cairnd` MUST log a WARN at startup saying so, and the
+self-hosting guide MUST call the combination out in a warning admonition. These settings are operator
 configuration. No user, team admin, token or request may change them. There is
 no deprecated alias for any earlier variable name.
 
@@ -161,6 +166,11 @@ no deprecated alias for any earlier variable name.
 
 - **WHEN** GitHub credentials are set and `CAIRN_ENROLLMENT_MODE` is unset
 - **THEN** the effective mode is `invite`, and cairnd starts
+
+#### Scenario: Open signup with GitHub warns
+
+- **WHEN** GitHub credentials are set and `CAIRN_ENROLLMENT_MODE=open`
+- **THEN** cairnd starts, any GitHub account may enroll, and the startup log carries a WARN that enrollment is open to every GitHub account
 
 #### Scenario: Default mode without GitHub
 

@@ -105,7 +105,8 @@ The modes:
 * **`open`**: any identity the configured providers authenticate may enroll.
   This is the explicit open-signup setting. `open` combined with a non-empty
   `CAIRN_ENROLLMENT_ALLOW` is a startup error, because the operator's intent is
-  ambiguous.
+  ambiguous. With GitHub configured, `open` admits every GitHub account, so
+  cairnd logs a WARN at startup and the self-hosting guide calls it out.
 
 Entries match case-insensitively. A GitHub user is named by numeric account id,
 which `GET /user` already returns, never by login, because a renamed login can

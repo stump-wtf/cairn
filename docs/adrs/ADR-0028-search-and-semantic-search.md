@@ -190,7 +190,8 @@ It applies the same scope and needs no new server endpoint.
   Postgres. Database size grows with the corpus, bounded by the per-body cap.
 * Bad, because semantic search sends artifact text to whatever endpoint the operator
   configures. For a hosted endpoint, that is a data-processing decision the operator is
-  making for their users, and the docs have to say so plainly.
+  making for their users, and the docs have to say so plainly. It is off by default, and
+  `cairnd` logs a WARN at startup naming the endpoint's host while it is on.
 * Neutral, because a filtered approximate-nearest-neighbour search can return fewer than
   `limit` results for a small owner inside a large instance. That is recall, not
   correctness, and it is tunable (`ef_search`, iterative scans).
