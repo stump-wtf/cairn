@@ -7,6 +7,109 @@ reaches 1.0.
 
 ## [Unreleased]
 
+## [0.1.1] - Unreleased
+
+Changes since `v0.1.0`, staged for the next patch release.
+
+### Added
+
+- **GitHub OAuth login** — a provider interface for web authentication with a
+  GitHub provider as the first implementation, and login-method provenance
+  recorded on sessions. (ADR-0017, #259)
+
+### Fixed
+
+- CI checks out the PR head SHA rather than the branch ref, so required checks
+  gate the exact commit under review. (#245)
+- Self-hosting guide: corrected env secrets and the `CAIRN_API_TOKENS` compose
+  passthrough. (#239)
+- Docs build: unlinked two repository-host references that broke the build, and
+  renumbered the embedded-docs spec off the SPEC-0013 collision. (#258, #257)
+
+### Added (records)
+
+- ADR-0020 + SPEC-0013 — single-binary runtime with embedded docs; ADR-0021 +
+  SPEC-0014 — Prometheus metrics led by storage and expiry. (#251, #254, #255)
+
+## [0.1.0] - 2026-09-12
+
+First release after the module paths moved to their public homes, and the
+first cut under the MIT license. The headline: Cairn talks to the rest of the
+machine — outbound webhooks on artifact creation, client-asserted tags for
+handoff routing, and a wave of A2UI work that renders traces, bundles, and
+markdown straight into an agent's UI.
+
+### Added
+
+- **Outbound webhooks on artifact creation** (SPEC-0012) — configured
+  destinations receive a signed `artifact.created` event when a share lands,
+  the seam Switchboard's todo routing is built on. (#175)
+- **Client-asserted artifact tags for handoff routing** (ADR-0018) — creators
+  can tag artifacts at create time so downstream routers can lane them. (#181)
+- **A2UI everywhere over MCP** — `cairn://artifact/{id}/a2ui` for single-body
+  artifacts, trace and bundle views as A2UI resources, a widened and colorized
+  flame graph, bundle members served as their own resources with `open_member`
+  navigation via `a2ui_action` (and `a2ui_error` for render failures), and
+  guidance for agents to prefer `/a2ui` surfaces. (#91, #92, #93, #94, #98,
+  #102, #107)
+- **Click-to-copy** for markdown code blocks and the whole document. (#134)
+- `--help` and usage errors styled with fang in the Cairn palette. (#132)
+- Cross-platform `cairn` CLI binaries built and attached to releases, with the
+  release destinations split: binaries on Gitea, container image on GitHub.
+  (#60, and the release-pipeline commits through `v0.1.0`)
+- Homebrew tap publishing for the CLI. (release-pipeline commits)
+
+### Changed
+
+- Module paths moved to their public homes (`github.com/stump-wtf/…`), and the
+  Settings template updated to match. (81454e2, a5e7eb9)
+- Cairn is now MIT-licensed. (#206)
+- Traces, not trajectories — naming settled in ADR-0016 Phase 1. (#86)
+- Release archives ship only the binary, and the shipped CLI is gated against
+  containing any server code. (215e99f, 5c3ffb6)
+- The four racing CI workflows retired in favor of one composed pipeline. (#29)
+
+### Fixed
+
+- **Artifact creation 500ed on every call when webhooks were disabled** —
+  `cairnd` now degrades gracefully instead. (#203)
+- The CLI's default server resolves; dead install links dropped. (#217)
+- MCP: boolean JSON schemas no longer void the tool list (#45); span output is
+  plain text (#44); string-encoded spans unwrap via middleware with end-to-end
+  regression tests (#108); `bundle_create` publishes concrete array types so
+  the tool is callable (#116); the `run_capture` prompt no longer names a
+  nonexistent task argument (#115); A2UI resources honor the `?w=` width hint
+  (#102).
+- Trajectory viewer: unbounded zoom and toggling pickers (#55), pan tracks the
+  centre row with gaps collapsing for real (#57), the category bar is a
+  composition not a wall-clock fraction (#58), pan reaches the run's ends and
+  the timeline box scrubs (#59), bullet reactions on their own line with prompt
+  spans as markers (#48).
+- The bin's type menu stays reachable while filtering, and overlapping tabs
+  became visibility + type lenses. (020245c, f383ad1)
+- A loading indicator for bundle member navigation. (7eaf852)
+- Nil-guarded storeless handlers so port reuse cannot panic `httpapi`. (0c8007f)
+
+### Security
+
+- `golang.org/x/net` bumped for CVE-2026-46600. (#165)
+
+### Dependencies
+
+- Go 1.27, chi v5.3.2, Lip Gloss v2.0.6, MCP Go SDK v1.7.0, and the usual
+  Renovate churn. (#124, #126, #135, #166, #167, #168, #169)
+
+### Docs
+
+- Getting-started guides for hosted Cairn users, aligned Switchboard sections,
+  and links to Switchboard's new first-webhook and handoff recipe pages.
+  (#186, #187, #188)
+- `cairn.sh` was never acquired — the record and the site no longer imply it
+  might be. (#219)
+- Deployment docs corrected to the files a self-hoster actually reads. (#227)
+- The mobile drawer behind the glass navbar unbroken. (#225)
+- Three ways a shell check reports the wrong answer, recorded. (#233)
+
 ## [0.0.4] - 2026-07-15
 
 ### Fixed
@@ -15,7 +118,7 @@ reaches 1.0.
   MCP bearer verifier only accepted OAuth access tokens (`cairn_at_`), so a
   `cairn_pat_` token (the credential Settings creates *for agents*, which
   connect over MCP) was rejected. `/mcp` now accepts personal access tokens with
-  the same scope enforcement as OAuth; set a client's `CAIRN_API_TOKEN` to a
+  the same scope enforcement as OAuth; set a client's `CAIRN_TOKEN` to a
   `cairn_pat_…` value and connect, no OAuth browser flow needed. (#99, closes
   upstream #51)
 
@@ -148,7 +251,8 @@ The MVP: trajectory shares end to end on a composable share-type SDK.
   slot, the Bin listing, generic-file viewer, CSRF protection. (#10, #12)
 - **Minimal web session auth and login.** (#11)
 
-[Unreleased]: https://github.com/stump-wtf/cairn/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/stump-wtf/cairn/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/stump-wtf/cairn/compare/v0.0.4...v0.1.0
 [0.0.4]: https://github.com/stump-wtf/cairn/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/stump-wtf/cairn/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/stump-wtf/cairn/compare/v0.0.1...v0.0.2
