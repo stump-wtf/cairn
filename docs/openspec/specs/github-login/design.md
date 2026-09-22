@@ -83,49 +83,64 @@ dropped when the callback returns.
 **Rationale**: Provenance stays auditable without changing what downstream
 code sees; zero GitHub API traffic in steady state avoids rate limits.
 
-### Allowlist by organisation and user, failing closed (ADR-0024)
+### Enrollment modes and an allowlist, failing closed (ADR-0024)
 
-**Choice**: Three operator settings, parsed in `internal/config`:
+**Choice**: Operator settings, parsed in `internal/config`:
 
 ```go
+Enrollment         string   // CAIRN_ENROLLMENT: "allowlist" (default) | "invite" | "open"
 GitHubAllowedOrgs  []string // CAIRN_GITHUB_ALLOWED_ORGS, lower-cased
 GitHubAllowedUsers []string // CAIRN_GITHUB_ALLOWED_USERS: logins (lower-cased) or "id:<n>"
-GitHubOpenSignup   bool     // CAIRN_GITHUB_OPEN_SIGNUP, default false
 ```
+
+`config.Load` rejects:
+
+- `open` combined with an allowlist;
+- a malformed `id:` entry;
+- `invite` until the Teams invitation store exists (Cairn ADR-0029).
 
 `Server.EnableGitHub` registers the provider only when credentials are set
-**and** (an allowlist is non-empty **or** open signup is true). Otherwise it
-logs:
+**and** a GitHub sign-in could succeed: `open` mode, a non-empty allowlist,
+`invite` mode, or at least one user with a linked GitHub identity once ADR-0029
+adds identities. Otherwise it logs:
 
 ```
-WARN github login disabled: CAIRN_GITHUB_CLIENT_ID/SECRET are set but no
-     CAIRN_GITHUB_ALLOWED_ORGS, CAIRN_GITHUB_ALLOWED_USERS or
-     CAIRN_GITHUB_OPEN_SIGNUP=true — nobody could sign in
+WARN github login disabled: CAIRN_GITHUB_CLIENT_ID/SECRET are set but
+     CAIRN_ENROLLMENT=allowlist with no CAIRN_GITHUB_ALLOWED_ORGS or
+     CAIRN_GITHUB_ALLOWED_USERS — nobody could enroll
 ```
 
 It leaves `s.gh` nil, so the existing 404 behaviour covers the route.
-`config.Load` rejects open signup combined with an allowlist, and malformed `id:`
-entries.
 
-The provider gains an admission step after identity verification:
+`GET /user` additionally decodes `id` (int64). The identity becomes
+`Identity{Issuer: "https://github.com", Subject: strconv.FormatInt(id, 10),
+Actor: <verified email>, Login: <login>}`. `Login` is new: it is display and
+logs only.
+
+The enrollment decision is a function the callback calls after `FinishLogin`
+succeeds, and before `sessions.Create`:
 
 ```go
-type Admission struct {
-	OpenSignup bool
-	Users      map[string]bool  // lower-cased logins
-	UserIDs    map[int64]bool
-	Orgs       []string
+type EnrollmentPolicy struct {
+	Mode    string          // allowlist | invite | open
+	Users   map[string]bool // lower-cased logins
+	UserIDs map[int64]bool
+	Orgs    []string
+	Linked  func(ctx context.Context, iss, sub, email string) (bool, error) // ADR-0029; nil before it
+	Invited func(ctx context.Context, email string) (bool, error)          // ADR-0029; nil before it
 }
 
-// In FinishLogin, after the verified-email check and before returning:
-//   GET /user now also decodes "id" (int64).
-//   if !admit(ctx, client, user) -> return Identity{}, ErrNotAllowlisted{Reason}
-func (g *GitHubProvider) admit(ctx context.Context, c *http.Client, u githubUser) (reason string, ok bool)
+// Admit returns ok=false with a reason from {not_allowlisted,
+// org_restricted_oauth_app, membership_check_failed}.
+func (p EnrollmentPolicy) Admit(ctx context.Context, gh *http.Client, id Identity, numericID int64) (reason string, ok bool)
 ```
 
-The membership call is `GET {APIBase}/user/memberships/orgs/{org}` with the
-same `Accept: application/vnd.github+json` header `getJSON` already sets. The
-response is decoded into `{state string}`, and mapped as follows:
+The membership call must use the user's token, which lives only inside
+`FinishLogin`. So `FinishLogin` takes the policy and runs `Admit` before it drops
+the token. The token still never leaves the provider.
+
+The membership call is `GET {APIBase}/user/memberships/orgs/{org}`, with the same
+`Accept: application/vnd.github+json` header `getJSON` sets:
 
 | GitHub answer | Result |
 |---|---|
@@ -135,28 +150,33 @@ response is decoded into `{state string}`, and mapped as follows:
 | 403 | not admitted by this org (the org restricts the OAuth app); try the next, reason `org_restricted_oauth_app` |
 | anything else, or a transport error | deny now, reason `membership_check_failed` |
 
-`handleGitHubCallback` distinguishes `ErrNotAllowlisted` from other
-`FinishLogin` errors: it renders a 403 "not permitted" page, where other errors
-get today's 502 "github login failed". The state cookie is cleared first on both
-paths, as today.
+`handleGitHubCallback` distinguishes `ErrNotPermitted` from other `FinishLogin`
+errors. It renders a generic 403 "not permitted" page, which names no
+organisation, team or invitation. Other errors keep today's 502 "github login
+failed". The state cookie is cleared first on both paths, as today.
 
 `NewGitHubProvider` appends `read:org` to `oauth2.Config.Scopes` only when `Orgs`
-is non-empty (AL-4).
+is non-empty (AL-5).
 
-**Rationale**: Organisations are how GitHub users are already grouped, and
-numeric ids are the only rename-proof user key. Treating an allowlist-less
-provider as unconfigured reuses the existing, tested 404 path rather than adding
-a new "configured but closed" state.
+**Rationale**:
+
+- Organisations are how GitHub users are already grouped, and numeric ids are the
+  only rename-proof key.
+- Gating enrollment rather than every sign-in matches Switchboard's
+  `SWITCHBOARD_ENROLLMENT` (Switchboard SPEC-0033), and keeps a GitHub API outage
+  from locking out existing users.
+- Treating a closed provider as unconfigured reuses the tested 404 path.
 
 **Alternatives considered**:
 
+- Re-check on every sign-in: rejected. It diverges from Switchboard, and fails
+  closed against existing users during GitHub outages. Offboarding is suspension
+  (ADR-0029).
 - Email-domain allowlist: rejected, because a verified email proves control of an
   address, not membership.
-- Invitations: rejected for now, because that is a new admin surface overlapping
-  Teams (Cairn ADR-0029).
-- `GET /user/orgs` listing: rejected, because it omits organisations that
-  restrict OAuth apps without saying so. The per-organisation membership call
-  returns a distinguishable 403.
+- `GET /user/orgs` listing: rejected, because it silently omits organisations
+  that restrict OAuth apps. The per-organisation membership call returns a
+  distinguishable 403.
 
 ## Architecture
 
@@ -185,9 +205,10 @@ conditionally rendered button.
   restricts third-party apps returns 403 on the membership check until an owner
   approves Cairn's OAuth app. It is logged as `org_restricted_oauth_app` and
   documented, and fails closed.
-- **Membership changes lag sessions (ADR-0024)** → a removed member keeps their
-  session until TTL or revocation. This is documented, and bounded by the
-  session TTL.
+- **Leavers keep access until suspended (ADR-0024)** → the gate applies to
+  enrollment only. A removed organisation member keeps their session and (after
+  ADR-0029) their account until the operator suspends them. This is documented,
+  and is the same rule as Switchboard.
 - **Phishable login vs Pocket ID passkey** → accepted and recorded: the
   session stores provider provenance so a future assurance policy can
   distinguish them; no capability in Cairn currently requires step-up.
@@ -209,9 +230,11 @@ conditionally rendered button.
 4. (ADR-0024) Ship the allowlist. An instance that set only the credentials
    stops offering GitHub login and logs why. The operator adds
    `CAIRN_GITHUB_ALLOWED_ORGS` / `CAIRN_GITHUB_ALLOWED_USERS`, or knowingly sets
-   `CAIRN_GITHUB_OPEN_SIGNUP=true`.
+   `CAIRN_ENROLLMENT=open`. New GitHub sessions record the numeric id as `sub`,
+   and old sessions simply expire.
 5. (ADR-0024) Publish the operator docs, which were blocked until step 4:
-   - add all five `CAIRN_GITHUB_*` variables to `.env.example` and to the
+   - add `CAIRN_ENROLLMENT` and the four `CAIRN_GITHUB_*` variables to
+     `.env.example` and to the
      environment passthrough in `docker-compose.yml` and
      `docker-compose.prod.yml`;
    - add a "GitHub login" section to the self-hosting guide: creating the GitHub
@@ -228,7 +251,8 @@ conditionally rendered button.
 ## Open Questions
 
 - ~~Should GitHub logins be allow-listed rather than open to any GitHub
-  account?~~ **Resolved by ADR-0024 (2026-09-22):** yes, by organisation and
-  user, failing closed, with open signup only behind an explicit flag.
+  account?~~ **Resolved by ADR-0024 (2026-09-22):** yes. Enrollment is gated by
+  organisation and user allowlists, failing closed, with open signup only as the
+  explicit `CAIRN_ENROLLMENT=open`, and matching Switchboard's enrollment modes.
 - Does the CLI (`cairn login`) ever want GitHub as a device-flow option?
   Deferred — out of scope for this spec.
