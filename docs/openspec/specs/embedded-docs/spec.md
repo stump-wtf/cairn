@@ -85,8 +85,9 @@ self-hosting guide and the compose files in the same change.
 ### Requirement: Deployment Convergence
 
 The single-image runtime MUST be the only supported self-host path: the
-`docker-compose.prod.yml` and the published guide MUST describe one `cairnd`
-service with embedded docs. The `ghcr.io/stump-wtf/cairn` pull contract MUST
+published guide MUST describe one `cairnd` service with embedded docs, and no
+second compose path may live in the repo root (the old
+`docker-compose.prod.yml` is retired, #345). The `ghcr.io/stump-wtf/cairn` pull contract MUST
 keep working across the change — same name, same env surface, same ports.
 
 #### Scenario: Compose bring-up

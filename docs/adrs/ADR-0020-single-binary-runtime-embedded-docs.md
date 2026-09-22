@@ -71,8 +71,9 @@ The `cairn-docs` service and its `/docs/*` edge route are removed from the
 compose stack once `cairnd` with embedded docs is deployed; the edge config
 proxies `/docs/*` to `cairnd:8080` like every other route. Because the bundle
 was already built with the `/docs/` base path for the live site, no URL
-contract changes. The self-hosting guide and `docker-compose.prod.yml` are
-updated in the same PR that lands the serving code.
+contract changes. The self-hosting guide was updated in the same PR that
+landed the serving code; the repo-root `docker-compose.prod.yml` was retired
+afterward (#345), leaving the published guide as the one self-host path.
 
 ### Consequences
 
