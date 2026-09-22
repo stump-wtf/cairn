@@ -412,8 +412,8 @@ Each MUST be delivered only when its kind is listed in ADR-0022's kind allowlist
 plus ADR-0022's common actor fields. `artifact.deleted` MUST carry `data.tombstone` with its
 kind and removal time. It MUST NOT carry `title` or `tags`.
 
-The `artifact.created` payload MUST be unchanged, byte for byte, for every artifact (all
-new artifacts are ephemeral).
+This capability MUST add nothing to the `artifact.created` payload: every new artifact is
+ephemeral, so there is nothing retention-specific to carry at creation.
 
 #### Scenario: Retained event carries the checksum
 
@@ -428,7 +428,7 @@ new artifacts are ephemeral).
 #### Scenario: Created payload unchanged
 
 - **WHEN** an artifact is created after this capability ships
-- **THEN** its `artifact.created` body MUST match the existing golden payloads
+- **THEN** its `artifact.created` body MUST be byte-identical to what the same build produced before this capability, with no `checksum` or `retention` key
 
 ### Requirement: REQ-15 Metrics
 

@@ -231,8 +231,8 @@ Three new kinds ride the envelope that ADR-0017 defined and that ADR-0022 extend
 
 Each is opt-in through ADR-0022's kind allowlist, so existing consumers are not surprised.
 Each carries `data.checksum` and `data.retention`, and the actor fields ADR-0022 makes
-common to every kind. `artifact.created` is unchanged: a new artifact is always ephemeral,
-so its bytes do not change (SPEC-0012).
+common to every kind. This ADR adds nothing to `artifact.created`: a new artifact is always
+ephemeral, so it has no retention fields to carry (SPEC-0012).
 
 ### Consequences
 
@@ -269,7 +269,7 @@ SPEC-0020 carries the scenarios. The load-bearing ones:
 * a bundle's retained checksum equals `sha256sum` over the published manifest lines;
 * a retain over quota, over the size limit, on a disabled instance, or by an agent without
   `retention:write` is refused and changes nothing;
-* the `artifact.created` golden bytes are unchanged.
+* this capability leaves the `artifact.created` payload unchanged.
 
 ## Pros and Cons of the Options
 
