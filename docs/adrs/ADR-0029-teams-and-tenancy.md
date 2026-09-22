@@ -51,6 +51,11 @@ person who runs the instance do that a user may not?**
   can return an artifact's bytes, metadata or annotations, or it must not be offered.
 * **Operator config may bound tenant data, never route it.** Limits, retention and login policy are
   instance concerns. A URL that receives every user's events is not.
+* **Pre-1.0 means clean breaks (Joe, 2026-09-22).** Cairn has no 1.0 compatibility promise yet. A
+  setting that is wrong is removed in the change that replaces it: no deprecation window, no
+  transition warning, no dual path.
+* **Risky options are opt-in.** A setting that widens exposure may exist when it is configurable and
+  off by default (Joe, 2026-09-22).
 * **Links stay the default.** ADR-0007's capability link is what makes Cairn useful between agents:
   a link handed to another agent just works. Teams must add a tighter option, not take the link away.
 * **Identity must be something a user cannot claim.** Ownership keyed on an unverified, unnormalised
@@ -86,8 +91,8 @@ The **operator** is whoever runs the instance, named by `CAIRN_OPERATORS` (provi
 subjects, `<issuer>|<subject>`, matched against the session's recorded provenance) and optionally
 `CAIRN_OPERATOR_GROUP`. An operator is also a user, and owns their own artifacts as one.
 
-Operator surfaces are instance configuration and governance only: login policy (the GitHub allowlist
-of ADR-0024, cited by number while it is in flight), per-user and per-team quotas, retention bounds,
+Operator surfaces are instance configuration and governance only: login policy (the enrollment mode
+and allowlist of ADR-0024, `CAIRN_ENROLLMENT_MODE`, cited by number while it is in flight), per-user and per-team quotas, retention bounds,
 suspending a user or team (which revokes their sessions, personal access tokens and OAuth grants in
 one step), the metrics scrape credential ADR-0021 assumed but never defined, and a directory of users
 and teams with **counts**. No operator surface returns an artifact's body, title, link, annotations
@@ -96,8 +101,8 @@ team owners can read.
 
 The rule for every environment variable, now and later: **operator configuration may bound tenant
 data — size, retention, rate, who may sign in — and may never route, copy or reveal it.**
-`CAIRN_OUTBOUND_WEBHOOK_URLS` fails that test and is retired (section 6). `CAIRN_API_TOKENS` fails it
-as written and is narrowed (section 7).
+`CAIRN_OUTBOUND_WEBHOOK_URLS` fails that test and is removed outright (section 6). `CAIRN_API_TOKENS`
+fails it as written and is restricted to operator users (section 7).
 
 ### 2. Users become rows
 
@@ -162,8 +167,10 @@ an agent can create into a team its human belongs to.
 
 Outbound targets move from the environment into an `outbound_subscriptions` table, each owned by a
 user or a team. A user manages their own in Settings; team admins manage the team's. Each has a
-target URL, a secret minted per subscription and shown once, optional filters (event types, share
-types, tags) and health: last status, consecutive failures, auto-disable after repeated failure.
+target URL, a per-subscription secret, optional filters (event types, share types, tags) and health:
+last status, consecutive failures, auto-disable after repeated failure. The secret is either
+supplied by its creator, for a receiver that issues its own signing secret (a Switchboard `cairn`
+webhook does), or minted by Cairn; either way it is shown once and stored encrypted.
 
 **A workspace's events go only to that workspace's subscriptions.** `artifact.created` for a
 personal artifact reaches its owner's subscriptions; for a team artifact, the team's. Annotation and
@@ -176,17 +183,21 @@ are validated at creation and re-resolved at every dial: HTTPS only unless the o
 private, loopback and link-local addresses refused, redirects treated as failures — the rules
 Switchboard's notify hooks apply (its ADR-0029).
 
-**Retiring `CAIRN_OUTBOUND_WEBHOOK_URLS`.**
+**`CAIRN_OUTBOUND_WEBHOOK_URLS` and `CAIRN_OUTBOUND_WEBHOOK_SECRET` are removed, not retired.** The
+change that ships owned subscriptions also deletes both variables: their parsing in
+`internal/config`, the delivery path that reads them, and every place they are documented
+(`.env.example`, the compose files, `DEPLOY.md`, the self-hosting and outbound-webhooks guides). The
+CHANGELOG carries one upgrade line in their place. There is no narrowed stage, no deprecation
+warning, no import command and no release in which both paths deliver (Joe, 2026-09-22: "retire it,
+but nuke it 100%"). A deployment that still sets them after upgrading sends nothing to those URLs;
+the variables mean nothing to Cairn any more.
 
-| Stage | When | What the env vars do |
-|---|---|---|
-| **1. Narrowed** | the release that ships subscriptions | Deliver only events for artifacts owned by an operator identity. Other users' events are never sent. Boot logs a deprecation `WARN`. `cairnd outbound import --owner <operator>` copies each env target into a subscription owned by that operator, **reusing** the env secret so receivers need no change. |
-| **2. Ignored** | the first minor release at least 30 days after stage 1 | Ignored. Boot logs an `ERROR` naming the migration guide, and the operator console shows a banner. Cairn still starts. |
-| **3. Removed** | the first minor release at least 90 days after stage 1 | Parsing removed; the variables are documented as removed. |
-
-Stage 1 is the privacy fix, and it lands on day one: from the first release, no user's event leaves
-through an operator-configured target. The hosted instance's own handoff flow keeps working, because
-its artifacts are the operator's.
+**This supersedes ADR-0017's instance-wide delivery.** ADR-0017's event envelope, signing and
+bounded retry stay; its operator-configured target list, and SPEC-0012 REQ "Delivery Targets from
+Configuration", do not. An operator who fed a Switchboard through the env vars recreates that target
+as a subscription they own, supplying the Switchboard webhook's existing signing secret, so the
+receiver needs no change. The privacy fix and the replacement land in the same change, so no release
+sends one user's events to another's target.
 
 ### 7. Static API tokens act as a user, and only as the operator
 
@@ -194,16 +205,18 @@ its artifacts are the operator's.
 existing user who is an operator identity. An entry naming anyone else is refused at boot. Tokens get
 agent scopes unless marked otherwise, never `sharing:manage`, and appear on their user's Settings
 page as "operator-provisioned". Everyone else uses personal access tokens, which they mint and revoke
-themselves. The old free-form `secret:actor` form keeps working with a boot `WARN` for one minor
-release, then is refused.
+themselves. The old free-form `secret:actor` form is refused at boot from the release that ships
+this, with no grace period; the error names the entry's position and the new form, and the CHANGELOG
+says so.
 
 ### 8. Quotas for permanent retention
 
-Permanent storage is opt-in per artifact (ADR-0026, SPEC-0020, cited by number while in flight).
-Permanent artifacts count against their **owner's** quota: the operator sets a default per user and a
-default per team, and may raise either for one owner (audited). Team admins decide which team
-artifacts are permanent. Moving an artifact into a team re-charges it to the team and fails if the
-team is over quota.
+Permanent storage is opt-in per artifact and off for the whole instance until the operator enables
+it (ADR-0026, SPEC-0020, cited by number while in flight). Permanent artifacts count against their
+**owner's** quota. Quotas are configurable, not mandatory: the operator may set one per user and one
+per team, and may override either for one owner (audited). **Where no quota is set, none applies.**
+Team admins decide which team artifacts are permanent. Moving an artifact into a team re-charges it
+to the team and fails if the team has a quota and is over it.
 
 ### 9. OIDC groups (optional)
 
@@ -221,7 +234,9 @@ Switchboard.
 * No teams exist until someone creates one. Existing visibility values are kept: `link` stays
   `link`; `private` becomes **actually** private, which the release notes and the getting-started
   guide's current warning both call out.
-* `CAIRN_OUTBOUND_WEBHOOK_URLS` enters stage 1; `CAIRN_API_TOKENS` entries are checked at boot.
+* `CAIRN_OUTBOUND_WEBHOOK_URLS` and `_SECRET` are gone in the release that adds subscriptions;
+  `CAIRN_API_TOKENS` entries are checked at boot and legacy `secret:actor` entries fail it. The
+  CHANGELOG's upgrade notes say both.
 
 ### 11. The rest of the audit
 
@@ -249,6 +264,10 @@ alone; and OTLP `trace_id`s (ADR-0015) must key by owner when that lands.
   "you only" link. That flow was relying on a bug; the release notes say so.
 * Bad, because per-subscription outbound delivery multiplies requests and adds an SSRF surface that
   the env list, being operator-chosen, never had.
+* Bad, because an instance that fed a receiver through `CAIRN_OUTBOUND_WEBHOOK_URLS`, or used a
+  legacy `secret:actor` token, needs an operator step on upgrade: recreate the target as a
+  subscription, rewrite the token entry. Pre-1.0, one clean break is cheaper than three staged
+  releases of code written to be deleted.
 * Bad, because a team member can read every team artifact, including ones marked permanent. That is
   what a team is; the invite screen says so.
 * Neutral, because the operator still controls the database and the object store. The product removes
@@ -261,9 +280,10 @@ alone; and OTLP `trace_id`s (ADR-0015) must key by owner when that lands.
   `private`, team `team` and team `link` artifact, on every surface in section 4, and every attempt
   outside the table returns `404`.
 * `policy_integration_test.go:178` asserts `404` for an anonymous read of a private artifact.
-* With `CAIRN_OUTBOUND_WEBHOOK_URLS` set, an artifact created by a non-operator user produces no
-  request to the env target, and one created by the operator does.
-* A static token naming a non-operator user fails boot.
+* With `CAIRN_OUTBOUND_WEBHOOK_URLS` still set in the environment, no artifact, the operator's
+  included, produces a request to it, and a test asserts that neither variable name is read anywhere
+  in the Go source.
+* A static token naming a non-operator user fails boot, and so does a legacy `secret:actor` entry.
 * Removing a team member ends their read of `team` artifacts on the next request.
 
 ## Pros and Cons of the Options
@@ -329,3 +349,8 @@ flowchart TB
   SPEC-0020 (permanent retention), ADR-0027 (receipts), ADR-0028 (search). Front-matter edges to them
   are added once they merge.
 * Issues folded in: #182 ("you only" not enforced) and #185 (instance-wide outbound webhooks).
+* **Supersedes ADR-0017's instance-wide delivery** (section 6). ADR-0017 stays the record for the
+  event envelope, signing and retry; the env-configured target list is removed by this ADR.
+* Design review, Joe, 2026-09-22: remove the env targets in the same change as their replacement,
+  with no deprecation window or back-compat shim; quotas are configurable and unset means none;
+  risky options are configurable and off by default.

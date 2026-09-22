@@ -12,7 +12,7 @@ related: [SPEC-0005, SPEC-0006, SPEC-0008, SPEC-0014]
 
 - **Implements:** **ADR-0029** — every artifact belongs to a user or a team; the operator owns none
 - **Requires:** **SPEC-0009** — link-based access, visibility and retention, which this spec enforces and extends
-- **Requires:** **SPEC-0012** — outbound webhooks, whose delivery targets become owned subscriptions
+- **Requires:** **SPEC-0012** — outbound webhooks, whose delivery targets become owned subscriptions; this spec replaces its REQ "Delivery Targets from Configuration"
 - **Requires:** **SPEC-0001**, **SPEC-0002**, **SPEC-0007**, **SPEC-0013** — the Bin, the artifact core, MCP OAuth and GitHub login, each of which gains an owner or a team argument
 - **Related:** **SPEC-0005**, **SPEC-0006**, **SPEC-0008**, **SPEC-0014** — hooks, annotations, the CLI and metrics, touched by the audit fixes
 
@@ -29,9 +29,13 @@ defines:
 * **visibility** `link`, `team` or `private`, enforced on every read surface (closing #182);
 * a **team view** in the Bin;
 * **owned outbound subscriptions** replacing the instance-wide target list (F-C8, closing #185), and
-  the timeline for retiring `CAIRN_OUTBOUND_WEBHOOK_URLS`;
+  the removal of `CAIRN_OUTBOUND_WEBHOOK_URLS` and `CAIRN_OUTBOUND_WEBHOOK_SECRET` in the same change;
 * static API tokens mapped to a user, quotas for permanent retention, and fixes for the other
   unscoped surfaces found on `main` at `dea1f0b`.
+
+Cairn is pre-1.0. Nothing this spec replaces gets a deprecation window, a transition warning or a
+back-compat path: the old behaviour is removed in the change that ships the new one, and the
+CHANGELOG's upgrade notes say what an operator must do (design review, Joe, 2026-09-22).
 
 Records in flight that take their owner model from this spec, cited by number until they merge:
 ADR-0022 and SPEC-0016 (annotation and trace events), ADR-0023 (redaction), ADR-0024 (GitHub
@@ -71,15 +75,15 @@ set the instance MUST have no operator, and operator routes MUST answer `404`. S
 
 Operator surfaces MUST be limited to: a directory of users and teams with counts (artifacts, bytes,
 permanent bytes, subscriptions); per-user and per-team quotas; login policy (owned by ADR-0024 and
-SPEC-0013's enrollment gate, `CAIRN_ENROLLMENT`); suspending and unsuspending a user or team;
+SPEC-0013's enrollment gate, `CAIRN_ENROLLMENT_MODE`); suspending and unsuspending a user or team;
 retention bounds; and the metrics scrape credential SPEC-0014 requires. No operator surface MAY
 return an artifact's body, title, link, tags, annotations, captured requests or subscription
 targets. Operator status MUST NOT widen `authorizeRead`.
 
 Instance configuration MAY bound tenant data (size, retention, rate, who may sign in) and MUST NOT
 route, copy or reveal it: no environment variable or setting MAY name a destination that receives
-other owners' artifacts or events, apart from the deprecated variables retired by REQ "Retiring the
-Instance-Wide Outbound Targets".
+other owners' artifacts or events. There is no exception (REQ "Removing the Instance-Wide Outbound
+Targets").
 
 Every operator action that affects a tenant MUST write an audit row (operator, target, action,
 required reason, time) in the same transaction, readable by the affected user or the affected team's
@@ -190,9 +194,9 @@ days. Accepting MUST require a signed-in user whose verified email equals the in
 `404`. Whether an invited email already has an account MUST NOT be revealed to the inviter. These
 semantics MUST match Switchboard's SPEC-0033 REQ "Team Invitations".
 
-When the enrollment policy is `invite` (ADR-0024, `CAIRN_ENROLLMENT`), a pending invite to a verified
-email MUST admit that identity as a new user; this spec supplies the invitations that mode reads and
-does not otherwise define who may sign in.
+When the enrollment mode is `invite` (ADR-0024, `CAIRN_ENROLLMENT_MODE`, the default when GitHub
+login is configured), a pending invite to a verified email MUST admit that identity as a new user;
+this spec supplies the invitations that mode reads and does not otherwise define who may sign in.
 
 #### Scenario: Accepting
 
@@ -201,7 +205,7 @@ does not otherwise define who may sign in.
 
 #### Scenario: Invite admits a new user under invite-only enrollment
 
-- **GIVEN** `CAIRN_ENROLLMENT=invite` and a pending invite to `friend@example.com`
+- **GIVEN** `CAIRN_ENROLLMENT_MODE=invite` and a pending invite to `friend@example.com`
 - **WHEN** a GitHub identity whose primary verified email is `friend@example.com` signs in for the
   first time
 - **THEN** a user is created and the invite page is offered
@@ -337,8 +341,10 @@ with `not_found`.
 Outbound delivery targets MUST be `outbound_subscriptions` owned by a user or a team. A user MUST be
 able to create, list, rotate the secret of, pause and delete their own subscriptions in Settings and
 over `/v1`; team admins and owners MUST be able to do the same for the team's. Each subscription MUST
-have a target URL, a secret minted by Cairn and shown once, optional filters (event types, share
-types, tags), and health: last attempt, last status, consecutive failures. After 20 consecutive
+have a target URL, a secret, optional filters (event types, share types, tags), and health: last
+attempt, last status, consecutive failures. The secret MUST be either supplied by the creator (at
+least 32 bytes, for a receiver that issues its own signing secret, as a Switchboard `cairn` webhook
+does) or minted by Cairn; it MUST be shown once and stored encrypted. After 20 consecutive
 failed deliveries a subscription MUST be disabled and say so. Per-owner ceilings MUST apply (default
 5 per user, 10 per team). Deliveries MUST be signed per SPEC-0012 REQ "Signed Delivery" with the
 subscription's own secret.
@@ -348,6 +354,11 @@ subscription's own secret.
 - **WHEN** U creates a subscription to their Switchboard webhook URL and then creates an artifact
 - **THEN** one signed `artifact.created` delivery reaches that URL, verifiable with the secret U was
   shown
+
+#### Scenario: Receiver-issued secret
+
+- **WHEN** U creates a subscription and supplies the signing secret their Switchboard webhook issued
+- **THEN** deliveries verify at that webhook with no change on the Switchboard side
 
 #### Scenario: Member tries to add a team subscription
 
@@ -391,38 +402,33 @@ after 5 seconds. Delivery MUST NOT block artifact creation.
 - **WHEN** a target answers `302` to another host
 - **THEN** the redirect is not followed and the delivery counts as failed
 
-### Requirement: Retiring the Instance-Wide Outbound Targets
+### Requirement: Removing the Instance-Wide Outbound Targets
 
-`CAIRN_OUTBOUND_WEBHOOK_URLS` and `CAIRN_OUTBOUND_WEBHOOK_SECRET` MUST be retired in three stages:
+The change that ships REQ "Owned Outbound Subscriptions" MUST remove `CAIRN_OUTBOUND_WEBHOOK_URLS`
+and `CAIRN_OUTBOUND_WEBHOOK_SECRET` entirely: their parsing, the delivery path that reads them, and
+every reference in `.env.example`, the compose files, `DEPLOY.md` and the website guides. The
+CHANGELOG MUST carry an upgrade note naming both variables as removed and pointing to subscriptions.
+There MUST NOT be a narrowed stage, a deprecation or transition warning, an import command, or any
+release in which env targets and subscriptions both deliver. This replaces SPEC-0012 REQ "Delivery
+Targets from Configuration" and supersedes ADR-0017's instance-wide delivery; SPEC-0012's payload,
+signing and retry requirements apply to subscription deliveries unchanged.
 
-1. **Narrowed**, from the release that ships REQ "Owned Outbound Subscriptions": the variables MUST
-   deliver only events for artifacts owned by an operator identity (REQ "Operator and User
-   Profiles"); with no operator configured they MUST deliver nothing. Boot MUST log a deprecation
-   warning naming the migration guide. `cairnd outbound import --owner <operator>` MUST create one
-   subscription per env target owned by that operator, reusing the env secret so the receiver needs
-   no change, and MUST be idempotent.
-2. **Ignored**, from the first minor release at least 30 days after stage 1: the variables MUST have
-   no effect; boot MUST log an error naming them and the guide, and the operator console MUST show a
-   banner. Cairn MUST still start.
-3. **Removed**, from the first minor release at least 90 days after stage 1: parsing MUST be removed
-   and the variables documented as removed.
+#### Scenario: A leftover variable delivers nothing
 
-#### Scenario: A friend's artifact under stage 1
+- **GIVEN** a deployment upgraded with `CAIRN_OUTBOUND_WEBHOOK_URLS` still set
+- **WHEN** any user, the operator included, creates an artifact tagged `handoff`
+- **THEN** no request is made to that URL, and cairnd starts and runs normally
 
-- **GIVEN** stage 1, `CAIRN_OUTBOUND_WEBHOOK_URLS` set, and user V who is not an operator
-- **WHEN** V creates an artifact tagged `handoff`
-- **THEN** no request is made to the env target
+#### Scenario: No code reads the variables
 
-#### Scenario: The operator's own artifact under stage 1
+- **WHEN** the Go source is searched for either variable name
+- **THEN** there is no match, and a test asserts it
 
-- **WHEN** the operator creates an artifact
-- **THEN** the env target receives it exactly as before
+#### Scenario: The operator replaces their firehose
 
-#### Scenario: Import preserves the receiver
-
-- **WHEN** the operator runs `cairnd outbound import --owner <operator>` twice
-- **THEN** one subscription exists per env target, signed with the env secret, and the receiver
-  verifies deliveries unchanged
+- **WHEN** the operator creates a subscription they own to their Switchboard webhook, supplying that
+  webhook's signing secret
+- **THEN** their artifacts reach it signed as before, and no other user's artifact does
 
 ### Requirement: Static API Tokens Act as an Operator's User
 
@@ -431,13 +437,20 @@ after 5 seconds. Delivery MUST NOT block artifact creation.
 operator. An entry naming any other user MUST fail boot with an error naming the entry's position
 (never its secret). Tokens MUST default to agent scopes; `:human` MUST NOT grant `sharing:manage`
 unless the user is an operator acting on their own artifacts. Each token MUST appear on its user's
-Settings page as operator-provisioned. For one minor release after this lands, legacy free-form
-`secret:actor` entries MUST keep working with a boot warning; after that they MUST fail boot.
+Settings page as operator-provisioned. Legacy free-form `secret:actor` entries MUST fail boot from
+the release that ships this requirement, with no grace period; the error MUST name the entry's
+position and the new form, and the CHANGELOG MUST say so.
 
 #### Scenario: Token naming a non-operator
 
 - **WHEN** `CAIRN_API_TOKENS` contains an entry naming a user who is not an operator
 - **THEN** cairnd refuses to start and logs "CAIRN_API_TOKENS entry 2: user is not an operator"
+
+#### Scenario: Legacy entry refused
+
+- **WHEN** `CAIRN_API_TOKENS` contains a free-form `secret:ci-bot` entry
+- **THEN** cairnd refuses to start and names that entry's position and the `secret:<user>[:agent|:human]`
+  form, never the secret
 
 #### Scenario: Token cannot impersonate
 
@@ -446,18 +459,27 @@ Settings page as operator-provisioned. For one minor release after this lands, l
 
 ### Requirement: Quotas for Permanent Retention
 
-Permanent retention (ADR-0026, SPEC-0020) MUST be charged to the artifact's owner. The operator MUST
-set a default per-user and per-team permanent quota in bytes (`CAIRN_PERMANENT_QUOTA_USER_BYTES`,
-`CAIRN_PERMANENT_QUOTA_TEAM_BYTES`) and MAY override either for one owner, audited. Only the owner of
-a personal artifact, or an admin or owner of the team, MAY mark an artifact permanent. A request
-that would exceed the owner's quota MUST be refused with `409 quota_exceeded`, and a move into a
-team that would exceed the team's quota MUST be refused the same way.
+Permanent retention (ADR-0026, SPEC-0020) is off unless the operator enables it (SPEC-0020 REQ-2),
+and MUST be charged to the artifact's owner. The operator MAY set per-user and per-team permanent
+quotas, by count and by bytes, with SPEC-0020's variables (`CAIRN_PERMANENT_USER_MAX_COUNT`,
+`CAIRN_PERMANENT_USER_MAX_BYTES`, `CAIRN_PERMANENT_TEAM_MAX_COUNT`, `CAIRN_PERMANENT_TEAM_MAX_BYTES`),
+and MAY override either for one owner, audited. **A quota that is not set MUST NOT limit anything.**
+Only the owner of a personal artifact, or an admin or owner of the team, MAY mark an artifact
+permanent. A request that would exceed a configured quota MUST be refused with `409` and reason
+`retention_quota_exceeded` (SPEC-0020 REQ-5), and a move into a team that would exceed the team's
+configured quota MUST be refused the same way.
 
 #### Scenario: Team over quota
 
-- **GIVEN** team T has used its whole permanent quota
+- **GIVEN** the operator set a per-team count quota, and team T has used all of it
 - **WHEN** an admin marks another T artifact permanent
-- **THEN** the request fails with `409 quota_exceeded` and the artifact keeps its expiry
+- **THEN** the request fails with `409 retention_quota_exceeded` and the artifact keeps its expiry
+
+#### Scenario: No team quota configured
+
+- **GIVEN** retention is enabled and no per-team quota is set
+- **WHEN** an admin of T marks a 51st T artifact permanent
+- **THEN** it succeeds
 
 #### Scenario: Member cannot mark permanent
 

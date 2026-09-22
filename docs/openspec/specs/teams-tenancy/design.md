@@ -41,8 +41,8 @@ Facts from `main` at `dea1f0b` this design rests on:
 - Syncing teams with Switchboard. Separate stores.
 - Nested teams or an organisation layer.
 - Per-tenant object-store buckets or encryption keys (audit A17 is accepted, not fixed).
-- Login policy itself: who may become a user is ADR-0024's enrollment gate (`CAIRN_ENROLLMENT`,
-  `allowlist | invite | open`, in flight). This spec supplies the invitations its `invite` mode reads
+- Login policy itself: who may become a user is ADR-0024's enrollment gate (`CAIRN_ENROLLMENT_MODE`,
+  `allowlist | invite | open`, default `invite` when GitHub login is configured, in flight). This spec supplies the invitations its `invite` mode reads
   and the `(issuer, subject)` identities its gate is defined over.
 
 ## Decisions
@@ -125,21 +125,29 @@ than interpreted.
 `internal/outboundhook` keeps its bounded queue, retry schedule and graceful shutdown (SPEC-0012),
 and changes in three places: the event carries its workspace; the emitter looks up that
 workspace's enabled subscriptions matching the filters; each POST is signed with that
-subscription's secret. SSRF checks move into a dialer that re-validates the resolved address on
+subscription's secret. The env target list is deleted from `internal/config` and from the worker in
+the same change. SSRF checks move into a dialer that re-validates the resolved address on
 every connection, the pattern Switchboard's `internal/push` uses.
 
 **Rationale**: the delivery machinery is sound; what was wrong is who the targets belong to.
 
-### The env firehose is narrowed before it is removed
+### The env firehose is removed, not staged
 
-**Choice**: stage 1 filters env-target deliveries to artifacts whose owner is an operator user, in
-the same code path that routes subscription deliveries; `cairnd outbound import` creates one
-subscription per env target for a named operator, storing the env secret as that subscription's
-secret.
+**Choice**: the change that adds `outbound_subscriptions` deletes `CAIRN_OUTBOUND_WEBHOOK_URLS` and
+`CAIRN_OUTBOUND_WEBHOOK_SECRET` outright: parsing, delivery and documentation, with one CHANGELOG
+upgrade line. No narrowed stage, no warning, no import command. A subscription may carry a secret
+its creator supplies, so an operator re-points the hosted instance's handoff lane by creating one
+subscription with the Switchboard webhook's existing signing secret.
 
-**Rationale**: the privacy fix cannot wait for a deprecation window, and the operator's own flow
-(the hosted instance's handoff lane) must not break the day it lands. Reusing the env secret means
-the Switchboard webhook on the far side needs no change.
+**Rationale**: Cairn is pre-1.0, and Joe's design review (2026-09-22) was explicit: "retire it, but
+nuke it 100%." A staged retirement would keep a path that leaks users' events alive for 90 days and
+add three releases of code written to be deleted. Letting the creator supply the secret removes the
+one thing the import command was for, keeping the receiver unchanged, without leaving any reader of
+the old variables in the code.
+
+**Alternatives considered**: narrowing the env targets to operator-owned artifacts and retiring them
+in three stages (the first draft of this design; rejected in review); an import command that copies
+env targets into subscriptions (rejected: it keeps code that reads the removed variables).
 
 ### Static tokens resolve to an operator's user at boot
 
@@ -193,7 +201,7 @@ sequenceDiagram
   OH->>DB: stump's enabled subscriptions matching filters
   OH->>OH: SSRF re-check at dial
   OH->>SB: POST signed with the subscription's secret
-  Note over OH: env targets (stage 1) receive it only if the artifact's owner is an operator
+  Note over OH: no instance-wide target exists; only the owning workspace's subscriptions receive it
 ```
 
 ## Schema
@@ -278,7 +286,6 @@ CREATE TABLE outbound_subscriptions (
     consecutive_failures int NOT NULL DEFAULT 0,
     last_attempt_at      timestamptz,
     last_status          int,
-    imported_from_env    boolean NOT NULL DEFAULT false,
     created_at           timestamptz NOT NULL DEFAULT now(),
     CHECK (num_nonnulls(owner_user_id, owner_team_id) = 1)
 );
@@ -319,7 +326,7 @@ GET /v1/bin?workspace=team:stump&tag=handoff
 MCP: `artifact_create`, `bundle_create` and `run_create` gain an optional `team` string. CLI:
 `cairn ls --team <slug>`, `cairn push --team <slug>`, `cairn subscriptions {ls,add,rotate,rm}`.
 
-Error codes introduced: `invalid_visibility`, `move_out_of_team`, `quota_exceeded`, `last_owner`,
+Error codes introduced: `invalid_visibility`, `move_out_of_team`, `last_owner`,
 `role_ceiling`, `team_ceiling_reached`, `group_not_held`.
 
 ## Configuration
@@ -332,10 +339,10 @@ Error codes introduced: `invalid_visibility`, `move_out_of_team`, `quota_exceede
 | `CAIRN_OIDC_GROUPS_CLAIM` | empty (sync off) | claim to request and read |
 | `CAIRN_SUBSCRIPTIONS_PER_USER` / `_PER_TEAM` | `5` / `10` | subscription ceilings |
 | `CAIRN_OUTBOUND_ALLOW_HTTP` | `false` | permit `http://` subscription targets |
-| `CAIRN_PERMANENT_QUOTA_USER_BYTES` / `_TEAM_BYTES` | set with ADR-0026 | permanent retention quotas |
+| `CAIRN_PERMANENT_USER_MAX_COUNT` / `_USER_MAX_BYTES` / `_TEAM_MAX_COUNT` / `_TEAM_MAX_BYTES` | unset (no quota) | permanent retention quotas, defined by SPEC-0020; retention itself is off unless `CAIRN_PERMANENT_RETENTION=true` |
 | `CAIRN_HOOK_REQUEST_CAP_MAX` | `5000` | ceiling on a hook's `request_cap` (A15) |
-| `CAIRN_OUTBOUND_WEBHOOK_URLS`, `_SECRET` | deprecated | stage 1 narrowed, stage 2 ignored, stage 3 removed |
-| `CAIRN_API_TOKENS` | — | `secret:<user>[:agent\|:human]`, operator users only |
+| `CAIRN_OUTBOUND_WEBHOOK_URLS`, `_SECRET` | **removed** | no longer read; use owned subscriptions (REQ "Removing the Instance-Wide Outbound Targets") |
+| `CAIRN_API_TOKENS` | — | `secret:<user>[:agent\|:human]`, operator users only; legacy `secret:actor` fails boot |
 
 ## Audit Findings
 
@@ -345,8 +352,8 @@ From `main` at `dea1f0b`. SPEC-0023 REQ "Closing the Audited Surfaces" binds to 
 |---|---|---|---|---|
 | A1 | `private` unenforced on every read path (#182) | `internal/store/read.go:21-52`; `api.go:461-463`; `mcp.go:806-830`; `mcp_a2ui.go`; trajectory and webhook readers | `ResolveReadable` + `authorizeRead` | Read Authorization on Every Surface |
 | A2 | `CAIRN_API_TOKENS` acts as any string, with `sharing:manage` | `auth.go:120-161,198-220`; `auth.go:42-46` | operator users only, agent scopes by default | Static API Tokens Act as an Operator's User |
-| A3 | GitHub sign-in open to every account | `github.go:25-31`; `authprovider.go:128-167` | ADR-0024's `CAIRN_ENROLLMENT` gate (in flight); its `invite` mode reads this spec's invitations | Team Invitations |
-| A4 | Instance-wide outbound targets (#185) | `internal/config/config.go:104-109`; `internal/store/store.go:147-166`; `internal/outboundhook/outboundhook.go` | owned subscriptions; staged retirement | Owned Outbound Subscriptions; Retiring the Instance-Wide Outbound Targets |
+| A3 | GitHub sign-in open to every account | `github.go:25-31`; `authprovider.go:128-167` | ADR-0024's `CAIRN_ENROLLMENT_MODE` gate (in flight); its `invite` mode reads this spec's invitations | Team Invitations |
+| A4 | Instance-wide outbound targets (#185) | `internal/config/config.go:104-109`; `internal/store/store.go:147-166`; `internal/outboundhook/outboundhook.go` | owned subscriptions; env targets removed in the same change | Owned Outbound Subscriptions; Removing the Instance-Wide Outbound Targets |
 | A5 | Identity is an unverified, unnormalised string | `oidc.go:198-202`; `0002_annotations.sql` | `users` + `user_identities` | Users and Identities |
 | A6 | Dev password live on GitHub-only deployments | `session.go:277-279` | disabled whenever a real provider exists | Users and Identities |
 | A7 | REST runs and hooks skip the write-scope check | `runs.go:41-43`; `hooks.go:46` | `requireScope(artifacts:write)` | Closing the Audited Surfaces |
@@ -380,8 +387,9 @@ From `main` at `dea1f0b`. SPEC-0023 REQ "Closing the Audited Surfaces" binds to 
 | Invites | email, 7 days, single-use, hashed, verified match, role ≤ inviter | same |
 | Group sync | `CAIRN_OIDC_GROUPS_CLAIM`, owner links, member or admin, login-time | same with `SWITCHBOARD_` |
 | Flow | artifacts move into a team, never out | routes flow into a team, never out |
-| Enrollment | `CAIRN_ENROLLMENT` (ADR-0024): `allowlist`, `invite`, `open` | `SWITCHBOARD_ENROLLMENT`: the same three modes |
-| Instance-wide destinations | env firehose retired in three stages | none exist; forbidden |
+| Enrollment | `CAIRN_ENROLLMENT_MODE` (ADR-0024): `allowlist`, `invite`, `open`; `invite` by default with GitHub login, else `open` | `SWITCHBOARD_ENROLLMENT_MODE`: the same modes, default and semantics |
+| Instance-wide destinations | env firehose removed in the change that ships subscriptions | none exist; forbidden |
+| Replaced behaviour | removed outright, no deprecation window (pre-1.0) | same |
 
 A person in `stump` in both products holds two memberships, one per store, and meets the same roles
 in each. The cross-product handoff is owned at both ends: a Cairn team subscription posts to a
@@ -397,6 +405,10 @@ Switchboard webhook owned by the Switchboard team, which puts todos on that team
   are listed in the operator console as legacy owners.
 - **`private` becomes a lock.** → Release notes, and the getting-started guide's warning is replaced
   with the real behaviour.
+- **An env-fed receiver goes quiet on upgrade.** A deployment that set `CAIRN_OUTBOUND_WEBHOOK_URLS`
+  delivers nothing after upgrading until the operator creates a subscription. → The CHANGELOG's
+  upgrade note names the variables and the one step; the receiver keeps its secret because the
+  subscription can carry it.
 - **Per-subscription fan-out multiplies outbound requests.** → The bounded queue and per-owner
   ceilings cap it; delivery never blocks creation.
 - **Team members see every team artifact.** → That is the definition; the invite page says so.
@@ -407,19 +419,19 @@ Switchboard webhook owned by the Switchboard team, which puts todos on that team
    on artifacts; constraints `NOT VALID` then validated.
 2. `authorizeRead` and `ResolveReadable` on every surface; the cross-tenant suite; invert
    `policy_integration_test.go:178`. (Ships #182 before teams exist.)
-3. `outbound_subscriptions`, the import command, stage 1 of the env retirement. (Ships #185.)
-4. Static token resolution.
+3. `outbound_subscriptions`, and the removal of `CAIRN_OUTBOUND_WEBHOOK_URLS` / `_SECRET` with its
+   CHANGELOG upgrade note, in one change. (Ships #185.)
+4. Static token resolution; legacy `secret:actor` entries fail boot, with a CHANGELOG note.
 5. Teams, roles, invites, visibility `team`, moves, the Bin team view, MCP and CLI `team`.
 6. Operator console, suspension, quotas, group sync.
 7. Remaining audit fixes (A7–A24), each independently shippable.
-8. Stage 2 (at least 30 days after step 3), stage 3 (at least 90 days), drop legacy strings.
+8. Drop the legacy `owner_id` / `actor_id` strings, one release after step 1. This is a rollback
+   safeguard for the backfill inside the database, not a user-facing compatibility path: no read
+   uses the strings after step 1.
 
 ## Open Questions
 
 - **Team default visibility.** This design makes new team artifacts `team`, unlike personal ones.
   Is that right for agent handoffs inside a team, where a `link` is what the next agent is handed?
-- **Stage 1 with no operator configured.** Self-hosters who set `CAIRN_OUTBOUND_WEBHOOK_URLS` and
-  never set `CAIRN_OPERATORS` get no deliveries after upgrading. Acceptable, given the boot warning,
-  or should stage 1 treat the first user as the operator on single-user instances?
 - **Legacy `private` links.** Should the release that enforces `private` also rotate every private
   artifact's id, so links already sent can never resolve even if a later bug reopens reads?
