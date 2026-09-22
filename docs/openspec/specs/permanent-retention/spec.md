@@ -12,8 +12,9 @@ related: [SPEC-0007, SPEC-0008, SPEC-0012, SPEC-0014]
 
 This capability lets an artifact's owner mark it **permanent**: it never expires, its id
 never changes, its checksum is published, and removing it leaves an audit tombstone.
-Every artifact is still ephemeral by default. The operator enables the feature and bounds
-it per artifact, per user and per team.
+Every artifact is still ephemeral by default, and the feature itself is off until the
+operator enables it. The operator may bound it per artifact, per user and per team; a
+quota the operator does not set imposes no limit.
 
 It realizes ADR-0026, which amends ADR-0007. It builds on SPEC-0002 (artifact core and
 content addressing) and SPEC-0009 (provenance, link access and retention), and it amends
@@ -145,17 +146,23 @@ A retain MUST be refused, with no state change, when any of these holds:
 
 - the artifact's logical size (for a bundle, the sum of its members) exceeds
   `CAIRN_PERMANENT_MAX_ARTIFACT_BYTES`. Reason `retention_size_exceeded`, `400`.
-- the owner's count of permanent artifacts would exceed its count quota. Reason
+- the owner has a count quota and its count of permanent artifacts would exceed it.
+  Reason `retention_quota_exceeded`, `409`.
+- the owner has a byte quota and its total permanent bytes would exceed it. Reason
   `retention_quota_exceeded`, `409`.
-- the owner's total permanent bytes would exceed its byte quota. Reason
-  `retention_quota_exceeded`, `409`.
+
+Quotas are optional. An owner's quota for a dimension is its per-owner override if one is
+set, otherwise the instance quota for its kind (`CAIRN_PERMANENT_USER_MAX_COUNT`,
+`CAIRN_PERMANENT_USER_MAX_BYTES`, `CAIRN_PERMANENT_TEAM_MAX_COUNT`,
+`CAIRN_PERMANENT_TEAM_MAX_BYTES`). When neither is set, that dimension MUST NOT limit
+retains. No quota MAY be applied by default.
 
 The owner is the artifact's owner: a user or, under ADR-0029, a team (`owner_user_id` XOR
 `owner_team_id`). A team-owned artifact MUST count against the team's quota and never
 against the member who retained it. Moving a permanent artifact from one owner to another
 (for example, into a team under ADR-0029) MUST re-charge it to the new owner, in the same
 transaction as the move. The move MUST fail with `retention_quota_exceeded` if the new
-owner is over quota.
+owner has a quota and the move would exceed it.
 
 The quota check and the mode change MUST be atomic per owner: two concurrent retains MUST
 NOT both succeed when only one fits. Lowering a quota below current usage MUST NOT release
@@ -163,12 +170,19 @@ anything; it MUST only refuse further retains.
 
 #### Scenario: Over the count quota
 
+- **GIVEN** the operator set `CAIRN_PERMANENT_USER_MAX_COUNT=100`
 - **WHEN** a user at 100 of 100 permanent artifacts retains another
 - **THEN** the server MUST refuse with `409` and reason `retention_quota_exceeded`, with details naming `count`, `used` and `limit`
 
+#### Scenario: No quota configured
+
+- **GIVEN** retention is enabled and no per-user quota or override is set
+- **WHEN** a user with 5,000 permanent artifacts totalling 20 GiB retains another eligible artifact
+- **THEN** the retain MUST succeed, and `GET /v1/retention/usage` MUST report `limit: null` for both dimensions
+
 #### Scenario: Concurrent retains at the boundary
 
-- **WHEN** a user with one slot left retains two artifacts concurrently
+- **WHEN** a user whose configured count quota has one slot left retains two artifacts concurrently
 - **THEN** exactly one MUST succeed and the other MUST be refused with `retention_quota_exceeded`
 
 #### Scenario: Team quota, not member quota
@@ -178,7 +192,7 @@ anything; it MUST only refuse further retains.
 
 #### Scenario: Moving into a full team
 
-- **WHEN** a user moves their permanent artifact into a team that is at its count quota
+- **WHEN** a user moves their permanent artifact into a team that is at its configured count quota
 - **THEN** the move MUST fail with `retention_quota_exceeded`, and the artifact MUST stay user-owned and permanent
 
 #### Scenario: Oversize artifact
@@ -360,7 +374,7 @@ The capability MUST be exposed on every surface (ADR-0003 parity), in these shap
 #### Scenario: Usage endpoint
 
 - **WHEN** an owner calls `GET /v1/retention/usage`
-- **THEN** the response MUST give `enabled`, `agent_retain`, `max_artifact_bytes`, and the owner's `count` and `bytes` as `used` and `limit`
+- **THEN** the response MUST give `enabled`, `agent_retain`, `max_artifact_bytes`, and the owner's `count` and `bytes` as `used` and `limit`, where `limit` is `null` when no quota applies
 
 #### Scenario: Usage for a team the caller is not in
 
@@ -373,7 +387,9 @@ The capability MUST be exposed on every surface (ADR-0003 parity), in these shap
 start the server.
 
 - `cairnd retention quota get|set|unset --user <id> | --team <id> [--count N] [--bytes SIZE]`
-  manages per-owner overrides of the default quotas.
+  manages per-owner overrides of the instance quotas. An override MAY set a limit where no
+  instance quota exists, or `unlimited` where one does; `unset` returns the owner to the
+  instance quota, or to no quota if none is set.
 - `cairnd retention release (--owner <id> | --all) --ttl <dur> --reason <text>` bulk-releases
   permanent artifacts. It MUST emit one `artifact.released` event and one audit row per
   artifact.
@@ -422,11 +438,10 @@ Cairn MUST emit these event kinds on the ADR-0017 envelope, as extended by ADR-0
   rotation.
 
 Each MUST be routed as ADR-0022 routes every kind: by the artifact's owning workspace, to
-that workspace's subscriptions under ADR-0029. Each MUST reach the instance env targets only
-when its kind is listed in ADR-0022's allowlist (`CAIRN_OUTBOUND_WEBHOOK_EVENTS`), and only
-for artifacts ADR-0029 still routes there. This capability MUST NOT add a fan-out path of
-its own. Each MUST carry `data.checksum` and `data.retention`,
-plus ADR-0022's common actor fields. `artifact.deleted` MUST carry `data.tombstone` with its
+that workspace's subscriptions under ADR-0029 whose event-type filter admits the kind. There
+is no instance-wide target (ADR-0029 removes `CAIRN_OUTBOUND_WEBHOOK_URLS`), and this
+capability MUST NOT add a fan-out path of its own. Each MUST carry `data.checksum` and
+`data.retention`, plus ADR-0022's common actor fields. `artifact.deleted` MUST carry `data.tombstone` with its
 kind and removal time. It MUST NOT carry `title` or `tags`.
 
 This capability MUST add nothing to the `artifact.created` payload: every new artifact is
@@ -434,13 +449,13 @@ ephemeral, so there is nothing retention-specific to carry at creation.
 
 #### Scenario: Retained event carries the checksum
 
-- **WHEN** `artifact.retained` is in the allowlist and an owner retains an artifact
-- **THEN** one delivery MUST carry `kind: "artifact.retained"`, `data.retention: "permanent"` and `data.checksum` equal to the retained checksum, signed like every other event
+- **WHEN** the owner has a subscription whose filter admits `artifact.retained`, and retains an artifact
+- **THEN** one delivery to that subscription MUST carry `kind: "artifact.retained"`, `data.retention: "permanent"` and `data.checksum` equal to the retained checksum, signed with that subscription's secret
 
-#### Scenario: Not allowlisted
+#### Scenario: Filtered out by the subscription
 
-- **WHEN** the env allowlist holds only `artifact.created`
-- **THEN** retain, release and delete MUST send nothing to the env targets
+- **WHEN** the owner's only subscription filters to `artifact.created`
+- **THEN** retain, release and delete MUST send nothing to it
 
 #### Scenario: Created payload unchanged
 

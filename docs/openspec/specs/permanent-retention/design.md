@@ -20,8 +20,8 @@ The existing machinery constrains the design:
 * Scopes: `agentScopes()` grants `artifacts:read`, `artifacts:write` and
   `annotations:write`. `sharing:manage` is human-only (`httpapi/auth.go`).
 * Events: `internal/outboundhook` builds the ADR-0017 envelope. ADR-0022 (in parallel)
-  adds kinds, the `CAIRN_OUTBOUND_WEBHOOK_EVENTS` allowlist, and the common `actor_kind` /
-  `auth` fields.
+  adds kinds and the common `actor_kind` / `auth` fields; ADR-0029 (in parallel) replaces
+  the env target list with owned subscriptions that filter by event type.
 
 ## Goals / Non-Goals
 
@@ -78,10 +78,13 @@ bundle's ordinal order, which the API already exposes. A JSON canonicalisation w
 a specified serializer, and "canonical JSON" is where cross-language verification goes to
 die.
 
-### Quotas: env defaults, per-owner overrides, advisory lock
+### Quotas: optional instance quotas, per-owner overrides, advisory lock
 
-**Choice.** Defaults come from the environment. Overrides live in
-`retention_quota_overrides`, keyed by (owner_kind, owner_id). The retain transaction takes
+**Choice.** Instance quotas come from the environment and are unset by default: an unset
+quota imposes no limit. Overrides live in `retention_quota_overrides`, keyed by
+(owner_kind, owner_id). The effective limit per dimension is the override if present, else
+the instance quota, else none; with no limit, the retain skips the comparison but still
+takes the lock, so enabling a quota later needs no migration. The retain transaction takes
 `pg_advisory_xact_lock(hashtextextended('cairn:retention:' || owner_key, 0))`, sums usage
 from `artifacts WHERE owner = $1 AND retention = 'permanent'`, compares, and updates.
 
@@ -282,13 +285,16 @@ and the advisory-lock key follow that key.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CAIRN_PERMANENT_RETENTION` | `false` | Master switch (SPEC-0020 REQ-2) |
+| `CAIRN_PERMANENT_RETENTION` | `false` | Master switch (SPEC-0020 REQ-2). Off until the operator sets it |
 | `CAIRN_PERMANENT_MAX_ARTIFACT_BYTES` | value of `CAIRN_MAX_UPLOAD_BYTES` | Per-artifact ceiling; for a bundle, the sum of its members |
-| `CAIRN_PERMANENT_USER_MAX_COUNT` | `100` | Default per-user count quota (`unlimited` allowed) |
-| `CAIRN_PERMANENT_USER_MAX_BYTES` | `1GiB` | Default per-user byte quota |
-| `CAIRN_PERMANENT_TEAM_MAX_COUNT` | `1000` | Default per-team count quota |
-| `CAIRN_PERMANENT_TEAM_MAX_BYTES` | `10GiB` | Default per-team byte quota |
+| `CAIRN_PERMANENT_USER_MAX_COUNT` | unset (no quota) | Per-user count quota. Example: `100` |
+| `CAIRN_PERMANENT_USER_MAX_BYTES` | unset (no quota) | Per-user byte quota. Example: `1GiB` |
+| `CAIRN_PERMANENT_TEAM_MAX_COUNT` | unset (no quota) | Per-team count quota. Example: `1000` |
+| `CAIRN_PERMANENT_TEAM_MAX_BYTES` | unset (no quota) | Per-team byte quota. Example: `10GiB` |
 | `CAIRN_PERMANENT_AGENT_RETAIN` | `false` | Operator gate for agent retain (REQ-6) |
+
+The example values are a reasonable starting point for a small shared instance. They are
+documented as examples, and nothing applies them unless the operator sets them.
 
 ### REST shapes
 
@@ -351,6 +357,8 @@ A read of a tombstoned id returns `410`:
   "bytes": {"used": 482113, "limit": 1073741824}
 }
 ```
+
+With no quota configured for a dimension, its `limit` is `null`.
 
 ### MCP
 
@@ -424,8 +432,10 @@ need adding there before a routing rule can match on them. That is a cross-repo 
   sentinel year.
 - **A permanent link leaks.** Mitigation: restrict to owner-only once cairn#182 enforces
   `private`; until then, release and rotate. The docs say this plainly.
-- **Storage grows without bound.** Mitigation: quotas, the per-artifact ceiling, default
-  off, and the REQ-15 gauges.
+- **Storage grows without bound.** Mitigation: the feature is off by default; the operator
+  who enables it can set quotas and the per-artifact ceiling, and the REQ-15 gauges show
+  growth. An operator who enables it with no quota has accepted unbounded growth; the
+  self-hosting guide says so next to the example values.
 - **A tombstone discloses the removing actor to link holders.** Accepted. The live artifact
   already showed its provenance actor to the same audience.
 - **The retain-time rescan is slow for a large bundle.** Mitigation: the scan runs before
@@ -440,7 +450,8 @@ need adding there before a routing rule can match on them. That is a cross-repo 
    tables. No backfill: every existing artifact is `ephemeral` with `ever_retained = false`.
 2. Ship the store, reaper and rotation changes with the feature switched off. Behavior is
    identical until an operator enables it.
-3. Ship the REST, MCP, CLI and web surfaces, then the events (opt-in), then the metrics.
+3. Ship the REST, MCP, CLI and web surfaces, then the events (delivered only to owned
+   subscriptions whose filter admits them), then the metrics.
 4. There is no down migration, because this repo's migrations are forward-only. Rolling
    back means disabling the feature. Permanent rows stay valid under the old code only
    because the sentinel keeps them live, so the old binary reads them as a long TTL, which

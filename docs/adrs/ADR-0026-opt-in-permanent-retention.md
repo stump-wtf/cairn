@@ -53,8 +53,10 @@ giving up ephemeral-by-default for everything else?
 * **Ephemeral stays the default.** Permanence is an explicit act, per artifact, by
   whoever is allowed to change that artifact's policy. Joe decided this.
 * **The operator controls the cost.** An instance serves users who are not the operator.
-  Permanent storage has to be switchable, bounded per artifact, and bounded per user and
-  per team, by count and by bytes.
+  Permanent storage has to be off by default and switchable, and the operator must be able
+  to bound it per artifact, per user and per team, by count and by bytes. Quotas are
+  configurable, not mandatory: where the operator sets none, none applies (Joe,
+  2026-09-22: "Configurable quotas seems reasonable. Off by default?").
 * **The identity must not change.** A tracker links an id. If the id can change, the
   tracker link can break, and the record is not stable.
 * **A reader can verify the content without trusting Cairn.** The checksum appears in the
@@ -149,14 +151,22 @@ carried as `data.checksum` on every retention event.
 
 ### Operator policy
 
-Permanent retention is **off by default**. The operator enables it and bounds it:
+Permanent retention is **off by default**. The operator turns it on with one instance
+setting (`CAIRN_PERMANENT_RETENTION=true`, default `false`) and may bound it:
 
 * whether permanent retention is enabled at all;
 * a maximum size per artifact (for a bundle, the sum of its members);
-* default quotas per user and per team, each as a count and as a total of logical bytes;
+* optional quotas per user and per team, each as a count and as a total of logical bytes.
+  **An unset quota imposes no limit.** SPEC-0020 gives example values (100 artifacts and
+  1 GiB per user, 1000 and 10 GiB per team) as a starting point, not as defaults;
 * per-user and per-team quota overrides, set with an operator command on the host;
 * whether agents may retain at all. This is a second gate, in addition to the human's
-  per-token grant.
+  per-token grant, and it is off by default too.
+
+An operator who enables retention and sets no quota has chosen unbounded permanent storage
+for their users. That is a legitimate choice for a small instance, and it is theirs to make:
+risky settings are allowed when they are configurable and off by default (Joe,
+2026-09-22).
 
 Turning retention off, or lowering a quota below current usage, **never releases anything
 already permanent**. It only refuses new retains. A permanent record is a promise that the
@@ -230,10 +240,11 @@ Three new kinds ride the envelope that ADR-0017 defined and that ADR-0022 extend
 * `artifact.deleted`, emitted only for an artifact that was ever retained
 
 They are routed exactly like every ADR-0022 kind: by the artifact's owning workspace, to
-that workspace's subscriptions under ADR-0029. They reach the instance env targets only
-where ADR-0022's kind allowlist and ADR-0029's narrowing of those targets still send
-anything, and this ADR adds no fan-out path of its own. Each carries `data.checksum` and `data.retention`, and the actor fields ADR-0022 makes
-common to every kind. This ADR adds nothing to `artifact.created`: a new artifact is always
+that workspace's subscriptions under ADR-0029, and only to subscriptions whose event-type
+filter admits them. There is no instance-wide target: ADR-0029 removes
+`CAIRN_OUTBOUND_WEBHOOK_URLS` in the change that adds subscriptions, and this ADR adds no
+fan-out path of its own. Each carries `data.checksum` and `data.retention`, and the actor
+fields ADR-0022 makes common to every kind. This ADR adds nothing to `artifact.created`: a new artifact is always
 ephemeral, so it has no retention fields to carry (SPEC-0012).
 
 ### Consequences
@@ -252,8 +263,10 @@ ephemeral, so it has no retention fields to carry (SPEC-0012).
 * Bad, because a leaked permanent link does not age out. Until cairn#182 enforces
   `private`, the only remedy is release-then-rotate. That is correct, but it takes two
   steps.
-* Bad, because storage now contains data with no end date. Growth is bounded only by
-  quotas, and SPEC-0014's metrics need permanent-storage gauges to keep it visible.
+* Bad, because storage now contains data with no end date. Growth is bounded only by the
+  quotas the operator chooses to set, so an instance that enables retention with no quota
+  has unbounded permanent growth by choice. SPEC-0014's metrics need permanent-storage
+  gauges to keep it visible.
 * Bad, because it adds a fourth consent scope to a model that SPEC-0007 promised had
   exactly three. The scope is opt-in and can only make data more durable, but it is still
   one more thing a human can grant.
@@ -269,8 +282,9 @@ SPEC-0020 carries the scenarios. The load-bearing ones:
 * deleting an ever-retained artifact makes its id return `410` with a tombstone whose
   checksum equals the retained one, while a never-retained id stays a uniform 404;
 * a bundle's retained checksum equals `sha256sum` over the published manifest lines;
-* a retain over quota, over the size limit, on a disabled instance, or by an agent without
-  `retention:write` is refused and changes nothing;
+* a retain over a configured quota, over the size limit, on a disabled instance, or by an
+  agent without `retention:write` is refused and changes nothing;
+* with retention enabled and no quota set, a retain is never refused for quota;
 * this capability leaves the `artifact.created` payload unchanged.
 
 ## Pros and Cons of the Options
@@ -337,17 +351,20 @@ stateDiagram-v2
   ADR-0023 (redaction, being written in parallel) on the retained bodies, and refuses on a
   finding. An artifact created before redaction shipped therefore cannot be made permanent
   with a token inside it.
-* **Quota is the denial-of-service bound.** It is per owner, and a team-owned artifact
-  counts against the team, not the member who retained it. The operator's per-artifact
-  size ceiling stops one retain from consuming a quota's worth of storage.
+* **Quota is the denial-of-service bound, and it is the operator's to set.** It is per
+  owner, and a team-owned artifact counts against the team, not the member who retained it.
+  The operator's per-artifact size ceiling stops one retain from consuming a quota's worth
+  of storage. The feature is off until the operator enables it, so no instance acquires
+  unbounded permanent storage by omission; one that enables it without quotas has accepted
+  that bound explicitly.
 * **Agents cannot destroy evidence.** Release and delete stay human-only. Agent retention
   needs both the operator's gate and a human's explicit `retention:write` grant.
 * **Tombstones disclose little.** A link holder sees the id, the share type, the checksum,
   the dates, and the deleting actor, but never the title, tags, or body.
-* **Events follow the artifact's workspace.** Under ADR-0029, events route to the owning
-  user's or team's own subscriptions, never through a new instance-wide path. Until that
-  lands (cairn#185), the env targets receive these kinds only if the operator allowlists
-  them (ADR-0022), and ADR-0029 narrows those targets to operator-owned artifacts.
+* **Events follow the artifact's workspace.** Under ADR-0029, events route only to the
+  owning user's or team's own subscriptions. ADR-0029 removes the instance-wide env targets
+  in the same change that adds subscriptions, so no release sends one owner's retention
+  events to a target the operator chose.
 * **Team-owned records.** Under ADR-0029, team admins (the `owner` and `admin` roles)
   decide which team artifacts are permanent: retaining, releasing, and deleting a
   team-owned permanent artifact need one of those roles, and a plain `member` cannot. The
@@ -385,3 +402,6 @@ stateDiagram-v2
   (teams and tenancy). Add them as front-matter edges once they land.
 * Prerequisite for the leak story: cairn#182 ("you only" visibility is not enforced on any
   read path).
+* Design review, Joe, 2026-09-22: permanent retention stays off by default behind one
+  operator setting; per-user and per-team quotas are configurable, and unset means no
+  quota; `retention:write` and the `410` tombstones stand as written.
