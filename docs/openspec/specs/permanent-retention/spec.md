@@ -430,7 +430,8 @@ an age rule. A blob referenced by a permanent artifact MUST survive every reaper
 
 ### Requirement: REQ-14 Retention Events
 
-Cairn MUST emit these event kinds on the ADR-0017 envelope, as extended by ADR-0022:
+Cairn MUST emit these event kinds on the ADR-0017 envelope, as extended by ADR-0022. They
+are entries in SPEC-0016 EV-1's closed kind registry:
 
 - `artifact.retained`, on a successful non-idempotent retain;
 - `artifact.released`, on release and on each operator release;

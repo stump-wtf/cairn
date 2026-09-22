@@ -50,14 +50,18 @@ package event
 type Kind string
 
 const (
-	ArtifactCreated Kind = "artifact.created"
-	CommentCreated  Kind = "comment.created"
-	ReactionAdded   Kind = "reaction.added"
-	ReactionRemoved Kind = "reaction.removed"
-	RunClosed       Kind = "run.closed"
+	ArtifactCreated  Kind = "artifact.created"
+	CommentCreated   Kind = "comment.created"
+	ReactionAdded    Kind = "reaction.added"
+	ReactionRemoved  Kind = "reaction.removed"
+	RunClosed        Kind = "run.closed"
+	// Registered by SPEC-0020 REQ-14 (permanent retention).
+	ArtifactRetained Kind = "artifact.retained"
+	ArtifactReleased Kind = "artifact.released"
+	ArtifactDeleted  Kind = "artifact.deleted"
 	// Reserved for #158; the emitter refuses to encode them until then.
-	CommentEdited  Kind = "comment.edited"
-	CommentDeleted Kind = "comment.deleted"
+	CommentEdited    Kind = "comment.edited"
+	CommentDeleted   Kind = "comment.deleted"
 )
 
 // Actor is who caused the event, derived from the authenticated principal.

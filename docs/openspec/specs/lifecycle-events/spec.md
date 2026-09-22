@@ -45,7 +45,10 @@ The system SHALL emit exactly these kinds, each named `<noun>.<past-tense verb>`
 - `comment.created`;
 - `reaction.added`;
 - `reaction.removed`;
-- `run.closed`.
+- `run.closed`;
+- `artifact.retained`, `artifact.released` and `artifact.deleted`, registered by
+  SPEC-0020 REQ-14 (opt-in permanent retention) and emitted only once that
+  capability ships.
 
 `comment.edited` and `comment.deleted` are RESERVED names. They MUST NOT be
 emitted for any other meaning. The comment edit and delete routes (#158) SHALL
