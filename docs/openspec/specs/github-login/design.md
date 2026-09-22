@@ -22,6 +22,8 @@ how and why.
 - Third providers are config + one file.
 - The Pocket ID flow's behavior and its test suite are untouched.
 - GitHub tokens never leave the callback.
+- Only people the operator intends can sign in with GitHub, and enabling the
+  provider without saying who fails closed (ADR-0024).
 
 ### Non-Goals
 
@@ -81,6 +83,81 @@ dropped when the callback returns.
 **Rationale**: Provenance stays auditable without changing what downstream
 code sees; zero GitHub API traffic in steady state avoids rate limits.
 
+### Allowlist by organisation and user, failing closed (ADR-0024)
+
+**Choice**: Three operator settings, parsed in `internal/config`:
+
+```go
+GitHubAllowedOrgs  []string // CAIRN_GITHUB_ALLOWED_ORGS, lower-cased
+GitHubAllowedUsers []string // CAIRN_GITHUB_ALLOWED_USERS: logins (lower-cased) or "id:<n>"
+GitHubOpenSignup   bool     // CAIRN_GITHUB_OPEN_SIGNUP, default false
+```
+
+`Server.EnableGitHub` registers the provider only when credentials are set
+**and** (an allowlist is non-empty **or** open signup is true). Otherwise it
+logs:
+
+```
+WARN github login disabled: CAIRN_GITHUB_CLIENT_ID/SECRET are set but no
+     CAIRN_GITHUB_ALLOWED_ORGS, CAIRN_GITHUB_ALLOWED_USERS or
+     CAIRN_GITHUB_OPEN_SIGNUP=true — nobody could sign in
+```
+
+It leaves `s.gh` nil, so the existing 404 behaviour covers the route.
+`config.Load` rejects open signup combined with an allowlist, and malformed `id:`
+entries.
+
+The provider gains an admission step after identity verification:
+
+```go
+type Admission struct {
+	OpenSignup bool
+	Users      map[string]bool  // lower-cased logins
+	UserIDs    map[int64]bool
+	Orgs       []string
+}
+
+// In FinishLogin, after the verified-email check and before returning:
+//   GET /user now also decodes "id" (int64).
+//   if !admit(ctx, client, user) -> return Identity{}, ErrNotAllowlisted{Reason}
+func (g *GitHubProvider) admit(ctx context.Context, c *http.Client, u githubUser) (reason string, ok bool)
+```
+
+The membership call is `GET {APIBase}/user/memberships/orgs/{org}` with the
+same `Accept: application/vnd.github+json` header `getJSON` already sets. The
+response is decoded into `{state string}`, and mapped as follows:
+
+| GitHub answer | Result |
+|---|---|
+| 200, `state: active` | admit |
+| 200, `state: pending` | not admitted by this org; try the next |
+| 404 | not admitted by this org; try the next |
+| 403 | not admitted by this org (the org restricts the OAuth app); try the next, reason `org_restricted_oauth_app` |
+| anything else, or a transport error | deny now, reason `membership_check_failed` |
+
+`handleGitHubCallback` distinguishes `ErrNotAllowlisted` from other
+`FinishLogin` errors: it renders a 403 "not permitted" page, where other errors
+get today's 502 "github login failed". The state cookie is cleared first on both
+paths, as today.
+
+`NewGitHubProvider` appends `read:org` to `oauth2.Config.Scopes` only when `Orgs`
+is non-empty (AL-4).
+
+**Rationale**: Organisations are how GitHub users are already grouped, and
+numeric ids are the only rename-proof user key. Treating an allowlist-less
+provider as unconfigured reuses the existing, tested 404 path rather than adding
+a new "configured but closed" state.
+
+**Alternatives considered**:
+
+- Email-domain allowlist: rejected, because a verified email proves control of an
+  address, not membership.
+- Invitations: rejected for now, because that is a new admin surface overlapping
+  Teams (Cairn ADR-0029).
+- `GET /user/orgs` listing: rejected, because it omits organisations that
+  restrict OAuth apps without saying so. The per-organisation membership call
+  returns a distinguishable 403.
+
 ## Architecture
 
 ```mermaid
@@ -104,6 +181,13 @@ conditionally rendered button.
 
 ## Risks / Trade-offs
 
+- **Organisation OAuth app restrictions (ADR-0024)** → an organisation that
+  restricts third-party apps returns 403 on the membership check until an owner
+  approves Cairn's OAuth app. It is logged as `org_restricted_oauth_app` and
+  documented, and fails closed.
+- **Membership changes lag sessions (ADR-0024)** → a removed member keeps their
+  session until TTL or revocation. This is documented, and bounded by the
+  session TTL.
 - **Phishable login vs Pocket ID passkey** → accepted and recorded: the
   session stores provider provenance so a future assurance policy can
   distinguish them; no capability in Cairn currently requires step-up.
@@ -122,13 +206,29 @@ conditionally rendered button.
 2. Configure credentials on the deployed instance; verify a real login.
 3. Rollback: clear the GitHub credentials — the button disappears and the
    route 404s; Pocket ID flow is unaffected at every step.
+4. (ADR-0024) Ship the allowlist. An instance that set only the credentials
+   stops offering GitHub login and logs why. The operator adds
+   `CAIRN_GITHUB_ALLOWED_ORGS` / `CAIRN_GITHUB_ALLOWED_USERS`, or knowingly sets
+   `CAIRN_GITHUB_OPEN_SIGNUP=true`.
+5. (ADR-0024) Publish the operator docs, which were blocked until step 4:
+   - add all five `CAIRN_GITHUB_*` variables to `.env.example` and to the
+     environment passthrough in `docker-compose.yml` and
+     `docker-compose.prod.yml`;
+   - add a "GitHub login" section to the self-hosting guide: creating the GitHub
+     OAuth app, the callback URL `CAIRN_BASE_URL + /auth/callback`, the
+     allowlist variables, why `read:org` appears only with organisations, the
+     organisation-approval step for organisations that restrict OAuth apps, and
+     the login-time-only membership window;
+   - add troubleshooting entries for the startup warning and each denial reason.
+   Also correct the code comments that cite the wrong design IDs (`github.go`,
+   `authprovider.go` and `config.go` name SPEC-0012 / ADR-0017; the records are
+   SPEC-0013 / ADR-0019). Stop hard-coding "Pocket ID" in the login page's note,
+   which is wrong when GitHub is also offered.
 
 ## Open Questions
 
-- Should GitHub logins be allow-listed (e.g., org membership or an explicit
-  email allow-list) rather than open to any GitHub account? Default plan:
-  any verified-email GitHub account may log in, with the same
-  actor-identity rules as today; revisit if the deployment becomes a
-  spam target.
+- ~~Should GitHub logins be allow-listed rather than open to any GitHub
+  account?~~ **Resolved by ADR-0024 (2026-09-22):** yes, by organisation and
+  user, failing closed, with open signup only behind an explicit flag.
 - Does the CLI (`cairn login`) ever want GitHub as a device-flow option?
   Deferred — out of scope for this spec.

@@ -1,7 +1,7 @@
 ---
 status: draft
 date: 2026-09-13
-implements: [ADR-0019]
+implements: [ADR-0019, ADR-0024]
 requires: [SPEC-0001]
 ---
 
@@ -10,6 +10,7 @@ requires: [SPEC-0001]
 ## Graph Edges
 
 - **Implements:** **ADR-0019** — GitHub as an additional human auth provider behind a minimal provider interface.
+- **Implements:** **ADR-0024** — GitHub sign-in is allowlisted by organisation and user, and fails closed.
 - **Extends:** **SPEC-0001** — the web app shell whose login page and session model this capability extends.
 
 ## Overview
@@ -27,6 +28,12 @@ primary verified email as the identity anchor. The provider difference is
 confined to one implementation; routes, session establishment, and CSRF are
 shared and unchanged.
 
+**Amended 2026-09-22 (ADR-0024).** GitHub sign-in is restricted to an operator
+allowlist of organisations and users (requirements AL-1 to AL-5 below). A GitHub
+provider with credentials but no allowlist, and no explicit open-signup flag,
+admits nobody and is treated as unconfigured. This reverses the design's
+original default of admitting any verified-email GitHub account.
+
 ## Requirements
 
 ### Requirement: Provider Selection on the Login Page
@@ -37,12 +44,12 @@ start the login flow at `GET /auth/login?provider=github`.
 
 #### Scenario: GitHub provider configured
 
-- **WHEN** a visitor loads the login page with `CAIRN_GITHUB_CLIENT_ID` and `CAIRN_GITHUB_CLIENT_SECRET` configured
+- **WHEN** a visitor loads the login page with `CAIRN_GITHUB_CLIENT_ID` and `CAIRN_GITHUB_CLIENT_SECRET` configured, and at least one of `CAIRN_GITHUB_ALLOWED_ORGS`, `CAIRN_GITHUB_ALLOWED_USERS` or `CAIRN_GITHUB_OPEN_SIGNUP=true` (AL-2)
 - **THEN** the page shows both the Pocket ID login control and a "Log in with GitHub" button, and the button links to `/auth/login?provider=github`
 
 #### Scenario: GitHub provider not configured
 
-- **WHEN** a visitor loads the login page on a deployment without GitHub credentials configured
+- **WHEN** a visitor loads the login page on a deployment without GitHub credentials configured, or with credentials but no allowlist and no open-signup flag (AL-2)
 - **THEN** no GitHub login control is rendered and `/auth/login?provider=github` returns 404 without leaking whether the route exists
 
 ### Requirement: GitHub OAuth Callback Exchange
@@ -98,6 +105,118 @@ login time only.
 - **WHEN** a GitHub callback completes and the session is established
 - **THEN** the access token is dropped and never appears in any persisted store or log line
 
+### Requirement: AL-1 Sign-in Allowlist Configuration
+
+The operator MUST be able to restrict GitHub sign-in with three settings:
+
+- `CAIRN_GITHUB_ALLOWED_ORGS`: comma-separated GitHub organisation logins;
+- `CAIRN_GITHUB_ALLOWED_USERS`: comma-separated GitHub logins or `id:<numeric id>`
+  entries;
+- `CAIRN_GITHUB_OPEN_SIGNUP`: boolean, default `false`.
+
+Login and organisation matching MUST be case-insensitive. An `id:` entry MUST
+match GitHub's numeric user `id` from `GET /user`, and a malformed `id:` entry
+MUST fail startup. Setting `CAIRN_GITHUB_OPEN_SIGNUP=true` together with a
+non-empty allowlist MUST fail startup, with an error naming the conflict. These
+settings are operator configuration. No user, token or request may change them.
+
+#### Scenario: Numeric id survives a rename
+
+- **WHEN** `CAIRN_GITHUB_ALLOWED_USERS=id:583231` and that user has renamed their GitHub login since the entry was written
+- **THEN** they are admitted, and a different account now holding their old login is not
+
+#### Scenario: Conflicting configuration refused
+
+- **WHEN** `CAIRN_GITHUB_OPEN_SIGNUP=true` and `CAIRN_GITHUB_ALLOWED_ORGS=acme` are both set
+- **THEN** cairnd refuses to start and names both variables
+
+### Requirement: AL-2 Fail Closed Without an Allowlist
+
+When GitHub credentials are configured, but both allowlists are empty and
+`CAIRN_GITHUB_OPEN_SIGNUP` is not `true`, the GitHub provider MUST be treated as
+unconfigured. No button is rendered, and `/auth/login?provider=github` and a
+GitHub callback return 404, indistinguishable from an unknown provider. cairnd
+MUST log a startup warning naming the variables that would enable it.
+
+#### Scenario: Credentials alone admit nobody
+
+- **WHEN** only `CAIRN_GITHUB_CLIENT_ID` and `CAIRN_GITHUB_CLIENT_SECRET` are set
+- **THEN** the login page shows no GitHub button, `/auth/login?provider=github` returns 404, and the startup log warns that GitHub login is disabled until an allowlist or `CAIRN_GITHUB_OPEN_SIGNUP=true` is set
+
+### Requirement: AL-3 Allowlist Check Before Session
+
+After the existing identity verification succeeds, and before any session is
+created, the callback MUST admit the identity only when one of these holds:
+
+1. `CAIRN_GITHUB_OPEN_SIGNUP=true`;
+2. the login or numeric id matches a `CAIRN_GITHUB_ALLOWED_USERS` entry;
+3. `GET /user/memberships/orgs/{org}`, with the user's token, returns 200 with
+   `state == "active"` for some allowed organisation.
+
+For each organisation checked:
+
+- 404 (not a member) and 403 (the organisation restricts the OAuth app) MUST be
+  treated as not admitted, and the next organisation tried;
+- `state == "pending"` MUST NOT admit;
+- any other status, or a transport error, MUST deny the login. Fail closed.
+
+A denied login MUST:
+
+- create no session;
+- clear the state cookie (as today);
+- render a 403 page stating that the account is not permitted on this instance;
+- log the GitHub login, the numeric id and the reason (`not_allowlisted`,
+  `org_restricted_oauth_app`, `membership_check_failed`), and never the token.
+
+#### Scenario: Active org member admitted
+
+- **WHEN** `CAIRN_GITHUB_ALLOWED_ORGS=acme` and the user is an active member of `acme`
+- **THEN** a session is established exactly as for any GitHub login
+
+#### Scenario: Non-member denied
+
+- **WHEN** the user is not a member of any allowed organisation and not in the user allowlist
+- **THEN** the response is the 403 page, no session cookie is set, and the log reason is `not_allowlisted`
+
+#### Scenario: Pending invitation denied
+
+- **WHEN** the user's `acme` membership has `state: "pending"`
+- **THEN** the login is denied
+
+#### Scenario: Organisation restricts the OAuth app
+
+- **WHEN** the membership call for `acme` returns 403
+- **THEN** that organisation does not admit, the log reason is `org_restricted_oauth_app`, and the next allowed organisation (if any) is checked
+
+#### Scenario: GitHub API failure denies
+
+- **WHEN** the membership call times out or returns 502
+- **THEN** the login is denied with reason `membership_check_failed`, and no session is created
+
+### Requirement: AL-4 Scope Minimisation
+
+The authorisation request MUST include the `read:org` scope if and only if
+`CAIRN_GITHUB_ALLOWED_ORGS` is non-empty. Otherwise the scopes MUST remain
+`read:user user:email`.
+
+#### Scenario: Users-only instance does not ask for org access
+
+- **WHEN** only `CAIRN_GITHUB_ALLOWED_USERS` is set
+- **THEN** the redirect to GitHub requests `read:user user:email` and not `read:org`
+
+### Requirement: AL-5 Membership Evaluated at Login Only
+
+Allowlist and membership checks MUST run only in the callback. The access token
+MUST still be dropped when the callback returns (REQ "Token Containment"). A
+later change in organisation membership MUST NOT be assumed to end an existing
+session. The session TTL and operator session revocation bound that window, and
+the operator documentation MUST state it.
+
+#### Scenario: Removed member keeps a live session until expiry
+
+- **WHEN** a signed-in user is removed from the allowed organisation
+- **THEN** their existing session continues until it expires or is revoked, their next GitHub login is denied, and no GitHub API call is made in between
+
 ## Security Requirements
 
 This is a web-facing spec. The following apply per ADR-0019 and the project's
@@ -107,6 +226,10 @@ behavior (SPEC-0001 and ADR-0013):
 - **Authentication**: Per ADR-0013, sessions are HttpOnly, SameSite=Lax,
   signed cookies with server-side revocation. GitHub login reuses that
   machinery verbatim; no new cookie or session format is introduced.
+- **Authorization (instance sign-in)**: GitHub sign-in is admitted only through
+  the operator allowlist or the explicit open-signup flag (AL-1 to AL-3), and
+  fails closed on an empty allowlist and on any membership-check error. The
+  allowlist is operator configuration, never user-settable.
 - **Rate limiting**: The `/auth/login` and `/auth/callback` routes inherit
   whatever edge limits exist at the reverse proxy. The state cookie's
   single-use, short-TTL property is the primary anti-replay control; per-IP
@@ -134,6 +257,6 @@ GitHub login button, per WCAG 2.1 AA:
 - **WCAG 2.1 AA compliance** — the minimum conformance target
 - **ARIA landmarks** — the login page's existing landmarks are preserved
 - **`aria-label` on icon-only controls** — the GitHub button MUST carry an accessible name ("Log in with GitHub"); if rendered with only the GitHub mark, the label is still required
-- **`aria-live` regions for dynamic content** — login error messages (rejected email, state mismatch) MUST be announced via a polite live region
+- **`aria-live` regions for dynamic content** — login error messages (rejected email, state mismatch, account not permitted) MUST be announced via a polite live region
 - **Keyboard navigation** — the button is reachable in tab order and activates with Enter/Space like the existing login controls
 - **Focus management in modals and dialogs** — not applicable; the login flow introduces no modal
