@@ -245,8 +245,16 @@ func (s *Server) handleWhoami(w http.ResponseWriter, r *http.Request) {
 // page it wanted after signing in (SPEC-0001 Authentication & Authorization).
 func (s *Server) requireWebSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p, err := s.auth.Authenticate(r)
-		if err != nil || p == nil {
+		// Browser sessions only (A20, issue #343; SPEC-0023 REQ "Closing the
+		// Audited Surfaces"): a bearer token — a PAT, an OAuth access token,
+		// a static CAIRN_API_TOKENS entry — is not a browser, and the pages
+		// that list and revoke every credential acting as the user must
+		// never render for one. sessionPrincipal is the Ambient+!IsAgent
+		// gate the OAuth consent screen uses for the identical reason; a
+		// bearer principal is never Ambient, so it fails here and is
+		// redirected to sign in like any other stranger.
+		p, ok := s.sessionPrincipal(r)
+		if !ok {
 			http.Redirect(w, r, s.loginRedirectPath()+"?next="+url.QueryEscape(safeNext(r.URL.RequestURI())), http.StatusSeeOther)
 			return
 		}

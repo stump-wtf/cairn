@@ -275,13 +275,63 @@
     });
   }
 
+  // initGrants wires the OAuth connections table's Revoke buttons (A20,
+  // issue #343): a fetch DELETE against the same owner-scoped
+  // /v1/oauth/grants/{id} JSON endpoint the settings page's server render
+  // reads from — the identical discipline initMCPSessions follows. Revoking
+  // a grant kills its whole token family server-side, so the connected
+  // client's next call fails immediately; this only updates the row.
+  function initGrants() {
+    var rowsBody = document.querySelector('[data-grant-rows]');
+    if (!rowsBody) return;
+
+    rowsBody.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-grant-revoke]') : null;
+      if (!btn) return;
+      var id = btn.dataset.grantId;
+      var name = btn.dataset.grantName || 'this client';
+      if (!id) return;
+      if (!window.confirm('Revoke the OAuth connection for "' + name + '"? Its access is cut off immediately.')) {
+        return;
+      }
+      btn.disabled = true;
+      fetch('/v1/oauth/grants/' + encodeURIComponent(id), {
+        method: 'DELETE',
+        headers: { 'X-CSRF-Token': readCSRFCookie() },
+        credentials: 'same-origin',
+      })
+        .then(function (resp) {
+          if (!resp.ok && resp.status !== 204) {
+            btn.disabled = false;
+            return;
+          }
+          var row = document.getElementById('grant-' + id);
+          if (!row) return;
+          row.classList.add('token-row-revoked');
+          var actionCell = row.querySelector('.token-cell-action');
+          if (actionCell) {
+            actionCell.textContent = '';
+            var label = document.createElement('span');
+            label.className = 'token-revoked-label';
+            label.textContent = 'revoked';
+            actionCell.appendChild(label);
+          }
+        })
+        .catch(function () {
+          btn.disabled = false;
+        });
+    });
+  }
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () {
       initTokens();
       initMCPSessions();
+      initGrants();
     });
   } else {
     initTokens();
     initMCPSessions();
+    initGrants();
   }
 })();
