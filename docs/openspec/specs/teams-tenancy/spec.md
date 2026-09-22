@@ -395,7 +395,7 @@ after 5 seconds. Delivery MUST NOT block artifact creation.
 
 #### Scenario: Rebinding target
 
-- **WHEN** a target resolves to a public address at creation and to `10.0.0.5` at delivery
+- **WHEN** a target resolves to a public address at creation and to a private (RFC 1918) address at delivery
 - **THEN** the delivery is not dialled and counts as a failure
 
 #### Scenario: Redirect
