@@ -491,3 +491,83 @@ func (s *Service) AuthenticateAccess(ctx context.Context, token string) (*Identi
 	}
 	return &Identity{ActorID: actorID, ClientID: clientID, GrantID: grantID, Scopes: scopes, ExpiresAt: expiresAt}, nil
 }
+
+// ActorGrant is one OAuth connection a human has approved, as the Settings
+// page lists it: which client, with which scopes, since when, last used
+// when. It carries no secret — grant ids are owner-scoped identifiers, and
+// every token in the family is hashed at rest.
+type ActorGrant struct {
+	GrantID   string
+	ClientID  string
+	Client    string
+	Scope     string
+	CreatedAt time.Time
+	LastUsed  *time.Time
+}
+
+// ListActorGrants returns the actor's still-active OAuth grants, newest
+// first (SPEC-0023 REQ "Closing the Audited Surfaces", A20): a grant used
+// purely over REST never opens an MCP session, so without this it is
+// invisible to the one human who can revoke it.
+func (s *Service) ListActorGrants(ctx context.Context, actorID string) ([]*ActorGrant, error) {
+	if actorID == "" {
+		return nil, fmt.Errorf("oauth: actor is required: %w", ErrInvalidRequest)
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT g.grant_id, g.client_id, c.client_name, g.scope, g.created_at, g.last_used_at
+		FROM oauth_grants g
+		JOIN oauth_clients c ON c.client_id = g.client_id
+		WHERE g.actor_id = $1 AND g.revoked_at IS NULL
+		ORDER BY g.created_at DESC`,
+		actorID)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: list grants: %w", err)
+	}
+	defer rows.Close()
+	var out []*ActorGrant
+	for rows.Next() {
+		g := &ActorGrant{}
+		if err := rows.Scan(&g.GrantID, &g.ClientID, &g.Client, &g.Scope, &g.CreatedAt, &g.LastUsed); err != nil {
+			return nil, fmt.Errorf("oauth: scan grant: %w", err)
+		}
+		out = append(out, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("oauth: list grants: %w", err)
+	}
+	return out, nil
+}
+
+// RevokeActorGrant revokes the actor's OWN grant and every token in its
+// family — the same cascade the RFC 7009 endpoint runs, gated on ownership
+// so a Settings caller can only ever cut their own connections. An unknown
+// grant, or one belonging to somebody else, is the same error: the endpoint
+// never discloses which.
+func (s *Service) RevokeActorGrant(ctx context.Context, actorID, grantID string) error {
+	if grantID == "" {
+		return fmt.Errorf("grant id is required: %w", ErrInvalidRequest)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("oauth: begin revoke grant: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	tag, err := tx.Exec(ctx, `
+		UPDATE oauth_grants SET revoked_at = COALESCE(revoked_at, $1)
+		WHERE grant_id = $2 AND actor_id = $3 AND revoked_at IS NULL`,
+		s.now().UTC(), grantID, actorID,
+	)
+	if err != nil {
+		return fmt.Errorf("oauth: revoke grant: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("oauth: unknown grant: %w", ErrInvalidGrant)
+	}
+	if err := revokeGrantTx(ctx, tx, grantID, s.now().UTC()); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("oauth: commit revoke grant: %w", err)
+	}
+	return nil
+}
