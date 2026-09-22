@@ -216,6 +216,38 @@ carries the structured violation shape that Cairn ADR-0025 / SPEC-0019
 `members[3].content`, `spans[12].args`), reason `secret_detected`, rule ID,
 line and column. It never carries the secret or the line containing it.
 
+### Security and tenancy
+
+* Scanning runs before persist for **every** owner, whether a personal user or a
+  team (Cairn ADR-0029, in flight). No user, team or token can opt its content
+  out.
+* The operator's settings (cap, oversize policy, reject types, value allowlist)
+  are the instance floor. If per-workspace redaction settings are ever added,
+  they belong to the owning workspace, and they may only tighten that floor (add
+  reject types, lower the cap). They may never loosen it.
+* Masked content is never stored, so nobody can read what was redacted away: not
+  the owner, a team admin or the operator. The recorded outcome (status, counts,
+  rule IDs) is visible to the owner and their workspace, and to operator
+  metrics as aggregates without artifact identity.
+* The operator allowlist relaxes detection instance-wide. That is an operator
+  power over every tenant, so it accepts exact values and anchored regexes only,
+  and the self-hosting guide tells operators to list only inert fixture values.
+
+### How it composes with Harness and Switchboard
+
+* **Harness** is the main producer of the content this scans: traces, bundles and
+  handoff artifacts written by agents. Harness masks at display and export (its
+  `internal/redact`, and telemetry export in Harness ADR-0022). Cairn masks at
+  ingest, using the same mask string and the same contextual shapes, so a
+  credential masked in one tool's output never reappears in the other's. When
+  Harness exports traces to Cairn's future OTLP receiver (Cairn ADR-0015), those
+  spans pass through this same scan.
+* **Switchboard** receives Cairn events (ADR-0017, ADR-0022). Because scanning
+  runs before any event is emitted, a comment body or title in an event is
+  already redacted. Switchboard's own header sanitisation (`«redacted»` in its
+  routing envelope) stays the defence for what Cairn puts in headers, which is
+  never content.
+
 ### Consequences
 
 * Good, because a credential in a trace, paste or comment is masked or refused
