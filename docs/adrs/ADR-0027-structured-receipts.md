@@ -191,10 +191,12 @@ This ADR adds no fan-out path.
   with identical fields would render, and checksum, differently.
 * Bad, because receipt fields are client-asserted. A receipt can claim evidence it does
   not have. The card says whose claim it is, and it cannot say more than that.
-* Bad, because events now carry content, not just a pointer. Until ADR-0029 routes events
-  per owner (cairn#185), a receipt's text reaches the operator's instance-wide targets.
-  Those targets already receive the capability URL, which grants read of the whole
-  receipt, so this adds convenience, not access.
+* Bad, because events now carry content, not just a pointer. A receipt's text goes to
+  every subscription its owner's workspace has (ADR-0029), so a subscriber sees the fields
+  without opening the link. That subscriber could already open the link, so this adds
+  convenience, not access. No receipt reaches an operator-chosen target: ADR-0029 removes
+  the instance-wide `CAIRN_OUTBOUND_WEBHOOK_URLS` outright, in the change that ships owned
+  subscriptions (design review, Joe, 2026-09-22).
 * Neutral, because `artifact_create` does not take metadata. A caller that wants a receipt
   uses the receipt verb. That is one more tool in the list, and it is the tool the task
   names.

@@ -292,7 +292,7 @@ that has no metadata.
 
 #### Scenario: Receipt event
 
-- **WHEN** a receipt is created and outbound webhooks are configured
+- **WHEN** a receipt is created and its owner's workspace has a subscription whose filter admits `artifact.created` (ADR-0029)
 - **THEN** the delivered body MUST carry `data.metadata.schema = "cairn.receipt/v1"`, all stored fields, and `data.tags` containing `receipt`
 
 #### Scenario: Non-receipt event unchanged
