@@ -123,8 +123,9 @@ when there are several.
 ### Requirement: VE-5 Envelope Compatibility and Uniformity
 
 - `code`, `message`, `details` and `request_id` MUST keep their ADR-0012 types.
-- `details` MUST remain a flat string map, keeping its existing keys. It MUST
-  additionally carry `field`, equal to the first violation's field.
+- `details` MUST remain a flat string map, carrying only handler-supplied keys.
+  It MUST NOT duplicate violation data: field names appear only in
+  `violations`. No key is added solely for old clients (pre-1.0).
 - Responses with codes other than `validation_failed` and `payload_too_large`
   MUST carry no `violations`, and MUST be byte-identical to their pre-change
   form. Not-found stays uniform across unknown, unauthorized and expired ids.

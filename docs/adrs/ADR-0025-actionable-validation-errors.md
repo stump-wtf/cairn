@@ -50,8 +50,10 @@ without giving up the leak-free property ADR-0012 exists to protect?
 * **Keep the leak-free envelope for everything else.** `not_found`,
   `unauthorized` and `forbidden` stay uniform. Only caller-caused validation
   failures gain detail.
-* **Backward compatible on the wire.** Deployed CLIs decode `details` as
-  `map[string]string`. A nested value there would break their decode entirely.
+* **Additive, with no compatibility shims.** Cairn is pre-1.0, so nothing is
+  added only to serve old clients (design review, Joe, 2026-09-22). The detail
+  goes in a new key rather than into `details`, whose flat string map every
+  client decodes today; nesting there would break decoding for no gain.
 * **One contract, three surfaces** (ADR-0003). REST, MCP and the CLI show the
   same violation.
 * **Machine-readable first.** A stable reason code and a limit an agent can act
@@ -82,7 +84,6 @@ Chosen option: **A**.
   "error": {
     "code": "validation_failed",
     "message": "X-Cairn-Ttl-Seconds: 5184000 seconds exceeds the maximum of 2592000 (30 days)",
-    "details": { "field": "X-Cairn-Ttl-Seconds" },
     "violations": [
       {
         "field": "X-Cairn-Ttl-Seconds",
@@ -123,9 +124,9 @@ validated and every bad tag reported, not just the first. The top-level
 `message` for `validation_failed` becomes the first violation's `field: message`
 (or "N problems: …"). Every other code keeps its fixed ADR-0012 message.
 
-`details` is unchanged in type (a flat string map) and keeps its existing keys.
-It additionally mirrors the first violation's `field`, so an old CLI still
-prints something useful.
+`details` is unchanged in type (a flat string map) and carries only what a
+handler puts there. It does not mirror the violations: a field name lives in one
+place, `violations`.
 
 `payload_too_large` also carries one violation (`reason: too_large`, `limit` in
 bytes), because the limit is the fix.
@@ -207,8 +208,9 @@ entry is a reasonable model to adopt there.
   have read "--ttl 60d exceeds the server's maximum of 30d".
 * Good, because agents can self-correct from a stable reason code and a numeric
   limit, with no prose to parse.
-* Good, because the wire change is additive. Old CLIs keep decoding, and see a
-  better top-level message and `details.field`.
+* Good, because the wire change is additive. A client that ignores unknown keys
+  keeps decoding and sees a better top-level message, and no shim is kept for
+  it.
 * Good, because not-found, unauthorized and forbidden stay uniform. The
   leak-free property is kept exactly where it protects something.
 * Bad, because about 158 validation sites migrate over several stories. Until
@@ -241,8 +243,8 @@ entry is a reasonable model to adopt there.
 
 * Good, because it is additive, structured, and uniform across surfaces.
 * Good, because it leaves the not-found uniformity untouched.
-* Bad, because it is a second place a field name appears (`details.field` and
-  `violations[0].field`). The mirror is kept deliberately for old clients.
+* Bad, because a client must read a new key to get the detail. One that reads
+  only `details` sees just the improved top-level message.
 
 ### B. RFC 9457 Problem Details
 

@@ -24,7 +24,8 @@ See SPEC-0019 (`spec.md`) for the requirements and ADR-0025 for the decision.
 
 - Every client-reachable validation failure names its field, its reason and its
   limit, on REST, MCP and the CLI.
-- The change is additive on the wire. Deployed CLIs keep working.
+- The change is additive on the wire, with no shim kept for old clients
+  (pre-1.0; design review, 2026-09-22).
 - Not-found, unauthorized and forbidden responses are unchanged.
 - The CLI folds tag case, with a warning.
 
@@ -127,8 +128,8 @@ type errorBody struct {
   (or synthesises the single `invalid` violation);
 - it sets `Message` to the first violation's `field: message`, or to
   `"N problems: …"` when there are several;
-- it sets `details["field"]` to the first violation's field, keeping any keys the
-  handler passed;
+- it leaves `details` as the handler passed it, and does not copy violation
+  fields into it;
 - every other code takes the existing path untouched. That is what VE-5's
   byte-identical test pins.
 
@@ -192,7 +193,7 @@ sequenceDiagram
     CLI->>API: POST /v1/artifacts, X-Cairn-Ttl-Seconds: 5184000, X-Cairn-Tags: size:m
     API->>V: requestedTTL()
     V-->>API: Invalid{X-Cairn-Ttl-Seconds, exceeds_max, 2592000 s}
-    API-->>CC: 400 {code, message, details.field, violations[1]}
+    API-->>CC: 400 {code, message, violations[1]}
     CC-->>CLI: APIError{Violations}
     CLI->>CLI: "cairn: --ttl 60d exceeds the server's maximum of 30d" (exit 2)
 ```
