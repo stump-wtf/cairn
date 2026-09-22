@@ -169,9 +169,14 @@ This ADR does not change who receives events.
 * **The instance env targets** (`CAIRN_OUTBOUND_WEBHOOK_URLS`) remain the
   operator firehose #185 describes. A new `CAIRN_OUTBOUND_WEBHOOK_EVENTS`
   allowlist (default `artifact.created`) selects which kinds they receive, so an
-  existing deployment sees exactly what it saw before. An operator who opts into
-  annotation kinds is opting into every user's comments; the self-hosting guide
-  says so next to the variable.
+  existing deployment sees exactly what it saw before. Until Teams lands, an
+  operator who opts into annotation kinds is opting into every user's comments,
+  and the self-hosting guide says so next to the variable. Teams (ADR-0029)
+  narrows these targets to operator-owned artifacts, and later retires them in
+  favour of owned subscriptions. The kind allowlist applies to whatever scope the
+  env targets have at the time.
+* **Never the actor's subscriptions.** An event about Alice's artifact never goes
+  to a subscription belonging to Bob just because Bob commented or reacted.
 
 ### Delivery
 

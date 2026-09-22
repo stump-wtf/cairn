@@ -254,7 +254,10 @@ owner or team owns. The owner MUST NOT appear on the wire.
 The instance env targets (`CAIRN_OUTBOUND_WEBHOOK_URLS`) MUST receive only the
 kinds listed in `CAIRN_OUTBOUND_WEBHOOK_EVENTS` (comma-separated, default
 `artifact.created`). An unknown kind in that list MUST fail startup with an error
-naming it.
+naming it. When Teams (Cairn ADR-0029) narrows the env targets to operator-owned
+artifacts, or retires them, this allowlist MUST apply within whatever scope they
+then have. Events MUST NOT be routed to subscriptions of the event's actor
+unless that actor's workspace owns the subject artifact.
 
 #### Scenario: Existing deployment unchanged
 
