@@ -575,9 +575,10 @@ jobs:
         run: echo "tagged build is green — releasing ${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
 
   # ---- 12. release ---------------------------------------------------------
-  # Builds the cross-platform `cairn` CLI and publishes it to the PUBLIC
-  # stump-wtf/cairn-cli repo (see .goreleaser.yaml). Only the client ships:
-  # the server is a container image built by the image job above.
+  # Builds the cross-platform `cairn` CLI and the `cairnd` server archives and
+  # publishes both to the PUBLIC stump-wtf/cairn-cli repo (see .goreleaser.yaml).
+  # They are separate archives that never mix (cairn#361); the container image
+  # is still built by the image job above.
   #
   # This runs on Gitea, not the GitHub mirror, because this runner is the only
   # host that can reach both sides — Gitea over the LAN and github.com
@@ -623,6 +624,21 @@ jobs:
         # runs this script as a post-build hook against each compiled binary
         # (.goreleaser.yaml), so the artifact is checked as well as the graph.
         run: make verify-cli
+
+      # goreleaser has no post-archive hook in the open-source edition, and a
+      # real `release` uploads as soon as it has archived. So the archive check
+      # runs against a snapshot of the same config first: which binary lands in
+      # which archive is a property of the config, not the version, and a
+      # snapshot publishes nothing. Costs one extra build on tags only.
+      - name: GoReleaser snapshot (publishes nothing)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean
+
+      - name: Verify each archive holds only its own binary
+        run: scripts/verify-release-archives.sh dist
 
       - name: GoReleaser
         uses: goreleaser/goreleaser-action@v6

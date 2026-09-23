@@ -1,4 +1,4 @@
-.PHONY: build test test-race test-js vet fmt fmt-check lint check tidy up down migrate ci verify-cli
+.PHONY: build test test-race test-js test-scripts vet fmt fmt-check lint check tidy up down migrate ci verify-cli release-snapshot
 
 GO ?= go
 PKGS ?= ./...
@@ -54,7 +54,20 @@ lint: fmt-check vet
 verify-cli:
 	@scripts/verify-cli-artifact.sh $(CLI_BIN)
 
-check: lint test verify-cli
+# Tests for the release gates themselves: fixture dist/ directories the
+# archive verifier must pass or fail, each for its own reason. No Go build, so
+# it is cheap enough for every run.
+test-scripts:
+	@scripts/verify-release-archives.test.sh
+
+# A local dry run of the whole release: both builds, both archives, the CLI
+# post hook, then the archive-composition check the release job runs before it
+# publishes. Needs goreleaser on PATH; publishes nothing.
+release-snapshot:
+	goreleaser release --snapshot --clean
+	scripts/verify-release-archives.sh dist
+
+check: lint test verify-cli test-scripts
 
 tidy:
 	$(GO) mod tidy
@@ -66,4 +79,4 @@ up:
 down:
 	docker compose down -v
 
-ci: fmt-check vet build test-race test-js
+ci: fmt-check vet build test-race test-js test-scripts

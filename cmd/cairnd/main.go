@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -29,6 +30,10 @@ import (
 )
 
 func main() {
+	if wantsVersion(os.Args[1:]) {
+		fmt.Println("cairnd " + versionString())
+		return
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(logger); err != nil {
 		logger.Error("cairnd exited", "error", err)

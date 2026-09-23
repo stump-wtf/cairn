@@ -1,11 +1,21 @@
-# GoReleaser configuration for Cairn — the cairn CLI binary.
+# GoReleaser configuration for Cairn — the cairn CLI and the cairnd server.
 # https://goreleaser.com
 #
-# Builds and attaches cross-platform `cairn` CLI binaries to each GitHub
-# release (SPEC-0008: the CLI is the human's terminal surface). The `cairnd`
-# server is deployed separately as a container image (see deploy.yml), so only
-# the CLI is built here. The pure-REST client has no CGO deps, so static
-# CGO_ENABLED=0 builds are safe on every target.
+# Two builds, two archives, one release:
+#
+#   * `cairn`  — the CLI (SPEC-0008: the human's terminal surface), for linux,
+#     darwin and windows on amd64 and arm64. Archive: cairn_<ver>_<os>_<arch>.
+#   * `cairnd` — the server, for linux and darwin on amd64 and arm64, for
+#     operators who run it natively rather than as the container image (the
+#     image is still built by the pipeline's image job and release.yml).
+#     Harness's native runtime pins this archive by URL and SHA-256 (cairn#361),
+#     so its build is reproducible: see the cairnd build below.
+#     Archive: cairnd_<ver>_<os>_<arch>.
+#
+# The archives never mix. Each carries its own binary and LICENSE, and
+# scripts/verify-release-archives.sh fails the release job if either ever holds
+# anything else. Both are pure Go with no CGO deps, so static CGO_ENABLED=0
+# builds are safe on every target.
 
 version: 2
 
@@ -59,8 +69,40 @@ builds:
       post:
         - scripts/verify-cli-artifact.sh "{{ .Path }}"
 
+  # The server. Its own build rather than a second binary in the CLI's, so the
+  # CLI gate above is untouched and still aborts the release if the cairn
+  # binary ever picks up server code.
+  #
+  # Reproducible on purpose, unlike the CLI build: Harness's manifest pins the
+  # cairnd archive by SHA-256, and the release job re-runs against an existing
+  # tag with replace_existing_artifacts, so a rebuild that produced different
+  # bytes would silently invalidate every pin. -trimpath drops the builder's
+  # paths, the commit date replaces the build date in the binary, and
+  # mod_timestamp fixes the file mtime the archive records.
+  - id: cairnd
+    main: ./cmd/cairnd
+    binary: cairnd
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.CommitDate}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
 archives:
-  - id: default
+  - id: cairn
+    ids:
+      - cairn
     formats:
       - tar.gz
     format_overrides:
@@ -82,6 +124,31 @@ archives:
       - LICENSE
     name_template: >-
       {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+  # The server archive. `ids` is what keeps the two apart: an archive with no
+  # `ids` takes every build, which is how the CLI archive above would have
+  # picked up cairnd the moment the second build existed. Both archives name
+  # their build explicitly for that reason.
+  #
+  # Same files rule as the CLI (binary plus LICENSE, never the README), and the
+  # same fixed mtime as the build, so the tarball's bytes are a function of the
+  # commit alone.
+  - id: cairnd
+    ids:
+      - cairnd
+    formats:
+      - tar.gz
+    files:
+      - src: LICENSE
+        info:
+          mtime: "{{ .CommitDate }}"
+    builds_info:
+      mtime: "{{ .CommitDate }}"
+    name_template: >-
+      cairnd_
       {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
@@ -121,6 +188,15 @@ release:
   draft: false
   prerelease: auto
   name_template: "v{{.Version}}"
+  # Two kinds of archive sit side by side on every release, and the names differ
+  # by one letter, so say which is which before anyone downloads the wrong one.
+  header: |
+    ## Which download do I want?
+
+    - **`cairn_<version>_<os>_<arch>`**: the **CLI**. It's what you want to share artifacts from a terminal or a script.
+    - **`cairnd_<version>_<os>_<arch>`**: the **server**, for running your own Cairn natively (linux and darwin only). Most self-hosters use the container image instead: `ghcr.io/stump-wtf/cairn:{{ .Version }}`.
+
+    Each archive holds its one binary plus `LICENSE`. `checksums.txt` covers both kinds.
   # goreleaser owns the release notes, generated from the changelog block above.
   #
   # This previously carried a different justification: that release.yml created
