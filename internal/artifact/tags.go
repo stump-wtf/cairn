@@ -1,6 +1,7 @@
 package artifact
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/stump-wtf/cairn/internal/errs"
@@ -39,24 +40,39 @@ const tagPunct = "._:/#-"
 // truncated, lowercased or otherwise rewritten — and so does a list of more
 // than MaxTags distinct tags; exact repeats are simply dropped. Nil or empty
 // input yields nil.
+//
+// Every failing tag is reported, each as a violation on tags[i] (the MCP
+// argument's shape), so a caller fixes them all in one round trip.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-4
 func NormalizeTags(raw []string) ([]string, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
 	out := make([]string, 0, len(raw))
 	seen := make(map[string]struct{}, len(raw))
-	for _, t := range raw {
-		if err := ValidateTag(t); err != nil {
-			return nil, err
+	var bad []*errs.Invalid
+	tooMany := false
+	for i, t := range raw {
+		if inv := CheckTag(t, fmt.Sprintf("tags[%d]", i), errs.LocBody); inv != nil {
+			bad = append(bad, inv)
+			continue
 		}
 		if _, dup := seen[t]; dup {
 			continue
 		}
 		if len(out) == MaxTags {
-			return nil, errs.Validationf("tags: more than the maximum of %d distinct tags", MaxTags)
+			tooMany = true
+			continue
 		}
 		seen[t] = struct{}{}
 		out = append(out, t)
+	}
+	if tooMany {
+		bad = append(bad, TooManyTags("tags", errs.LocBody))
+	}
+	if inv := errs.Join(bad...); inv != nil {
+		return nil, inv
 	}
 	return out, nil
 }
@@ -65,19 +81,47 @@ func NormalizeTags(raw []string) ([]string, error) {
 // and tagPunct. Uppercase is rejected rather than folded, so what a consumer
 // matches is byte-for-byte what the creator sent.
 func ValidateTag(t string) error {
-	switch {
-	case t == "":
-		return errs.Validationf("tags: a tag must not be empty")
-	case len(t) > MaxTagBytes:
-		return errs.Validationf("tags: a tag is %d bytes, maximum is %d", len(t), MaxTagBytes)
-	}
-	for i := 0; i < len(t); i++ {
-		c := t[i]
-		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && strings.IndexByte(tagPunct, c) < 0 {
-			return errs.Validationf("tags: tag %q may only contain lowercase [a-z0-9%s]", t, tagPunct)
-		}
+	if inv := CheckTag(t, "tag", errs.LocBody); inv != nil {
+		return inv
 	}
 	return nil
+}
+
+// CheckTag is ValidateTag reporting a violation on the caller's own field and
+// location, or nil when the tag is valid. A tag that is wrong only in its case
+// is `uppercase`, so the fix it names is exact; any other disallowed character
+// is `invalid_charset`.
+//
+// Governing: ADR-0018, ADR-0025, SPEC-0019 VE-1, VE-3
+func CheckTag(t, field string, loc errs.Location) *errs.Invalid {
+	switch {
+	case t == "":
+		return errs.Violate(field, loc, errs.ReasonRequired)
+	case len(t) > MaxTagBytes:
+		return errs.Violate(field, loc, errs.ReasonTooLong,
+			errs.WithValue(t), errs.WithLimit(MaxTagBytes, errs.UnitBytes))
+	}
+	upper := false
+	for i := 0; i < len(t); i++ {
+		c := t[i]
+		switch {
+		case (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || strings.IndexByte(tagPunct, c) >= 0:
+		case c >= 'A' && c <= 'Z':
+			upper = true
+		default:
+			return errs.Violate(field, loc, errs.ReasonInvalidCharset,
+				errs.WithValue(t), errs.WithExpect("lowercase a-z, 0-9 and "+tagPunct))
+		}
+	}
+	if upper {
+		return errs.Violate(field, loc, errs.ReasonUppercase, errs.WithValue(t))
+	}
+	return nil
+}
+
+// TooManyTags is the violation for a list of more than MaxTags distinct tags.
+func TooManyTags(field string, loc errs.Location) *errs.Invalid {
+	return errs.Violate(field, loc, errs.ReasonTooMany, errs.WithLimit(MaxTags, errs.UnitCount))
 }
 
 // validateNormalizedTags is the aggregate invariant: tags already normalized,
