@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"time"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -85,13 +85,9 @@ func (s *Server) handleUpdateTTL(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	if req.TTLSeconds <= 0 {
-		s.writeError(w, r, errs.Validationf("ttl_seconds must be a positive integer number of seconds"), map[string]string{"id": id})
-		return
-	}
-	ttl := time.Duration(req.TTLSeconds) * time.Second
-	if ttl > s.cfg.MaxRequestedTTL {
-		s.writeError(w, r, errs.Validationf("ttl_seconds exceeds the maximum allowed TTL (%s)", s.cfg.MaxRequestedTTL), map[string]string{"id": id})
+	ttl, inv := checkTTLSeconds("ttl_seconds", errs.LocBody, strconv.FormatInt(req.TTLSeconds, 10), s.cfg.MaxRequestedTTL)
+	if inv != nil {
+		s.writeError(w, r, inv, map[string]string{"id": id})
 		return
 	}
 	art, err := s.store.UpdateTTL(r.Context(), id, p.ActorID, s.now().Add(ttl))
@@ -131,7 +127,7 @@ func (s *Server) decodePolicyBody(w http.ResponseWriter, r *http.Request, dst an
 		if errors.As(err, &maxErr) {
 			return errs.ErrTooLarge
 		}
-		return errs.Validationf("policy request body is not valid JSON")
+		return errs.Violate("body", errs.LocBody, errs.ReasonInvalidFormat, errs.WithExpect("a JSON object"))
 	}
 	return nil
 }
