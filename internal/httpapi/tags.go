@@ -22,44 +22,62 @@ const tagHeader = "X-Cairn-Tags"
 // hold an over-long or surplus tag, so it is rejected whole rather than cut.
 const maxTagFieldBytes = artifact.MaxTags * (artifact.MaxTagBytes + len(","))
 
-// tagErrorDetails names the rejected input in the error envelope. The REST
-// surface never echoes a validation message (messageFor maps every code to a
-// fixed string), so without this a caller could not tell a bad tag from a bad
-// TTL or body.
-func tagErrorDetails() map[string]string {
-	return map[string]string{"field": "tag"}
-}
+// tagField is the caller-facing field every REST tag source reports its
+// violations under, whichever source carried the tag; the violation's location
+// says which (query, header or form).
+const tagField = "tag"
 
 // tagSet accumulates tags from a request. Each tag is validated and
 // deduplicated as it arrives and the distinct count is bounded, so the
 // multipart path — where the number of fields is otherwise bounded only by the
-// body — stops at the first tag too many rather than buffering them all. The
-// store normalizes the assembled list again at its single create choke point,
-// which is what the MCP surface relies on.
+// body — never buffers more than MaxTags tags. Every bad tag, from every
+// source, is recorded rather than only the first, and err reports them
+// together. The store normalizes the assembled list again at its single create
+// choke point, which is what the MCP surface relies on.
 //
 // Governing: ADR-0018 (Client-Asserted Artifact Tags), SPEC-0002 REQ "Artifact
-// Tags"
+// Tags", ADR-0025, SPEC-0019 VE-4
 type tagSet struct {
-	tags []string
-	seen map[string]struct{}
+	tags    []string
+	seen    map[string]struct{}
+	bad     []*errs.Invalid
+	tooMany errs.Location // where the first tag past MaxTags arrived, or ""
+}
+
+// err is every violation recorded so far, or nil.
+func (ts *tagSet) err() error {
+	bad := ts.bad
+	if ts.tooMany != "" {
+		bad = append(bad[:len(bad):len(bad)], artifact.TooManyTags(tagField, ts.tooMany))
+	}
+	if inv := errs.Join(bad...); inv != nil {
+		return inv
+	}
+	return nil
 }
 
 // addList adds a comma-separated list. Whitespace around a tag is trimmed and
 // empty items are skipped, so "a, b," and "a,b" mean the same thing.
-func (ts *tagSet) addList(list string) error {
+func (ts *tagSet) addList(list string, loc errs.Location) {
 	for _, item := range strings.Split(list, ",") {
 		t := strings.TrimSpace(item)
 		if t == "" {
 			continue
 		}
-		if err := artifact.ValidateTag(t); err != nil {
-			return err
+		if inv := artifact.CheckTag(t, tagField, loc); inv != nil {
+			if len(ts.bad) < errs.MaxViolations {
+				ts.bad = append(ts.bad, inv)
+			}
+			continue
 		}
 		if _, dup := ts.seen[t]; dup {
 			continue
 		}
 		if len(ts.tags) == artifact.MaxTags {
-			return errs.Validationf("tags: more than the maximum of %d distinct tags", artifact.MaxTags)
+			if ts.tooMany == "" {
+				ts.tooMany = loc
+			}
+			continue
 		}
 		if ts.seen == nil {
 			ts.seen = map[string]struct{}{}
@@ -67,40 +85,38 @@ func (ts *tagSet) addList(list string) error {
 		ts.seen[t] = struct{}{}
 		ts.tags = append(ts.tags, t)
 	}
-	return nil
 }
 
 // addQuery adds every ?tag= parameter.
 func (ts *tagSet) addQuery(r *http.Request) error {
 	for _, list := range r.URL.Query()["tag"] {
-		if err := ts.addList(list); err != nil {
-			return err
-		}
+		ts.addList(list, errs.LocQuery)
 	}
-	return nil
+	return ts.err()
 }
 
 // addFromRequest adds ?tag= parameters, then X-Cairn-Tags headers.
 func (ts *tagSet) addFromRequest(r *http.Request) error {
-	if err := ts.addQuery(r); err != nil {
-		return err
+	for _, list := range r.URL.Query()["tag"] {
+		ts.addList(list, errs.LocQuery)
 	}
 	for _, list := range r.Header.Values(tagHeader) {
-		if err := ts.addList(list); err != nil {
-			return err
-		}
+		ts.addList(list, errs.LocHeader)
 	}
-	return nil
+	return ts.err()
 }
 
-// addFormField reads one multipart `tag` field.
-func (ts *tagSet) addFormField(part io.Reader) error {
+// addFormField reads one multipart `tag` field. A field too long to hold only
+// valid tags is rejected whole, rather than cut.
+func (ts *tagSet) addFormField(part io.Reader) {
 	b, err := io.ReadAll(io.LimitReader(part, int64(maxTagFieldBytes)+1))
-	if err != nil {
-		return errs.Validationf("multipart: malformed tag field")
+	switch {
+	case err != nil:
+		ts.bad = append(ts.bad, errs.Violate(tagField, errs.LocForm, errs.ReasonInvalidFormat))
+	case len(b) > maxTagFieldBytes:
+		ts.bad = append(ts.bad, errs.Violate(tagField, errs.LocForm, errs.ReasonTooLong,
+			errs.WithLimit(maxTagFieldBytes, errs.UnitBytes)))
+	default:
+		ts.addList(string(b), errs.LocForm)
 	}
-	if len(b) > maxTagFieldBytes {
-		return errs.Validationf("tags: a tag field exceeds %d bytes", maxTagFieldBytes)
-	}
-	return ts.addList(string(b))
 }
