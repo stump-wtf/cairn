@@ -321,10 +321,15 @@ type guardSite struct {
 	trigger func() error
 }
 
-// validationSites is the SPEC-0019 VE-6 migration guard's list. Every site on
-// it must reject with typed violations, never a bare validation error. Each
-// migration story appends its sites; a listed site can never regress.
-func validationSites(t *testing.T) []guardSite {
+// guardSiteSources feeds the SPEC-0019 VE-6 migration guard. Each migration
+// registers its own list from an init func in its own test file, so stories
+// that land in parallel never edit one shared list. A listed site can never
+// regress.
+var guardSiteSources = []func(t *testing.T) []guardSite{createPathTTLAndTagSites}
+
+// createPathTTLAndTagSites are the first migrated sites (#275): TTL, tags,
+// the policy body and the upload cap.
+func createPathTTLAndTagSites(t *testing.T) []guardSite {
 	ttlReq := func(v string) *http.Request {
 		r := httptest.NewRequest(http.MethodPost, "/v1/artifacts", nil)
 		r.Header.Set(ttlHeader, v)
@@ -379,7 +384,11 @@ func validationSites(t *testing.T) []guardSite {
 // TestMigrationGuard is SPEC-0019 VE-6's guard: it fails, naming the site, if
 // any listed validator returns a bare validation error.
 func TestMigrationGuard(t *testing.T) {
-	for _, site := range validationSites(t) {
+	var sites []guardSite
+	for _, src := range guardSiteSources {
+		sites = append(sites, src(t)...)
+	}
+	for _, site := range sites {
 		err := site.trigger()
 		if err == nil {
 			t.Errorf("%s: accepted input it must reject", site.name)
