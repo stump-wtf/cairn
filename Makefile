@@ -1,4 +1,4 @@
-.PHONY: build test test-race test-js vet fmt fmt-check lint check tidy up down migrate ci verify-cli
+.PHONY: build test test-race test-js vet fmt fmt-check lint check tidy up down migrate ci verify-cli website
 
 GO ?= go
 PKGS ?= ./...
@@ -67,3 +67,13 @@ down:
 	docker compose down -v
 
 ci: fmt-check vet build test-race test-js
+
+# The docs site's own gate: its unit tests, the typecheck, and the full build.
+# The build is what runs the design-record validator (a front-matter edge to a
+# record that does not exist throws) and, from its postBuild hook, the bundle
+# scan for private hosts and credentials. Not part of `ci` or `check`, so a
+# Go-only box still passes those; the pipeline runs it as its own `website` job.
+# DOCS_URL / DOCS_BASE_URL match the public build, not the Pages one.
+website:
+	cd website && npm ci --no-audit --no-fund && npm test && npm run typecheck && \
+		DOCS_URL=https://cairn.stump.wtf DOCS_BASE_URL=/ npm run build

@@ -289,6 +289,39 @@ jobs:
           docker rm -f "$PG" "$GARAGE" >/dev/null 2>&1 || true
           docker network rm "$NET" >/dev/null 2>&1 || true
 
+  # ---- 4c. website: tests, record validator, docs build -------------------
+  # Until this job existed nothing on a pull_request touched website/. The only
+  # jobs that built it (docs-image, pages) sit behind main-only, and the test
+  # suite and typecheck ran only on the GitHub mirror, after merge. So a PR could
+  # pass every required check and then break main's docs build, which happened
+  # repeatedly (a dangling front-matter edge, a record-id collision, a private
+  # host in the bundle), each fixed by a follow-up PR.
+  #
+  # `npm run build` is the part that matters most: it runs the design-record
+  # validator over docs/adrs and docs/openspec (a front-matter edge naming a
+  # record that is not in the tree throws), the link guard, and, from its
+  # postBuild hook, the bundle scan for private hosts and credentials.
+  #
+  # Its own job, not a step in `build`, so a red check says the docs broke
+  # rather than "lint + test". Node 22, matching website/package.json `engines`:
+  # the record plugin is TypeScript run directly by node, which needs 22.18+.
+  website:
+    name: website
+    needs: [secrets]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: make website
+        run: make website
+
   # ---- 5. ai review (PRs only, and only once the build is green) -----------
   # aibot.yml still exists beside this file, narrowed to the conversation
   # events (issue_comment, review, review_comment) so a maintainer can keep
@@ -296,7 +329,7 @@ jobs:
   # review waits for a build rather than racing it, and the two triggers cannot
   # both fire on the same event.
   review:
-    needs: [build, integration]
+    needs: [build, integration, website]
     if: ${{ github.event_name == 'pull_request' }}
     uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/aibot.yaml@main
     secrets: inherit
