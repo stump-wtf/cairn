@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -63,19 +64,49 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 // docs). The server remains authoritative (ADR-0007): this only interprets an
 // explicit ask, it never computes one.
 func requestedTTL(r *http.Request, cfg Config) (time.Duration, error) {
-	raw := r.Header.Get("X-Cairn-Ttl-Seconds")
+	raw := r.Header.Get(ttlHeader)
 	if raw == "" {
 		return cfg.DefaultTTL, nil
 	}
-	secs, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || secs <= 0 {
-		return 0, errs.Validationf("X-Cairn-Ttl-Seconds must be a positive integer number of seconds")
-	}
-	ttl := time.Duration(secs) * time.Second
-	if ttl > cfg.MaxRequestedTTL {
-		return 0, errs.Validationf("X-Cairn-Ttl-Seconds exceeds the maximum allowed TTL (%s)", cfg.MaxRequestedTTL)
+	ttl, inv := checkTTLSeconds(ttlHeader, errs.LocHeader, raw, cfg.MaxRequestedTTL)
+	if inv != nil {
+		return 0, inv
 	}
 	return ttl, nil
+}
+
+// ttlHeader is the create path's requested-TTL header.
+const ttlHeader = "X-Cairn-Ttl-Seconds"
+
+// ttlExpect is how a valid TTL is described in a violation's message.
+const ttlExpect = "a positive integer number of seconds"
+
+// checkTTLSeconds validates a requested TTL, given as decimal seconds, against
+// the server's cap. The create header and the policy body share it, so both
+// TTL surfaces agree on units, bounds and the violation they report.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1 (scenarios "TTL over the cap",
+// "Malformed TTL"), ADR-0007
+func checkTTLSeconds(field string, loc errs.Location, raw string, max time.Duration) (time.Duration, *errs.Invalid) {
+	secs, err := strconv.ParseInt(raw, 10, 64)
+	switch {
+	case err != nil:
+		var numErr *strconv.NumError
+		if errors.As(err, &numErr) && errors.Is(numErr.Err, strconv.ErrRange) && !strings.HasPrefix(raw, "-") {
+			return 0, ttlTooLong(field, loc, raw, max)
+		}
+		return 0, errs.Violate(field, loc, errs.ReasonInvalidFormat, errs.WithValue(raw), errs.WithExpect(ttlExpect))
+	case secs <= 0:
+		return 0, errs.Violate(field, loc, errs.ReasonNotPositive, errs.WithValue(raw), errs.WithExpect(ttlExpect))
+	case secs > int64(max/time.Second):
+		return 0, ttlTooLong(field, loc, raw, max)
+	}
+	return time.Duration(secs) * time.Second, nil
+}
+
+func ttlTooLong(field string, loc errs.Location, raw string, max time.Duration) *errs.Invalid {
+	return errs.Violate(field, loc, errs.ReasonExceedsMax,
+		errs.WithValue(raw), errs.WithLimit(int64(max/time.Second), errs.UnitSeconds))
 }
 
 func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Principal) {
@@ -83,14 +114,12 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 		r.URL.Query().Get("type"), r.Header.Get("X-Cairn-Type"), string(artifact.TypeFile)))
 	now := s.now()
 
-	ttl, err := requestedTTL(r, s.cfg)
-	if err != nil {
-		s.writeError(w, r, err, nil)
-		return
-	}
+	// The TTL and every tag are checked together, so one rejection names all
+	// of them (SPEC-0019 VE-4).
 	var tags tagSet
-	if err := tags.addFromRequest(r); err != nil {
-		s.writeError(w, r, err, tagErrorDetails())
+	ttl, ttlErr := requestedTTL(r, s.cfg)
+	if err := errs.JoinErrors(ttlErr, tags.addFromRequest(r)); err != nil {
+		s.writeError(w, r, err, nil)
 		return
 	}
 
@@ -108,7 +137,7 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 		Tags:              tags.tags,
 	})
 	if err != nil {
-		s.writeError(w, r, mapUploadErr(err), nil)
+		s.writeError(w, r, s.mapUploadErr(err), nil)
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, s.toArtifactResponse(art))
@@ -128,16 +157,13 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		s.writeError(w, r, errs.Validationf("multipart: missing boundary"), nil)
 		return
 	}
-	ttl, err := requestedTTL(r, s.cfg)
-	if err != nil {
-		s.writeError(w, r, err, nil)
-		return
-	}
+	// The TTL, header and query tags are checked with the form's own tag
+	// fields, so one rejection names every bad tag from every source (SPEC-0019
+	// VE-4). They are reported at the first file part, before any body is
+	// spooled.
 	var tags tagSet
-	if err := tags.addFromRequest(r); err != nil {
-		s.writeError(w, r, err, tagErrorDetails())
-		return
-	}
+	ttl, ttlErr := requestedTTL(r, s.cfg)
+	_ = tags.addFromRequest(r)
 	mr := multipart.NewReader(r.Body, boundary)
 
 	var (
@@ -167,14 +193,15 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 				b, _ := io.ReadAll(io.LimitReader(part, 4096))
 				title = string(b)
 			case "tag":
-				if err := tags.addFormField(part); err != nil {
-					_ = part.Close()
-					s.writeError(w, r, err, tagErrorDetails())
-					return
-				}
+				tags.addFormField(part)
 			}
 			_ = part.Close()
 			continue
+		}
+		if err := errs.JoinErrors(ttlErr, tags.err()); err != nil {
+			_ = part.Close()
+			s.writeError(w, r, err, nil)
+			return
 		}
 		tmp, err := os.CreateTemp("", "cairn-upload-*")
 		if err != nil {
@@ -193,7 +220,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		if n > s.cfg.MaxUploadBytes {
 			_ = tmp.Close()
 			_ = os.Remove(tmp.Name())
-			s.writeError(w, r, errs.ErrTooLarge, nil)
+			s.writeError(w, r, s.mapUploadErr(errs.ErrTooLarge), nil)
 			return
 		}
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
@@ -205,6 +232,10 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		files = append(files, spooledFile{name: part.FileName(), media: part.Header.Get("Content-Type"), file: tmp, size: n})
 	}
 
+	if err := errs.JoinErrors(ttlErr, tags.err()); err != nil {
+		s.writeError(w, r, err, nil)
+		return
+	}
 	if len(files) == 0 {
 		s.writeError(w, r, errs.Validationf("multipart: no file parts"), nil)
 		return
@@ -228,7 +259,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			Tags:              tags.tags,
 		})
 		if err != nil {
-			s.writeError(w, r, mapUploadErr(err), nil)
+			s.writeError(w, r, s.mapUploadErr(err), nil)
 			return
 		}
 		s.writeJSON(w, http.StatusCreated, s.toArtifactResponse(art))
@@ -248,7 +279,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		Tags:       tags.tags,
 	})
 	if err != nil {
-		s.writeError(w, r, mapUploadErr(err), nil)
+		s.writeError(w, r, s.mapUploadErr(err), nil)
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, s.toArtifactResponse(art))
@@ -398,7 +429,7 @@ func (s *Server) handleBin(w http.ResponseWriter, r *http.Request) {
 	// create accepts.
 	var filter tagSet
 	if err := filter.addQuery(r); err != nil {
-		s.writeError(w, r, err, tagErrorDetails())
+		s.writeError(w, r, err, nil)
 		return
 	}
 	page, err := s.store.ListBin(r.Context(), p.ActorID, r.URL.Query().Get("cursor"), limit, filter.tags...)
@@ -413,12 +444,17 @@ func (s *Server) handleBin(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, binResponse{Artifacts: items, NextCursor: page.NextCursor})
 }
 
-// mapUploadErr maps an http.MaxBytesReader overflow to the payload-too-large
-// domain error so it renders as 413 rather than a generic 500.
-func mapUploadErr(err error) error {
+// mapUploadErr maps a body over the upload cap — an http.MaxBytesReader
+// overflow, or the store's incremental limit — to a too_large violation naming
+// the cap, so it renders as a 413 that says what the limit is rather than a
+// generic 500 or a bare "payload too large".
+//
+// Governing: ADR-0025, SPEC-0019 VE-1 (scenario "Oversize body")
+func (s *Server) mapUploadErr(err error) error {
 	var maxErr *http.MaxBytesError
-	if errors.As(err, &maxErr) {
-		return errs.ErrTooLarge
+	if errors.As(err, &maxErr) || (errors.Is(err, errs.ErrTooLarge) && errs.ViolationsOf(err) == nil) {
+		return errs.Violate("body", errs.LocBody, errs.ReasonTooLarge,
+			errs.WithLimit(s.cfg.MaxUploadBytes, errs.UnitBytes)).Because(err)
 	}
 	return err
 }
