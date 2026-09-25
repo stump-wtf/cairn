@@ -216,6 +216,8 @@ type RunInput struct {
 	Spans      []SpanInput
 	// ActorKind and Auth classify the creator's credential, derived by the
 	// adapter from the authenticated principal (ADR-0022, SPEC-0016 EV-4).
+	// They are plumbing only for now: trajectory emits no event yet, so
+	// nothing reads them until trajectory emission lands (#313).
 	ActorKind event.ActorKind
 	Auth      event.AuthMethod
 }
