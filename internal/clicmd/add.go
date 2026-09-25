@@ -35,7 +35,7 @@ func runAdd(cmd *cobra.Command, streams IOStreams, flags *globalFlags, configPat
 	if err != nil {
 		return err
 	}
-	tags, err := parseTagFlags(flags.tags)
+	tags, err := parseTagFlags(flags.tags, streams.ErrOut)
 	if err != nil {
 		return err
 	}
