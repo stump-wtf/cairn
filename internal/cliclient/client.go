@@ -56,6 +56,10 @@ type APIError struct {
 	Details    map[string]string
 	RequestID  string
 	HTTPStatus int
+	// Violations name each field a validation_failed or payload_too_large
+	// response rejected (SPEC-0019 VE-1). They are nil from a server that
+	// predates them, and then Message is all there is to show.
+	Violations []Violation
 }
 
 func (e *APIError) Error() string {
@@ -102,13 +106,16 @@ var (
 )
 
 // envelope mirrors the server's ADR-0012 wire shape
-// (internal/httpapi/errors.go errorEnvelope/errorBody).
+// (internal/httpapi/errors.go errorEnvelope/errorBody). Violations are kept
+// raw and decoded on their own, so a violation this client cannot parse costs
+// only the per-field detail, never the code and message.
 type envelope struct {
 	Error struct {
-		Code      Code              `json:"code"`
-		Message   string            `json:"message"`
-		Details   map[string]string `json:"details,omitempty"`
-		RequestID string            `json:"request_id,omitempty"`
+		Code       Code              `json:"code"`
+		Message    string            `json:"message"`
+		Details    map[string]string `json:"details,omitempty"`
+		Violations json.RawMessage   `json:"violations,omitempty"`
+		RequestID  string            `json:"request_id,omitempty"`
 	} `json:"error"`
 }
 
@@ -235,6 +242,7 @@ func DecodeError(resp *http.Response) error {
 		Details:    env.Error.Details,
 		RequestID:  env.Error.RequestID,
 		HTTPStatus: resp.StatusCode,
+		Violations: decodeViolations(env.Error.Violations),
 	}
 }
 
