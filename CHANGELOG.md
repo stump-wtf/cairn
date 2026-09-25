@@ -15,12 +15,14 @@ Changes since `v0.1.0`, staged for the next patch release.
 
 - **GitHub OAuth login** — a provider interface for web authentication with a
   GitHub provider as the first implementation, and login-method provenance
-  recorded on sessions. (ADR-0017, #259)
+  recorded on sessions. (ADR-0019, SPEC-0013, #259)
 
 ### Fixed
 
 - CI checks out the PR head SHA rather than the branch ref, so required checks
   gate the exact commit under review. (#245)
+- CI's integration job probes Postgres over TCP, so the tests stop racing the
+  database's first-boot initialisation. (#353)
 - Self-hosting guide: corrected env secrets and the `CAIRN_API_TOKENS` compose
   passthrough. (#239)
 - Docs build: unlinked two repository-host references that broke the build, and
@@ -28,8 +30,25 @@ Changes since `v0.1.0`, staged for the next patch release.
 
 ### Added (records)
 
-- ADR-0020 + SPEC-0013 — single-binary runtime with embedded docs; ADR-0021 +
-  SPEC-0014 — Prometheus metrics led by storage and expiry. (#251, #254, #255)
+- ADR-0019 + SPEC-0013 — GitHub login for the web app shell; ADR-0020 +
+  SPEC-0015 — single-binary runtime with embedded docs; ADR-0021 + SPEC-0014 —
+  Prometheus metrics led by storage and expiry. (#251, #254, #255, #257)
+- The Operation Stumply design records, accepted: ADR-0022 + SPEC-0016
+  (annotation and trace lifecycle events), ADR-0023 + SPEC-0017 (secret
+  redaction at ingest), ADR-0024 (enrollment modes; GitHub sign-in fails
+  closed), ADR-0025 + SPEC-0019 (actionable validation errors), ADR-0026 +
+  SPEC-0020 (opt-in permanent retention), ADR-0027 + SPEC-0021 (structured
+  receipts), ADR-0028 + SPEC-0022 (search and export by tag), ADR-0029 +
+  SPEC-0023 (teams and tenancy). Design only; none of it is implemented in this
+  release. (#360)
+
+### Removed
+
+- The repo-root production deploy path: `DEPLOY.md`, `docker-compose.prod.yml`
+  and `deploy/Caddyfile`. The prod compose never forwarded `CAIRN_API_TOKENS`,
+  `CAIRN_OIDC_*` or `CAIRN_GITHUB_*`, so it rejected every authenticated
+  caller. The self-hosting guide is now the one documented deploy path, and
+  `.env.example` lists the sign-in variables. (#362)
 
 ## [0.1.0] - 2026-09-12
 
