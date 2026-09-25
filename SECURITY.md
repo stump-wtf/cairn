@@ -20,7 +20,7 @@ Please include:
 - the steps to reproduce, and what an attacker gains.
 
 Never send real credentials, even in a private report. That covers API tokens,
-OAuth or session cookies, webhook ingest URLs, and the contents of anyone
+OAuth or session cookies, webhook ingress URLs, and the contents of anyone
 else's artifacts. Use `<redacted>` or a throwaway instance.
 
 ## Supported versions
