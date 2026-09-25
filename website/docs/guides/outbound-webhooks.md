@@ -23,6 +23,10 @@ Cairn sends an event after a new **single-body artifact** (markdown, code, image
 or a new **bundle** is saved, whether it came from the REST API, the CLI, or an agent
 over MCP. Creating a trace or a webhook endpoint doesn't send one.
 
+Comments, reactions and closed runs are never sent to these targets. The targets are
+chosen by whoever runs the instance, not by the owner of the artifact, so those events
+are reserved for subscriptions that artifact owners set up themselves.
+
 The event goes out in the background. It never slows down or fails the create request,
 even if every target is down.
 
@@ -47,7 +51,9 @@ its content:
     "actor_id": "you@example.com",
     "expires_at": "2026-09-18T17:04:05Z",
     "on_behalf_of": "claude-code/2.1.0",
-    "tags": ["handoff", "lane:m", "reply:cairn-comment"]
+    "tags": ["handoff", "lane:m", "reply:cairn-comment"],
+    "actor_kind": "agent",
+    "auth": "oauth"
   }
 }
 ```
@@ -66,8 +72,14 @@ its content:
 | `data.expires_at` | When the artifact expires |
 | `data.on_behalf_of` | For artifacts created over MCP, the client's self-reported name and version |
 | `data.tags` | The creator's [tags](../product/tags.md), if any; routing hints, never authorization |
+| `data.actor_kind` | `human` if the creator signed in with a browser session, `agent` for every token (MCP OAuth, personal access tokens, API tokens). Cairn works this out from the credential; no request field can set it |
+| `data.auth` | How the creator signed in: `session`, `oauth`, `pat`, or `api_token` |
 
-Empty optional fields are left out of the body.
+Empty optional fields are left out of the body. New fields are only ever added at the
+end of `data`, so a consumer that ignores unknown keys keeps working.
+
+Gate trust on `actor_kind` and `auth`, never on `on_behalf_of` or tags: those two are
+whatever the client said.
 
 Because the event includes the title and a working link, whatever receives it can open
 the artifact. That's one more reason to keep secrets out of titles and bodies.
@@ -78,7 +90,7 @@ Every delivery also carries these headers:
 |---|---|
 | `Content-Type` | `application/json` |
 | `User-Agent` | `cairn-outboundhook/1` |
-| `X-Cairn-Event` | `artifact.created` |
+| `X-Cairn-Event` | The same value as `kind` in the body: always `artifact.created` for these targets |
 | `X-Cairn-Event-Id` | The same value as `event_id` in the body |
 | `X-Cairn-Signature` | `sha256=` and the lowercase hex HMAC-SHA256 of the raw body, keyed with the instance's secret. It's left out when the instance has no secret. |
 
