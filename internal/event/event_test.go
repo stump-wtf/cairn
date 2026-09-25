@@ -28,6 +28,27 @@ func TestEventKindRegistry(t *testing.T) {
 	}
 }
 
+// TestRegisteredKindsMatchesRegistry pins that the exported list and the
+// Registered predicate cannot drift: every listed kind is registered, none is
+// listed twice, and the list is as long as the registry, so a kind added to
+// one and not the other fails here.
+func TestRegisteredKindsMatchesRegistry(t *testing.T) {
+	kinds := RegisteredKinds()
+	seen := map[Kind]bool{}
+	for _, k := range kinds {
+		if !k.Registered() || k.Reserved() {
+			t.Errorf("RegisteredKinds lists %q: Registered=%v Reserved=%v", k, k.Registered(), k.Reserved())
+		}
+		if seen[k] {
+			t.Errorf("RegisteredKinds lists %q twice", k)
+		}
+		seen[k] = true
+	}
+	if len(kinds) != len(registered) {
+		t.Errorf("RegisteredKinds has %d kinds, the registry has %d", len(kinds), len(registered))
+	}
+}
+
 // TestActorKindValid pins that only the two derivable kinds are valid: an
 // empty kind means nobody derived one, and a caller must not act on it.
 func TestActorKindValid(t *testing.T) {

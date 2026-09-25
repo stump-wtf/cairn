@@ -60,6 +60,16 @@ var registered = map[Kind]bool{
 // not (SPEC-0016 EV-1 "Unknown kind never emitted").
 func (k Kind) Registered() bool { return registered[k] }
 
+// RegisteredKinds returns every emittable kind, in registry order. It is the
+// closed set a per-kind counter or a subscription filter validates against;
+// the reserved kinds are not in it (SPEC-0016 EV-1).
+func RegisteredKinds() []Kind {
+	return []Kind{
+		ArtifactCreated, CommentCreated, ReactionAdded, ReactionRemoved,
+		RunClosed, ArtifactRetained, ArtifactReleased, ArtifactDeleted,
+	}
+}
+
 // Reserved reports whether k is a name held back for a future route (EV-1).
 func (k Kind) Reserved() bool { return k == CommentEdited || k == CommentDeleted }
 
