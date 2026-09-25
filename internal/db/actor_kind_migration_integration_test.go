@@ -183,7 +183,7 @@ func isCheckViolation(err error) bool {
 }
 
 // TestActorKindMigrationOverExistingRows is SPEC-0016 "Migration over existing
-// rows": pre-existing rows gain actor_kind = '' and stay unique under the new
+// rows": pre-existing rows gain an empty actor_kind and stay unique under the new
 // key, the old key is gone (found by its columns, not an assumed name), and
 // the same actor may now hold one row per kind.
 func TestActorKindMigrationOverExistingRows(t *testing.T) {
