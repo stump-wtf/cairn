@@ -254,31 +254,44 @@ func (s *Server) handleGetHookRequestBody(w http.ResponseWriter, r *http.Request
 }
 
 // parseHookListQuery reads and bounds the `before`/`limit` list query params, a
-// malformed value being validation_failed rather than silently ignored.
+// malformed value being validation_failed rather than silently ignored. Both
+// are checked, so a request with two bad values hears about both.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-4, VE-6
 func parseHookListQuery(r *http.Request) (before int64, limit int, err error) {
+	var bad []*errs.Invalid
 	if v := r.URL.Query().Get("before"); v != "" {
-		before, err = strconv.ParseInt(v, 10, 64)
-		if err != nil || before < 0 {
-			return 0, 0, errs.Validationf("before must be a non-negative integer seq")
+		n, perr := strconv.ParseInt(v, 10, 64)
+		if perr != nil || n < 0 {
+			bad = append(bad, errs.Violate("before", errs.LocQuery, errs.ReasonInvalidFormat,
+				errs.WithValue(v), errs.WithExpect("a non-negative integer seq")))
 		}
+		before = n
 	}
 	if v := r.URL.Query().Get("limit"); v != "" {
-		var n int
-		n, err = strconv.Atoi(v)
-		if err != nil || n < 0 {
-			return 0, 0, errs.Validationf("limit must be a non-negative integer")
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 0 {
+			bad = append(bad, errs.Violate("limit", errs.LocQuery, errs.ReasonInvalidFormat,
+				errs.WithValue(v), errs.WithExpect("a non-negative integer")))
 		}
 		limit = n
+	}
+	if inv := errs.Join(bad...); inv != nil {
+		return 0, 0, inv
 	}
 	return before, limit, nil
 }
 
 // parseSeq parses the {seq} path param as a positive int64, a malformed value
 // being validation_failed rather than a uniform-looking not-found.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-6
 func parseSeq(r *http.Request) (int64, error) {
-	seq, err := strconv.ParseInt(chi.URLParam(r, "seq"), 10, 64)
+	raw := chi.URLParam(r, "seq")
+	seq, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || seq <= 0 {
-		return 0, errs.Validationf("seq must be a positive integer")
+		return 0, errs.Violate("seq", errs.LocPath, errs.ReasonInvalidFormat,
+			errs.WithValue(raw), errs.WithExpect("a positive integer"))
 	}
 	return seq, nil
 }

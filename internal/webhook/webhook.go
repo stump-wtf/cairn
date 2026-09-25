@@ -17,6 +17,8 @@
 package webhook
 
 import (
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/stump-wtf/cairn/internal/artifact"
@@ -73,7 +75,12 @@ func (in EndpointInput) validate() error {
 	case in.ExpiresAt.IsZero():
 		return errs.Validationf("webhook: expiry is required")
 	case in.RequestCap < 0:
-		return errs.Validationf("webhook: request cap must not be negative")
+		// The one caller-supplied field here: a typed violation (SPEC-0019
+		// VE-1, VE-6). The checks above are server-derived invariants a client
+		// cannot cause, so they stay bare (ADR-0025 non-goal).
+		return fmt.Errorf("webhook: request cap must not be negative: %w",
+			errs.Violate("request_cap", errs.LocBody, errs.ReasonNotPositive, errs.WithValue(strconv.Itoa(in.RequestCap)),
+				errs.WithExpect(fmt.Sprintf("a non-negative number of requests (0 takes the default of %d)", DefaultRequestCap))))
 	}
 	return nil
 }
