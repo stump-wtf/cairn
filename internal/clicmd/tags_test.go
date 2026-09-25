@@ -2,6 +2,7 @@ package clicmd
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,14 +27,15 @@ func TestParseTagFlags(t *testing.T) {
 		{"none", nil, nil, false},
 		{"repeated", []string{"handoff", "lane:auto"}, []string{"handoff", "lane:auto"}, false},
 		{"comma list", []string{"handoff, lane:s", "issue:stump.wtf/cairn#42"}, []string{"handoff", "lane:s", "issue:stump.wtf/cairn#42"}, false},
-		{"server decides case", []string{"Handoff"}, []string{"Handoff"}, false},
+		{"ascii case folded", []string{"Handoff,size:M"}, []string{"handoff", "size:m"}, false},
+		{"only ascii folded", []string{"Ärger:X", "lane m"}, []string{"Ärger:x", "lane m"}, false},
 		{"empty flag", []string{""}, nil, true},
 		{"empty item", []string{"a,,b"}, nil, true},
 		{"trailing comma", []string{"handoff,"}, nil, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseTagFlags(tc.raw)
+			got, err := parseTagFlags(tc.raw, io.Discard)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("parseTagFlags(%q) = %q, want an error", tc.raw, got)
