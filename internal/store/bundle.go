@@ -33,33 +33,90 @@ type CreateBundleInput struct {
 	Tags []string
 }
 
+// MaxBundleMembers bounds a bundle's member count. Every member is spooled
+// and staged before the bundle commits, so without a bound the count, not the
+// per-member upload cap, would decide what one request can hold.
+const MaxBundleMembers = 256
+
+// membersField is the caller-facing name of a bundle's member list.
+const membersField = "members"
+
+// MemberField names one member's sub-field ("name" or "content") the way every
+// surface reports it: members[i].name.
+func MemberField(i int, part string) string {
+	return fmt.Sprintf("%s[%d].%s", membersField, i, part)
+}
+
+// MemberNames checks bundle member names in member order: each must be
+// non-empty and unique within the bundle. The multipart create and
+// CreateBundle share it, so both report a bad name identically.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-4; SPEC-0002 REQ "Bundles with N
+// Members"
+type MemberNames struct {
+	seen map[string]struct{}
+}
+
+// Check reports member i's name as a violation at loc, or nil when it is valid.
+func (m *MemberNames) Check(i int, name string, loc errs.Location) *errs.Invalid {
+	if name == "" {
+		return errs.Violate(MemberField(i, "name"), loc, errs.ReasonRequired)
+	}
+	if _, dup := m.seen[name]; dup {
+		return errs.Violate(MemberField(i, "name"), loc, errs.ReasonDuplicate, errs.WithValue(name))
+	}
+	if m.seen == nil {
+		m.seen = map[string]struct{}{}
+	}
+	m.seen[name] = struct{}{}
+	return nil
+}
+
+// MemberTooLarge is the violation for member i's content over the upload cap.
+// The content is never echoed (SPEC-0019 VE-3).
+func MemberTooLarge(i int, loc errs.Location, limit int64) *errs.Invalid {
+	return errs.Violate(MemberField(i, "content"), loc, errs.ReasonTooLarge, errs.WithLimit(limit, errs.UnitBytes))
+}
+
+// TooManyMembers is the violation for a bundle of more than MaxBundleMembers.
+func TooManyMembers(loc errs.Location) *errs.Invalid {
+	return errs.Violate(membersField, loc, errs.ReasonTooMany, errs.WithLimit(MaxBundleMembers, errs.UnitCount))
+}
+
+// validate checks the input before any member streams. The member list and the
+// title are the caller's, and every bad name is reported, not only the first
+// (SPEC-0019 VE-4). Provenance, access and expiry are server-derived, so a gap
+// there is an internal error rather than a client violation.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-4; SPEC-0002 REQ "Bundles with N
+// Members"
 func (in CreateBundleInput) validate() error {
 	switch {
-	case len(in.Members) == 0:
-		return errs.Validationf("bundle: at least one member is required")
 	case in.Provenance.Channel == "":
-		return errs.Validationf("bundle: provenance channel is required")
+		return errors.New("bundle: provenance channel is required")
 	case in.Provenance.ActorID == "":
-		return errs.Validationf("bundle: provenance actor is required")
+		return errors.New("bundle: provenance actor is required")
 	case in.Access.OwnerID == "":
-		return errs.Validationf("bundle: access owner is required")
+		return errors.New("bundle: access owner is required")
 	case in.Access.Visibility == "":
-		return errs.Validationf("bundle: access visibility is required")
+		return errors.New("bundle: access visibility is required")
 	case in.ExpiresAt.IsZero():
-		return errs.Validationf("bundle: expiry is required")
+		return errors.New("bundle: expiry is required")
+	case len(in.Members) == 0:
+		return errs.Violate(membersField, errs.LocBody, errs.ReasonRequired)
+	case len(in.Members) > MaxBundleMembers:
+		return TooManyMembers(errs.LocBody)
 	}
-	seen := map[string]struct{}{}
+	bad := []*errs.Invalid{artifact.CheckTitle(in.Title, "title", errs.LocBody)}
+	var names MemberNames
 	for i, m := range in.Members {
-		if m.Name == "" {
-			return errs.Validationf("bundle: member %d has an empty name", i)
-		}
 		if m.Body == nil {
-			return errs.Validationf("bundle: member %q has a nil body", m.Name)
+			return fmt.Errorf("bundle: member %d has a nil body", i)
 		}
-		if _, dup := seen[m.Name]; dup {
-			return errs.Validationf("bundle: duplicate member name %q", m.Name)
-		}
-		seen[m.Name] = struct{}{}
+		bad = append(bad, names.Check(i, m.Name, errs.LocBody))
+	}
+	if inv := errs.Join(bad...); inv != nil {
+		return inv
 	}
 	return nil
 }
@@ -106,14 +163,26 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 		}
 	}()
 
+	// A member over the upload cap does not stop the others streaming, so every
+	// oversize member is named in one rejection (SPEC-0019 VE-4). The cap is
+	// enforced as each streams, so a skipped member costs at most one byte past
+	// it.
 	var totalSize int64
+	var tooLarge []*errs.Invalid
 	for i, m := range in.Members {
 		sb, err := StageBlob(ctx, s.obj, m.Body, s.maxBytes, m.DeclaredMediaType)
+		if errors.Is(err, errs.ErrTooLarge) {
+			tooLarge = append(tooLarge, MemberTooLarge(i, errs.LocBody, s.maxBytes))
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("bundle: stream member %q: %w", m.Name, err)
 		}
 		staged = append(staged, stagedMember{ordinal: i, name: m.Name, blob: sb})
 		totalSize += sb.Size
+	}
+	if inv := errs.Join(tooLarge...); inv != nil {
+		return nil, fmt.Errorf("bundle: stream members: %w", inv)
 	}
 
 	art := &artifact.Artifact{

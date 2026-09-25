@@ -13,6 +13,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
 // CreateArtifactInput is the transport-agnostic create request. Provenance,
@@ -36,30 +37,51 @@ type CreateArtifactInput struct {
 	Tags []string
 }
 
-func (in CreateArtifactInput) validate() error {
+// ChecksumHeader is the REST create header that carries ExpectedSHA256. No
+// other surface sends a checksum, so a mismatch is reported on it.
+const ChecksumHeader = "X-Cairn-Sha256"
+
+// ChecksumMismatch is the violation for a body whose SHA-256 is not the one the
+// caller declared. It echoes the digest the caller sent (never the body), and
+// errors.Is(err, errs.ErrChecksumMismatch) still holds.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-2
+func ChecksumMismatch(expected string) *errs.Invalid {
+	return errs.Violate(ChecksumHeader, errs.LocHeader, errs.ReasonChecksum,
+		errs.WithValue(expected)).Because(errs.ErrChecksumMismatch)
+}
+
+// validate checks the input before any body streams. What a caller controls
+// (the share type and the title) is reported as violations, together
+// (SPEC-0019 VE-4). The rest is server-derived, so a gap there is a bug in the
+// adapter, never the caller's fault: it is an internal error, not a client
+// violation.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-4; SPEC-0002 REQ "Artifact Aggregate
+// and Invariants"
+func (in CreateArtifactInput) validate(reg *sharetype.Registry) error {
 	switch {
-	case in.ShareType == "":
-		return errs.Validationf("create: missing share type")
-	case in.ShareType == artifact.TypeBundle:
-		// A bundle is a members-only type built via CreateBundle (NULL body +
-		// bundle_members). Accepting it on the single-body path would mint a
-		// malformed bundle (a body blob, no members), so reject a client-supplied
-		// bundle type here. SPEC-0002 REQ "Bundles with N Members".
-		return errs.Validationf("create: bundle artifacts must be created via the bundle (multipart) path")
 	case in.Provenance.Channel == "":
-		return errs.Validationf("create: provenance channel is required")
+		return errors.New("create: provenance channel is required")
 	case in.Provenance.ActorID == "":
-		return errs.Validationf("create: provenance actor is required")
+		return errors.New("create: provenance actor is required")
 	case in.Access.OwnerID == "":
-		return errs.Validationf("create: access owner is required")
+		return errors.New("create: access owner is required")
 	case in.Access.Visibility == "":
-		return errs.Validationf("create: access visibility is required")
+		return errors.New("create: access visibility is required")
 	case in.ExpiresAt.IsZero():
-		return errs.Validationf("create: expiry is required")
+		return errors.New("create: expiry is required")
 	case in.Body == nil:
-		return errs.Validationf("create: nil body")
+		return errors.New("create: nil body")
 	}
-	return nil
+	// A client-supplied bundle type is refused (not_allowed): a bundle is a
+	// members-only type built via CreateBundle (NULL body + bundle_members), and
+	// accepting it here would mint a malformed bundle (a body blob, no
+	// members). SPEC-0002 REQ "Bundles with N Members".
+	return errs.JoinErrors(
+		reg.CheckCreateType(in.ShareType, "type", errs.LocBody),
+		artifact.CheckTitle(in.Title, "title", errs.LocBody),
+	)
 }
 
 // CreateArtifact streams the body to storage with checksum verification and
@@ -71,7 +93,7 @@ func (in CreateArtifactInput) validate() error {
 // SPEC-0002 REQ "Streaming Upload with Checksum Verification",
 // SPEC-0002 REQ "Database Operation Standards"
 func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*artifact.Artifact, error) {
-	if err := in.validate(); err != nil {
+	if err := in.validate(s.registry); err != nil {
 		return nil, err
 	}
 	// Normalized before the body streams, so a bad tag costs nothing;
@@ -102,7 +124,7 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	// 2. Verify a client-declared checksum, if one was provided.
 	if in.ExpectedSHA256 != "" && !strings.EqualFold(in.ExpectedSHA256, staged.SHA256) {
 		return nil, fmt.Errorf("create: expected %s got %s: %w",
-			in.ExpectedSHA256, staged.SHA256, errs.ErrChecksumMismatch)
+			in.ExpectedSHA256, staged.SHA256, ChecksumMismatch(in.ExpectedSHA256))
 	}
 
 	// Decide previewability at ingest from the share type + sniffed/declared

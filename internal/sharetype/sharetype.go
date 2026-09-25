@@ -114,6 +114,44 @@ func (r *Registry) Registered(key artifact.ShareType) bool {
 	return ok
 }
 
+// CheckCreateType validates the share type a caller declared for a single-body
+// create, reporting on the caller's own field and location. A bundle is
+// not_allowed, since it is built from several files rather than one body; a
+// key the registry does not know is unknown_value, naming the keys it does. It
+// returns nil for a registered, single-body-creatable type.
+//
+// Resolution stays total for a stored type (an old row whose type was since
+// unregistered still resolves to the generic file handler); this only refuses
+// a new artifact a caller declared with a type no handler exists for.
+//
+// Governing: ADR-0002, ADR-0025, SPEC-0019 VE-1, VE-2; SPEC-0002 REQ "Bundles
+// with N Members"
+func (r *Registry) CheckCreateType(key artifact.ShareType, field string, loc errs.Location) *errs.Invalid {
+	switch {
+	case key == "":
+		return errs.Violate(field, loc, errs.ReasonRequired)
+	case key == artifact.TypeBundle:
+		return errs.Violate(field, loc, errs.ReasonNotAllowed, errs.WithValue(string(key)),
+			errs.WithExpect("a bundle is created by sending several files in one multipart upload"))
+	case !r.Registered(key):
+		return errs.Violate(field, loc, errs.ReasonUnknownValue, errs.WithValue(string(key)),
+			errs.WithLimit(r.creatableTypes(), ""))
+	}
+	return nil
+}
+
+// creatableTypes lists, sorted and comma-separated, the keys CheckCreateType
+// accepts.
+func (r *Registry) creatableTypes() string {
+	var keys []string
+	for _, t := range r.Types() {
+		if t.Key() != artifact.TypeBundle {
+			keys = append(keys, string(t.Key()))
+		}
+	}
+	return strings.Join(keys, ", ")
+}
+
 // DecidePreview decides, at ingest, the effective share type and previewability
 // for a single body. A body is previewable only when its declared type is
 // registered, a viewer exists for the type/media pair, and the body is within

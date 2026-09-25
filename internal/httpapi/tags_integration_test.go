@@ -174,7 +174,7 @@ func TestIntegrationTagsRESTRoundTrip(t *testing.T) {
 		t.Fatalf("read tags = %q, want %q", got.Tags, want)
 	}
 
-	plainID := createArtifact(t, srv.URL, "text", "alice", "plain")
+	plainID := createArtifact(t, srv.URL, "file", "alice", "plain")
 	all := []string{art.ID, plainID}
 	slices.Sort(all)
 	if got := binIDs(t, srv.URL, "alice", ""); !slices.Equal(got, all) {

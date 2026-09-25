@@ -85,7 +85,7 @@ func TestIntegrationArtifactCreateEmitsSignedWebhook(t *testing.T) {
 	t.Cleanup(func() { cancel(); <-done })
 
 	srv := testServer(t, Config{}, opts)
-	id := createArtifact(t, srv.URL, "text", "joestump", "hello webhook world")
+	id := createArtifact(t, srv.URL, "file", "joestump", "hello webhook world")
 
 	ev := recv.wait(t)
 	var body struct {
@@ -127,7 +127,7 @@ func TestIntegrationArtifactCreateEmitsSignedWebhook(t *testing.T) {
 // creation behaves exactly as before — the store-level nil guard.
 func TestIntegrationNoEmitterIsInert(t *testing.T) {
 	srv := testServer(t, Config{}, store.Options{})
-	id := createArtifact(t, srv.URL, "text", "joestump", "no emitter")
+	id := createArtifact(t, srv.URL, "file", "joestump", "no emitter")
 	if id == "" {
 		t.Fatal("creation failed without emitter")
 	}
