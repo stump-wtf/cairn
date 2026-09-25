@@ -49,6 +49,11 @@ cat prompt.md | cairn --tag handoff --tag lane:auto,size:m
 cairn add prompt.md context.log --tag handoff --tag repo:stump.wtf/cairn
 ```
 
+The CLI is the one client that fixes case for you: it lower-cases a `--tag` value that
+contains an uppercase letter, and warns on stderr (`cairn: warning: tag "size:M" sent as
+"size:m"`). It changes nothing else, and the server still rejects uppercase from every
+other client. See [Errors](./errors.md#uppercase).
+
 **REST:** on `POST /v1/artifacts`, send `X-Cairn-Tags: handoff,lane:auto`, repeated
 `?tag=` parameters, or both. Each value may be a comma-separated list. A multipart
 create also accepts repeated `tag` form fields.
