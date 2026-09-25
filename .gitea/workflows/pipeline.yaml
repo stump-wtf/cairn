@@ -555,8 +555,10 @@ jobs:
       # Exported to the build as DOCS_URL. garage-pages-deploy slugifies the
       # owner — dots to dashes — so stump.wtf serves as stump-wtf; passing it
       # here means the deploy target and the URL the bundle bakes into its
-      # canonical links cannot drift apart. docusaurus.config.ts carries the
-      # same value as its default, so a local build is not wrong either.
+      # canonical links cannot drift apart. docusaurus.config.ts does NOT
+      # default to this host: an unconfigured build advertises the public
+      # origin, and a Pages-shaped DOCS_URL alone is what bases this bundle
+      # at /cairn/ (website/scripts/site-location.mjs).
       site_url: https://stump-wtf.pages.stump.rocks
     secrets: inherit
 
