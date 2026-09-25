@@ -554,3 +554,23 @@ if (typeof module !== 'undefined' && module.exports) {
     initShareDialog();
   }
 })();
+
+// Redaction notice (SPEC-0017 RD-9, "Accessibility Requirements"). The server
+// renders the owner's post-create notice, with its text, inside a polite live
+// region. A live region's initial content is not announced, so once the page
+// settles the text is cleared and set again, which is.
+(function () {
+  function announceRedaction() {
+    var live = document.querySelector('[data-redaction-notice]');
+    if (!live) return;
+    var text = live.textContent;
+    live.textContent = '';
+    setTimeout(function () { live.textContent = text; }, 250);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', announceRedaction);
+  } else {
+    announceRedaction();
+  }
+})();

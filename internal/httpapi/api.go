@@ -538,6 +538,9 @@ type artifactResponse struct {
 	// re-deriving it from expires_at against its own clock skew.
 	ExpiresIn        string `json:"expires_in"`
 	ExpiresInSeconds int64  `json:"expires_in_seconds"`
+	// OwnerRedaction is the ingest scan outcome, set only for the owner and
+	// omitted for everyone else (SPEC-0017 RD-9, see redaction.go).
+	OwnerRedaction
 }
 
 type provenanceView struct {

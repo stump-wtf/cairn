@@ -673,3 +673,28 @@ body.landing { display: flex; flex-direction: column; align-items: center; justi
 .account-facts dt { color: var(--t6); font: 400 11px var(--mono); }
 .account-facts dd { margin: 0; color: var(--t2); font: 400 13px var(--sans); }
 .account-signout-btn { margin-top: 18px; }
+
+/* Owner-only redaction badge and post-create notice (SPEC-0017 RD-9). The
+   badge is a native details/summary disclosure (focus ring from the global
+   :focus-visible rule); the pop-over is its content. */
+.redaction-badge { position: relative; }
+.redaction-badge > summary {
+  list-style: none; cursor: pointer;
+  font: 500 11px var(--mono); color: var(--yellow);
+  background: rgba(227,179,65,.12); border: 1px solid var(--border);
+  padding: 3px 8px; border-radius: var(--radius-chip);
+}
+.redaction-badge > summary::-webkit-details-marker { display: none; }
+.redaction-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; min-width: 220px;
+  background: var(--well); border: 1px solid var(--border); border-radius: 7px;
+  padding: 10px 12px; color: var(--t2); font: 400 12px var(--sans);
+}
+.redaction-pop-h { margin: 0 0 6px; color: var(--t4); }
+.redaction-rules { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.redaction-rules code { font: 400 11.5px var(--mono); color: var(--t1); }
+.redaction-rule-count { color: var(--t5); font: 400 11px var(--mono); }
+.redaction-notice {
+  margin: 0; padding: 7px 16px; font: 400 12px var(--sans);
+  color: var(--yellow); background: rgba(227,179,65,.08); border-bottom: 1px solid var(--border);
+}

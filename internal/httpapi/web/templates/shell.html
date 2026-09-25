@@ -13,6 +13,21 @@
   <span class="type-badge" data-type="{{.TypeLabel}}" title="{{.TypeName}}">{{.Badge}}</span>
   <span class="artifact-title">{{.Title}}</span>
   <span class="artifact-meta">{{.MetaLine}}</span>
+  {{/* Owner-only redaction badge (SPEC-0017 RD-9). A native details/summary
+  is the disclosure: keyboard operable with no script, so it needs nothing the
+  CSP build forbids. The summary shows only a glyph and a number, so it carries
+  the full phrase as its accessible name. */}}
+  {{with .Redaction}}{{if gt .Count 0}}
+  <details class="redaction-badge" data-redaction-badge>
+    <summary aria-label="{{.Label}}" title="{{.Label}}"><span aria-hidden="true">⛨ {{.Count}}</span></summary>
+    <div class="redaction-pop">
+      <p class="redaction-pop-h">Replaced with [REDACTED] at ingest, by rule:</p>
+      <ul class="redaction-rules" data-redaction-rules>
+        {{range .Rules}}<li><code>{{.Rule}}</code> <span class="redaction-rule-count">× {{.Count}}</span></li>{{end}}
+      </ul>
+    </div>
+  </details>
+  {{end}}{{end}}
 
   <div class="header-spacer"></div>
 
@@ -34,6 +49,14 @@
 </header>
 
 {{template "share-dialog" .ShareDialog}}
+
+{{/* The post-create notice that content was masked, in a polite live region
+(SPEC-0017 "Accessibility Requirements"). It is rendered with its text, so a
+reader without script still sees it; app.js re-sets the text once the page
+settles so a screen reader announces it. */}}
+{{with .Redaction}}{{if .Notice}}
+<p class="redaction-notice" role="status" aria-live="polite" data-redaction-notice>{{.Notice}}</p>
+{{end}}{{end}}
 
 <main class="shell-grid" x-bind:class="panelClass">
   <article id="body" class="body-slot{{if .Bundle}} body-slot-bundle{{end}}{{if .Hook}} body-slot-hook{{end}}" tabindex="-1">
@@ -59,6 +82,16 @@
         {{if .Provenance.Expires}}<dt>expires</dt><dd data-provenance-expires>{{.Provenance.Expires}}</dd>{{end}}
       </dl>
     </section>
+
+    {{with .Redaction}}
+    <section class="panel-section" aria-labelledby="redaction-h" data-redaction>
+      <h2 class="panel-h" id="redaction-h">Secret scan</h2>
+      <dl class="facts">
+        <dt>status</dt><dd data-redaction-status>{{.Status}}</dd>
+        <dt>redacted</dt><dd data-redaction-count>{{.Label}}</dd>
+      </dl>
+    </section>
+    {{end}}
 
     {{if .PanelFields}}
     <section class="panel-section" aria-labelledby="type-h">

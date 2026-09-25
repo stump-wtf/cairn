@@ -815,7 +815,8 @@ func (s *Server) mcpReadArtifact(ctx context.Context, req *mcp.CallToolRequest, 
 	if err != nil {
 		return nil, mcpReadOutput{}, s.mcpToolErr(ctx, "artifact_read", err)
 	}
-	out := mcpReadOutput{artifactResponse: s.toArtifactResponse(art)}
+	// The owner also sees the scan outcome (SPEC-0017 RD-9).
+	out := mcpReadOutput{artifactResponse: s.toViewerArtifactResponse(art, mcpActor(req.Extra))}
 
 	if art.ShareType == artifact.TypeBundle && in.Path == "" {
 		members, err := s.store.ListMembers(ctx, id)
@@ -1018,7 +1019,7 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 	if err != nil {
 		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", err)
 	}
-	return nil, mcpCreateOutput{artifactResponse: s.toArtifactResponse(art)}, nil
+	return nil, mcpCreateOutput{artifactResponse: s.toOwnerArtifactResponse(art)}, nil
 }
 
 // --- bundle_create ---------------------------------------------------------------
@@ -1105,7 +1106,7 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 	if err != nil {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", err)
 	}
-	out := mcpBundleCreateOutput{artifactResponse: s.toArtifactResponse(art)}
+	out := mcpBundleCreateOutput{artifactResponse: s.toOwnerArtifactResponse(art)}
 	created, err := s.store.ListMembers(ctx, art.PublicID)
 	if err != nil {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", err)
