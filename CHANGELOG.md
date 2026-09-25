@@ -18,6 +18,17 @@ reaches 1.0.
   password login is disabled whenever OIDC or GitHub is configured, and answers
   `404` (A6). Anonymous and other readers see the creator's display handle, not
   their email (A18).
+- **Explicit ownership** (SPEC-0023 REQ "Owner Model", #327). Every owner and
+  author is a user id: artifacts carry `owner_user_id` (or, once teams exist,
+  `owner_team_id`, never both) and `created_by_user_id`; comments, reactions,
+  personal access tokens, OAuth grants, MCP sessions and web sessions carry
+  `user_id`. The free-form `owner_id` / `actor_id` strings are gone, and every
+  ownership check compares user ids. Wire fields named `actor_id` keep their
+  name and are rendered from the user row: its verified email, else the name it
+  was known by. A first sign-in whose **verified** email equals a pre-upgrade
+  owner string claims that owner's artifacts; an unverified one never does.
+  `CAIRN_API_TOKENS` entries and the dev logins resolve their actor to a user
+  the same way, so they keep the Bin they had.
 
 ### Upgrade notes
 
@@ -28,6 +39,14 @@ reaches 1.0.
   that email. Confirm your provider marks the operator's email verified.
 - **`CAIRN_DEV_INSECURE_BEARER_AUTH` with an `https` `CAIRN_BASE_URL` now fails
   boot** (A21). It was never safe there.
+- **Back up the database before upgrading past `0018_owner_columns`.** It
+  resolves every owner and actor string to a user and drops the strings in one
+  transaction; there is no in-database way back, so rollback is a restore from
+  that backup. Before dropping anything it compares every owner's Bin; if any
+  would change, the whole migration rolls back, the old schema is left intact,
+  and `cairnd` refuses to start with `ownership backfill would change the Bin
+  of owner <owner>` naming the first mismatch. Report that error rather than
+  editing rows by hand.
 
 ## [0.1.1] - Unreleased
 
