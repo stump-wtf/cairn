@@ -143,13 +143,14 @@ func TestMCPEventActorIsAlwaysAgent(t *testing.T) {
 	}
 }
 
-// TestCommentActorIgnoresAssertedKind is SPEC-0016 EV-4 "Client cannot assert
-// the kind" at the REST comment handler's seam: a hostile body is decoded
-// exactly as handleComment decodes it, and the actor it produces carries the
-// principal's derived kind and auth whatever the body claims. on_behalf_of is
-// kept: it is the one asserted, display-only field.
-func TestCommentActorIgnoresAssertedKind(t *testing.T) {
-	const hostile = `{"anchor_type":"artifact","body":"lgtm",` +
+// TestBodyActorIgnoresAssertedKind is SPEC-0016 EV-4 "Client cannot assert
+// the kind" at the REST comment and reaction handlers' seam: a hostile body is
+// decoded exactly as handleComment and handleReact decode it, and the actor it
+// produces carries the principal's derived kind and auth whatever the body
+// claims. on_behalf_of is kept: it is the one asserted, display-only field,
+// populated for reactions exactly as for comments (EV-6).
+func TestBodyActorIgnoresAssertedKind(t *testing.T) {
+	const hostile = `{"anchor_type":"artifact","body":"lgtm","emoji":"👍",` +
 		`"actor_kind":"human","auth":"session","ambient":true,"on_behalf_of":"claude-code/1.0"}`
 	cases := []struct {
 		name     string
@@ -161,19 +162,27 @@ func TestCommentActorIgnoresAssertedKind(t *testing.T) {
 		{"API token", Principal{ActorID: "alice", Channel: artifact.ChannelAPI, Auth: event.AuthAPIToken}, event.KindAgent},
 		{"session", Principal{ActorID: "alice", Channel: artifact.ChannelWeb, Ambient: true, Auth: event.AuthSession}, event.KindHuman},
 	}
+	decode := func(t *testing.T, path string, dst any) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(hostile))
+		if err := (&Server{}).decodeAnnotationBody(httptest.NewRecorder(), r, dst); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodPost, "/v1/artifacts/ABCDEFGH/comments", strings.NewReader(hostile))
-			var req commentRequest
-			if err := (&Server{}).decodeAnnotationBody(httptest.NewRecorder(), r, &req); err != nil {
-				t.Fatalf("decode: %v", err)
-			}
-			a := commentActor(&tc.p, req)
-			if a.Kind != tc.wantKind || a.Auth != tc.p.Auth {
-				t.Errorf("(auth, kind) = (%q, %q), want (%q, %q)", a.Auth, a.Kind, tc.p.Auth, tc.wantKind)
-			}
-			if a.OnBehalfOf != "claude-code/1.0" {
-				t.Errorf("OnBehalfOf = %q, want the asserted display value", a.OnBehalfOf)
+			var creq commentRequest
+			decode(t, "/v1/artifacts/ABCDEFGH/comments", &creq)
+			var rreq reactionRequest
+			decode(t, "/v1/artifacts/ABCDEFGH/reactions", &rreq)
+			for surface, obo := range map[string]string{"comment": creq.OnBehalfOf, "reaction": rreq.OnBehalfOf} {
+				a := bodyActor(&tc.p, obo)
+				if a.Kind != tc.wantKind || a.Auth != tc.p.Auth {
+					t.Errorf("%s: (auth, kind) = (%q, %q), want (%q, %q)", surface, a.Auth, a.Kind, tc.p.Auth, tc.wantKind)
+				}
+				if a.OnBehalfOf != "claude-code/1.0" {
+					t.Errorf("%s: OnBehalfOf = %q, want the asserted display value", surface, a.OnBehalfOf)
+				}
 			}
 		})
 	}

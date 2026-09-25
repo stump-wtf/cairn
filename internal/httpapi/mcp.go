@@ -1586,6 +1586,7 @@ type mcpCommentOutput struct {
 	AnchorKey  string         `json:"anchor_key"`
 	ParentID   *int64         `json:"parent_id,omitempty"`
 	ActorID    string         `json:"actor_id"`
+	ActorKind  string         `json:"actor_kind"`
 	OnBehalfOf string         `json:"on_behalf_of,omitempty"`
 	Body       string         `json:"body"`
 	CreatedAt  time.Time      `json:"created_at"`
@@ -1597,7 +1598,7 @@ func toMCPCommentOutput(c annotation.Comment) mcpCommentOutput {
 	r := toCommentResponse(c)
 	return mcpCommentOutput{
 		ID: r.ID, AnchorType: r.AnchorType, AnchorRef: anchorRefObject(r.AnchorRef), AnchorKey: r.AnchorKey,
-		ParentID: r.ParentID, ActorID: r.ActorID, OnBehalfOf: r.OnBehalfOf, Body: r.Body,
+		ParentID: r.ParentID, ActorID: r.ActorID, ActorKind: r.ActorKind, OnBehalfOf: r.OnBehalfOf, Body: r.Body,
 		CreatedAt: r.CreatedAt, EditedAt: r.EditedAt, Deleted: r.Deleted,
 	}
 }
@@ -1647,6 +1648,8 @@ type mcpReactOutput struct {
 	AnchorRef  map[string]any `json:"anchor_ref,omitempty"`
 	Emoji      string         `json:"emoji"`
 	ActorID    string         `json:"actor_id"`
+	ActorKind  string         `json:"actor_kind"`
+	OnBehalfOf string         `json:"on_behalf_of,omitempty"`
 	CreatedAt  time.Time      `json:"created_at"`
 }
 
@@ -1654,16 +1657,16 @@ func toMCPReactOutput(r annotation.Reaction) mcpReactOutput {
 	v := toReactionResponse(r)
 	return mcpReactOutput{
 		ID: v.ID, AnchorType: v.AnchorType, AnchorRef: anchorRefObject(v.AnchorRef), Emoji: v.Emoji,
-		ActorID: v.ActorID, CreatedAt: v.CreatedAt,
+		ActorID: v.ActorID, ActorKind: v.ActorKind, OnBehalfOf: v.OnBehalfOf, CreatedAt: v.CreatedAt,
 	}
 }
 
 // mcpReact is the artifact_react tool handler (SPEC-0007 REQ "Comment &
 // React"): it records an idempotent reaction via the same annotation core the
-// REST adapter calls, with provenance stamping the model actor + channel
-// `via MCP`. React carries no on_behalf_of field on the wire today (REST
-// parity: [reactionRequest] has none either), so the model actor is recorded
-// implicitly by the channel alone.
+// REST adapter calls, with provenance stamping the human principal as actor,
+// the connected client's identification as on_behalf_of, and channel
+// `via MCP` — exactly as artifact_comment does (SPEC-0016 EV-6, SPEC-0009 REQ
+// "Actor Captures Human and On-Behalf-Of Model"). The kind is always agent.
 func (s *Server) mcpReact(ctx context.Context, req *mcp.CallToolRequest, in mcpReactInput) (*mcp.CallToolResult, mcpReactOutput, error) {
 	if !mcpScopes(req.Extra)[oauth.ScopeAnnotationsWrite] {
 		return nil, mcpReactOutput{}, s.mcpScopeErr(ctx, "artifact_react", oauth.ScopeAnnotationsWrite)

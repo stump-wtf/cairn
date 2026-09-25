@@ -128,7 +128,7 @@ func TestServiceReactToggle(t *testing.T) {
 	assertCountsMatchAggregates(t, pool, artID)
 
 	// Tallies group per (anchor, emoji) with the caller's "did I react" flag.
-	tallies, err := svc.ReactionTallies(ctx, "SVCAAAA1", "u2")
+	tallies, err := svc.ReactionTallies(ctx, "SVCAAAA1", Viewer{ID: "u2", Kind: event.KindAgent})
 	if err != nil {
 		t.Fatalf("tallies: %v", err)
 	}
@@ -370,22 +370,22 @@ func TestServiceCommentThreading(t *testing.T) {
 	}
 
 	// Edits are author-only and stamp edited_at.
-	if err := svc.EditComment(ctx, "SVCAAAA4", root1.ID, "u2", "hijack"); !errors.Is(err, errs.ErrForbidden) {
+	if err := svc.EditComment(ctx, "SVCAAAA4", root1.ID, agent("u2"), "hijack"); !errors.Is(err, errs.ErrForbidden) {
 		t.Fatalf("foreign edit = %v, want ErrForbidden", err)
 	}
-	if err := svc.EditComment(ctx, "SVCAAAA4", root1.ID, "u1", "root one, edited"); err != nil {
+	if err := svc.EditComment(ctx, "SVCAAAA4", root1.ID, agent("u1"), "root one, edited"); err != nil {
 		t.Fatalf("edit: %v", err)
 	}
 
 	// Soft delete is author-only, tombstones the root, keeps the reply, and
 	// decrements the rollup in the same transaction.
-	if err := svc.DeleteComment(ctx, "SVCAAAA4", root1.ID, "u2"); !errors.Is(err, errs.ErrForbidden) {
+	if err := svc.DeleteComment(ctx, "SVCAAAA4", root1.ID, agent("u2")); !errors.Is(err, errs.ErrForbidden) {
 		t.Fatalf("foreign delete = %v, want ErrForbidden", err)
 	}
-	if err := svc.DeleteComment(ctx, "SVCAAAA4", root1.ID, "u1"); err != nil {
+	if err := svc.DeleteComment(ctx, "SVCAAAA4", root1.ID, agent("u1")); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if err := svc.DeleteComment(ctx, "SVCAAAA4", root1.ID, "u1"); !errors.Is(err, errs.ErrNotFound) {
+	if err := svc.DeleteComment(ctx, "SVCAAAA4", root1.ID, agent("u1")); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("double delete = %v, want ErrNotFound", err)
 	}
 
@@ -442,7 +442,7 @@ func TestServicePinCount(t *testing.T) {
 		t.Fatalf("counts = (%d,%d,%d), want (1,2,2)", r, c, p)
 	}
 
-	if err := svc.DeleteComment(ctx, "SVCAAAA5", pin.ID, "u2"); err != nil {
+	if err := svc.DeleteComment(ctx, "SVCAAAA5", pin.ID, agent("u2")); err != nil {
 		t.Fatalf("delete pin comment: %v", err)
 	}
 	if removed, err := svc.Unreact(ctx, "SVCAAAA5", sharetype.AnchorImageRegion, region, "🔥", agent("u1")); err != nil || !removed {
