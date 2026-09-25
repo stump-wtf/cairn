@@ -37,7 +37,7 @@ variable in your shell does nothing for the CLI, and the reverse is also true.
 | Name | Read by | What it is |
 |---|---|---|
 | `CAIRN_API_TOKENS` | the server | The list of static bearer credentials the server accepts, `secret:actor[:role]`. See [First run: bootstrap a credential](#first-run-bootstrap-a-credential). |
-| `CAIRN_TOKEN` | the `cairn` CLI | The one bearer token the CLI sends, the same as `--token`. The MCP client configs in [Connect your agent](./connect-your-agent.md) expand it from your shell too. |
+| `CAIRN_TOKEN` | the `cairn` CLI | The one bearer token the CLI sends, the same as `--token`. The MCP client configs in [Connect your agent](./connect-your-agent.md) expand it from your shell too, but `/mcp` accepts only a personal access token or an OAuth token there, never a `CAIRN_API_TOKENS` secret. |
 | `CAIRN_BASE_URL` | the server | The public origin the server builds short links and its OIDC redirect URI from. |
 | `CAIRN_URL` | the `cairn` CLI | The server the CLI talks to, the same as `--url`. It defaults to the hosted service, so a self-hoster sets it. |
 | `CAIRN_OUTBOUND_WEBHOOK_URLS` | the server | Where the server sends `artifact.created` events. |
@@ -45,8 +45,9 @@ variable in your shell does nothing for the CLI, and the reverse is also true.
 | `CAIRN_API_TOKEN` (singular) | nothing | A common slip. You want `CAIRN_API_TOKENS` on the server, or `CAIRN_TOKEN` for the CLI. |
 
 The pairs connect like this: one secret in the server's `CAIRN_API_TOKENS` is
-the value a client puts in `CAIRN_TOKEN`, and the server's `CAIRN_BASE_URL` is
-the address a client puts in `CAIRN_URL`.
+the value a REST or CLI client puts in `CAIRN_TOKEN`, and the server's
+`CAIRN_BASE_URL` is the address a client puts in `CAIRN_URL`. The MCP endpoint
+is the exception: it rejects `CAIRN_API_TOKENS` secrets with `401`.
 
 ## Configuration
 
@@ -336,7 +337,8 @@ starts with the bootstrap credential below.
 ## First run: bootstrap a credential
 
 A fresh instance has no users, and minting a personal access token needs a
-browser session, which needs OIDC. Until sign-in works, the only credential
+browser session, which needs a sign-in provider such as
+[OIDC](#sign-in-oidc). Until sign-in works, the only credential
 that exists is one you put in `CAIRN_API_TOKENS` yourself. The server logs
 this WARN at startup while it has neither:
 
@@ -384,6 +386,11 @@ curl -sS https://cairn.example.com/v1/whoami -H "Authorization: Bearer $CAIRN_TO
 If you use the `cairn` CLI, also set `CAIRN_URL=https://cairn.example.com`,
 since the CLI talks to the hosted service unless told otherwise. Then
 `cairn whoami` prints `✓ authorized as you@example.com · via API`.
+
+The bootstrap secret works on the REST API under `/v1` and with the `cairn`
+CLI. It does not work on `/mcp`, which answers `401` to any static
+`CAIRN_API_TOKENS` secret: an agent connecting over MCP needs a personal access
+token or OAuth, so it waits for sign-in.
 
 **4. Replace it once sign-in works.** When OIDC is configured, sign in, mint
 personal access tokens in Settings → **API tokens**, then delete the
@@ -459,7 +466,10 @@ Nothing is stored for a rejected request.
 
 **6. Connect an agent over MCP.** Any MCP client speaking Streamable HTTP can
 reach `<base>/mcp`. The verification used a bare JSON-RPC exchange — what a
-real client does for you — with the token from step 2:
+real client does for you — with a personal access token. The bootstrap secret
+from step 2 gets `401` here, because `/mcp` accepts only a personal access
+token or an OAuth token, so on a fresh instance this step waits until sign-in
+works:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8080/mcp \

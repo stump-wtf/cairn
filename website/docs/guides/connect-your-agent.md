@@ -30,7 +30,8 @@ To mint a token, see [Mint a personal access token](./first-share.md#mint-a-pers
 Running your own instance? Replace `https://cairn.stump.wtf` below with your server's
 address. The `CAIRN_TOKEN` these configs expand is a client-side variable, not the server's
 `CAIRN_API_TOKENS`; [Which variable is which](./self-hosting.md#which-variable-is-which)
-sorts out the look-alike names.
+sorts out the look-alike names. A static `CAIRN_API_TOKENS` secret does not work here:
+`/mcp` accepts only a personal access token or an OAuth token.
 
 ## Claude Code
 
