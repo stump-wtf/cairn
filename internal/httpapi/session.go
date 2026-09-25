@@ -11,7 +11,6 @@ import (
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/session"
-	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // The minimal web session surface (SPEC-0001, ADR-0004). A browser logs in once
@@ -184,22 +183,23 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=1&next="+url.QueryEscape(next), http.StatusSeeOther)
 		return
 	}
-	// The dev login still gets a user row, keyed on the typed name under the
-	// dev issuer and never linked by email: it proves nothing about any
-	// mailbox. Its session acts as the typed name, as it always has.
-	var userID string
-	if s.users != nil {
-		u, err := s.users.Resolve(r.Context(), user.Identity{Issuer: user.DevIssuer, Subject: actor, Handle: user.HandleFromEmail(actor)})
-		if err != nil {
-			s.log.ErrorContext(r.Context(), "web: resolve dev user failed", "error", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		userID = u.ID
+	// The dev login resolves the typed name the way a CAIRN_API_TOKENS entry
+	// does (user.Store.ResolveActor): the user that answers to it, else a new
+	// unverified one. It never creates an identity or verifies an email, and
+	// is disabled wherever a real provider is configured (loginEnabled).
+	if s.users == nil {
+		s.renderWebError(w, r, errs.ErrNotFound)
+		return
+	}
+	u, err := s.users.ResolveActor(r.Context(), actor)
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "web: resolve dev user failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
 	// Dev-password sessions carry no provider provenance: empty issuer and
 	// subject (SPEC-0012 records provenance only for real IdP logins).
-	sess, err := s.sessions.Create(r.Context(), "", "", actor, userID, s.cfg.SessionTTL)
+	sess, err := s.sessions.Create(r.Context(), "", "", u.Actor, u.ID, s.cfg.SessionTTL)
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "web: create session failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

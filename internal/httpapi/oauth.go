@@ -558,7 +558,7 @@ func (s *Server) handleAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		s.redirectAuthorizeError(w, r, req.redirectURI, "access_denied", req.state)
 		return
 	}
-	code, err := s.oauth.CreateAuthCode(r.Context(), req.client.ID, p.ActorID, req.redirectURI, approved, req.challenge)
+	code, err := s.oauth.CreateAuthCode(r.Context(), req.client.ID, p.UserID, req.redirectURI, approved, req.challenge)
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "oauth: create auth code failed", "client_id", req.client.ID, "error", err)
 		s.redirectAuthorizeError(w, r, req.redirectURI, "server_error", req.state)
@@ -737,6 +737,7 @@ func (a *OAuthAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 	}
 	return &Principal{
 		ActorID: ident.ActorID,
+		UserID:  ident.UserID,
 		Channel: artifact.ChannelAPI,
 		IsAgent: true,
 		Scopes:  scopes,

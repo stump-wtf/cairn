@@ -133,12 +133,13 @@ func (s *Server) handleCreateHook(w http.ResponseWriter, r *http.Request) {
 		Title:      req.Title,
 		RequestCap: req.RequestCap,
 		Provenance: artifact.Provenance{
-			ActorID:    p.ActorID,
-			OnBehalfOf: req.OnBehalfOf,
-			Channel:    p.Channel,
-			CapturedAt: now,
+			CreatedByUserID: p.UserID,
+			ActorID:         p.ActorID,
+			OnBehalfOf:      req.OnBehalfOf,
+			Channel:         p.Channel,
+			CapturedAt:      now,
 		},
-		Access:    artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
+		Access:    artifact.AccessPolicy{OwnerUserID: p.UserID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 	})
 	if err != nil {

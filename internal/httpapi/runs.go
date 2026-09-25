@@ -169,15 +169,16 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		TokenCount: req.TokenCount,
 		StartedAt:  started,
 		Provenance: artifact.Provenance{
-			ActorID:    p.ActorID,
-			OnBehalfOf: req.OnBehalfOf,
+			CreatedByUserID: p.UserID,
+			ActorID:         p.ActorID,
+			OnBehalfOf:      req.OnBehalfOf,
 			// The run already names its model; mirror it onto provenance so a
 			// trajectory reads the same as every other artifact.
 			Model:      req.Model,
 			Channel:    p.Channel,
 			CapturedAt: now,
 		},
-		Access:    artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
+		Access:    artifact.AccessPolicy{OwnerUserID: p.UserID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 		Spans:     toSpanInputs(req.Spans),
 	}
@@ -221,7 +222,7 @@ func (s *Server) handleAppendSpans(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	if _, err := s.traj.AppendSpans(r.Context(), id, p.ActorID, toSpanInputs(req.Spans)); err != nil {
+	if _, err := s.traj.AppendSpans(r.Context(), id, p.UserID, toSpanInputs(req.Spans)); err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
@@ -246,7 +247,7 @@ func (s *Server) handleCloseRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	run, err := s.traj.CloseRun(r.Context(), id, p.ActorID)
+	run, err := s.traj.CloseRun(r.Context(), id, p.UserID)
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return

@@ -104,7 +104,7 @@ func (s *Server) handleReact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reaction, created, err := s.annot.React(
-		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, p.ActorID)
+		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, p.UserID)
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id, "anchor_type": req.AnchorType})
 		return
@@ -133,7 +133,7 @@ func (s *Server) handleUnreact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.annot.Unreact(
-		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, p.ActorID); err != nil {
+		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, p.UserID); err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id, "anchor_type": req.AnchorType})
 		return
 	}
@@ -155,7 +155,7 @@ func (s *Server) handleUnreactByID(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, errs.Validationf("reaction id must be an integer"), map[string]string{"id": id})
 		return
 	}
-	if err := s.annot.UnreactByID(r.Context(), id, rid, p.ActorID); err != nil {
+	if err := s.annot.UnreactByID(r.Context(), id, rid, p.UserID); err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
@@ -169,7 +169,7 @@ func (s *Server) handleUnreactByID(w http.ResponseWriter, r *http.Request) {
 // I react" flag; an anonymous link read gets all-false.
 func (s *Server) handleListReactions(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	tallies, err := s.annot.ReactionTallies(r.Context(), id, s.optionalActor(r))
+	tallies, err := s.annot.ReactionTallies(r.Context(), id, s.optionalUserID(r))
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
@@ -207,7 +207,7 @@ func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
 		AnchorType: sharetype.Anchor(req.AnchorType),
 		AnchorRef:  req.AnchorRef,
 		ParentID:   req.ParentID,
-		ActorID:    p.ActorID,
+		UserID:     p.UserID,
 		OnBehalfOf: req.OnBehalfOf,
 		Body:       req.Body,
 	})
@@ -252,12 +252,12 @@ func (s *Server) decodeAnnotationBody(w http.ResponseWriter, r *http.Request, ds
 	return nil
 }
 
-// optionalActor resolves the caller's actor id when the read carries valid
+// optionalUserID resolves the caller's user id when the read carries valid
 // credentials, or "" for an anonymous link read. It never rejects: annotation
 // reads are gated by the artifact's link capability, not by authentication, so
 // an absent or invalid credential simply yields the anonymous "did I react"
 // view (all false).
-func (s *Server) optionalActor(r *http.Request) string {
+func (s *Server) optionalUserID(r *http.Request) string {
 	if s.auth == nil {
 		return ""
 	}
@@ -265,7 +265,7 @@ func (s *Server) optionalActor(r *http.Request) string {
 	if err != nil || p == nil {
 		return ""
 	}
-	return p.ActorID
+	return p.UserID
 }
 
 func toReactionResponse(r annotation.Reaction) reactionResponse {

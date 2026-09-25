@@ -35,7 +35,7 @@ func fixtureArtifact(shareType artifact.ShareType, hasBody bool) *artifact.Artif
 		Provenance: artifact.Provenance{
 			ActorID: "joe", Channel: artifact.ChannelMCP, CapturedAt: time.Now().Add(-2 * time.Hour),
 		},
-		Access:    artifact.AccessPolicy{OwnerID: "joe", Visibility: artifact.VisibilityLink},
+		Access:    artifact.AccessPolicy{OwnerUserID: "joe", Visibility: artifact.VisibilityLink},
 		ExpiresAt: time.Now().Add(5 * 24 * time.Hour),
 		CreatedAt: time.Now().Add(-2 * time.Hour),
 	}

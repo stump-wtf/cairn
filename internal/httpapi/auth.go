@@ -10,6 +10,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // Scopes gate capabilities across every authenticated surface. They are the MVP
@@ -49,12 +50,14 @@ func humanScopes() map[string]bool {
 // authenticated surface — never from a client claim (SPEC-0002 "Channel is
 // server-derived"). Scopes gate capabilities such as sharing:manage, which
 // agents do not receive (SPEC-0002 "Agent cannot broaden sharing").
+//
+// UserID is the users row this principal acts for, and every ownership and
+// authorship check compares it (SPEC-0023 REQ "Owner Model"). ActorID is that
+// user as rendered on the wire (provenance, actor_id fields); it is display
+// text, never an ownership key. Every authenticator that can reach a store
+// sets both; a principal without a UserID owns and creates nothing.
 type Principal struct {
 	ActorID string
-	// UserID is the users row this principal acts for (SPEC-0023 REQ "Users and
-	// Identities"), set by the session authenticator for sessions minted since
-	// users existed. Empty for bearer credentials until ownership moves to
-	// user ids (#327).
 	UserID  string
 	Channel artifact.Channel
 	IsAgent bool
@@ -183,6 +186,9 @@ type TokenAuthenticator struct {
 	// grants maps sha256(secret) → the credential. The digest key means the map
 	// stores no plaintext secret and a lookup is a single constant-cost hash.
 	grants map[[sha256.Size]byte]APIToken
+	// users resolves each token's configured actor to its user (nil on
+	// storeless wirings, whose principals then carry no user id).
+	users *user.Store
 }
 
 // NewTokenAuthenticator builds a TokenAuthenticator over the given static
@@ -216,12 +222,38 @@ func (a *TokenAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 	if grant.IsAgent {
 		scopes = agentScopes()
 	}
-	return &Principal{
+	p := &Principal{
 		ActorID: grant.ActorID,
 		Channel: artifact.ChannelAPI,
 		IsAgent: grant.IsAgent,
 		Scopes:  scopes,
-	}, nil
+	}
+	if err := resolveActorUser(r.Context(), a.users, p); err != nil {
+		return nil, errs.ErrUnauthorized
+	}
+	return p, nil
+}
+
+// resolveActorUser binds a string-keyed principal (a CAIRN_API_TOKENS entry
+// or the dev bearer) to the user its actor names, in the order the ownership
+// migration resolved legacy owner strings, so the credential keeps the Bin it
+// had before (user.Store.ResolveActor). The principal then renders as that
+// user. Static tokens are reworked to name an operator's user by #333; until
+// then this is the whole of their change. A nil store leaves the principal
+// without a user: it can authenticate but owns and creates nothing.
+//
+// Governing: ADR-0029, SPEC-0023 REQ "Owner Model", REQ "Migration to
+// Explicit Ownership".
+func resolveActorUser(ctx context.Context, users *user.Store, p *Principal) error {
+	if users == nil {
+		return nil
+	}
+	u, err := users.ResolveActor(ctx, p.ActorID)
+	if err != nil {
+		return err
+	}
+	p.UserID, p.ActorID = u.ID, u.Actor
+	return nil
 }
 
 // DevActorAuthenticator is the INSECURE development-only Authenticator: it trusts
@@ -235,23 +267,31 @@ func (a *TokenAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 //
 // Governing: ADR-0004 (the seam OAuth replaces; this dev stub is never a prod
 // credential).
-type DevActorAuthenticator struct{}
+type DevActorAuthenticator struct {
+	// users resolves the typed actor to its user (nil on storeless wirings).
+	users *user.Store
+}
 
 // Authenticate implements Authenticator. The bearer token is taken verbatim as
-// the actor id; the channel is fixed server-side to the REST surface's `via API`
-// so provenance is still not client-spoofable even under this dev shortcut. The
-// grant is the agent scope set (no sharing:manage) — a dev caller is never more
-// privileged than an agent.
-func (DevActorAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
+// the actor id and resolved to that actor's user; the channel is fixed
+// server-side to the REST surface's `via API` so provenance is still not
+// client-spoofable even under this dev shortcut. The grant is the agent scope
+// set (no sharing:manage) — a dev caller is never more privileged than an
+// agent.
+func (a DevActorAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 	token := bearerToken(r)
 	if token == "" {
 		return nil, errs.ErrUnauthorized
 	}
-	return &Principal{
+	p := &Principal{
 		ActorID: token,
 		Channel: artifact.ChannelAPI,
 		Scopes:  agentScopes(),
-	}, nil
+	}
+	if err := resolveActorUser(r.Context(), a.users, p); err != nil {
+		return nil, errs.ErrUnauthorized
+	}
+	return p, nil
 }
 
 // chainAuthenticator tries each Authenticator in order, returning the first

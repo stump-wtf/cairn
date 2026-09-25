@@ -78,7 +78,7 @@ func (s *Server) handleListMCPSessions(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, listMCPSessionsResponse{Sessions: []mcpSessionView{}})
 		return
 	}
-	sessions, err := s.mcpSessions.List(r.Context(), p.ActorID, maxMCPSessionListLimit)
+	sessions, err := s.mcpSessions.List(r.Context(), p.UserID, maxMCPSessionListLimit)
 	if err != nil {
 		s.writeError(w, r, err, nil)
 		return
@@ -109,7 +109,7 @@ func (s *Server) handleEndMCPSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	sess, err := s.mcpSessions.Get(r.Context(), p.ActorID, id)
+	sess, err := s.mcpSessions.Get(r.Context(), p.UserID, id)
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
@@ -118,6 +118,6 @@ func (s *Server) handleEndMCPSession(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	s.log.InfoContext(r.Context(), "mcp: session ended", "id", id, "owner", p.ActorID, "grant_id", sess.GrantID)
+	s.log.InfoContext(r.Context(), "mcp: session ended", "id", id, "owner", p.UserID, "grant_id", sess.GrantID)
 	w.WriteHeader(http.StatusNoContent)
 }

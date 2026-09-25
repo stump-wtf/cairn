@@ -303,7 +303,9 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	// backs both the standalone API wiring and the session-aware adapter, so the
 	// web binary authenticates browser sessions AND verified bearer tokens.
 	if auth == nil {
-		bearers := chainAuthenticator{NewTokenAuthenticator(cfg.APITokens)}
+		static := NewTokenAuthenticator(cfg.APITokens)
+		static.users = users
+		bearers := chainAuthenticator{static}
 		if patSvc != nil {
 			bearers = append(bearers, &PATAuthenticator{svc: patSvc})
 		}
@@ -311,7 +313,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 			bearers = append(bearers, &OAuthAuthenticator{svc: oauthSvc})
 		}
 		if cfg.DevInsecureBearerAuth {
-			bearers = append(bearers, DevActorAuthenticator{})
+			bearers = append(bearers, DevActorAuthenticator{users: users})
 		}
 		var bearer Authenticator = bearers
 		if sessions != nil {

@@ -9,27 +9,22 @@ import (
 )
 
 // Sign-in identities resolve to user rows (SPEC-0023 REQ "Users and
-// Identities"). Until ownership moves to user ids (#327, REQ "Owner Model"),
-// artifacts are still owned by a string, so every sign-in also yields the
-// OWNER KEY its session acts as. The key is derived from the user row, never
-// from what the provider typed into this sign-in:
+// Identities"), and every owner and actor reference is that user's id (REQ
+// "Owner Model"). What a session shows as its actor is rendered from the user
+// row (user.ActorSQL), never from what the provider typed into this sign-in:
+// a verified primary email, else the user's actor key (a legacy owner string,
+// or a subject that is not email-shaped), else "user:<id>". So a Pocket ID and
+// a GitHub identity carrying the same verified email are one user with one
+// Bin, and no identity reaches an email's Bin without verifying that email.
 //
-//   - a user with a verified primary email is keyed on that email, so a Pocket
-//     ID and a GitHub identity carrying the same verified email share one key
-//     and one Bin;
-//   - a user without one (an OIDC identity whose email is absent or
-//     unverified) is keyed on its provider subject, which is what these
-//     identities were keyed on before; an email-shaped subject is not trusted
-//     that way and falls back to the user id, so no identity can land on an
-//     email-keyed Bin without a verified email.
-//
-// Governing: ADR-0029, SPEC-0023 REQ "Users and Identities".
+// Governing: ADR-0029, SPEC-0023 REQ "Users and Identities", REQ "Owner
+// Model".
 
 // errNoUserStore reports a sign-in on a wiring with no users store.
 var errNoUserStore = errors.New("httpapi: no users store configured")
 
-// resolveSignIn resolves a provider identity to its user and the owner key
-// the session acts as.
+// resolveSignIn resolves a provider identity to its user and the actor the
+// session renders as.
 func (s *Server) resolveSignIn(ctx context.Context, id user.Identity) (*user.User, string, error) {
 	if s.users == nil {
 		return nil, "", errNoUserStore
@@ -38,18 +33,7 @@ func (s *Server) resolveSignIn(ctx context.Context, id user.Identity) (*user.Use
 	if err != nil {
 		return nil, "", err
 	}
-	return u, ownerKey(u, id.Subject), nil
-}
-
-// ownerKey is the interim string owner a user's sessions act as (see above).
-func ownerKey(u *user.User, subject string) string {
-	if u.PrimaryEmail != "" && u.EmailVerified {
-		return u.PrimaryEmail
-	}
-	if subject != "" && !strings.Contains(subject, "@") {
-		return subject
-	}
-	return "user:" + u.ID
+	return u, u.Actor, nil
 }
 
 // displayActors maps each actor string a page is about to show to what this

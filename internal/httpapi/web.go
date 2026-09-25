@@ -330,7 +330,7 @@ func (s *Server) renderShellFor(w http.ResponseWriter, r *http.Request, wantPref
 	if ok {
 		vm.Authenticated = true
 		vm.Actor = viewer.ActorID
-		vm.ShareDialog.IsOwner = viewer.ActorID == a.Access.OwnerID
+		vm.ShareDialog.IsOwner = a.Access.OwnedByUser(viewer.UserID)
 	}
 	s.maskActors(r.Context(), viewer, &vm.Provenance, vm.Comments)
 	vm.ShareDialog.Provenance.Actor = vm.Provenance.Actor
@@ -339,7 +339,7 @@ func (s *Server) renderShellFor(w http.ResponseWriter, r *http.Request, wantPref
 
 // optionalPrincipal resolves the caller's principal when the request carries
 // valid credentials (a session cookie or a bearer token), or reports false for
-// an anonymous link read. Like optionalActor it never rejects: the shell is a
+// an anonymous link read. Like optionalUserID it never rejects: the shell is a
 // link-capability read, so an unauthenticated viewer still sees the artifact.
 func (s *Server) optionalPrincipal(r *http.Request) (*Principal, bool) {
 	if s.auth == nil {
