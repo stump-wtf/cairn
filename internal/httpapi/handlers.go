@@ -110,15 +110,15 @@ func ttlTooLong(field string, loc errs.Location, raw string, max time.Duration) 
 }
 
 func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Principal) {
-	shareType := artifact.ShareType(firstNonEmpty(
-		r.URL.Query().Get("type"), r.Header.Get("X-Cairn-Type"), string(artifact.TypeFile)))
 	now := s.now()
 
-	// The TTL and every tag are checked together, so one rejection names all
-	// of them (SPEC-0019 VE-4).
+	// The TTL, share type, title and every tag are checked together, so one
+	// rejection names all of them (SPEC-0019 VE-4).
 	var tags tagSet
 	ttl, ttlErr := requestedTTL(r, s.cfg)
-	if err := errs.JoinErrors(ttlErr, tags.addFromRequest(r)); err != nil {
+	shareType, typeErr := s.requestedShareType(r)
+	title, titleErr := requestedTitle(r)
+	if err := errs.JoinErrors(ttlErr, typeErr, titleErr, tags.addFromRequest(r)); err != nil {
 		s.writeError(w, r, err, nil)
 		return
 	}
@@ -127,10 +127,10 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes+1)
 	art, err := s.store.CreateArtifact(r.Context(), store.CreateArtifactInput{
 		ShareType:         shareType,
-		Title:             firstNonEmpty(r.URL.Query().Get("title"), r.Header.Get("X-Cairn-Title")),
+		Title:             title,
 		Body:              body,
 		DeclaredMediaType: r.Header.Get("Content-Type"),
-		ExpectedSHA256:    r.Header.Get("X-Cairn-Sha256"),
+		ExpectedSHA256:    r.Header.Get(store.ChecksumHeader),
 		Provenance:        artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now},
 		Access:            artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
 		ExpiresAt:         now.Add(ttl),
@@ -154,21 +154,23 @@ type spooledFile struct {
 
 func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Principal, boundary string) {
 	if boundary == "" {
-		s.writeError(w, r, errs.Validationf("multipart: missing boundary"), nil)
+		s.writeError(w, r, errMissingBoundary(), nil)
 		return
 	}
 	// The TTL, header and query tags are checked with the form's own tag
-	// fields, so one rejection names every bad tag from every source (SPEC-0019
-	// VE-4). They are reported at the first file part, before any body is
-	// spooled.
+	// and title fields, so one rejection names every bad tag from every source
+	// (SPEC-0019 VE-4). They are reported at the first file part, before any
+	// body is spooled.
 	var tags tagSet
 	ttl, ttlErr := requestedTTL(r, s.cfg)
 	_ = tags.addFromRequest(r)
 	mr := multipart.NewReader(r.Body, boundary)
 
 	var (
-		title string
-		files []spooledFile
+		title    string
+		titleErr error
+		files    []spooledFile
+		parts    memberChecks
 	)
 	cleanup := func() {
 		for _, f := range files {
@@ -184,23 +186,30 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			break
 		}
 		if err != nil {
-			s.writeError(w, r, errs.Validationf("multipart: malformed body"), nil)
+			s.writeError(w, r, errMalformedMultipart(err), nil)
 			return
 		}
 		if part.FileName() == "" {
 			switch part.FormName() {
 			case "title":
-				b, _ := io.ReadAll(io.LimitReader(part, 4096))
-				title = string(b)
+				title, titleErr = readTitleField(part)
 			case "tag":
 				tags.addFormField(part)
 			}
 			_ = part.Close()
 			continue
 		}
-		if err := errs.JoinErrors(ttlErr, tags.err()); err != nil {
+		if err := errs.JoinErrors(ttlErr, titleErr, tags.err()); err != nil {
 			_ = part.Close()
 			s.writeError(w, r, err, nil)
+			return
+		}
+		// Past a bundle's member bound nothing more is spooled; the parts
+		// already seen are reported with the count (SPEC-0019 VE-4).
+		if parts.n == store.MaxBundleMembers {
+			_ = part.Close()
+			parts.add(part.FileName(), false, s.cfg.MaxUploadBytes)
+			s.writeError(w, r, parts.err(), nil)
 			return
 		}
 		tmp, err := os.CreateTemp("", "cairn-upload-*")
@@ -209,19 +218,24 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			return
 		}
 		// Copy at most MaxUploadBytes+1 so an oversize part is detected precisely.
-		n, copyErr := io.Copy(tmp, io.LimitReader(part, s.cfg.MaxUploadBytes+1))
+		src := &partReader{r: io.LimitReader(part, s.cfg.MaxUploadBytes+1)}
+		n, copyErr := io.Copy(tmp, src)
 		_ = part.Close()
 		if copyErr != nil {
 			_ = tmp.Close()
 			_ = os.Remove(tmp.Name())
-			s.writeError(w, r, copyErr, nil)
+			s.writeError(w, r, src.classify(copyErr), nil)
 			return
 		}
-		if n > s.cfg.MaxUploadBytes {
+		// An oversize part is dropped, not spooled, and the rest still are, so
+		// every bad member is named together (SPEC-0019 VE-4). Close already
+		// read the part through, so continuing costs no extra body.
+		tooLarge := n > s.cfg.MaxUploadBytes
+		parts.add(part.FileName(), tooLarge, s.cfg.MaxUploadBytes)
+		if tooLarge {
 			_ = tmp.Close()
 			_ = os.Remove(tmp.Name())
-			s.writeError(w, r, s.mapUploadErr(errs.ErrTooLarge), nil)
-			return
+			continue
 		}
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 			_ = tmp.Close()
@@ -232,13 +246,23 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		files = append(files, spooledFile{name: part.FileName(), media: part.Header.Get("Content-Type"), file: tmp, size: n})
 	}
 
-	if err := errs.JoinErrors(ttlErr, tags.err()); err != nil {
+	if err := errs.JoinErrors(ttlErr, titleErr, tags.err()); err != nil {
 		s.writeError(w, r, err, nil)
 		return
 	}
-	if len(files) == 0 {
-		s.writeError(w, r, errs.Validationf("multipart: no file parts"), nil)
+	switch {
+	case parts.n == 0:
+		s.writeError(w, r, errNoFileParts(), nil)
 		return
+	case parts.n == 1 && parts.oversize:
+		// A lone file is the artifact's body, so its oversize is the body's.
+		s.writeError(w, r, s.mapUploadErr(errs.ErrTooLarge), nil)
+		return
+	case parts.n > 1:
+		if err := parts.err(); err != nil {
+			s.writeError(w, r, err, nil)
+			return
+		}
 	}
 
 	now := s.now()
@@ -248,8 +272,13 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 
 	if len(files) == 1 {
 		f := files[0]
+		shareType, err := s.multipartShareType(r)
+		if err != nil {
+			s.writeError(w, r, err, nil)
+			return
+		}
 		art, err := s.store.CreateArtifact(r.Context(), store.CreateArtifactInput{
-			ShareType:         artifact.ShareType(firstNonEmpty(r.URL.Query().Get("type"), string(artifact.TypeFile))),
+			ShareType:         shareType,
 			Title:             firstNonEmpty(title, f.name),
 			Body:              f.file,
 			DeclaredMediaType: f.media,
