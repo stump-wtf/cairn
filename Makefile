@@ -54,11 +54,13 @@ lint: fmt-check vet
 verify-cli:
 	@scripts/verify-cli-artifact.sh $(CLI_BIN)
 
-# Tests for the release gates themselves: fixture dist/ directories the
-# archive verifier must pass or fail, each for its own reason. No Go build, so
-# it is cheap enough for every run.
+# Tests for the release scripts themselves (scripts/*.test.sh): fixtures each
+# gate must pass or fail, each for its own reason. No Go build, so it is cheap
+# enough for every run. A glob, so a new script's tests join by existing.
 test-scripts:
-	@scripts/verify-release-archives.test.sh
+	@set -e; n=0; for t in scripts/*.test.sh; do \
+		[ -e "$$t" ] || continue; echo "==> $$t"; "$$t"; n=$$((n + 1)); \
+	done; [ "$$n" -gt 0 ] || { echo "no scripts/*.test.sh found; nothing was tested"; exit 1; }
 
 # A local dry run of the whole release: both builds, both archives, the CLI
 # post hook, then the archive-composition check the release job runs before it
