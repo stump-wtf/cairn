@@ -27,6 +27,27 @@ and how to tell it worked.
 There is no external secret manager, no message broker, and no sidecar. One
 process, one database, one bucket.
 
+## Which variable is which
+
+Several names look alike but belong to different programs. The server,
+`cairnd`, reads its settings from its own environment. The `cairn` CLI reads
+different names, from the shell of whoever is running it. Setting a server
+variable in your shell does nothing for the CLI, and the reverse is also true.
+
+| Name | Read by | What it is |
+|---|---|---|
+| `CAIRN_API_TOKENS` | the server | The list of static bearer credentials the server accepts, `secret:actor[:role]`. See [First run: bootstrap a credential](#first-run-bootstrap-a-credential). |
+| `CAIRN_TOKEN` | the `cairn` CLI | The one bearer token the CLI sends, the same as `--token`. The MCP client configs in [Connect your agent](./connect-your-agent.md) expand it from your shell too. |
+| `CAIRN_BASE_URL` | the server | The public origin the server builds short links and its OIDC redirect URI from. |
+| `CAIRN_URL` | the `cairn` CLI | The server the CLI talks to, the same as `--url`. It defaults to the hosted service, so a self-hoster sets it. |
+| `CAIRN_OUTBOUND_WEBHOOK_URLS` | the server | Where the server sends `artifact.created` events. |
+| `CAIRN_OUTBOUND_WEBHOOK_SECRET` | the server | The secret the server signs those events with. A receiver checks signatures against the same value. |
+| `CAIRN_API_TOKEN` (singular) | nothing | A common slip. You want `CAIRN_API_TOKENS` on the server, or `CAIRN_TOKEN` for the CLI. |
+
+The pairs connect like this: one secret in the server's `CAIRN_API_TOKENS` is
+the value a client puts in `CAIRN_TOKEN`, and the server's `CAIRN_BASE_URL` is
+the address a client puts in `CAIRN_URL`.
+
 ## Configuration
 
 Everything comes from the environment; `cairnd` takes no flags. Every variable
@@ -42,7 +63,7 @@ is read from the `CAIRN_` namespace and nothing is ever loaded from a file.
 | `CAIRN_S3_BUCKET` | `cairn` | Bucket name; created on connect if missing. |
 | `CAIRN_S3_REGION` | `us-east-1` | Region string most S3 implementations accept. |
 | `CAIRN_S3_USE_SSL` | `false` | Set `true` when the endpoint speaks HTTPS. |
-| `CAIRN_API_TOKENS` | *(empty)* | Static bearer credentials for headless agents, comma-separated `secret:actor[:role]`. **Empty means the bearer surface accepts no tokens** — it fails closed. Real per-agent tokens come from OAuth or a personal access token minted in Settings. Wired through the compose file above; on the Docker path with no OIDC provider yet this is the only way to get a working credential. |
+| `CAIRN_API_TOKENS` | *(empty)* | Static bearer credentials for headless agents, comma-separated `secret:actor[:role]`. **Empty means the bearer surface accepts no tokens** — it fails closed. Real per-agent tokens come from OAuth or a personal access token minted in Settings. Wired through the compose file above; on the Docker path with no OIDC provider yet this is the only way to get a working credential. See [First run: bootstrap a credential](#first-run-bootstrap-a-credential). |
 | `CAIRN_OIDC_ISSUER` | *(empty)* | Issuer URL of your OIDC provider. **Its presence is the switch that turns OIDC on** and, just as importantly, turns the dev-password login off (below). |
 | `CAIRN_OIDC_CLIENT_ID` | `cairn` | Client id registered at your provider. |
 | `CAIRN_OIDC_CLIENT_SECRET` | *(empty)* | Client secret. The redirect URI is not configurable — it is always `<base>/auth/callback`. |
@@ -221,7 +242,9 @@ background workers came up.
 The one thing `docker compose up` cannot do is authenticate anybody. Without
 OIDC configured there is no interactive login, and without tokens nothing can
 call the API — see [Sign-in (OIDC)](#sign-in-oidc) and
-[Tokens for agents](#tokens-for-agents) before exposing the instance.
+[Tokens for agents](#tokens-for-agents) before exposing the instance. To get
+a first credential without an identity provider, see
+[First run: bootstrap a credential](#first-run-bootstrap-a-credential).
 
 ### As a binary
 
@@ -307,7 +330,71 @@ Two ways to authorize an agent, both documented in
 
 Minting a PAT is deliberately a browser-only action (Settings is
 session-authenticated and CSRF-guarded); there is no API to mint tokens with a
-token, by design.
+token, by design. Both paths need someone who can sign in, so a new instance
+starts with the bootstrap credential below.
+
+## First run: bootstrap a credential
+
+A fresh instance has no users, and minting a personal access token needs a
+browser session, which needs OIDC. Until sign-in works, the only credential
+that exists is one you put in `CAIRN_API_TOKENS` yourself. The server logs
+this WARN at startup while it has neither:
+
+```text
+no API tokens (CAIRN_API_TOKENS), no OIDC (CAIRN_OIDC_ISSUER), and no dev web login (CAIRN_DEV_LOGIN_PASSWORD) configured: all authenticated endpoints will reject every caller
+```
+
+**1. Generate a secret and give it to the server.** In the directory that
+holds `compose.yaml` and `.env`:
+
+```bash
+SECRET=$(openssl rand -hex 32)
+printf 'CAIRN_API_TOKENS=%s:you@example.com\n' "$SECRET" >> .env
+```
+
+The entry is `secret:actor`. Use the email address you will sign in with as
+the actor: today cairn names an OIDC user by the provider's `email` claim, so
+what you create now stays attributed to you afterwards. Append `:agent`
+(`secret:actor:agent`) for an agent-role token, which gets the three agent
+scopes and never `sharing:manage`. Several entries are separated by commas.
+
+**2. Recreate the server** so it reads the new value. `docker compose up -d`
+does that when `.env` changes; `docker compose restart` does not, because it
+keeps the old environment.
+
+```bash
+docker compose up -d
+```
+
+The WARN above is gone from `docker compose logs cairnd`. On the binary
+path, export `CAIRN_API_TOKENS` in the environment `cairnd` starts from and
+restart it instead.
+
+**3. Use it as `CAIRN_TOKEN`.** The server's secret is the client's token:
+
+```bash
+export CAIRN_TOKEN="$SECRET"
+curl -sS https://cairn.example.com/v1/whoami -H "Authorization: Bearer $CAIRN_TOKEN"
+```
+
+```json
+{"actor_id":"you@example.com","channel":"via API","authenticated":true}
+```
+
+If you use the `cairn` CLI, also set `CAIRN_URL=https://cairn.example.com`,
+since the CLI talks to the hosted service unless told otherwise. Then
+`cairn whoami` prints `✓ authorized as you@example.com · via API`.
+
+**4. Replace it once sign-in works.** When OIDC is configured, sign in, mint
+personal access tokens in Settings → **API tokens**, then delete the
+`CAIRN_API_TOKENS` line from `.env` and run `docker compose up -d` again. The
+old secret answers `401` from then on.
+
+Treat the bootstrap token as the long-lived secret it is. It never expires and
+cannot be revoked from Settings; it works until you remove it from the
+environment and recreate the server. `cairnd` keeps only its SHA-256 digest in
+memory, but the plaintext sits in your `.env` and in the container's
+environment, so protect that file like the token itself.
 
 ## Verify the whole loop
 
@@ -325,15 +412,15 @@ curl -sS http://127.0.0.1:8080/healthz
 ok
 ```
 
-**2. Sign in and mint a token.** With OIDC configured, sign in at `/login`
-in a browser, then Settings → **API tokens**. (The verification run used the
-dev-password login: the form posts `actor`, `password`, and the CSRF field
-the login page embeds — a browser does all of that for you.)
+**2. Get a token.** On a fresh instance, use the secret from
+[First run: bootstrap a credential](#first-run-bootstrap-a-credential). Once
+OIDC works, sign in at `/login` in a browser and mint one in Settings →
+**API tokens** instead. Either way, it goes in `CAIRN_TOKEN`.
 
 **3. Create an artifact over REST.**
 
 ```bash
-export CAIRN_TOKEN='cairn_pat_…'
+export CAIRN_TOKEN='…'   # the bootstrap secret, or a cairn_pat_… token
 
 curl -sS http://127.0.0.1:8080/v1/artifacts \
   -H "Authorization: Bearer $CAIRN_TOKEN" \
@@ -372,7 +459,7 @@ Nothing is stored for a rejected request.
 
 **6. Connect an agent over MCP.** Any MCP client speaking Streamable HTTP can
 reach `<base>/mcp`. The verification used a bare JSON-RPC exchange — what a
-real client does for you — with the PAT from step 2:
+real client does for you — with the token from step 2:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8080/mcp \
