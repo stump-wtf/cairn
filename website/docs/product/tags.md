@@ -150,14 +150,17 @@ shape depends on the credential:
 
 | Credential | `actor_id` |
 |---|---|
-| Web sign-in through your identity provider (OIDC), or an MCP client you authorized through OAuth | Your sign-in: the email your identity provider asserts, or its subject id when it sends no email, e.g. `you@example.com` |
-| Personal access token | The token's owner, the same value as their sign-in, e.g. `you@example.com` |
-| Static token from `CAIRN_API_TOKENS` | The actor configured for it in `secret:actor[:role]`, exactly as written |
+| Web sign-in through your identity provider (OIDC) | The email your identity provider asserts, or its subject id when it sends no email, e.g. `you@example.com` |
+| Web sign-in with GitHub, on a server that enables it | Your primary verified GitHub email, lowercased, e.g. `you@example.com`. Never your GitHub username |
+| An MCP client you authorized through OAuth | The sign-in you approved it from, as in the rows above |
+| Personal access token | The token's owner: the sign-in that created it, e.g. `you@example.com` |
+| Static token from `CAIRN_API_TOKENS` | The `actor` field of its `secret:actor[:role]` entry, with surrounding spaces trimmed |
 
 This matters for routing. A Switchboard rule that trusts handoffs by `actor_id` has to
 list the value Cairn records, so a rule written for a forge login such as `octocat`
-drops every handoff you create while signed in as `you@example.com`. Read the real value
-off a stored event before you write the rule.
+drops every handoff you create while signed in as `you@example.com`, even when you
+signed in with that GitHub account. Read the real value off a stored event before you
+write the rule.
 
 See [SPEC-0002](../specs/artifact-core-and-share-types/index.md) for the tag
 requirement and [SPEC-0012](../specs/outbound-webhooks/index.md) for the event
