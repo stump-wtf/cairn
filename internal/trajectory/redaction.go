@@ -145,9 +145,11 @@ func (s *Service) scanSpans(ctx context.Context, spans []SpanInput) ([]SpanInput
 // an output over the cap is a 413, and scanning it first would turn that into
 // a 422. The masked form is not held to the cap again (see spillOutputs).
 func (s *Service) checkOutputCaps(spans []SpanInput) error {
-	for _, sp := range spans {
+	for i, sp := range spans {
 		if int64(len(sp.Output)) > s.maxOutputBytes {
-			return fmt.Errorf("trajectory: span %q output: %w", sp.SpanID, errs.ErrTooLarge)
+			return fmt.Errorf("trajectory: span %q output: %w", sp.SpanID,
+				errs.Violate(spanField(i, "output"), errs.LocBody, errs.ReasonTooLarge,
+					errs.WithLimit(s.maxOutputBytes, errs.UnitBytes)))
 		}
 	}
 	return nil
