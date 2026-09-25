@@ -136,6 +136,21 @@ type Config struct {
 	// tokens replace this in #22.
 	APITokensRaw string
 
+	// Ingest redaction (ADR-0023, SPEC-0017 RD-4, RD-7, RD-8). There is
+	// deliberately no switch that turns scanning off.
+	//
+	// RedactionMaxScanBytes caps each scanned field (default 16 MiB).
+	// RedactionOversize is what happens to a text field over the cap: "reject"
+	// (the default) or "store_unscanned", a risky opt-in cairnd warns about at
+	// startup. RedactionRejectTypes lists the share types whose writes are
+	// refused rather than masked (default code,bundle). RedactionAllowlistFile
+	// names the operator's value-only allowlist TOML; a file that does not
+	// parse, or that names paths or commits, stops startup.
+	RedactionMaxScanBytes  int64
+	RedactionOversize      string
+	RedactionRejectTypes   []string
+	RedactionAllowlistFile string
+
 	// DevInsecureBearerAuth, when true, makes the API trust a raw bearer token AS
 	// the actor id with no verification. It is an INSECURE local-development
 	// shortcut that must never be enabled in production; the default is false, so
@@ -249,7 +264,37 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	c.HookEndpointRateBurst = int(hookEndpointBurst)
+	if err := loadRedaction(c); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// loadRedaction resolves the CAIRN_REDACTION_* settings (ADR-0023, SPEC-0017).
+// A value it does not recognise is a startup error, never a silent default:
+// these settings decide what may be stored with a credential in it.
+func loadRedaction(c *Config) error {
+	var err error
+	if c.RedactionMaxScanBytes, err = envInt64("CAIRN_REDACTION_MAX_SCAN_BYTES", 16<<20); err != nil {
+		return err
+	}
+	if c.RedactionMaxScanBytes <= 0 {
+		return fmt.Errorf("config CAIRN_REDACTION_MAX_SCAN_BYTES: must be positive, got %d", c.RedactionMaxScanBytes)
+	}
+	c.RedactionOversize = env("CAIRN_REDACTION_OVERSIZE", "reject")
+	switch c.RedactionOversize {
+	case "reject", "store_unscanned":
+	default:
+		return fmt.Errorf("config CAIRN_REDACTION_OVERSIZE: %q: must be reject or store_unscanned", c.RedactionOversize)
+	}
+	c.RedactionRejectTypes = nil
+	for _, raw := range strings.Split(env("CAIRN_REDACTION_REJECT_TYPES", "code,bundle"), ",") {
+		if t := strings.ToLower(strings.TrimSpace(raw)); t != "" {
+			c.RedactionRejectTypes = append(c.RedactionRejectTypes, t)
+		}
+	}
+	c.RedactionAllowlistFile = os.Getenv("CAIRN_REDACTION_ALLOWLIST_FILE")
+	return nil
 }
 
 // OIDCConfigured reports whether the OIDC relying-party settings are present —
