@@ -11,6 +11,15 @@
 // Governing: ADR-0006 (Unified Annotation Layer), ADR-0012 (backend contract),
 // SPEC-0006 REQ "Idempotent Reactions", REQ "Threaded Comments", REQ "Count
 // Aggregation", REQ "Cross-Surface Parity", REQ "Database Operation Standards".
+//
+// Ownership is per actor KIND as well as per actor id: an agent's bearer
+// token and its human's browser session share one actor_id, and must never
+// share, occupy or withdraw each other's annotations. Every row stores the
+// server-derived actor_kind; rows written before it was stored carry '' and
+// are never treated as human, and only the same actor_id removes them.
+//
+// Governing: ADR-0022 (per-kind idempotency), SPEC-0016 EV-6 "Per-Kind
+// Reaction and Comment Ownership".
 
 package annotation
 
@@ -81,13 +90,17 @@ func NewService(pool *pgxpool.Pool, reg *sharetype.Registry) *Service {
 	return &Service{pool: pool, reg: reg, now: time.Now}
 }
 
-// Reaction is one stored reaction row.
+// Reaction is one stored reaction row. ActorKind is the server-derived kind
+// of the credential that wrote it, or "" for a row written before kinds were
+// stored (never human). OnBehalfOf is provenance parity with comments.
 type Reaction struct {
-	ID        int64
-	Anchor    Anchor
-	Emoji     string
-	ActorID   string
-	CreatedAt time.Time
+	ID         int64
+	Anchor     Anchor
+	Emoji      string
+	ActorID    string
+	ActorKind  event.ActorKind
+	OnBehalfOf string
+	CreatedAt  time.Time
 }
 
 // Comment is one stored comment. A soft-deleted comment is returned as a
@@ -98,6 +111,7 @@ type Comment struct {
 	Anchor     Anchor
 	ParentID   *int64
 	ActorID    string
+	ActorKind  event.ActorKind // "" for a comment written before kinds were stored
 	OnBehalfOf string
 	Body       string
 	CreatedAt  time.Time
@@ -132,6 +146,14 @@ func validateActor(op string, a event.Actor) error {
 	return nil
 }
 
+// Viewer identifies who is reading reaction tallies, for the "did I react"
+// flag: the actor id and the kind it authenticated as now. The zero Viewer is
+// an anonymous link-capability read.
+type Viewer struct {
+	ID   string
+	Kind event.ActorKind
+}
+
 // Tally is one per-anchor emoji tally, computed at view time over a single
 // artifact's reactions (SPEC-0006 "Per-anchor emoji tally").
 type Tally struct {
@@ -139,20 +161,28 @@ type Tally struct {
 	AnchorKey  string
 	Emoji      string
 	Count      int
-	// Reacted reports whether the requesting actor already reacted with this
-	// emoji on this anchor ("did I react").
+	// HumanCount and AgentCount split Count by the stored actor kind. Rows
+	// written before kinds were stored are in neither: they are never human.
+	HumanCount int
+	AgentCount int
+	// Reacted reports whether the requesting actor, as the kind it is now,
+	// holds a row it could remove with this emoji on this anchor ("did I
+	// react"): its own kind's row or a legacy one.
 	Reacted bool
 }
 
 // React records an idempotent reaction: reacting with the same emoji to the
-// same anchor twice by the same actor is a no-op collapsed by the unique
-// constraint, never a duplicate row or a double-counted rollup. It returns the
-// reaction row and whether it was newly created. The insert and the artifact's
-// reaction_count / pin_count bumps commit in one transaction.
+// same anchor twice by the same actor of the same kind is a no-op collapsed by
+// the unique index, never a duplicate row or a double-counted rollup. The same
+// actor_id reacting as the other kind (a human after their agent, or the
+// reverse) gets its own row, so an agent can never occupy the human's. It
+// returns the reaction row and whether it was newly created. The insert and
+// the artifact's reaction_count / pin_count bumps commit in one transaction.
 //
 // Governing: ADR-0006 (idempotency by unique constraint, not
-// read-modify-write), SPEC-0006 REQ "Idempotent Reactions", REQ "Count
-// Aggregation".
+// read-modify-write), ADR-0022 (per-kind key), SPEC-0006 REQ "Idempotent
+// Reactions", REQ "Count Aggregation", SPEC-0016 EV-6 "Agent cannot occupy the
+// human's row".
 func (s *Service) React(ctx context.Context, publicID string, anchorType sharetype.Anchor, ref json.RawMessage, emoji string, actor event.Actor) (Reaction, bool, error) {
 	if err := validateEmoji(emoji); err != nil {
 		return Reaction{}, false, err
@@ -160,7 +190,6 @@ func (s *Service) React(ctx context.Context, publicID string, anchorType sharety
 	if err := validateActor("react", actor); err != nil {
 		return Reaction{}, false, err
 	}
-	actorID := actor.ID
 
 	var (
 		out     Reaction
@@ -179,14 +208,18 @@ func (s *Service) React(ctx context.Context, publicID string, anchorType sharety
 		// ON CONFLICT DO NOTHING makes two concurrent identical reacts collapse
 		// to one row with no application lock; only the transaction that
 		// actually inserted bumps the counters.
-		var id int64
-		var createdAt time.Time
+		var (
+			id         int64
+			createdAt  time.Time
+			onBehalfOf = actor.OnBehalfOf
+		)
 		err = tx.QueryRow(ctx, `
-			INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, actor_id)
-			VALUES ($1, $2, $3, $4, $5, $6)
-			ON CONFLICT (artifact_id, anchor_type, anchor_key, emoji, actor_id) DO NOTHING
+			INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, actor_id, actor_kind, on_behalf_of)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			ON CONFLICT (artifact_id, anchor_type, anchor_key, emoji, actor_id, actor_kind) DO NOTHING
 			RETURNING id, created_at`,
-			anchor.ArtifactID, string(anchor.Type), anchor.Ref, anchor.Key, emoji, actorID,
+			anchor.ArtifactID, string(anchor.Type), anchor.Ref, anchor.Key, emoji,
+			actor.ID, string(actor.Kind), actor.OnBehalfOf,
 		).Scan(&id, &createdAt)
 		switch {
 		case err == nil:
@@ -195,18 +228,24 @@ func (s *Service) React(ctx context.Context, publicID string, anchorType sharety
 				return err
 			}
 		case errors.Is(err, pgx.ErrNoRows):
-			// Duplicate react: surface the existing row as the no-op result.
+			// Duplicate react: surface the existing row, with the provenance it
+			// was first recorded with, as the no-op result.
 			if err := tx.QueryRow(ctx, `
-				SELECT id, created_at FROM reactions
-				WHERE artifact_id = $1 AND anchor_type = $2 AND anchor_key = $3 AND emoji = $4 AND actor_id = $5`,
-				anchor.ArtifactID, string(anchor.Type), anchor.Key, emoji, actorID,
-			).Scan(&id, &createdAt); err != nil {
+				SELECT id, created_at, on_behalf_of FROM reactions
+				WHERE artifact_id = $1 AND anchor_type = $2 AND anchor_key = $3 AND emoji = $4
+				  AND actor_id = $5 AND actor_kind = $6`,
+				anchor.ArtifactID, string(anchor.Type), anchor.Key, emoji, actor.ID, string(actor.Kind),
+			).Scan(&id, &createdAt, &onBehalfOf); err != nil {
 				return fmt.Errorf("annotation: load existing reaction: %w", err)
 			}
 		default:
 			return fmt.Errorf("annotation: insert reaction: %w", err)
 		}
-		out = Reaction{ID: id, Anchor: anchor, Emoji: emoji, ActorID: actorID, CreatedAt: createdAt}
+		out = Reaction{
+			ID: id, Anchor: anchor, Emoji: emoji,
+			ActorID: actor.ID, ActorKind: actor.Kind, OnBehalfOf: onBehalfOf,
+			CreatedAt: createdAt,
+		}
 		return nil
 	})
 	if err != nil {
@@ -216,9 +255,14 @@ func (s *Service) React(ctx context.Context, publicID string, anchorType sharety
 }
 
 // Unreact removes the actor's reaction identified by (anchor, emoji) — the
-// toggle-off half of React. It reports whether a row was removed (removing a
-// reaction that does not exist is a no-op, matching the toggle semantics). The
-// delete and the counter decrements commit in one transaction.
+// toggle-off half of React. Only rows of the caller's own kind are removed,
+// plus a legacy row (kind "") of the same actor_id: an agent can never
+// withdraw its human's reaction, nor the human its agent's. It reports whether
+// a row was removed (removing a reaction that does not exist is a no-op,
+// matching the toggle semantics). The delete and the counter decrements
+// commit in one transaction.
+//
+// Governing: SPEC-0016 EV-6 "Agent cannot withdraw the human's approval".
 func (s *Service) Unreact(ctx context.Context, publicID string, anchorType sharetype.Anchor, ref json.RawMessage, emoji string, actor event.Actor) (bool, error) {
 	if err := validateEmoji(emoji); err != nil {
 		return false, err
@@ -226,7 +270,6 @@ func (s *Service) Unreact(ctx context.Context, publicID string, anchorType share
 	if err := validateActor("unreact", actor); err != nil {
 		return false, err
 	}
-	actorID := actor.ID
 	key, err := CanonicalKey(ref)
 	if err != nil {
 		return false, fmt.Errorf("annotation: unreact: %w", ErrLocatorInvalid)
@@ -240,28 +283,33 @@ func (s *Service) Unreact(ctx context.Context, publicID string, anchorType share
 		}
 		tag, err := tx.Exec(ctx, `
 			DELETE FROM reactions
-			WHERE artifact_id = $1 AND anchor_type = $2 AND anchor_key = $3 AND emoji = $4 AND actor_id = $5`,
-			art.id, string(anchorType), key, emoji, actorID)
+			WHERE artifact_id = $1 AND anchor_type = $2 AND anchor_key = $3 AND emoji = $4
+			  AND actor_id = $5 AND actor_kind IN ($6, '')`,
+			art.id, string(anchorType), key, emoji, actor.ID, string(actor.Kind))
 		if err != nil {
 			return fmt.Errorf("annotation: delete reaction: %w", err)
 		}
-		if tag.RowsAffected() == 0 {
+		n := tag.RowsAffected()
+		if n == 0 {
 			return nil
 		}
 		removed = true
-		return bumpCounts(ctx, tx, art.id, sharetype.KindReaction, anchorType, -1)
+		// A legacy row and the caller's own-kind row can both go at once.
+		return bumpCounts(ctx, tx, art.id, sharetype.KindReaction, anchorType, -int(n))
 	})
 	return removed, err
 }
 
 // UnreactByID deletes one reaction row by id — the REST
 // `DELETE /v1/artifacts/{id}/reactions/{rid}` shape. Only the reaction's own
-// actor may remove it (SPEC-0006 REQ "Authentication & Authorization").
+// actor, as the same kind, may remove it; a legacy row (kind "") only needs
+// the same actor_id. Any other row is forbidden, including the caller's own
+// actor_id under the other kind (SPEC-0006 REQ "Authentication &
+// Authorization", SPEC-0016 EV-6 "Agent cannot remove by id").
 func (s *Service) UnreactByID(ctx context.Context, publicID string, reactionID int64, actor event.Actor) error {
 	if err := validateActor("unreact", actor); err != nil {
 		return err
 	}
-	actorID := actor.ID
 	return s.inTx(ctx, func(tx pgx.Tx) error {
 		art, err := resolveArtifact(ctx, tx, publicID)
 		if err != nil {
@@ -269,13 +317,15 @@ func (s *Service) UnreactByID(ctx context.Context, publicID string, reactionID i
 		}
 		var anchorType string
 		err = tx.QueryRow(ctx, `
-			DELETE FROM reactions WHERE id = $1 AND artifact_id = $2 AND actor_id = $3
+			DELETE FROM reactions
+			WHERE id = $1 AND artifact_id = $2 AND actor_id = $3 AND actor_kind IN ($4, '')
 			RETURNING anchor_type`,
-			reactionID, art.id, actorID).Scan(&anchorType)
+			reactionID, art.id, actor.ID, string(actor.Kind)).Scan(&anchorType)
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Distinguish "someone else's reaction" from "no such reaction"
-			// without leaking other artifacts' rows: both checks stay scoped
-			// to this artifact.
+			// Distinguish "someone else's reaction" (another actor, or the
+			// same actor as the other kind) from "no such reaction" without
+			// leaking other artifacts' rows: both checks stay scoped to this
+			// artifact.
 			var exists bool
 			if err := tx.QueryRow(ctx,
 				`SELECT EXISTS(SELECT 1 FROM reactions WHERE id = $1 AND artifact_id = $2)`,
@@ -295,22 +345,27 @@ func (s *Service) UnreactByID(ctx context.Context, publicID string, reactionID i
 }
 
 // ReactionTallies returns the per-anchor emoji tallies for one artifact plus
-// the requesting actor's "did I react" flag, computed with a GROUP BY scoped
+// the requesting viewer's "did I react" flag, computed with a GROUP BY scoped
 // to that artifact and backed by the (artifact_id, anchor_type, anchor_key)
-// index (SPEC-0006 REQ "Count Aggregation", second tier). actorID may be empty
-// for an anonymous link-capability read (every Reacted is then false).
-func (s *Service) ReactionTallies(ctx context.Context, publicID, actorID string) ([]Tally, error) {
+// index (SPEC-0006 REQ "Count Aggregation", second tier). The viewer is
+// matched by actor id AND kind, so a human never sees their agent's reaction
+// as their own toggle (and the reverse). A zero viewer is an anonymous
+// link-capability read: every Reacted is then false.
+func (s *Service) ReactionTallies(ctx context.Context, publicID string, viewer Viewer) ([]Tally, error) {
 	art, err := resolveArtifact(ctx, s.pool, publicID)
 	if err != nil {
 		return nil, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT anchor_type, anchor_key, emoji, count(*), bool_or(actor_id = $2)
+		SELECT anchor_type, anchor_key, emoji, count(*),
+		       count(*) FILTER (WHERE actor_kind = 'human'),
+		       count(*) FILTER (WHERE actor_kind = 'agent'),
+		       bool_or($2 <> '' AND actor_id = $2 AND actor_kind IN ($3, ''))
 		FROM reactions
 		WHERE artifact_id = $1
 		GROUP BY anchor_type, anchor_key, emoji
 		ORDER BY anchor_type, anchor_key, count(*) DESC, emoji`,
-		art.id, actorID)
+		art.id, viewer.ID, string(viewer.Kind))
 	if err != nil {
 		return nil, fmt.Errorf("annotation: tally reactions for %s: %w", publicID, err)
 	}
@@ -320,7 +375,8 @@ func (s *Service) ReactionTallies(ctx context.Context, publicID, actorID string)
 	for rows.Next() {
 		var t Tally
 		var anchorType string
-		if err := rows.Scan(&anchorType, &t.AnchorKey, &t.Emoji, &t.Count, &t.Reacted); err != nil {
+		if err := rows.Scan(&anchorType, &t.AnchorKey, &t.Emoji, &t.Count,
+			&t.HumanCount, &t.AgentCount, &t.Reacted); err != nil {
 			return nil, fmt.Errorf("annotation: scan tally: %w", err)
 		}
 		t.AnchorType = sharetype.Anchor(anchorType)
@@ -387,11 +443,11 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 			createdAt time.Time
 		)
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, parent_id, actor_id, on_behalf_of, body)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, parent_id, actor_id, actor_kind, on_behalf_of, body)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 			RETURNING id, created_at`,
 			anchor.ArtifactID, string(anchor.Type), anchor.Ref, anchor.Key,
-			in.ParentID, in.Actor.ID, in.Actor.OnBehalfOf, in.Body,
+			in.ParentID, in.Actor.ID, string(in.Actor.Kind), in.Actor.OnBehalfOf, in.Body,
 		).Scan(&id, &createdAt); err != nil {
 			return fmt.Errorf("annotation: insert comment: %w", err)
 		}
@@ -400,7 +456,7 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 		}
 		out = Comment{
 			ID: id, Anchor: anchor, ParentID: in.ParentID,
-			ActorID: in.Actor.ID, OnBehalfOf: in.Actor.OnBehalfOf, Body: in.Body,
+			ActorID: in.Actor.ID, ActorKind: in.Actor.Kind, OnBehalfOf: in.Actor.OnBehalfOf, Body: in.Body,
 			CreatedAt: createdAt,
 		}
 		return nil
@@ -412,8 +468,14 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 }
 
 // EditComment replaces the body of the actor's own live comment and stamps
-// edited_at (SPEC-0006 "edits MUST record edited_at"). Author-only.
-func (s *Service) EditComment(ctx context.Context, publicID string, commentID int64, actorID, body string) error {
+// edited_at (SPEC-0006 "edits MUST record edited_at"). Author-only, and
+// kind-scoped like reaction removal: the author's other kind is forbidden,
+// and a legacy comment (kind "") needs only the same actor_id (SPEC-0016
+// EV-6).
+func (s *Service) EditComment(ctx context.Context, publicID string, commentID int64, actor event.Actor, body string) error {
+	if err := validateActor("edit comment", actor); err != nil {
+		return err
+	}
 	if body == "" || len(body) > maxCommentBytes {
 		return fmt.Errorf("annotation: comment body length %d: %w", len(body), ErrBodyInvalid)
 	}
@@ -424,8 +486,9 @@ func (s *Service) EditComment(ctx context.Context, publicID string, commentID in
 		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE comments SET body = $1, edited_at = now()
-			WHERE id = $2 AND artifact_id = $3 AND actor_id = $4 AND deleted_at IS NULL`,
-			body, commentID, art.id, actorID)
+			WHERE id = $2 AND artifact_id = $3 AND actor_id = $4 AND actor_kind IN ($5, '')
+			  AND deleted_at IS NULL`,
+			body, commentID, art.id, actor.ID, string(actor.Kind))
 		if err != nil {
 			return fmt.Errorf("annotation: edit comment %d: %w", commentID, err)
 		}
@@ -439,8 +502,11 @@ func (s *Service) EditComment(ctx context.Context, publicID string, commentID in
 // DeleteComment soft-deletes the actor's own comment — the tombstone keeps the
 // thread structure and its replies resolvable (SPEC-0006 "Soft-deleted comment
 // keeps the thread") — and decrements the rollups in the same transaction.
-// Author-only.
-func (s *Service) DeleteComment(ctx context.Context, publicID string, commentID int64, actorID string) error {
+// Author-only and kind-scoped, as EditComment.
+func (s *Service) DeleteComment(ctx context.Context, publicID string, commentID int64, actor event.Actor) error {
+	if err := validateActor("delete comment", actor); err != nil {
+		return err
+	}
 	return s.inTx(ctx, func(tx pgx.Tx) error {
 		art, err := resolveArtifact(ctx, tx, publicID)
 		if err != nil {
@@ -449,9 +515,10 @@ func (s *Service) DeleteComment(ctx context.Context, publicID string, commentID 
 		var anchorType string
 		err = tx.QueryRow(ctx, `
 			UPDATE comments SET deleted_at = now()
-			WHERE id = $1 AND artifact_id = $2 AND actor_id = $3 AND deleted_at IS NULL
+			WHERE id = $1 AND artifact_id = $2 AND actor_id = $3 AND actor_kind IN ($4, '')
+			  AND deleted_at IS NULL
 			RETURNING anchor_type`,
-			commentID, art.id, actorID).Scan(&anchorType)
+			commentID, art.id, actor.ID, string(actor.Kind)).Scan(&anchorType)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return commentWriteRefusal(ctx, tx, art.id, commentID)
 		}
@@ -476,7 +543,7 @@ func (s *Service) ListComments(ctx context.Context, publicID string) ([]Comment,
 	// after it.
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, anchor_type, anchor_ref, anchor_key, parent_id, actor_id,
-		       on_behalf_of, body, created_at, edited_at, deleted_at
+		       actor_kind, on_behalf_of, body, created_at, edited_at, deleted_at
 		FROM comments
 		WHERE artifact_id = $1
 		ORDER BY COALESCE(parent_id, id), created_at, id`,
@@ -491,15 +558,17 @@ func (s *Service) ListComments(ctx context.Context, publicID string) ([]Comment,
 		var (
 			c          Comment
 			anchorType string
+			actorKind  string
 			deletedAt  *time.Time
 		)
 		c.Anchor.ArtifactID = art.id
 		if err := rows.Scan(&c.ID, &anchorType, &c.Anchor.Ref, &c.Anchor.Key,
-			&c.ParentID, &c.ActorID, &c.OnBehalfOf, &c.Body,
+			&c.ParentID, &c.ActorID, &actorKind, &c.OnBehalfOf, &c.Body,
 			&c.CreatedAt, &c.EditedAt, &deletedAt); err != nil {
 			return nil, fmt.Errorf("annotation: scan comment: %w", err)
 		}
 		c.Anchor.Type = sharetype.Anchor(anchorType)
+		c.ActorKind = event.ActorKind(actorKind)
 		if deletedAt != nil {
 			c.Deleted = true
 			c.Body = "" // tombstone: structure without content
@@ -578,8 +647,9 @@ func loadParent(ctx context.Context, tx pgx.Tx, artifactID, parentID int64) (par
 }
 
 // commentWriteRefusal explains why an author-scoped comment mutation matched
-// nothing: forbidden when the live comment exists under another actor,
-// not-found otherwise (missing or already soft-deleted).
+// nothing: forbidden when the live comment exists under another actor (or the
+// same actor as the other kind), not-found otherwise (missing or already
+// soft-deleted).
 func commentWriteRefusal(ctx context.Context, tx pgx.Tx, artifactID, commentID int64) error {
 	var exists bool
 	if err := tx.QueryRow(ctx,

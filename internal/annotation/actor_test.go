@@ -40,6 +40,12 @@ func TestWritesRequireDerivedActor(t *testing.T) {
 				})
 				return err
 			},
+			"EditComment": func() error {
+				return svc.EditComment(ctx, "SVCAAAA1", 1, a, "hi")
+			},
+			"DeleteComment": func() error {
+				return svc.DeleteComment(ctx, "SVCAAAA1", 1, a)
+			},
 		}
 	}
 

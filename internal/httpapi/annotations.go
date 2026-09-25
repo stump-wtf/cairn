@@ -25,21 +25,28 @@ const maxAnnotationRequestBytes = 32 << 10
 
 // reactionRequest is the POST/DELETE reactions body: the anchor to attach to
 // and the emoji. anchor_ref is the raw locator object, validated per anchor_type
-// by the registry (an absent ref is the whole-artifact `{}`).
+// by the registry (an absent ref is the whole-artifact `{}`). on_behalf_of
+// records an agent acting for the human, exactly as on a comment (SPEC-0016
+// EV-6); it is ignored on DELETE, which matches by actor and kind alone.
 type reactionRequest struct {
 	AnchorType string          `json:"anchor_type"`
 	AnchorRef  json.RawMessage `json:"anchor_ref,omitempty"`
 	Emoji      string          `json:"emoji"`
+	OnBehalfOf string          `json:"on_behalf_of,omitempty"`
 }
 
 // reactionResponse is the JSON view of a stored reaction. ID is the handle the
-// DELETE /reactions/{rid} shape removes.
+// DELETE /reactions/{rid} shape removes. actor_kind is the server-derived kind
+// of the credential that reacted ("" for a row older than kinds), so a viewer
+// can show an agent's reaction the way it shows an agent's comment.
 type reactionResponse struct {
 	ID         int64           `json:"id"`
 	AnchorType string          `json:"anchor_type"`
 	AnchorRef  json.RawMessage `json:"anchor_ref"`
 	Emoji      string          `json:"emoji"`
 	ActorID    string          `json:"actor_id"`
+	ActorKind  string          `json:"actor_kind"`
+	OnBehalfOf string          `json:"on_behalf_of,omitempty"`
 	CreatedAt  time.Time       `json:"created_at"`
 }
 
@@ -49,11 +56,15 @@ type tallyResponse struct {
 	Reactions []tallyView `json:"reactions"`
 }
 
+// tallyView is one per-anchor emoji tally. human_count and agent_count split
+// count by the stored actor kind; rows older than kinds are in neither.
 type tallyView struct {
 	AnchorType string `json:"anchor_type"`
 	AnchorKey  string `json:"anchor_key"`
 	Emoji      string `json:"emoji"`
 	Count      int    `json:"count"`
+	HumanCount int    `json:"human_count"`
+	AgentCount int    `json:"agent_count"`
 	Reacted    bool   `json:"reacted"`
 }
 
@@ -77,6 +88,7 @@ type commentResponse struct {
 	AnchorKey  string          `json:"anchor_key"`
 	ParentID   *int64          `json:"parent_id,omitempty"`
 	ActorID    string          `json:"actor_id"`
+	ActorKind  string          `json:"actor_kind"`
 	OnBehalfOf string          `json:"on_behalf_of,omitempty"`
 	Body       string          `json:"body"`
 	CreatedAt  time.Time       `json:"created_at"`
@@ -105,7 +117,7 @@ func (s *Server) handleReact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reaction, created, err := s.annot.React(
-		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, p.EventActor())
+		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, bodyActor(p, req.OnBehalfOf))
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id, "anchor_type": req.AnchorType})
 		return
@@ -182,6 +194,8 @@ func (s *Server) handleListReactions(w http.ResponseWriter, r *http.Request) {
 			AnchorKey:  t.AnchorKey,
 			Emoji:      t.Emoji,
 			Count:      t.Count,
+			HumanCount: t.HumanCount,
+			AgentCount: t.AgentCount,
 			Reacted:    t.Reacted,
 		})
 	}
@@ -208,7 +222,7 @@ func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
 		AnchorType: sharetype.Anchor(req.AnchorType),
 		AnchorRef:  req.AnchorRef,
 		ParentID:   req.ParentID,
-		Actor:      commentActor(p, req),
+		Actor:      bodyActor(p, req.OnBehalfOf),
 		Body:       req.Body,
 	})
 	if err != nil {
@@ -218,14 +232,15 @@ func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusCreated, toCommentResponse(comment))
 }
 
-// commentActor is the author of a REST comment. The actor — and so its kind
-// and auth — comes from the principal alone. on_behalf_of is the one asserted
-// field the body may set: it names a harness for display and never changes the
-// derived kind, and commentRequest has no field a client could use to assert
-// one (SPEC-0016 EV-4 "Client cannot assert the kind").
-func commentActor(p *Principal, req commentRequest) event.Actor {
+// bodyActor is the author of a REST comment or reaction. The actor — and so
+// its kind and auth — comes from the principal alone. on_behalf_of is the one
+// asserted field the body may set: it names a harness for display and never
+// changes the derived kind, and neither commentRequest nor reactionRequest has
+// a field a client could use to assert one (SPEC-0016 EV-4 "Client cannot
+// assert the kind", EV-6 on_behalf_of "populated exactly as for comments").
+func bodyActor(p *Principal, onBehalfOf string) event.Actor {
 	a := p.EventActor()
-	a.OnBehalfOf = req.OnBehalfOf
+	a.OnBehalfOf = onBehalfOf
 	return a
 }
 
@@ -263,20 +278,22 @@ func (s *Server) decodeAnnotationBody(w http.ResponseWriter, r *http.Request, ds
 	return nil
 }
 
-// optionalActor resolves the caller's actor id when the read carries valid
-// credentials, or "" for an anonymous link read. It never rejects: annotation
-// reads are gated by the artifact's link capability, not by authentication, so
-// an absent or invalid credential simply yields the anonymous "did I react"
-// view (all false).
-func (s *Server) optionalActor(r *http.Request) string {
+// optionalActor resolves the caller's actor id and derived kind when the read
+// carries valid credentials, or the zero Viewer for an anonymous link read. It
+// never rejects: annotation reads are gated by the artifact's link capability,
+// not by authentication, so an absent or invalid credential simply yields the
+// anonymous "did I react" view (all false). The kind matters: a human's
+// browser must not see their agent's reaction as their own toggle.
+func (s *Server) optionalActor(r *http.Request) annotation.Viewer {
 	if s.auth == nil {
-		return ""
+		return annotation.Viewer{}
 	}
 	p, err := s.auth.Authenticate(r)
 	if err != nil || p == nil {
-		return ""
+		return annotation.Viewer{}
 	}
-	return p.ActorID
+	a := p.EventActor()
+	return annotation.Viewer{ID: a.ID, Kind: a.Kind}
 }
 
 func toReactionResponse(r annotation.Reaction) reactionResponse {
@@ -286,6 +303,8 @@ func toReactionResponse(r annotation.Reaction) reactionResponse {
 		AnchorRef:  r.Anchor.Ref,
 		Emoji:      r.Emoji,
 		ActorID:    r.ActorID,
+		ActorKind:  string(r.ActorKind),
+		OnBehalfOf: r.OnBehalfOf,
 		CreatedAt:  r.CreatedAt,
 	}
 }
@@ -298,6 +317,7 @@ func toCommentResponse(c annotation.Comment) commentResponse {
 		AnchorKey:  c.Anchor.Key,
 		ParentID:   c.ParentID,
 		ActorID:    c.ActorID,
+		ActorKind:  string(c.ActorKind),
 		OnBehalfOf: c.OnBehalfOf,
 		Body:       c.Body,
 		CreatedAt:  c.CreatedAt,

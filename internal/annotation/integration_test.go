@@ -82,14 +82,15 @@ func insertArtifact(t *testing.T, pool *pgxpool.Pool, publicID string, shareType
 }
 
 // insertReaction persists a validated anchor as a reaction row using the
-// idempotent upsert the unique constraint supports (parameterized per
-// SPEC-0006 REQ "Database Operation Standards").
+// idempotent upsert the per-kind unique index supports (parameterized per
+// SPEC-0006 REQ "Database Operation Standards"). The row carries no kind, as
+// a row written before kinds were stored does.
 func insertReaction(t *testing.T, pool *pgxpool.Pool, a Anchor, emoji, actorID string) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
 		INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, actor_id)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (artifact_id, anchor_type, anchor_key, emoji, actor_id) DO NOTHING`,
+		ON CONFLICT (artifact_id, anchor_type, anchor_key, emoji, actor_id, actor_kind) DO NOTHING`,
 		a.ArtifactID, string(a.Type), a.Ref, a.Key, emoji, actorID)
 	if err != nil {
 		t.Fatalf("insert reaction: %v", err)
