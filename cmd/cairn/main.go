@@ -43,7 +43,8 @@ func run(args []string) int {
 	// "Machine-Readable Error Mapping and Exit Codes"), so the handler
 	// routes: usage errors get fang's ERROR layout (Cairn-skinned, on an
 	// interactive terminal only), everything else keeps the greppable
-	// "cairn: <tag>: <message>" shape or its --json envelope, and a
+	// "cairn: <tag>: <message>" shape (or one line per violation, SPEC-0019
+	// VE-8) or its --json envelope, and a
 	// SIGINT-canceled error prints nothing here — main's interrupted
 	// branch below owns that message and exit code 130.
 	errHandler := func(w io.Writer, styles fang.Styles, err error) {
