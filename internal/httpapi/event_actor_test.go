@@ -1,6 +1,9 @@
 package httpapi
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,7 +13,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/event"
+	"github.com/stump-wtf/cairn/internal/oauth"
 )
 
 // Governing: ADR-0022 (server-derived actor kind), SPEC-0016 EV-4.
@@ -172,4 +177,64 @@ func TestCommentActorIgnoresAssertedKind(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestMCPCreateRefusesUnstampedCredential proves the MCP create tools fail
+// closed on a credential mcpTokenVerifier did not stamp: rather than create an
+// artifact whose creation event carries no auth (or a guessed one), the call
+// is refused as unauthorized before the store is touched. The server has no
+// store, so the stamped positive controls get past the check and fail (or
+// panic) further in, never as unauthorized.
+//
+// Governing: ADR-0022, SPEC-0016 EV-3, EV-4.
+func TestMCPCreateRefusesUnstampedCredential(t *testing.T) {
+	s := New(nil, nil, nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ctx := context.Background()
+	req := func(stamp any) *mcp.CallToolRequest {
+		ti := &sdkauth.TokenInfo{UserID: "alice", Scopes: []string{oauth.ScopeArtifactsWrite}, Extra: map[string]any{}}
+		if stamp != nil {
+			ti.Extra[mcpExtraAuth] = stamp
+		}
+		return &mcp.CallToolRequest{Extra: &mcp.RequestExtra{TokenInfo: ti}}
+	}
+	tools := map[string]func(*mcp.CallToolRequest) error{
+		"artifact_create": func(r *mcp.CallToolRequest) error {
+			_, _, err := s.mcpCreateArtifact(ctx, r, mcpCreateInput{Body: "hello"})
+			return err
+		},
+		"bundle_create": func(r *mcp.CallToolRequest) error {
+			_, _, err := s.mcpCreateBundle(ctx, r, mcpBundleCreateInput{})
+			return err
+		},
+		"run_create": func(r *mcp.CallToolRequest) error {
+			_, _, err := s.mcpCreateRun(ctx, r, mcpRunCreateInput{})
+			return err
+		},
+	}
+	isUnauthorized := func(err error) bool {
+		return err != nil && strings.Contains(err.Error(), messageFor(errs.CodeUnauthorized))
+	}
+	for tool, call := range tools {
+		for _, stamp := range []any{nil, string(event.AuthSession), string(event.AuthAPIToken), "cookie", 42} {
+			if err := call(req(stamp)); !isUnauthorized(err) {
+				t.Errorf("%s with stamp %v = %v, want unauthorized", tool, stamp, err)
+			}
+		}
+		for _, stamp := range []event.AuthMethod{event.AuthPAT, event.AuthOAuth} {
+			panicked, err := callRecovering(func() error { return call(req(string(stamp))) })
+			if !panicked && isUnauthorized(err) {
+				t.Errorf("%s with stamp %q was refused as unauthorized, want it past the actor check", tool, stamp)
+			}
+		}
+	}
+}
+
+// callRecovering runs fn, reporting a panic instead of propagating it.
+func callRecovering(fn func() error) (panicked bool, err error) {
+	defer func() {
+		if recover() != nil {
+			panicked = true
+		}
+	}()
+	return false, fn()
 }
