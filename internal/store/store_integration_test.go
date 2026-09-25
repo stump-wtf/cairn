@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -224,6 +225,14 @@ func TestHashMismatchRejected(t *testing.T) {
 	if errs.CodeOf(err) != errs.CodeValidation {
 		t.Fatalf("code = %q, want validation_failed", errs.CodeOf(err))
 	}
+	if !errors.Is(err, errs.ErrChecksumMismatch) {
+		t.Fatalf("err = %v, want it to still match errs.ErrChecksumMismatch", err)
+	}
+	vs := errs.ViolationsOf(err)
+	if len(vs) != 1 || vs[0].Field != ChecksumHeader || vs[0].Location != errs.LocHeader ||
+		vs[0].Reason != errs.ReasonChecksum || vs[0].Value == nil || *vs[0].Value != in.ExpectedSHA256 {
+		t.Fatalf("violations = %+v, want one checksum_mismatch on %s echoing the sent digest", vs, ChecksumHeader)
+	}
 
 	var artifacts int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM artifacts`).Scan(&artifacts); err != nil {
@@ -231,6 +240,44 @@ func TestHashMismatchRejected(t *testing.T) {
 	}
 	if artifacts != 0 {
 		t.Fatalf("a rejected upload must persist no artifact, found %d", artifacts)
+	}
+}
+
+// SPEC-0019 VE-4: every member over the upload cap is named, not only the
+// first, and nothing is persisted.
+func TestBundleOversizeMembersReportedTogether(t *testing.T) {
+	s, pool := newTestStore(t, Options{MaxUploadBytes: 8})
+	ctx := context.Background()
+
+	in := CreateBundleInput{
+		Provenance: artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
+		Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+		ExpiresAt:  time.Now().Add(time.Hour),
+		Members: []MemberInput{
+			{Name: "big1", Body: bytes.NewReader(bytes.Repeat([]byte("a"), 64))},
+			{Name: "ok", Body: bytes.NewReader([]byte("fine"))},
+			{Name: "big2", Body: bytes.NewReader(bytes.Repeat([]byte("b"), 64))},
+		},
+	}
+	_, err := s.CreateBundle(ctx, in)
+	if errs.CodeOf(err) != errs.CodePayloadTooLarge || !errors.Is(err, errs.ErrTooLarge) {
+		t.Fatalf("err = %v (code %q), want payload_too_large", err, errs.CodeOf(err))
+	}
+	vs := errs.ViolationsOf(err)
+	if len(vs) != 2 || vs[0].Field != "members[0].content" || vs[1].Field != "members[2].content" {
+		t.Fatalf("violations = %+v, want members[0] and members[2]", vs)
+	}
+	for _, v := range vs {
+		if v.Reason != errs.ReasonTooLarge || v.Limit != int64(8) || v.Unit != errs.UnitBytes || v.Value != nil {
+			t.Fatalf("violation = %+v, want too_large 8 bytes with no echo", v)
+		}
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM artifacts`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("a refused bundle persisted %d artifacts", n)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
@@ -72,15 +73,24 @@ func TestNonPreviewableLargeBodyDowngradesToFile(t *testing.T) {
 	}
 }
 
-func TestUnknownTypeIngestsAsFile(t *testing.T) {
-	s, _ := newTestStore(t, Options{PreviewMaxBytes: 1 << 20})
+// A declared type no handler exists for is refused at create with the types
+// that do exist (SPEC-0019 VE-1), rather than silently stored as a file.
+// Resolution of an already-stored unknown type stays total (the registry
+// tests cover that).
+func TestUnknownTypeRejectedAtCreate(t *testing.T) {
+	s, pool := newTestStore(t, Options{PreviewMaxBytes: 1 << 20})
 	ctx := context.Background()
 
-	art, err := s.CreateArtifact(ctx, typedInput("some-future-type", []byte("bytes")))
-	if err != nil {
-		t.Fatalf("create: %v", err)
+	_, err := s.CreateArtifact(ctx, typedInput("some-future-type", []byte("bytes")))
+	vs := errs.ViolationsOf(err)
+	if len(vs) != 1 || vs[0].Field != "type" || vs[0].Reason != errs.ReasonUnknownValue {
+		t.Fatalf("err = %v, want one type/unknown_value violation", err)
 	}
-	if art.ShareType != artifact.TypeFile || art.Previewable {
-		t.Fatalf("unknown type ingested as (type=%q, previewable=%v), want (file, false)", art.ShareType, art.Previewable)
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM artifacts`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("a refused create persisted %d artifacts", n)
 	}
 }
