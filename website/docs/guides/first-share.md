@@ -130,6 +130,12 @@ token in the OS keychain when it can, and otherwise in a `0600` file in your con
 directory. `cairn logout` deletes only that local copy. To kill the token itself, revoke
 it in Settings.
 
+When the server rejects a request, the CLI prints one line per problem to stderr in terms
+of its own flags, such as `cairn: --ttl 60d exceeds the server's maximum of 30d`, and
+exits with the usage exit code. It also lower-cases `--tag` values for you, with a
+warning. [Errors](../product/errors.md) lists every reason a request can be rejected, and
+[Troubleshooting](./troubleshooting.md#the-request-was-rejected) covers the common ones.
+
 ## Expiry
 
 Every artifact expires. The default is 7 days after creation, and you can ask for

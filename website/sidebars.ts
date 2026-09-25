@@ -37,7 +37,7 @@ import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
 //
 //     Overview                       docs/intro.md
 //     Product                        docs/product/_category_.json  (tracked)
-//       Share types · Surfaces · Annotations
+//       Share types · Surfaces · Annotations · Tags & handoffs · Errors
 //     Decisions · 14                 staged _category_.json        (derived)
 //       ADR-0001 … ADR-0014
 //     Specifications · 10            staged _category_.json        (derived)

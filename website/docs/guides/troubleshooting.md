@@ -15,6 +15,8 @@ REST errors come back as JSON:
 
 MCP tools report the same pair as their error text, for example
 `not_found: not found or expired`. If you ask someone for help, include the `request_id`.
+A rejected request also lists what was wrong with it; [Errors](../product/errors.md) is
+the full reference.
 
 ## A read came back truncated
 
@@ -68,11 +70,12 @@ ids exist:
 
 ## The request was rejected
 
-`400 validation_failed` means something in the request itself was wrong. The usual
-suspects:
+`400 validation_failed` means something in the request itself was wrong. The response's
+`violations` list says which field, why, and the limit it broke; each `reason` is
+explained in [Errors](../product/errors.md#reasons). The usual suspects:
 
 - **A TTL over 30 days.** A longer `X-Cairn-Ttl-Seconds` or `--ttl` is rejected, not
-  shortened.
+  shortened. See [`--ttl` is over the maximum](#--ttl-is-over-the-maximum).
 - **The wrong create tool.** `artifact_create` won't make a bundle or a trace. Use
   `bundle_create` or `run_create`.
 - **An empty body.** `artifact_create` needs a non-empty `body`.
@@ -83,14 +86,71 @@ suspects:
   parents before their children.
 - **A tag that breaks the rules.** Tags are lowercase `a-z`, `0-9`, and `. _ : / # -`,
   1 to 64 bytes each, with at most 32 per artifact. Cairn rejects a bad tag rather than
-  fixing it, so lowercase run ids and timestamps yourself.
+  fixing it, so lowercase run ids and timestamps yourself. (The CLI lower-cases
+  `--tag` for you; see [Uppercase tags](#uppercase-tags).)
 
 The MCP create tools also reject any field they don't define, such as `visibility` or
 `ttl`.
 
+### `--ttl` is over the maximum
+
+```text
+cairn: --ttl 60d exceeds the server's maximum of 30d
+```
+
+An artifact can live for at most 30 days. Cairn rejects a longer request rather than
+quietly shortening it, so you never believe a share lasts longer than it does. Over
+REST the same failure is a violation on `X-Cairn-Ttl-Seconds` with reason
+`exceeds_max`, `limit` `2592000` and unit `seconds`.
+
+Ask for 30 days or less: `--ttl 30d`, or `X-Cairn-Ttl-Seconds: 2592000`.
+The maximum isn't a server setting, so a self-hosted instance has the same 30-day cap.
+Only the default expiry, `CAIRN_DEFAULT_TTL` (7 days), is configurable. MCP create
+tools take no TTL at all, and always get the default.
+
+A TTL that isn't a number of seconds, such as `X-Cairn-Ttl-Seconds: 7d`, is
+`invalid_format`, and zero or a negative number is `not_positive`. The CLI converts
+`30m`, `24h` and `7d` to seconds for you.
+
+### Uppercase tags
+
+```json
+{"field": "tag", "location": "header", "reason": "uppercase", "value": "Size:M",
+ "message": "\"Size:M\" must be lowercase"}
+```
+
+The server rejects any tag with a capital letter, on every surface. It doesn't fold the
+case for you, because a routing rule downstream matches tags byte for byte, and a tag
+that silently changed would route somewhere you didn't expect. Send `size:m`.
+
+Every bad tag on a request is reported, not only the first, so a create carrying
+`Size:M` and `lane m` gets two violations and a message that starts `2 problems:`.
+Over MCP the field is the argument's index, `tags[0]`, rather than `tag`.
+
+### The CLI changed my tag
+
+```text
+cairn: warning: tag "size:M" sent as "size:m"
+```
+
+The CLI is the one place tag case is fixed for you. Before it sends a request, `cairn`
+lower-cases each `--tag` value that contains an uppercase ASCII letter, and prints this
+warning to stderr for each tag it changed. The warning goes to stderr, so `--json`
+output on stdout stays clean. The create goes ahead with the lower-cased tag.
+
+It changes only the case. Any other character that tags don't allow, such as the space
+in `--tag "lane m"`, is sent as you typed it, and the server's `invalid_charset`
+violation is printed instead. REST and MCP callers get no folding: an uppercase tag
+from them is rejected.
+
+### Payload too large
+
 `413 payload too large` means an upload is over the size limit (64 MiB per body by
-default), a webhook capture is over 5 MiB, or an MCP call is too big. For a large trace,
-page the spans or post it over REST.
+default), a webhook capture is over 5 MiB, or an MCP call is too big. Its violation has
+reason `too_large`, and `limit` is the cap in bytes. For a large trace, page the spans or
+post it over REST.
+
+### Rate limited
 
 `429 rate limit exceeded` comes from a webhook ingress URL, which limits requests per
 sending address and per endpoint. Back off and try again.

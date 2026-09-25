@@ -250,6 +250,15 @@ into the conversation; it's already stored.
 Bodies must be text. MCP has no binary path yet, so upload images and other binary files
 over REST or with the CLI.
 
+### When a call is rejected
+
+A tool call that fails validation returns an error result whose text says what was
+wrong, such as `tags[0]: "Handoff" must be lowercase`. Its structured content is
+`{"code": "validation_failed", "violations": [...]}`: one entry per problem, each naming
+the argument (`field`), a stable `reason` code, and the `limit` it broke. An agent
+should fix the named arguments and call again, rather than retry the same call.
+[Errors](../product/errors.md) lists every reason, with an example of each.
+
 ## Capturing a run as a trace
 
 A trace records what an agent did: each reasoning turn, tool call, and sub-agent, laid
