@@ -125,16 +125,20 @@ option skill-path ~/src/claude-plugin-cairn/skills
 ```
 
 `option skill-path` adds to the list of skill directories rather than replacing it, and
-`~` is expanded for you. In the deprecated `crush.json`, the same list is
-`options.skills_paths`:
+Bash expands the `~` before Crush sees it. In the deprecated `crush.json`, the same list is
+`options.skills_paths`. Write the full path there, not `~`:
 
 ```json
 {
   "options": {
-    "skills_paths": ["~/src/claude-plugin-cairn/skills"]
+    "skills_paths": ["/home/you/src/claude-plugin-cairn/skills"]
   }
 }
 ```
+
+Crush expands a `~` in `skills_paths` when it looks for skills, so the skill would still
+load. It doesn't expand it when it checks whether a file the skill reads sits inside a
+skills directory, so those reads would get truncated and ask for permission.
 
 **Or copy the skill into a directory Crush scans**, with no configuration at all:
 
