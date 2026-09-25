@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/stump-wtf/cairn/internal/event"
 )
 
 // withPrincipal stashes p in the request context the way requireAuth does, so
@@ -32,8 +34,8 @@ func TestEnforceCSRF(t *testing.T) {
 		return withPrincipal(r, p)
 	}
 
-	tokenPrincipal := &Principal{ActorID: "alice"}                  // bearer: ambient=false
-	ambientPrincipal := &Principal{ActorID: "alice", Ambient: true} // session cookie
+	tokenPrincipal := &Principal{ActorID: "alice", Auth: event.AuthPAT}                      // bearer: ambient=false
+	ambientPrincipal := &Principal{ActorID: "alice", Ambient: true, Auth: event.AuthSession} // session cookie
 
 	tests := []struct {
 		name string
