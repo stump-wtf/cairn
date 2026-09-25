@@ -163,7 +163,7 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		vm.CSRFToken = c.Value
 	}
 	if s.pat != nil {
-		toks, err := s.pat.List(r.Context(), p.ActorID)
+		toks, err := s.pat.List(r.Context(), p.UserID)
 		if err != nil {
 			s.log.WarnContext(r.Context(), "settings: list tokens failed", "error", err)
 		} else {
@@ -174,7 +174,7 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if s.mcpSessions != nil {
-		sessions, err := s.mcpSessions.List(r.Context(), p.ActorID, maxMCPSessionListLimit)
+		sessions, err := s.mcpSessions.List(r.Context(), p.UserID, maxMCPSessionListLimit)
 		if err != nil {
 			s.log.WarnContext(r.Context(), "settings: list mcp sessions failed", "error", err)
 		} else {

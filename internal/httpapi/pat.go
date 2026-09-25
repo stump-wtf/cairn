@@ -105,13 +105,13 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, errs.Validationf("tokens: scopes must be a subset of: %s", pat.JoinScope(pat.AllScopes())), nil)
 		return
 	}
-	secret, tok, err := s.pat.Create(r.Context(), p.ActorID, strings.TrimSpace(req.Name), scopes, req.IsAgent)
+	secret, tok, err := s.pat.Create(r.Context(), p.UserID, strings.TrimSpace(req.Name), scopes, req.IsAgent)
 	if err != nil {
 		s.writeError(w, r, err, nil)
 		return
 	}
 	s.log.InfoContext(r.Context(), "pat: token created",
-		"id", tok.ID, "owner", tok.OwnerID, "is_agent", tok.IsAgent, "scope", pat.JoinScope(tok.Scopes))
+		"id", tok.ID, "owner", tok.UserID, "is_agent", tok.IsAgent, "scope", pat.JoinScope(tok.Scopes))
 	s.writeJSON(w, http.StatusCreated, createTokenResponse{tokenView: toTokenView(tok), Token: secret})
 }
 
@@ -124,7 +124,7 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, errs.ErrUnauthorized, nil)
 		return
 	}
-	toks, err := s.pat.List(r.Context(), p.ActorID)
+	toks, err := s.pat.List(r.Context(), p.UserID)
 	if err != nil {
 		s.writeError(w, r, err, nil)
 		return
@@ -146,11 +146,11 @@ func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if err := s.pat.Revoke(r.Context(), p.ActorID, id); err != nil {
+	if err := s.pat.Revoke(r.Context(), p.UserID, id); err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	s.log.InfoContext(r.Context(), "pat: token revoked", "id", id, "owner", p.ActorID)
+	s.log.InfoContext(r.Context(), "pat: token revoked", "id", id, "owner", p.UserID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -207,7 +207,8 @@ func (a *PATAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 		scopes[sc] = true
 	}
 	return &Principal{
-		ActorID: tok.OwnerID,
+		ActorID: tok.Actor,
+		UserID:  tok.UserID,
 		Channel: artifact.ChannelAPI,
 		IsAgent: tok.IsAgent,
 		Scopes:  scopes,

@@ -102,8 +102,8 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 		Body:              body,
 		DeclaredMediaType: r.Header.Get("Content-Type"),
 		ExpectedSHA256:    r.Header.Get("X-Cairn-Sha256"),
-		Provenance:        artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now},
-		Access:            artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
+		Provenance:        artifact.Provenance{CreatedByUserID: p.UserID, ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now},
+		Access:            artifact.AccessPolicy{OwnerUserID: p.UserID, Visibility: artifact.VisibilityLink},
 		ExpiresAt:         now.Add(ttl),
 		Tags:              tags.tags,
 	})
@@ -211,8 +211,8 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 	}
 
 	now := s.now()
-	prov := artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now}
-	access := artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink}
+	prov := artifact.Provenance{CreatedByUserID: p.UserID, ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now}
+	access := artifact.AccessPolicy{OwnerUserID: p.UserID, Visibility: artifact.VisibilityLink}
 	expires := now.Add(ttl)
 
 	if len(files) == 1 {
@@ -377,7 +377,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if err := s.store.DeleteArtifact(r.Context(), id, p.ActorID); err != nil {
+	if err := s.store.DeleteArtifact(r.Context(), id, p.UserID); err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
@@ -404,7 +404,7 @@ func (s *Server) handleBin(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, tagErrorDetails())
 		return
 	}
-	page, err := s.store.ListBin(r.Context(), p.ActorID, r.URL.Query().Get("cursor"), limit, filter.tags...)
+	page, err := s.store.ListBin(r.Context(), p.UserID, r.URL.Query().Get("cursor"), limit, filter.tags...)
 	if err != nil {
 		s.writeError(w, r, err, nil)
 		return

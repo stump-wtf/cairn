@@ -133,6 +133,9 @@ func (s *Server) mcpBodyLimit(next http.Handler) http.Handler {
 const (
 	mcpExtraGrantID  = "grant_id"
 	mcpExtraClientID = "client_id"
+	// mcpExtraActor carries the caller's user as rendered on the wire;
+	// TokenInfo.UserID carries the user id every ownership check uses.
+	mcpExtraActor = "actor"
 
 	// patTokenInfoTTL is the validity window reported for a PAT-authenticated
 	// MCP request. PATs never expire, but the bearer middleware reads a zero
@@ -168,8 +171,9 @@ func (s *Server) mcpTokenVerifier() sdkauth.TokenVerifier {
 			return &sdkauth.TokenInfo{
 				Scopes:     t.Scopes,
 				Expiration: s.now().Add(patTokenInfoTTL),
-				UserID:     t.OwnerID,
+				UserID:     t.UserID,
 				Extra: map[string]any{
+					mcpExtraActor:    t.Actor,
 					mcpExtraGrantID:  "",
 					mcpExtraClientID: "",
 				},
@@ -182,8 +186,9 @@ func (s *Server) mcpTokenVerifier() sdkauth.TokenVerifier {
 		return &sdkauth.TokenInfo{
 			Scopes:     ident.Scopes,
 			Expiration: ident.ExpiresAt,
-			UserID:     ident.ActorID,
+			UserID:     ident.UserID,
 			Extra: map[string]any{
+				mcpExtraActor:    ident.ActorID,
 				mcpExtraGrantID:  ident.GrantID,
 				mcpExtraClientID: ident.ClientID,
 			},
@@ -478,10 +483,20 @@ func mcpScopes(extra *mcp.RequestExtra) map[string]bool {
 	return out
 }
 
-// mcpActor returns the authenticated human subject — the OAuth grant's actor —
-// for this call, or "" if no token info is attached (should not happen behind
-// the bearer middleware, guarded defensively by callers).
+// mcpActor returns the authenticated human — the OAuth grant's or PAT's user —
+// as rendered on the wire for this call, or "" if no token info is attached
+// (should not happen behind the bearer middleware, guarded defensively by
+// callers). It is display and provenance text; ownership uses mcpUserID.
 func mcpActor(extra *mcp.RequestExtra) string {
+	if extra == nil {
+		return ""
+	}
+	return mcpExtraString(extra.TokenInfo, mcpExtraActor)
+}
+
+// mcpUserID returns the authenticated user's id for this call, or "" if no
+// token info is attached (SPEC-0023 REQ "Owner Model").
+func mcpUserID(extra *mcp.RequestExtra) string {
 	if extra == nil || extra.TokenInfo == nil {
 		return ""
 	}
@@ -568,7 +583,7 @@ func (s *Server) mcpInitializedHandler(ctx context.Context, req *mcp.Initialized
 	}
 	if _, err := s.mcpSessions.Record(ctx, mcpsession.RecordInput{
 		ID:            sessionID,
-		OwnerID:       ti.UserID,
+		UserID:        ti.UserID,
 		GrantID:       grantID,
 		ClientID:      mcpExtraString(ti, mcpExtraClientID),
 		ClientName:    clientName,
@@ -816,7 +831,7 @@ func (s *Server) mcpReadArtifact(ctx context.Context, req *mcp.CallToolRequest, 
 		return nil, mcpReadOutput{}, s.mcpToolErr(ctx, "artifact_read", err)
 	}
 	out := mcpReadOutput{artifactResponse: s.toArtifactResponse(art)}
-	out.Provenance.Actor = s.displayActor(ctx, &Principal{ActorID: mcpActor(req.Extra)}, out.Provenance.Actor)
+	out.Provenance.Actor = s.displayActor(ctx, &Principal{ActorID: mcpActor(req.Extra), UserID: mcpUserID(req.Extra)}, out.Provenance.Actor)
 
 	if art.ShareType == artifact.TypeBundle && in.Path == "" {
 		members, err := s.store.ListMembers(ctx, id)
@@ -984,8 +999,8 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
 		return nil, mcpCreateOutput{}, s.mcpScopeErr(ctx, "artifact_create", oauth.ScopeArtifactsWrite)
 	}
-	actorID := mcpActor(req.Extra)
-	if actorID == "" {
+	actorID, userID := mcpActor(req.Extra), mcpUserID(req.Extra)
+	if actorID == "" || userID == "" {
 		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", errs.ErrUnauthorized)
 	}
 	if in.Body == "" {
@@ -1006,13 +1021,14 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 		Body:              strings.NewReader(in.Body),
 		DeclaredMediaType: mediaType,
 		Provenance: artifact.Provenance{
-			ActorID:    actorID,
-			OnBehalfOf: mcpModelActor(req.Session),
-			Model:      in.Model,
-			Channel:    artifact.ChannelMCP,
-			CapturedAt: now,
+			CreatedByUserID: userID,
+			ActorID:         actorID,
+			OnBehalfOf:      mcpModelActor(req.Session),
+			Model:           in.Model,
+			Channel:         artifact.ChannelMCP,
+			CapturedAt:      now,
 		},
-		Access:    artifact.AccessPolicy{OwnerID: actorID, Visibility: artifact.VisibilityLink},
+		Access:    artifact.AccessPolicy{OwnerUserID: userID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 		Tags:      in.Tags,
 	})
@@ -1076,8 +1092,8 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
 		return nil, mcpBundleCreateOutput{}, s.mcpScopeErr(ctx, "bundle_create", oauth.ScopeArtifactsWrite)
 	}
-	actorID := mcpActor(req.Extra)
-	if actorID == "" {
+	actorID, userID := mcpActor(req.Extra), mcpUserID(req.Extra)
+	if actorID == "" || userID == "" {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", errs.ErrUnauthorized)
 	}
 	members := make([]store.MemberInput, 0, len(in.Members))
@@ -1093,13 +1109,14 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 		Title:   in.Title,
 		Members: members,
 		Provenance: artifact.Provenance{
-			ActorID:    actorID,
-			OnBehalfOf: mcpModelActor(req.Session),
-			Model:      in.Model,
-			Channel:    artifact.ChannelMCP,
-			CapturedAt: now,
+			CreatedByUserID: userID,
+			ActorID:         actorID,
+			OnBehalfOf:      mcpModelActor(req.Session),
+			Model:           in.Model,
+			Channel:         artifact.ChannelMCP,
+			CapturedAt:      now,
 		},
-		Access:    artifact.AccessPolicy{OwnerID: actorID, Visibility: artifact.VisibilityLink},
+		Access:    artifact.AccessPolicy{OwnerUserID: userID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 		Tags:      in.Tags,
 	})
@@ -1379,8 +1396,8 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
 		return nil, mcpRunOutput{}, s.mcpScopeErr(ctx, "run_create", oauth.ScopeArtifactsWrite)
 	}
-	actorID := mcpActor(req.Extra)
-	if actorID == "" {
+	actorID, userID := mcpActor(req.Extra), mcpUserID(req.Extra)
+	if actorID == "" || userID == "" {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", errs.ErrUnauthorized)
 	}
 	spans, err := toRunSpanInputs("run_create", in.Spans)
@@ -1399,13 +1416,14 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 		TokenCount: in.TokenCount,
 		StartedAt:  started,
 		Provenance: artifact.Provenance{
-			ActorID:    actorID,
-			OnBehalfOf: mcpModelActor(req.Session),
-			Model:      in.Model,
-			Channel:    artifact.ChannelMCP,
-			CapturedAt: now,
+			CreatedByUserID: userID,
+			ActorID:         actorID,
+			OnBehalfOf:      mcpModelActor(req.Session),
+			Model:           in.Model,
+			Channel:         artifact.ChannelMCP,
+			CapturedAt:      now,
 		},
-		Access:    artifact.AccessPolicy{OwnerID: actorID, Visibility: artifact.VisibilityLink},
+		Access:    artifact.AccessPolicy{OwnerUserID: userID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 		Spans:     spans,
 	}
@@ -1447,8 +1465,8 @@ func (s *Server) mcpAppendRunSpans(ctx context.Context, req *mcp.CallToolRequest
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
 		return nil, mcpRunOutput{}, s.mcpScopeErr(ctx, "run_append_spans", oauth.ScopeArtifactsWrite)
 	}
-	actorID := mcpActor(req.Extra)
-	if actorID == "" {
+	actorID, userID := mcpActor(req.Extra), mcpUserID(req.Extra)
+	if actorID == "" || userID == "" {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_append_spans", errs.ErrUnauthorized)
 	}
 	id := normalizeMCPHandle(in.ID)
@@ -1456,7 +1474,7 @@ func (s *Server) mcpAppendRunSpans(ctx context.Context, req *mcp.CallToolRequest
 	if err != nil {
 		return nil, mcpRunOutput{}, err
 	}
-	if _, err := s.traj.AppendSpans(ctx, id, actorID, spans); err != nil {
+	if _, err := s.traj.AppendSpans(ctx, id, userID, spans); err != nil {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_append_spans", err)
 	}
 	run, err := s.traj.GetRun(ctx, id)
@@ -1570,8 +1588,8 @@ func (s *Server) mcpComment(ctx context.Context, req *mcp.CallToolRequest, in mc
 	if !mcpScopes(req.Extra)[oauth.ScopeAnnotationsWrite] {
 		return nil, mcpCommentOutput{}, s.mcpScopeErr(ctx, "artifact_comment", oauth.ScopeAnnotationsWrite)
 	}
-	actorID := mcpActor(req.Extra)
-	if actorID == "" {
+	actorID, userID := mcpActor(req.Extra), mcpUserID(req.Extra)
+	if actorID == "" || userID == "" {
 		return nil, mcpCommentOutput{}, s.mcpToolErr(ctx, "artifact_comment", errs.ErrUnauthorized)
 	}
 	id := normalizeMCPHandle(in.ID)
@@ -1583,7 +1601,7 @@ func (s *Server) mcpComment(ctx context.Context, req *mcp.CallToolRequest, in mc
 		AnchorType: sharetype.Anchor(in.AnchorType),
 		AnchorRef:  ref,
 		ParentID:   in.ParentID,
-		ActorID:    actorID,
+		UserID:     userID,
 		OnBehalfOf: mcpModelActor(req.Session),
 		Body:       in.Body,
 	})
@@ -1629,8 +1647,8 @@ func (s *Server) mcpReact(ctx context.Context, req *mcp.CallToolRequest, in mcpR
 	if !mcpScopes(req.Extra)[oauth.ScopeAnnotationsWrite] {
 		return nil, mcpReactOutput{}, s.mcpScopeErr(ctx, "artifact_react", oauth.ScopeAnnotationsWrite)
 	}
-	actorID := mcpActor(req.Extra)
-	if actorID == "" {
+	actorID, userID := mcpActor(req.Extra), mcpUserID(req.Extra)
+	if actorID == "" || userID == "" {
 		return nil, mcpReactOutput{}, s.mcpToolErr(ctx, "artifact_react", errs.ErrUnauthorized)
 	}
 	id := normalizeMCPHandle(in.ID)
@@ -1638,7 +1656,7 @@ func (s *Server) mcpReact(ctx context.Context, req *mcp.CallToolRequest, in mcpR
 	if err != nil {
 		return nil, mcpReactOutput{}, err
 	}
-	reaction, _, err := s.annot.React(ctx, id, sharetype.Anchor(in.AnchorType), ref, in.Emoji, actorID)
+	reaction, _, err := s.annot.React(ctx, id, sharetype.Anchor(in.AnchorType), ref, in.Emoji, userID)
 	if err != nil {
 		return nil, mcpReactOutput{}, s.mcpToolErr(ctx, "artifact_react", err)
 	}

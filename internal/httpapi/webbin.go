@@ -88,7 +88,7 @@ func (s *Server) handleBinPage(w http.ResponseWriter, r *http.Request) {
 // path (handleBinPage) so both surfaces render the exact same workspace view.
 func (s *Server) renderBin(w http.ResponseWriter, r *http.Request, p *Principal) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	page, err := s.store.ListBin(r.Context(), p.ActorID, r.URL.Query().Get("cursor"), limit)
+	page, err := s.store.ListBin(r.Context(), p.UserID, r.URL.Query().Get("cursor"), limit)
 	if err != nil {
 		s.renderWebError(w, r, err)
 		return
@@ -164,7 +164,7 @@ func (s *Server) handleWebComment(w http.ResponseWriter, r *http.Request) {
 	comment, err := s.annot.AddComment(r.Context(), id, annotation.CommentInput{
 		AnchorType: anchorType,
 		AnchorRef:  ref,
-		ActorID:    p.ActorID,
+		UserID:     p.UserID,
 		Body:       r.PostFormValue("body"),
 	})
 	if err != nil {

@@ -61,7 +61,7 @@ func (s *Server) handleUpdateVisibility(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	art, err := s.store.UpdateVisibility(r.Context(), id, p.ActorID, req.Visibility)
+	art, err := s.store.UpdateVisibility(r.Context(), id, p.UserID, req.Visibility)
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
@@ -94,7 +94,7 @@ func (s *Server) handleUpdateTTL(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, errs.Validationf("ttl_seconds exceeds the maximum allowed TTL (%s)", s.cfg.MaxRequestedTTL), map[string]string{"id": id})
 		return
 	}
-	art, err := s.store.UpdateTTL(r.Context(), id, p.ActorID, s.now().Add(ttl))
+	art, err := s.store.UpdateTTL(r.Context(), id, p.UserID, s.now().Add(ttl))
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
@@ -113,7 +113,7 @@ func (s *Server) handleRotateID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	art, err := s.store.RotateID(r.Context(), id, p.ActorID)
+	art, err := s.store.RotateID(r.Context(), id, p.UserID)
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return

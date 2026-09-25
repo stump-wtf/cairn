@@ -315,7 +315,7 @@ func (s *Server) handleRunShell(w http.ResponseWriter, r *http.Request) {
 	if ok {
 		vm.Authenticated = true
 		vm.Actor = viewer.ActorID
-		vm.ShareDialog.IsOwner = viewer.ActorID == a.Access.OwnerID
+		vm.ShareDialog.IsOwner = a.Access.OwnedByUser(viewer.UserID)
 		if c, cerr := r.Cookie(csrfCookieName); cerr == nil {
 			vm.CSRFToken = c.Value
 		}

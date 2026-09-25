@@ -21,6 +21,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/pat"
 	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // The MCP surface integration suite (SPEC-0007, ADR-0003/0004, issue #44):
@@ -365,8 +366,12 @@ func TestIntegrationMCPStaticTokenRejected(t *testing.T) {
 func TestIntegrationMCPPersonalAccessTokenAccepted(t *testing.T) {
 	srv, st := mcpTestServer(t, mcpConfig(), store.Options{})
 	patSvc := pat.NewService(st.Pool())
+	sam, err := user.NewStore(st.Pool()).ResolveActor(context.Background(), "sam@stump.rocks")
+	if err != nil {
+		t.Fatalf("resolve sam: %v", err)
+	}
 
-	secret, _, err := patSvc.Create(context.Background(), "sam@stump.rocks", "crush-agent",
+	secret, _, err := patSvc.Create(context.Background(), sam.ID, "crush-agent",
 		[]string{oauth.ScopeArtifactsRead, oauth.ScopeArtifactsWrite}, true)
 	if err != nil {
 		t.Fatalf("create PAT: %v", err)
@@ -380,7 +385,7 @@ func TestIntegrationMCPPersonalAccessTokenAccepted(t *testing.T) {
 	}
 
 	// Scope enforcement is unchanged: a read-only PAT is denied a write tool.
-	roSecret, _, err := patSvc.Create(context.Background(), "sam@stump.rocks", "readonly",
+	roSecret, _, err := patSvc.Create(context.Background(), sam.ID, "readonly",
 		[]string{oauth.ScopeArtifactsRead}, true)
 	if err != nil {
 		t.Fatalf("create read-only PAT: %v", err)
