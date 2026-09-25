@@ -7,6 +7,15 @@ reaches 1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **Outbound webhooks**: the `artifact.created` body appends two keys to `data`:
+  `actor_kind` (`human` or `agent`) and `auth` (`session`, `oauth`, `pat` or
+  `api_token`), both derived from the creator's credential. No other byte
+  changes. The encoder now handles every SPEC-0016 event kind; kinds other than
+  `artifact.created` are counted and never sent to `CAIRN_OUTBOUND_WEBHOOK_URLS`.
+  (ADR-0022, SPEC-0016, #305)
+
 ## [0.1.1] - Unreleased
 
 Changes since `v0.1.0`, staged for the next patch release.
