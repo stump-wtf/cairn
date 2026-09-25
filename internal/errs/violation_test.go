@@ -193,6 +193,43 @@ func TestReasonRegistryIsClosed(t *testing.T) {
 	}
 }
 
+// VE-2: "each registry entry is documented in the public error reference". The
+// page's Reasons section must list exactly the registry, in order, both in its
+// summary table and as one example heading per reason, so a reason cannot ship
+// undocumented and the page cannot document one the code does not have.
+func TestReasonRegistryIsDocumented(t *testing.T) {
+	b, err := os.ReadFile("../../website/docs/product/errors.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	start := strings.Index(s, "\n## Reasons\n")
+	if start < 0 {
+		t.Fatal(`"## Reasons" section not found in the error reference`)
+	}
+	s = s[start+1:]
+	if end := strings.Index(s[len("## Reasons"):], "\n## "); end >= 0 {
+		s = s[:len("## Reasons")+end]
+	}
+
+	want := strings.Join(reasonStrings(Reasons), ",")
+	for _, probe := range []struct {
+		what string
+		re   *regexp.Regexp
+	}{
+		{"table rows", regexp.MustCompile("(?m)^\\| `([a-z_]+)` \\|")},
+		{"example headings", regexp.MustCompile("(?m)^### `([a-z_]+)`$")},
+	} {
+		var got []string
+		for _, m := range probe.re.FindAllStringSubmatch(s, -1) {
+			got = append(got, m[1])
+		}
+		if strings.Join(got, ",") != want {
+			t.Errorf("error reference %s drifted from the registry:\n page: %v\n code: %v", probe.what, got, reasonStrings(Reasons))
+		}
+	}
+}
+
 func declaredReasons(t *testing.T) []Reason {
 	t.Helper()
 	fset := token.NewFileSet()
