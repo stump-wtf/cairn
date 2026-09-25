@@ -111,13 +111,14 @@ hint the creator asserts, not proof of anything.
 
 Two links tie the work together.
 
-- **The trace points at the receipt.** When an agent captures its run as a trace, a span
-  can carry `produced_artifact_id`: the id or `mcp://cairn/<id>` handle of an artifact that
-  span produced. The trace viewer shows that span with a link to the artifact, so a reader
-  can go from any step of the run to what it made
+- **The trace points at the receipt.** When an agent captures its run as a trace, a
+  `write` span can carry `produced_artifact_id`: the id or `mcp://cairn/<id>` handle of an
+  artifact that span produced. The trace viewer shows that span with a link to the
+  artifact, so a reader can go from the step in the run to what it made
   ([Trace](../product/share-types.md), [capturing a run](./connect-your-agent.md#capturing-a-run-as-a-trace)).
-  The artifact has to exist first: a `produced_artifact_id` that doesn't resolve rejects
-  the span batch with `validation_failed`.
+  Only a span whose `category` is `write` may carry it, even in a run that otherwise uses
+  workflow-phase categories. On any other span, or naming an artifact that doesn't exist
+  or has expired, the field rejects the whole span batch with `validation_failed`.
 - **The tracker points at the receipt.** The agent's last act is a comment on the issue
   with the receipt link. That comment is what makes the evidence findable from the status
   of record.
@@ -159,8 +160,8 @@ reviewed.
 
 - That the receipt is true. Every field is the creator's claim.
 - Who wrote it. That's [provenance](./connect-your-agent.md#what-an-agent-can-and-cant-reach):
-  the owner and channel are recorded by the server, and the MCP client name is
-  self-reported.
+  the owner and channel are recorded by the server, while the MCP client name and the
+  model are self-reported.
 - That anyone approved it. A reaction or a comment isn't a signature.
 - That it will still be there. The checksum doesn't stop the artifact expiring.
 
@@ -173,8 +174,10 @@ Every Cairn artifact expires ([Expiry](./first-share.md#expiry)):
 
 - **The default is 7 days.** On a self-hosted server it comes from `CAIRN_DEFAULT_TTL`
   ([Configuration](./self-hosting.md#configuration)).
-- **The maximum is 30 days.** A longer expiry is rejected, not shortened, and the cap isn't
-  configurable.
+- **The most you can ask for is 30 days.** A longer requested expiry is rejected, not
+  shortened, and the cap isn't configurable. Cairn doesn't check `CAIRN_DEFAULT_TTL`
+  against it, but raising the default lengthens the life of every artifact on the server,
+  so it isn't a way to keep one record.
 - **Artifacts an agent creates over MCP always get the default.** The agent can't change
   it. The owner can move the expiry to 1 to 30 days from now in the share dialog
   ([Visibility and access](./first-share.md#visibility-and-access)).
