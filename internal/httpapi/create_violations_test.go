@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -13,9 +14,11 @@ import (
 	"net/textproto"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/store"
 )
@@ -47,6 +50,33 @@ func createPathRemainingSites(t *testing.T) []guardSite {
 			return m.err()
 		}
 	}
+	// The store's own create paths, driven through their real entry points so a
+	// regression inside validate (or at the checksum or member-size check) is
+	// caught, not only one in the helpers they call. Every rejection below
+	// happens before the store touches Postgres, so no pool is needed.
+	st := store.New(nil, objectstore.NewMemory(), store.Options{MaxUploadBytes: 10})
+	now := time.Now()
+	prov := artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelAPI, CapturedAt: now}
+	access := artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink}
+	single := func(mutate func(*store.CreateArtifactInput)) func() error {
+		return func() error {
+			in := store.CreateArtifactInput{ShareType: artifact.TypeFile, Body: strings.NewReader("x"),
+				Provenance: prov, Access: access, ExpiresAt: now.Add(time.Hour)}
+			mutate(&in)
+			_, err := st.CreateArtifact(context.Background(), in)
+			return err
+		}
+	}
+	bundle := func(title string, bodies map[string]string, names ...string) func() error {
+		return func() error {
+			in := store.CreateBundleInput{Title: title, Provenance: prov, Access: access, ExpiresAt: now.Add(time.Hour)}
+			for _, n := range names {
+				in.Members = append(in.Members, store.MemberInput{Name: n, Body: strings.NewReader(bodies[n] + "x")})
+			}
+			_, err := st.CreateBundle(context.Background(), in)
+			return err
+		}
+	}
 	return []guardSite{
 		{"type: unknown (query)", func() error { _, err := s.requestedShareType(req("/?type=exotic", nil)); return err }},
 		{"type: unknown (header)", func() error {
@@ -55,24 +85,29 @@ func createPathRemainingSites(t *testing.T) []guardSite {
 		}},
 		{"type: bundle on the single-body path", func() error { _, err := s.requestedShareType(req("/?type=bundle", nil)); return err }},
 		{"type: unknown (multipart query)", func() error { _, err := s.multipartShareType(req("/?type=exotic", nil)); return err }},
-		{"type: missing (store backstop)", func() error { return s.reg.CheckCreateType("", "type", errs.LocBody) }},
+		{"type: missing (store)", single(func(in *store.CreateArtifactInput) { in.ShareType = "" })},
+		{"type: unknown (store)", single(func(in *store.CreateArtifactInput) { in.ShareType = "exotic" })},
+		{"type: bundle (store)", single(func(in *store.CreateArtifactInput) { in.ShareType = artifact.TypeBundle })},
 		{"title: query", func() error { _, err := requestedTitle(req("/?title="+longTitle, nil)); return err }},
 		{"title: header", func() error {
 			_, err := requestedTitle(req("/", map[string]string{titleHeader: longTitle}))
 			return err
 		}},
 		{"title: form field", func() error { _, err := readTitleField(strings.NewReader(longTitle)); return err }},
-		{"title: artifact.CheckTitle (store backstop)", func() error { return artifact.CheckTitle(longTitle, "title", errs.LocBody) }},
-		{"checksum: mismatch", func() error { return store.ChecksumMismatch("00") }},
+		{"title: store single body", single(func(in *store.CreateArtifactInput) { in.Title = longTitle })},
+		{"title: store bundle", bundle(longTitle, nil, "a")},
+		{"checksum: mismatch (store)", single(func(in *store.CreateArtifactInput) { in.ExpectedSHA256 = "00" })},
 		{"multipart: missing boundary", errMissingBoundary},
 		{"multipart: malformed body", func() error { return errMalformedMultipart(io.ErrUnexpectedEOF) }},
 		{"multipart: no file parts", errNoFileParts},
 		{"members: duplicate name", members([]string{"a", "a"})},
 		{"members: over the upload cap", members([]string{"a", "b"}, false, true)},
 		{"members: too many", members(make([]string, store.MaxBundleMembers+1))},
-		{"members: store empty name", func() error { var n store.MemberNames; return n.Check(0, "", errs.LocBody) }},
-		{"members: store none", func() error { return store.TooManyMembers(errs.LocBody) }},
-		{"members: store member too large", func() error { return store.MemberTooLarge(0, errs.LocBody, 10) }},
+		{"members: store none", bundle("", nil)},
+		{"members: store empty name", bundle("", nil, "a", "")},
+		{"members: store duplicate name", bundle("", nil, "a", "a")},
+		{"members: store too many", bundle("", nil, make([]string, store.MaxBundleMembers+1)...)},
+		{"members: store member too large", bundle("", map[string]string{"b": strings.Repeat("b", 64)}, "a", "b")},
 	}
 }
 
