@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // DefaultListLimit / MaxListLimit bound GET /v1/hooks/{id}/requests
@@ -28,14 +29,17 @@ func (s *Service) GetEndpoint(ctx context.Context, publicID string) (*Endpoint, 
 	var ep Endpoint
 	err := s.pool.QueryRow(ctx, `
 		SELECT a.public_id, a.title, h.request_cap,
-		       a.actor_id, a.on_behalf_of, a.channel, a.captured_at,
-		       a.owner_id, a.visibility, a.expires_at, a.created_at
+		       COALESCE(a.created_by_user_id::text, ''), COALESCE(`+user.ActorSQL("cu")+`, ''),
+		       a.on_behalf_of, a.channel, a.captured_at,
+		       COALESCE(a.owner_user_id::text, ''), COALESCE(a.owner_team_id::text, ''),
+		       a.visibility, a.expires_at, a.created_at
 		FROM hooks h
 		JOIN artifacts a ON a.id = h.artifact_id
+		LEFT JOIN users cu ON cu.id = a.created_by_user_id
 		WHERE a.public_id = $1 AND a.expires_at > now()`, publicID).Scan(
 		&ep.PublicID, &ep.Title, &ep.RequestCap,
-		&ep.Provenance.ActorID, &ep.Provenance.OnBehalfOf, &ep.Provenance.Channel, &ep.Provenance.CapturedAt,
-		&ep.Access.OwnerID, &ep.Access.Visibility, &ep.ExpiresAt, &ep.CreatedAt,
+		&ep.Provenance.CreatedByUserID, &ep.Provenance.ActorID, &ep.Provenance.OnBehalfOf, &ep.Provenance.Channel, &ep.Provenance.CapturedAt,
+		&ep.Access.OwnerUserID, &ep.Access.OwnerTeamID, &ep.Access.Visibility, &ep.ExpiresAt, &ep.CreatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

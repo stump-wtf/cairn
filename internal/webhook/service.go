@@ -17,6 +17,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/id"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // Default inline-vs-spill threshold and hard per-request body cap. A captured
@@ -327,9 +328,9 @@ func (s *Service) insertEndpointArtifact(ctx context.Context, tx pgx.Tx, in Endp
 	const insertSQL = `
 		INSERT INTO artifacts
 			(public_id, share_type, title, body_sha256, size_bytes, media_type,
-			 previewable, actor_id, on_behalf_of, channel, captured_at,
-			 owner_id, visibility, expires_at)
-		VALUES ($1,$2,$3,NULL,0,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			 previewable, created_by_user_id, on_behalf_of, channel, captured_at,
+			 owner_user_id, owner_team_id, visibility, expires_at)
+		VALUES ($1,$2,$3,NULL,0,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING id`
 
 	for attempt := 0; attempt < idMaxAttempts; attempt++ {
@@ -348,9 +349,10 @@ func (s *Service) insertEndpointArtifact(ctx context.Context, tx pgx.Tx, in Endp
 		var artID int64
 		err = sp.QueryRow(ctx, insertSQL,
 			art.PublicID, string(art.ShareType), art.Title, art.MediaType,
-			art.Previewable, art.Provenance.ActorID, art.Provenance.OnBehalfOf,
+			art.Previewable, user.IDParam(art.Provenance.CreatedByUserID), art.Provenance.OnBehalfOf,
 			string(art.Provenance.Channel), art.Provenance.CapturedAt,
-			art.Access.OwnerID, string(art.Access.Visibility), art.ExpiresAt,
+			user.IDParam(art.Access.OwnerUserID), user.IDParam(art.Access.OwnerTeamID),
+			string(art.Access.Visibility), art.ExpiresAt,
 		).Scan(&artID)
 		if err != nil {
 			_ = sp.Rollback(ctx)

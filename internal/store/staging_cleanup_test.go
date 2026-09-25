@@ -77,8 +77,8 @@ func TestNoStagingLeakOnSuccess(t *testing.T) {
 				{Name: "a.txt", Body: strings.NewReader("member a")},
 				{Name: "b.txt", Body: strings.NewReader("member b")},
 			},
-			Provenance: artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
-			Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+			Provenance: artifact.Provenance{CreatedByUserID: testOwner, ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
+			Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 			ExpiresAt:  time.Now().Add(time.Hour),
 		}
 		if _, err := s.CreateBundle(ctx, in); err != nil {

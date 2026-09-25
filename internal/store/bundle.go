@@ -39,9 +39,9 @@ func (in CreateBundleInput) validate() error {
 		return errs.Validationf("bundle: at least one member is required")
 	case in.Provenance.Channel == "":
 		return errs.Validationf("bundle: provenance channel is required")
-	case in.Provenance.ActorID == "":
+	case in.Provenance.ActorID == "" || in.Provenance.CreatedByUserID == "":
 		return errs.Validationf("bundle: provenance actor is required")
-	case in.Access.OwnerID == "":
+	case in.Access.OwnerUserID == "" && in.Access.OwnerTeamID == "":
 		return errs.Validationf("bundle: access owner is required")
 	case in.Access.Visibility == "":
 		return errs.Validationf("bundle: access visibility is required")

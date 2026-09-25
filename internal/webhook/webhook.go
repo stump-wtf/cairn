@@ -21,6 +21,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // DefaultRequestCap is the per-endpoint ring-buffer size: at most the last N
@@ -62,12 +63,14 @@ func (in EndpointInput) validate() error {
 	switch {
 	case in.Provenance.Channel == "":
 		return errs.Validationf("webhook: provenance channel is required")
-	case in.Provenance.ActorID == "":
+	case in.Provenance.ActorID == "" || in.Provenance.CreatedByUserID == "":
 		return errs.Validationf("webhook: provenance actor is required")
 	case in.Provenance.CapturedAt.IsZero():
 		return errs.Validationf("webhook: provenance capture time is required")
-	case in.Access.OwnerID == "":
+	case in.Access.OwnerUserID == "" && in.Access.OwnerTeamID == "":
 		return errs.Validationf("webhook: access owner is required")
+	case !validOptionalID(in.Provenance.CreatedByUserID) || !validOptionalID(in.Access.OwnerUserID) || !validOptionalID(in.Access.OwnerTeamID):
+		return errs.Validationf("webhook: owner and creator must be user ids")
 	case in.Access.Visibility == "":
 		return errs.Validationf("webhook: access visibility is required")
 	case in.ExpiresAt.IsZero():
@@ -76,6 +79,12 @@ func (in EndpointInput) validate() error {
 		return errs.Validationf("webhook: request cap must not be negative")
 	}
 	return nil
+}
+
+// validOptionalID reports whether id is empty or a user id, so a malformed
+// owner or creator is refused before it reaches the uuid columns.
+func validOptionalID(id string) bool {
+	return id == "" || user.ValidID(id)
 }
 
 // Endpoint is a webhook endpoint: its artifact envelope plus the ring-buffer

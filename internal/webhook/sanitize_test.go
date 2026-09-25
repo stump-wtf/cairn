@@ -71,7 +71,7 @@ func TestEndpointInputValidate(t *testing.T) {
 		{"missing channel", func(in *EndpointInput) { in.Provenance.Channel = "" }},
 		{"missing actor", func(in *EndpointInput) { in.Provenance.ActorID = "" }},
 		{"missing captured_at", func(in *EndpointInput) { in.Provenance.CapturedAt = zeroTime }},
-		{"missing owner", func(in *EndpointInput) { in.Access.OwnerID = "" }},
+		{"missing owner", func(in *EndpointInput) { in.Access.OwnerUserID = "" }},
 		{"missing visibility", func(in *EndpointInput) { in.Access.Visibility = "" }},
 		{"missing expiry", func(in *EndpointInput) { in.ExpiresAt = zeroTime }},
 		{"negative cap", func(in *EndpointInput) { in.RequestCap = -1 }},

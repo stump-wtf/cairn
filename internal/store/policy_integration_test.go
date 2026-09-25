@@ -27,7 +27,7 @@ func TestUpdateVisibilityOwnerOnly(t *testing.T) {
 	}
 
 	// Non-owner: distinct forbidden, policy unchanged.
-	if _, err := s.UpdateVisibility(ctx, art.PublicID, "mallory", artifact.VisibilityPrivate); errs.CodeOf(err) != errs.CodeForbidden {
+	if _, err := s.UpdateVisibility(ctx, art.PublicID, testIntruder, artifact.VisibilityPrivate); errs.CodeOf(err) != errs.CodeForbidden {
 		t.Fatalf("non-owner update code = %q, want forbidden", errs.CodeOf(err))
 	}
 	got, err := s.GetByPublicID(ctx, art.PublicID)
@@ -39,7 +39,7 @@ func TestUpdateVisibilityOwnerOnly(t *testing.T) {
 	}
 
 	// Owner: restricts to owner-only.
-	updated, err := s.UpdateVisibility(ctx, art.PublicID, "u1", artifact.VisibilityPrivate)
+	updated, err := s.UpdateVisibility(ctx, art.PublicID, testOwner, artifact.VisibilityPrivate)
 	if err != nil {
 		t.Fatalf("owner update: %v", err)
 	}
@@ -47,12 +47,12 @@ func TestUpdateVisibilityOwnerOnly(t *testing.T) {
 		t.Fatalf("visibility = %q, want private", updated.Access.Visibility)
 	}
 	// Ownership itself must never move.
-	if updated.Access.OwnerID != "u1" {
-		t.Fatalf("owner changed by a policy update: %q", updated.Access.OwnerID)
+	if updated.Access.OwnerUserID != testOwner {
+		t.Fatalf("owner changed by a policy update: %q", updated.Access.OwnerUserID)
 	}
 
 	// Owner: back to link.
-	updated, err = s.UpdateVisibility(ctx, art.PublicID, "u1", artifact.VisibilityLink)
+	updated, err = s.UpdateVisibility(ctx, art.PublicID, testOwner, artifact.VisibilityLink)
 	if err != nil {
 		t.Fatalf("owner update back to link: %v", err)
 	}
@@ -61,12 +61,12 @@ func TestUpdateVisibilityOwnerOnly(t *testing.T) {
 	}
 
 	// Invalid visibility value: validation_failed, no mutation.
-	if _, err := s.UpdateVisibility(ctx, art.PublicID, "u1", "bogus"); errs.CodeOf(err) != errs.CodeValidation {
+	if _, err := s.UpdateVisibility(ctx, art.PublicID, testOwner, "bogus"); errs.CodeOf(err) != errs.CodeValidation {
 		t.Fatalf("invalid visibility code = %q, want validation_failed", errs.CodeOf(err))
 	}
 
 	// Unknown id: uniform not-found, same as a read.
-	if _, err := s.UpdateVisibility(ctx, "nonexist", "u1", artifact.VisibilityPrivate); errs.CodeOf(err) != errs.CodeNotFound {
+	if _, err := s.UpdateVisibility(ctx, "nonexist", testOwner, artifact.VisibilityPrivate); errs.CodeOf(err) != errs.CodeNotFound {
 		t.Fatalf("unknown id code = %q, want not_found", errs.CodeOf(err))
 	}
 }
@@ -85,13 +85,13 @@ func TestUpdateTTLExtendAndShorten(t *testing.T) {
 	original := art.ExpiresAt
 
 	// Non-owner: distinct forbidden, TTL unchanged.
-	if _, err := s.UpdateTTL(ctx, art.PublicID, "mallory", time.Now().Add(48*time.Hour)); errs.CodeOf(err) != errs.CodeForbidden {
+	if _, err := s.UpdateTTL(ctx, art.PublicID, testIntruder, time.Now().Add(48*time.Hour)); errs.CodeOf(err) != errs.CodeForbidden {
 		t.Fatalf("non-owner update code = %q, want forbidden", errs.CodeOf(err))
 	}
 
 	// Owner extends.
 	extended := time.Now().Add(30 * 24 * time.Hour)
-	got, err := s.UpdateTTL(ctx, art.PublicID, "u1", extended)
+	got, err := s.UpdateTTL(ctx, art.PublicID, testOwner, extended)
 	if err != nil {
 		t.Fatalf("extend: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestUpdateTTLExtendAndShorten(t *testing.T) {
 
 	// Owner shortens.
 	shortened := time.Now().Add(10 * time.Minute)
-	got, err = s.UpdateTTL(ctx, art.PublicID, "u1", shortened)
+	got, err = s.UpdateTTL(ctx, art.PublicID, testOwner, shortened)
 	if err != nil {
 		t.Fatalf("shorten: %v", err)
 	}
@@ -113,10 +113,10 @@ func TestUpdateTTLExtendAndShorten(t *testing.T) {
 	}
 
 	// Zero / past expiry rejected.
-	if _, err := s.UpdateTTL(ctx, art.PublicID, "u1", time.Time{}); errs.CodeOf(err) != errs.CodeValidation {
+	if _, err := s.UpdateTTL(ctx, art.PublicID, testOwner, time.Time{}); errs.CodeOf(err) != errs.CodeValidation {
 		t.Fatalf("zero expiry code = %q, want validation_failed", errs.CodeOf(err))
 	}
-	if _, err := s.UpdateTTL(ctx, art.PublicID, "u1", time.Now().Add(-time.Hour)); errs.CodeOf(err) != errs.CodeValidation {
+	if _, err := s.UpdateTTL(ctx, art.PublicID, testOwner, time.Now().Add(-time.Hour)); errs.CodeOf(err) != errs.CodeValidation {
 		t.Fatalf("past expiry code = %q, want validation_failed", errs.CodeOf(err))
 	}
 }
@@ -135,7 +135,7 @@ func TestUpdateTTLShortenToExpiredThenUniformNotFound(t *testing.T) {
 	}
 	// A whisker in the future so UpdateTTL's own future-check accepts it, but
 	// it will have elapsed by the time we read it back.
-	if _, err := s.UpdateTTL(ctx, art.PublicID, "u1", time.Now().Add(50*time.Millisecond)); err != nil {
+	if _, err := s.UpdateTTL(ctx, art.PublicID, testOwner, time.Now().Add(50*time.Millisecond)); err != nil {
 		t.Fatalf("shorten near-immediately: %v", err)
 	}
 	time.Sleep(150 * time.Millisecond)
@@ -164,18 +164,18 @@ func TestRotateIDInvalidatesOldPreservesAnnotations(t *testing.T) {
 	// FK on the artifact's internal bigint id, never public_id, so any
 	// annotation table demonstrates the same invariant.
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, actor_id)
-		 VALUES ($1, 'artifact', '{}', '', '🔥', 'u1')`, art.ID,
+		`INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, user_id)
+		 VALUES ($1, 'artifact', '{}', '', '🔥', $2)`, art.ID, testOwner,
 	); err != nil {
 		t.Fatalf("seed reaction: %v", err)
 	}
 
 	// Non-owner: distinct forbidden, id unchanged.
-	if _, err := s.RotateID(ctx, oldID, "mallory"); errs.CodeOf(err) != errs.CodeForbidden {
+	if _, err := s.RotateID(ctx, oldID, testIntruder); errs.CodeOf(err) != errs.CodeForbidden {
 		t.Fatalf("non-owner rotate code = %q, want forbidden", errs.CodeOf(err))
 	}
 
-	rotated, err := s.RotateID(ctx, oldID, "u1")
+	rotated, err := s.RotateID(ctx, oldID, testOwner)
 	if err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestRotateIDUnknownIsUniformNotFound(t *testing.T) {
 	s, _ := newTestStore(t, Options{})
 	ctx := context.Background()
 
-	if _, err := s.RotateID(ctx, "nonexist", "u1"); errs.CodeOf(err) != errs.CodeNotFound {
+	if _, err := s.RotateID(ctx, "nonexist", testOwner); errs.CodeOf(err) != errs.CodeNotFound {
 		t.Fatalf("unknown id rotate code = %q, want not_found", errs.CodeOf(err))
 	}
 }

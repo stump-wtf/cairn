@@ -9,6 +9,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // Bin pagination bounds.
@@ -18,12 +19,20 @@ const (
 )
 
 // binColumns is the shared projection for listing artifacts, matching the read
-// path so the Bin and a single read agree on shape.
-const binColumns = `
-	id, public_id, share_type, title, body_sha256, size_bytes,
-	media_type, previewable, actor_id, on_behalf_of, model, channel,
-	captured_at, owner_id, visibility, reaction_count, comment_count, pin_count,
-	tags, expires_at, created_at`
+// path so the Bin and a single read agree on shape. It reads artifacts as a
+// joined to its creator as cu (artifactFrom): the provenance actor is
+// rendered from the creator's user row, never stored (SPEC-0023 REQ
+// "Migration to Explicit Ownership").
+var binColumns = `
+	a.id, a.public_id, a.share_type, a.title, a.body_sha256, a.size_bytes,
+	a.media_type, a.previewable, COALESCE(a.created_by_user_id::text, ''),
+	COALESCE(` + user.ActorSQL("cu") + `, ''), a.on_behalf_of, a.model, a.channel,
+	a.captured_at, COALESCE(a.owner_user_id::text, ''), COALESCE(a.owner_team_id::text, ''),
+	a.visibility, a.reaction_count, a.comment_count, a.pin_count,
+	a.tags, a.expires_at, a.created_at`
+
+// artifactFrom is the FROM clause binColumns reads.
+const artifactFrom = ` FROM artifacts a LEFT JOIN users cu ON cu.id = a.created_by_user_id`
 
 // BinPage is one page of the Bin plus the cursor to fetch the next page (empty
 // when the last page has been reached).
@@ -43,8 +52,11 @@ type BinPage struct {
 //
 // Governing: ADR-0012 (keyset pagination), SPEC-0002 REQ "Artifact Lifecycle —
 // List (the Bin)", ADR-0018, SPEC-0002 REQ "Artifact Tags".
-func (s *Store) ListBin(ctx context.Context, ownerID, cursor string, limit int, tags ...string) (BinPage, error) {
-	if ownerID == "" {
+//
+// ownerUserID is the caller's user id: the Bin is exactly the artifacts that
+// user owns (SPEC-0023 REQ "Owner Model").
+func (s *Store) ListBin(ctx context.Context, ownerUserID, cursor string, limit int, tags ...string) (BinPage, error) {
+	if ownerUserID == "" {
 		return BinPage{}, errs.Validationf("bin: owner is required")
 	}
 	if limit <= 0 {
@@ -55,15 +67,15 @@ func (s *Store) ListBin(ctx context.Context, ownerID, cursor string, limit int, 
 	}
 
 	// Fetch one extra row to decide whether a further page exists.
-	args := []any{ownerID}
-	where := "owner_id = $1 AND expires_at > now()"
+	args := []any{user.IDParam(ownerUserID)}
+	where := "a.owner_user_id = $1 AND a.expires_at > now()"
 	if cursor != "" {
 		curCreated, curID, err := decodeCursor(cursor)
 		if err != nil {
 			return BinPage{}, err
 		}
 		// Row-value comparison gives a correct, index-friendly keyset step.
-		where += " AND (created_at, id) < ($2, $3)"
+		where += " AND (a.created_at, a.id) < ($2, $3)"
 		args = append(args, curCreated, curID)
 	}
 	if len(tags) > 0 {
@@ -72,12 +84,12 @@ func (s *Store) ListBin(ctx context.Context, ownerID, cursor string, limit int, 
 			return BinPage{}, err
 		}
 		args = append(args, filter)
-		where += fmt.Sprintf(" AND tags @> $%d", len(args))
+		where += fmt.Sprintf(" AND a.tags @> $%d", len(args))
 	}
 	args = append(args, limit+1)
 
-	query := "SELECT" + binColumns + " FROM artifacts WHERE " + where +
-		fmt.Sprintf(" ORDER BY created_at DESC, id DESC LIMIT $%d", len(args))
+	query := "SELECT" + binColumns + artifactFrom + " WHERE " + where +
+		fmt.Sprintf(" ORDER BY a.created_at DESC, a.id DESC LIMIT $%d", len(args))
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -120,9 +132,9 @@ func scanArtifact(row rowScanner) (*artifact.Artifact, error) {
 	)
 	if err := row.Scan(
 		&a.ID, &a.PublicID, &a.ShareType, &a.Title, &bodySHA, &a.Size,
-		&a.MediaType, &a.Previewable, &a.Provenance.ActorID,
+		&a.MediaType, &a.Previewable, &a.Provenance.CreatedByUserID, &a.Provenance.ActorID,
 		&a.Provenance.OnBehalfOf, &a.Provenance.Model, &a.Provenance.Channel, &a.Provenance.CapturedAt,
-		&a.Access.OwnerID, &a.Access.Visibility,
+		&a.Access.OwnerUserID, &a.Access.OwnerTeamID, &a.Access.Visibility,
 		&a.ReactionCount, &a.CommentCount, &a.PinCount, &a.Tags,
 		&a.ExpiresAt, &a.CreatedAt,
 	); err != nil {

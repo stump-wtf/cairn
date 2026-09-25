@@ -82,8 +82,8 @@ func TestTagsPersistReadListFilterAndEmit(t *testing.T) {
 			{Name: "prompt.md", Body: strings.NewReader("# task")},
 			{Name: "context.log", Body: strings.NewReader("log")},
 		},
-		Provenance: artifact.Provenance{ActorID: "u1", OnBehalfOf: "crush/0.9.0", Channel: artifact.ChannelMCP, CapturedAt: time.Now()},
-		Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: testOwner, ActorID: "u1", OnBehalfOf: "crush/0.9.0", Channel: artifact.ChannelMCP, CapturedAt: time.Now()},
+		Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  time.Now().Add(time.Hour),
 		Tags:       []string{"handoff", "size:s"},
 	})
@@ -93,7 +93,7 @@ func TestTagsPersistReadListFilterAndEmit(t *testing.T) {
 
 	bin := func(tags ...string) []string {
 		t.Helper()
-		page, err := s.ListBin(ctx, "u1", "", 10, tags...)
+		page, err := s.ListBin(ctx, testOwner, "", 10, tags...)
 		if err != nil {
 			t.Fatalf("list %q: %v", tags, err)
 		}
@@ -120,7 +120,7 @@ func TestTagsPersistReadListFilterAndEmit(t *testing.T) {
 	if got := bin("nope"); len(got) != 0 {
 		t.Fatalf("bin tag=nope = %q, want none", got)
 	}
-	if _, err := s.ListBin(ctx, "u1", "", 10, "Bad"); errs.CodeOf(err) != errs.CodeValidation {
+	if _, err := s.ListBin(ctx, testOwner, "", 10, "Bad"); errs.CodeOf(err) != errs.CodeValidation {
 		t.Fatalf("bin with a malformed tag filter = %v, want a validation error", err)
 	}
 
@@ -159,8 +159,8 @@ func TestInvalidTagsPersistAndEmitNothing(t *testing.T) {
 	}
 	_, err := s.CreateBundle(ctx, CreateBundleInput{
 		Members:    []MemberInput{{Name: "a.md", Body: strings.NewReader("x")}},
-		Provenance: artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelMCP, CapturedAt: time.Now()},
-		Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: testOwner, ActorID: "u1", Channel: artifact.ChannelMCP, CapturedAt: time.Now()},
+		Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  time.Now().Add(time.Hour),
 		Tags:       []string{"lane auto"},
 	})
@@ -168,7 +168,7 @@ func TestInvalidTagsPersistAndEmitNothing(t *testing.T) {
 		t.Fatalf("bundle with a bad tag = %v, want validation error", err)
 	}
 
-	page, err := s.ListBin(ctx, "u1", "", 10)
+	page, err := s.ListBin(ctx, testOwner, "", 10)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

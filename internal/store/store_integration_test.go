@@ -26,6 +26,13 @@ import (
 // schemaSeq disambiguates test schemas created within the same nanosecond.
 var schemaSeq atomic.Int64
 
+// testOwner and testIntruder are the user ids newTestStore seeds: the owner
+// every fixture creates as (rendered "u1"), and a second user who owns nothing.
+const (
+	testOwner    = "00000000-0000-4000-8000-000000000001"
+	testIntruder = "00000000-0000-4000-8000-000000000002"
+)
+
 func newTestStore(t *testing.T, o Options) (*Store, *pgxpool.Pool) {
 	t.Helper()
 	dsn := os.Getenv("CAIRN_TEST_DATABASE_URL")
@@ -75,6 +82,13 @@ func newTestStore(t *testing.T, o Options) (*Store, *pgxpool.Pool) {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// Owners are users (SPEC-0023 REQ "Owner Model"): seed the two every
+	// test in this package acts as.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users (id, actor_key, display_handle) VALUES ($1, 'u1', 'u1'), ($2, 'intruder', 'intruder')`,
+		testOwner, testIntruder); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
 
 	var obj objectstore.ObjectStore
 	if ep := os.Getenv("CAIRN_TEST_S3_ENDPOINT"); ep != "" {
@@ -109,8 +123,8 @@ func input(body []byte) CreateArtifactInput {
 		ShareType:  artifact.TypeFile,
 		Title:      "test",
 		Body:       bytes.NewReader(body),
-		Provenance: artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
-		Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: testOwner, ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
+		Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  time.Now().Add(time.Hour),
 	}
 }

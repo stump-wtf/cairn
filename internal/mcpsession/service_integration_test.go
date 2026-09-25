@@ -23,6 +23,13 @@ var schemaSeq atomic.Int64
 // applies the embedded migrations inside a private, per-test schema — the
 // same isolation discipline internal/pat's and internal/oauth's integration
 // suites use.
+// sam, alice and bob are the users newTestPool seeds.
+const (
+	sam   = "00000000-0000-4000-8000-0000000000f1"
+	alice = "00000000-0000-4000-8000-0000000000f2"
+	bob   = "00000000-0000-4000-8000-0000000000f3"
+)
+
 func newTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("CAIRN_TEST_DATABASE_URL")
@@ -61,6 +68,12 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// Grants and sessions belong to users (SPEC-0023 REQ "Owner Model").
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, actor_key, display_handle) VALUES
+		($1, 'sam@stump.rocks', 'sam'), ($2, 'alice@stump.rocks', 'alice'), ($3, 'bob@stump.rocks', 'bob')`,
+		sam, alice, bob); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
 	return pool
 }
 
@@ -68,7 +81,7 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 // (mirroring internal/oauth's own issueGrant test helper) so mcp_sessions'
 // grant_id foreign key has a genuine oauth_grants row to reference — a
 // session is never recorded against a grant that doesn't exist.
-func seedGrant(t *testing.T, pool *pgxpool.Pool, actor string) (clientID, grantID string) {
+func seedGrant(t *testing.T, pool *pgxpool.Pool, userID string) (clientID, grantID string) {
 	t.Helper()
 	ctx := context.Background()
 	oauthSvc := oauth.NewService(pool, "https://cairn.test", oauth.Options{})
@@ -77,7 +90,7 @@ func seedGrant(t *testing.T, pool *pgxpool.Pool, actor string) (clientID, grantI
 		t.Fatalf("register client: %v", err)
 	}
 	verifier := strings.Repeat("v", 64)
-	code, err := oauthSvc.CreateAuthCode(ctx, client.ID, actor, "https://client.example/cb", oauth.AllScopes(), oauth.S256Challenge(verifier))
+	code, err := oauthSvc.CreateAuthCode(ctx, client.ID, userID, "https://client.example/cb", oauth.AllScopes(), oauth.S256Challenge(verifier))
 	if err != nil {
 		t.Fatalf("create code: %v", err)
 	}
@@ -96,11 +109,11 @@ func seedGrant(t *testing.T, pool *pgxpool.Pool, actor string) (clientID, grantI
 func TestIntegrationRecordTouchList(t *testing.T) {
 	pool := newTestPool(t)
 	ctx := context.Background()
-	clientID, grantID := seedGrant(t, pool, "sam@stump.rocks")
+	clientID, grantID := seedGrant(t, pool, sam)
 	svc := NewService(pool)
 
 	sess, err := svc.Record(ctx, RecordInput{
-		ID: "sess-1", OwnerID: "sam@stump.rocks", GrantID: grantID, ClientID: clientID,
+		ID: "sess-1", UserID: sam, GrantID: grantID, ClientID: clientID,
 		ClientName: "claude-code", ClientVersion: "1.2.3",
 	})
 	if err != nil {
@@ -120,7 +133,7 @@ func TestIntegrationRecordTouchList(t *testing.T) {
 		t.Fatalf("touch annotation posted: %v", err)
 	}
 
-	list, err := svc.List(ctx, "sam@stump.rocks", 0)
+	list, err := svc.List(ctx, sam, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -152,18 +165,18 @@ func TestIntegrationRecordTouchList(t *testing.T) {
 func TestIntegrationOwnerIsolation(t *testing.T) {
 	pool := newTestPool(t)
 	ctx := context.Background()
-	_, grantA := seedGrant(t, pool, "alice@stump.rocks")
-	clientB, grantB := seedGrant(t, pool, "bob@stump.rocks")
+	_, grantA := seedGrant(t, pool, alice)
+	clientB, grantB := seedGrant(t, pool, bob)
 	svc := NewService(pool)
 
-	if _, err := svc.Record(ctx, RecordInput{ID: "sess-a", OwnerID: "alice@stump.rocks", GrantID: grantA, ClientID: "client-a"}); err != nil {
+	if _, err := svc.Record(ctx, RecordInput{ID: "sess-a", UserID: alice, GrantID: grantA, ClientID: "client-a"}); err != nil {
 		t.Fatalf("record alice: %v", err)
 	}
-	if _, err := svc.Record(ctx, RecordInput{ID: "sess-b", OwnerID: "bob@stump.rocks", GrantID: grantB, ClientID: clientB}); err != nil {
+	if _, err := svc.Record(ctx, RecordInput{ID: "sess-b", UserID: bob, GrantID: grantB, ClientID: clientB}); err != nil {
 		t.Fatalf("record bob: %v", err)
 	}
 
-	aliceList, err := svc.List(ctx, "alice@stump.rocks", 0)
+	aliceList, err := svc.List(ctx, alice, 0)
 	if err != nil {
 		t.Fatalf("list alice: %v", err)
 	}
@@ -172,11 +185,11 @@ func TestIntegrationOwnerIsolation(t *testing.T) {
 	}
 
 	// Bob cannot Get Alice's session by id.
-	if _, err := svc.Get(ctx, "bob@stump.rocks", "sess-a"); !errors.Is(err, errs.ErrNotFound) {
+	if _, err := svc.Get(ctx, bob, "sess-a"); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("cross-owner get = %v, want errs.ErrNotFound", err)
 	}
 	// Bob's own session is still reachable.
-	if _, err := svc.Get(ctx, "bob@stump.rocks", "sess-b"); err != nil {
+	if _, err := svc.Get(ctx, bob, "sess-b"); err != nil {
 		t.Fatalf("bob's own get: %v", err)
 	}
 }
@@ -188,14 +201,14 @@ func TestIntegrationOwnerIsolation(t *testing.T) {
 func TestIntegrationEndedReflectsRevokedGrant(t *testing.T) {
 	pool := newTestPool(t)
 	ctx := context.Background()
-	clientID, grantID := seedGrant(t, pool, "sam@stump.rocks")
+	clientID, grantID := seedGrant(t, pool, sam)
 	svc := NewService(pool)
 	oauthSvc := oauth.NewService(pool, "https://cairn.test", oauth.Options{})
 
-	if _, err := svc.Record(ctx, RecordInput{ID: "sess-1", OwnerID: "sam@stump.rocks", GrantID: grantID, ClientID: clientID}); err != nil {
+	if _, err := svc.Record(ctx, RecordInput{ID: "sess-1", UserID: sam, GrantID: grantID, ClientID: clientID}); err != nil {
 		t.Fatalf("record: %v", err)
 	}
-	before, err := svc.Get(ctx, "sam@stump.rocks", "sess-1")
+	before, err := svc.Get(ctx, sam, "sess-1")
 	if err != nil {
 		t.Fatalf("get before revoke: %v", err)
 	}
@@ -207,7 +220,7 @@ func TestIntegrationEndedReflectsRevokedGrant(t *testing.T) {
 		t.Fatalf("revoke grant: %v", err)
 	}
 
-	after, err := svc.Get(ctx, "sam@stump.rocks", "sess-1")
+	after, err := svc.Get(ctx, sam, "sess-1")
 	if err != nil {
 		t.Fatalf("get after revoke: %v", err)
 	}
@@ -237,7 +250,7 @@ func TestIntegrationGetUnknownIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(pool)
 
-	if _, err := svc.Get(ctx, "sam@stump.rocks", "sess-does-not-exist"); !errors.Is(err, errs.ErrNotFound) {
+	if _, err := svc.Get(ctx, sam, "sess-does-not-exist"); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("get unknown id = %v, want errs.ErrNotFound", err)
 	}
 }

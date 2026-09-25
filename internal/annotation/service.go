@@ -29,6 +29,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // Comment body and emoji bounds. The transport additionally enforces its own
@@ -80,11 +81,14 @@ func NewService(pool *pgxpool.Pool, reg *sharetype.Registry) *Service {
 	return &Service{pool: pool, reg: reg, now: time.Now}
 }
 
-// Reaction is one stored reaction row.
+// Reaction is one stored reaction row. UserID is its author; ActorID is that
+// user as rendered on the wire (SPEC-0023 REQ "Migration to Explicit
+// Ownership": wire fields named actor_id are rendered from the user row).
 type Reaction struct {
 	ID        int64
 	Anchor    Anchor
 	Emoji     string
+	UserID    string
 	ActorID   string
 	CreatedAt time.Time
 }
@@ -93,9 +97,11 @@ type Reaction struct {
 // tombstone: Deleted is true and Body is empty, but the row (and therefore the
 // thread structure under it) remains resolvable.
 type Comment struct {
-	ID         int64
-	Anchor     Anchor
-	ParentID   *int64
+	ID       int64
+	Anchor   Anchor
+	ParentID *int64
+	// UserID is the author; ActorID is that user as rendered on the wire.
+	UserID     string
 	ActorID    string
 	OnBehalfOf string
 	Body       string
@@ -112,9 +118,9 @@ type CommentInput struct {
 	AnchorRef  json.RawMessage
 	// ParentID threads a reply under a root comment (nil for a root).
 	ParentID *int64
-	// ActorID is the authenticated author; OnBehalfOf names an agent acting
-	// for the human (provenance parity with artifacts, ADR-0007).
-	ActorID    string
+	// UserID is the authenticated author's user id; OnBehalfOf names an agent
+	// acting for the human (provenance parity with artifacts, ADR-0007).
+	UserID     string
 	OnBehalfOf string
 	Body       string
 }
@@ -140,11 +146,11 @@ type Tally struct {
 // Governing: ADR-0006 (idempotency by unique constraint, not
 // read-modify-write), SPEC-0006 REQ "Idempotent Reactions", REQ "Count
 // Aggregation".
-func (s *Service) React(ctx context.Context, publicID string, anchorType sharetype.Anchor, ref json.RawMessage, emoji, actorID string) (Reaction, bool, error) {
+func (s *Service) React(ctx context.Context, publicID string, anchorType sharetype.Anchor, ref json.RawMessage, emoji, userID string) (Reaction, bool, error) {
 	if err := validateEmoji(emoji); err != nil {
 		return Reaction{}, false, err
 	}
-	if actorID == "" {
+	if !user.ValidID(userID) {
 		return Reaction{}, false, errs.Validationf("annotation: react: actor is required")
 	}
 
@@ -167,13 +173,14 @@ func (s *Service) React(ctx context.Context, publicID string, anchorType sharety
 		// actually inserted bumps the counters.
 		var id int64
 		var createdAt time.Time
+		var actor string
 		err = tx.QueryRow(ctx, `
-			INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, actor_id)
+			INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, user_id)
 			VALUES ($1, $2, $3, $4, $5, $6)
-			ON CONFLICT (artifact_id, anchor_type, anchor_key, emoji, actor_id) DO NOTHING
-			RETURNING id, created_at`,
-			anchor.ArtifactID, string(anchor.Type), anchor.Ref, anchor.Key, emoji, actorID,
-		).Scan(&id, &createdAt)
+			ON CONFLICT (artifact_id, anchor_type, anchor_key, emoji, user_id) DO NOTHING
+			RETURNING id, created_at, (SELECT `+user.ActorSQL("u")+` FROM users u WHERE u.id = reactions.user_id)`,
+			anchor.ArtifactID, string(anchor.Type), anchor.Ref, anchor.Key, emoji, userID,
+		).Scan(&id, &createdAt, &actor)
 		switch {
 		case err == nil:
 			created = true
@@ -183,16 +190,16 @@ func (s *Service) React(ctx context.Context, publicID string, anchorType sharety
 		case errors.Is(err, pgx.ErrNoRows):
 			// Duplicate react: surface the existing row as the no-op result.
 			if err := tx.QueryRow(ctx, `
-				SELECT id, created_at FROM reactions
-				WHERE artifact_id = $1 AND anchor_type = $2 AND anchor_key = $3 AND emoji = $4 AND actor_id = $5`,
-				anchor.ArtifactID, string(anchor.Type), anchor.Key, emoji, actorID,
-			).Scan(&id, &createdAt); err != nil {
+				SELECT id, created_at, (SELECT `+user.ActorSQL("u")+` FROM users u WHERE u.id = reactions.user_id) FROM reactions
+				WHERE artifact_id = $1 AND anchor_type = $2 AND anchor_key = $3 AND emoji = $4 AND user_id = $5`,
+				anchor.ArtifactID, string(anchor.Type), anchor.Key, emoji, userID,
+			).Scan(&id, &createdAt, &actor); err != nil {
 				return fmt.Errorf("annotation: load existing reaction: %w", err)
 			}
 		default:
 			return fmt.Errorf("annotation: insert reaction: %w", err)
 		}
-		out = Reaction{ID: id, Anchor: anchor, Emoji: emoji, ActorID: actorID, CreatedAt: createdAt}
+		out = Reaction{ID: id, Anchor: anchor, Emoji: emoji, UserID: userID, ActorID: actor, CreatedAt: createdAt}
 		return nil
 	})
 	if err != nil {
@@ -205,7 +212,7 @@ func (s *Service) React(ctx context.Context, publicID string, anchorType sharety
 // toggle-off half of React. It reports whether a row was removed (removing a
 // reaction that does not exist is a no-op, matching the toggle semantics). The
 // delete and the counter decrements commit in one transaction.
-func (s *Service) Unreact(ctx context.Context, publicID string, anchorType sharetype.Anchor, ref json.RawMessage, emoji, actorID string) (bool, error) {
+func (s *Service) Unreact(ctx context.Context, publicID string, anchorType sharetype.Anchor, ref json.RawMessage, emoji, userID string) (bool, error) {
 	if err := validateEmoji(emoji); err != nil {
 		return false, err
 	}
@@ -222,8 +229,8 @@ func (s *Service) Unreact(ctx context.Context, publicID string, anchorType share
 		}
 		tag, err := tx.Exec(ctx, `
 			DELETE FROM reactions
-			WHERE artifact_id = $1 AND anchor_type = $2 AND anchor_key = $3 AND emoji = $4 AND actor_id = $5`,
-			art.id, string(anchorType), key, emoji, actorID)
+			WHERE artifact_id = $1 AND anchor_type = $2 AND anchor_key = $3 AND emoji = $4 AND user_id = $5`,
+			art.id, string(anchorType), key, emoji, user.IDParam(userID))
 		if err != nil {
 			return fmt.Errorf("annotation: delete reaction: %w", err)
 		}
@@ -239,7 +246,7 @@ func (s *Service) Unreact(ctx context.Context, publicID string, anchorType share
 // UnreactByID deletes one reaction row by id — the REST
 // `DELETE /v1/artifacts/{id}/reactions/{rid}` shape. Only the reaction's own
 // actor may remove it (SPEC-0006 REQ "Authentication & Authorization").
-func (s *Service) UnreactByID(ctx context.Context, publicID string, reactionID int64, actorID string) error {
+func (s *Service) UnreactByID(ctx context.Context, publicID string, reactionID int64, userID string) error {
 	return s.inTx(ctx, func(tx pgx.Tx) error {
 		art, err := resolveArtifact(ctx, tx, publicID)
 		if err != nil {
@@ -247,9 +254,9 @@ func (s *Service) UnreactByID(ctx context.Context, publicID string, reactionID i
 		}
 		var anchorType string
 		err = tx.QueryRow(ctx, `
-			DELETE FROM reactions WHERE id = $1 AND artifact_id = $2 AND actor_id = $3
+			DELETE FROM reactions WHERE id = $1 AND artifact_id = $2 AND user_id = $3
 			RETURNING anchor_type`,
-			reactionID, art.id, actorID).Scan(&anchorType)
+			reactionID, art.id, user.IDParam(userID)).Scan(&anchorType)
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Distinguish "someone else's reaction" from "no such reaction"
 			// without leaking other artifacts' rows: both checks stay scoped
@@ -275,20 +282,20 @@ func (s *Service) UnreactByID(ctx context.Context, publicID string, reactionID i
 // ReactionTallies returns the per-anchor emoji tallies for one artifact plus
 // the requesting actor's "did I react" flag, computed with a GROUP BY scoped
 // to that artifact and backed by the (artifact_id, anchor_type, anchor_key)
-// index (SPEC-0006 REQ "Count Aggregation", second tier). actorID may be empty
+// index (SPEC-0006 REQ "Count Aggregation", second tier). userID may be empty
 // for an anonymous link-capability read (every Reacted is then false).
-func (s *Service) ReactionTallies(ctx context.Context, publicID, actorID string) ([]Tally, error) {
+func (s *Service) ReactionTallies(ctx context.Context, publicID, userID string) ([]Tally, error) {
 	art, err := resolveArtifact(ctx, s.pool, publicID)
 	if err != nil {
 		return nil, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT anchor_type, anchor_key, emoji, count(*), bool_or(actor_id = $2)
+		SELECT anchor_type, anchor_key, emoji, count(*), COALESCE(bool_or(user_id = $2), false)
 		FROM reactions
 		WHERE artifact_id = $1
 		GROUP BY anchor_type, anchor_key, emoji
 		ORDER BY anchor_type, anchor_key, count(*) DESC, emoji`,
-		art.id, actorID)
+		art.id, user.IDParam(userID))
 	if err != nil {
 		return nil, fmt.Errorf("annotation: tally reactions for %s: %w", publicID, err)
 	}
@@ -319,7 +326,7 @@ func (s *Service) ReactionTallies(ctx context.Context, publicID, actorID string)
 // Governing: ADR-0006 (shallow threads, soft delete), SPEC-0006 REQ "Threaded
 // Comments", REQ "Count Aggregation".
 func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInput) (Comment, error) {
-	if in.ActorID == "" {
+	if !user.ValidID(in.UserID) {
 		return Comment{}, errs.Validationf("annotation: comment: actor is required")
 	}
 	if in.Body == "" || len(in.Body) > maxCommentBytes {
@@ -363,14 +370,15 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 		var (
 			id        int64
 			createdAt time.Time
+			actor     string
 		)
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, parent_id, actor_id, on_behalf_of, body)
+			INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, parent_id, user_id, on_behalf_of, body)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			RETURNING id, created_at`,
+			RETURNING id, created_at, (SELECT `+user.ActorSQL("u")+` FROM users u WHERE u.id = comments.user_id)`,
 			anchor.ArtifactID, string(anchor.Type), anchor.Ref, anchor.Key,
-			in.ParentID, in.ActorID, in.OnBehalfOf, in.Body,
-		).Scan(&id, &createdAt); err != nil {
+			in.ParentID, in.UserID, in.OnBehalfOf, in.Body,
+		).Scan(&id, &createdAt, &actor); err != nil {
 			return fmt.Errorf("annotation: insert comment: %w", err)
 		}
 		if err := bumpCounts(ctx, tx, anchor.ArtifactID, sharetype.KindComment, anchor.Type, +1); err != nil {
@@ -378,7 +386,7 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 		}
 		out = Comment{
 			ID: id, Anchor: anchor, ParentID: in.ParentID,
-			ActorID: in.ActorID, OnBehalfOf: in.OnBehalfOf, Body: in.Body,
+			UserID: in.UserID, ActorID: actor, OnBehalfOf: in.OnBehalfOf, Body: in.Body,
 			CreatedAt: createdAt,
 		}
 		return nil
@@ -391,7 +399,7 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 
 // EditComment replaces the body of the actor's own live comment and stamps
 // edited_at (SPEC-0006 "edits MUST record edited_at"). Author-only.
-func (s *Service) EditComment(ctx context.Context, publicID string, commentID int64, actorID, body string) error {
+func (s *Service) EditComment(ctx context.Context, publicID string, commentID int64, userID, body string) error {
 	if body == "" || len(body) > maxCommentBytes {
 		return fmt.Errorf("annotation: comment body length %d: %w", len(body), ErrBodyInvalid)
 	}
@@ -402,8 +410,8 @@ func (s *Service) EditComment(ctx context.Context, publicID string, commentID in
 		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE comments SET body = $1, edited_at = now()
-			WHERE id = $2 AND artifact_id = $3 AND actor_id = $4 AND deleted_at IS NULL`,
-			body, commentID, art.id, actorID)
+			WHERE id = $2 AND artifact_id = $3 AND user_id = $4 AND deleted_at IS NULL`,
+			body, commentID, art.id, user.IDParam(userID))
 		if err != nil {
 			return fmt.Errorf("annotation: edit comment %d: %w", commentID, err)
 		}
@@ -418,7 +426,7 @@ func (s *Service) EditComment(ctx context.Context, publicID string, commentID in
 // thread structure and its replies resolvable (SPEC-0006 "Soft-deleted comment
 // keeps the thread") — and decrements the rollups in the same transaction.
 // Author-only.
-func (s *Service) DeleteComment(ctx context.Context, publicID string, commentID int64, actorID string) error {
+func (s *Service) DeleteComment(ctx context.Context, publicID string, commentID int64, userID string) error {
 	return s.inTx(ctx, func(tx pgx.Tx) error {
 		art, err := resolveArtifact(ctx, tx, publicID)
 		if err != nil {
@@ -427,9 +435,9 @@ func (s *Service) DeleteComment(ctx context.Context, publicID string, commentID 
 		var anchorType string
 		err = tx.QueryRow(ctx, `
 			UPDATE comments SET deleted_at = now()
-			WHERE id = $1 AND artifact_id = $2 AND actor_id = $3 AND deleted_at IS NULL
+			WHERE id = $1 AND artifact_id = $2 AND user_id = $3 AND deleted_at IS NULL
 			RETURNING anchor_type`,
-			commentID, art.id, actorID).Scan(&anchorType)
+			commentID, art.id, user.IDParam(userID)).Scan(&anchorType)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return commentWriteRefusal(ctx, tx, art.id, commentID)
 		}
@@ -453,11 +461,13 @@ func (s *Service) ListComments(ctx context.Context, publicID string) ([]Comment,
 	// thread the root sorts first because replies are created (and numbered)
 	// after it.
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, anchor_type, anchor_ref, anchor_key, parent_id, actor_id,
-		       on_behalf_of, body, created_at, edited_at, deleted_at
-		FROM comments
-		WHERE artifact_id = $1
-		ORDER BY COALESCE(parent_id, id), created_at, id`,
+		SELECT c.id, c.anchor_type, c.anchor_ref, c.anchor_key, c.parent_id, c.user_id::text,
+		       `+user.ActorSQL("u")+`,
+		       c.on_behalf_of, c.body, c.created_at, c.edited_at, c.deleted_at
+		FROM comments c
+		JOIN users u ON u.id = c.user_id
+		WHERE c.artifact_id = $1
+		ORDER BY COALESCE(c.parent_id, c.id), c.created_at, c.id`,
 		art.id)
 	if err != nil {
 		return nil, fmt.Errorf("annotation: list comments for %s: %w", publicID, err)
@@ -473,7 +483,7 @@ func (s *Service) ListComments(ctx context.Context, publicID string) ([]Comment,
 		)
 		c.Anchor.ArtifactID = art.id
 		if err := rows.Scan(&c.ID, &anchorType, &c.Anchor.Ref, &c.Anchor.Key,
-			&c.ParentID, &c.ActorID, &c.OnBehalfOf, &c.Body,
+			&c.ParentID, &c.UserID, &c.ActorID, &c.OnBehalfOf, &c.Body,
 			&c.CreatedAt, &c.EditedAt, &deletedAt); err != nil {
 			return nil, fmt.Errorf("annotation: scan comment: %w", err)
 		}

@@ -62,8 +62,11 @@ func JoinScope(scopes []string) string { return oauth.JoinScope(scopes) }
 // plaintext secret, which exists only in memory at creation time (Service.Create
 // return value) and is never persisted or re-derivable.
 type Token struct {
-	ID         string
-	OwnerID    string
+	ID string
+	// UserID is the owning user (SPEC-0023 REQ "Owner Model"); Actor is that
+	// user as rendered on the wire.
+	UserID     string
+	Actor      string
 	Name       string
 	Scopes     []string
 	IsAgent    bool
