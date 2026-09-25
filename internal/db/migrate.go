@@ -18,6 +18,13 @@ var migrationsFS embed.FS
 // applied versions are skipped. Migrations are bundled into the binary so the
 // single artifact carries its own schema (ADR-0012 "Deployment shape").
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
+	return migrateThrough(ctx, pool, "")
+}
+
+// migrateThrough applies pending migrations up to and including version last
+// ("" applies all). Tests use it to seed a schema as an earlier release left
+// it before applying the migration under test.
+func migrateThrough(ctx context.Context, pool *pgxpool.Pool, last string) error {
 	if _, err := pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version    TEXT PRIMARY KEY,
@@ -40,6 +47,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 
 	for _, name := range names {
 		version := strings.TrimSuffix(name, ".sql")
+		if last != "" && version > last {
+			break
+		}
 
 		var exists bool
 		if err := pool.QueryRow(ctx,
