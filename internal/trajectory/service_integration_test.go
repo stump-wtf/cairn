@@ -17,6 +17,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/db"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/store"
 )
@@ -389,7 +390,7 @@ func TestBatchAndIncrementalConverge(t *testing.T) {
 			t.Fatalf("append %s: %v", sp.SpanID, err)
 		}
 	}
-	closed, err := svc.CloseRun(ctx, open.PublicID, "joe")
+	closed, err := svc.CloseRun(ctx, open.PublicID, event.Actor{ID: "joe", Channel: artifact.ChannelMCP, Kind: event.KindAgent, Auth: event.AuthOAuth})
 	if err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -503,7 +504,7 @@ func TestNonOwnerCannotClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	_, err = svc.CloseRun(ctx, open.PublicID, "mallory")
+	_, err = svc.CloseRun(ctx, open.PublicID, event.Actor{ID: "mallory", Channel: artifact.ChannelMCP, Kind: event.KindAgent, Auth: event.AuthOAuth})
 	if !errors.Is(err, ErrNotOwner) {
 		t.Fatalf("close by non-owner err = %v, want ErrNotOwner", err)
 	}

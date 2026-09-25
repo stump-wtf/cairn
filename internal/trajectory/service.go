@@ -13,6 +13,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/id"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/sharetype"
@@ -347,8 +348,16 @@ func (s *Service) AppendSpans(ctx context.Context, publicID, actorID string, spa
 // CloseRun closes an open run, stamping ended_at from the span tree (so it
 // matches a batch run) and freezing it against further spans. Only the owner may
 // close it; a closed run stays closed (SPEC-0004 "Run Model and Lifecycle",
-// "Non-owner cannot close a run").
-func (s *Service) CloseRun(ctx context.Context, publicID, actorID string) (*Run, error) {
+// "Non-owner cannot close a run"). The actor is the closer, derived from the
+// authenticated principal (SPEC-0016 EV-4).
+func (s *Service) CloseRun(ctx context.Context, publicID string, actor event.Actor) (*Run, error) {
+	// Every adapter derives the actor from the authenticated principal, so an
+	// empty id or kind means a caller skipped that step: fail closed before the
+	// transaction rather than close a run nobody can attribute (EV-4).
+	if actor.ID == "" || !actor.Kind.Valid() {
+		return nil, errs.Validationf("trajectory: close run: actor id and kind are required")
+	}
+	actorID := actor.ID
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("trajectory: begin tx: %w", err)

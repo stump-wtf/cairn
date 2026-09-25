@@ -28,6 +28,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
@@ -112,11 +113,25 @@ type CommentInput struct {
 	AnchorRef  json.RawMessage
 	// ParentID threads a reply under a root comment (nil for a root).
 	ParentID *int64
-	// ActorID is the authenticated author; OnBehalfOf names an agent acting
-	// for the human (provenance parity with artifacts, ADR-0007).
-	ActorID    string
-	OnBehalfOf string
-	Body       string
+	// Actor is the authenticated author, derived server-side from the
+	// principal (SPEC-0016 EV-4). Actor.OnBehalfOf names an agent acting for
+	// the human (provenance parity with artifacts, ADR-0007).
+	Actor event.Actor
+	Body  string
+}
+
+// validateActor refuses a write whose actor has no identity or no derived kind.
+// Every adapter derives the kind from the authenticated principal, so an empty
+// one means a caller skipped that step: fail closed rather than record an
+// annotation nobody can classify (SPEC-0016 EV-4).
+func validateActor(op string, a event.Actor) error {
+	if a.ID == "" {
+		return errs.Validationf("annotation: %s: actor is required", op)
+	}
+	if !a.Kind.Valid() {
+		return errs.Validationf("annotation: %s: actor kind is required", op)
+	}
+	return nil
 }
 
 // Tally is one per-anchor emoji tally, computed at view time over a single
@@ -140,13 +155,14 @@ type Tally struct {
 // Governing: ADR-0006 (idempotency by unique constraint, not
 // read-modify-write), SPEC-0006 REQ "Idempotent Reactions", REQ "Count
 // Aggregation".
-func (s *Service) React(ctx context.Context, publicID string, anchorType sharetype.Anchor, ref json.RawMessage, emoji, actorID string) (Reaction, bool, error) {
+func (s *Service) React(ctx context.Context, publicID string, anchorType sharetype.Anchor, ref json.RawMessage, emoji string, actor event.Actor) (Reaction, bool, error) {
 	if err := validateEmoji(emoji); err != nil {
 		return Reaction{}, false, err
 	}
-	if actorID == "" {
-		return Reaction{}, false, errs.Validationf("annotation: react: actor is required")
+	if err := validateActor("react", actor); err != nil {
+		return Reaction{}, false, err
 	}
+	actorID := actor.ID
 
 	var (
 		out     Reaction
@@ -205,10 +221,14 @@ func (s *Service) React(ctx context.Context, publicID string, anchorType sharety
 // toggle-off half of React. It reports whether a row was removed (removing a
 // reaction that does not exist is a no-op, matching the toggle semantics). The
 // delete and the counter decrements commit in one transaction.
-func (s *Service) Unreact(ctx context.Context, publicID string, anchorType sharetype.Anchor, ref json.RawMessage, emoji, actorID string) (bool, error) {
+func (s *Service) Unreact(ctx context.Context, publicID string, anchorType sharetype.Anchor, ref json.RawMessage, emoji string, actor event.Actor) (bool, error) {
 	if err := validateEmoji(emoji); err != nil {
 		return false, err
 	}
+	if err := validateActor("unreact", actor); err != nil {
+		return false, err
+	}
+	actorID := actor.ID
 	key, err := CanonicalKey(ref)
 	if err != nil {
 		return false, fmt.Errorf("annotation: unreact: %w", ErrLocatorInvalid)
@@ -239,7 +259,11 @@ func (s *Service) Unreact(ctx context.Context, publicID string, anchorType share
 // UnreactByID deletes one reaction row by id — the REST
 // `DELETE /v1/artifacts/{id}/reactions/{rid}` shape. Only the reaction's own
 // actor may remove it (SPEC-0006 REQ "Authentication & Authorization").
-func (s *Service) UnreactByID(ctx context.Context, publicID string, reactionID int64, actorID string) error {
+func (s *Service) UnreactByID(ctx context.Context, publicID string, reactionID int64, actor event.Actor) error {
+	if err := validateActor("unreact", actor); err != nil {
+		return err
+	}
+	actorID := actor.ID
 	return s.inTx(ctx, func(tx pgx.Tx) error {
 		art, err := resolveArtifact(ctx, tx, publicID)
 		if err != nil {
@@ -319,8 +343,8 @@ func (s *Service) ReactionTallies(ctx context.Context, publicID, actorID string)
 // Governing: ADR-0006 (shallow threads, soft delete), SPEC-0006 REQ "Threaded
 // Comments", REQ "Count Aggregation".
 func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInput) (Comment, error) {
-	if in.ActorID == "" {
-		return Comment{}, errs.Validationf("annotation: comment: actor is required")
+	if err := validateActor("comment", in.Actor); err != nil {
+		return Comment{}, err
 	}
 	if in.Body == "" || len(in.Body) > maxCommentBytes {
 		return Comment{}, fmt.Errorf("annotation: comment body length %d: %w", len(in.Body), ErrBodyInvalid)
@@ -369,7 +393,7 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 			RETURNING id, created_at`,
 			anchor.ArtifactID, string(anchor.Type), anchor.Ref, anchor.Key,
-			in.ParentID, in.ActorID, in.OnBehalfOf, in.Body,
+			in.ParentID, in.Actor.ID, in.Actor.OnBehalfOf, in.Body,
 		).Scan(&id, &createdAt); err != nil {
 			return fmt.Errorf("annotation: insert comment: %w", err)
 		}
@@ -378,7 +402,7 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 		}
 		out = Comment{
 			ID: id, Anchor: anchor, ParentID: in.ParentID,
-			ActorID: in.ActorID, OnBehalfOf: in.OnBehalfOf, Body: in.Body,
+			ActorID: in.Actor.ID, OnBehalfOf: in.Actor.OnBehalfOf, Body: in.Body,
 			CreatedAt: createdAt,
 		}
 		return nil

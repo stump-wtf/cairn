@@ -11,6 +11,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 )
 
 // MemberInput is one file to place in a bundle. Body is streamed and dedup'd
@@ -31,6 +32,11 @@ type CreateBundleInput struct {
 	// Tags are client-asserted routing strings on the bundle as a whole
 	// (ADR-0018); members carry none of their own.
 	Tags []string
+	// ActorKind and Auth classify the creator's credential. The adapter derives
+	// them from the authenticated principal, never from the request, and they
+	// travel only on the creation event (ADR-0022, SPEC-0016 EV-4).
+	ActorKind event.ActorKind
+	Auth      event.AuthMethod
 }
 
 func (in CreateBundleInput) validate() error {
@@ -154,7 +160,7 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("bundle: commit: %w", err)
 	}
-	s.emitCreated(art)
+	s.emitCreated(art, in.ActorKind, in.Auth)
 	return art, nil
 }
 
