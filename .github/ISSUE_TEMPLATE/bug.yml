@@ -1,0 +1,114 @@
+name: Bug report
+description: Something in Cairn broke or behaved differently from the docs.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. These fields are what we need to reproduce it.
+
+        **Don't paste secrets.** No API tokens, OAuth or session cookies, webhook
+        ingest URLs, or the contents of a private artifact. Replace them with `<redacted>`.
+        A security problem goes through [the security policy](https://github.com/stump-wtf/cairn/security/policy),
+        not a public issue.
+
+  - type: input
+    id: version
+    attributes:
+      label: Server version
+      description: >
+        The image tag plus its digest, for example `ghcr.io/stump-wtf/cairn:0.1.0@sha256:…`
+        (`docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/stump-wtf/cairn:<tag>`).
+        For a source build, the commit (`git rev-parse --short HEAD`). On an instance
+        someone else runs, write "unknown" and give its URL below.
+      placeholder: ghcr.io/stump-wtf/cairn:0.1.0@sha256:…
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Self-hosted with Docker Compose
+        - Self-hosted binary or source build
+        - An instance someone else runs
+    validations:
+      required: true
+
+  - type: input
+    id: instance
+    attributes:
+      label: Instance URL
+      description: The origin you were talking to, if you can share it.
+      placeholder: https://cairn.example.com
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      description: Where you saw the problem. Pick every one that applies.
+      multiple: true
+      options:
+        - Web
+        - CLI
+        - MCP
+        - REST API, called directly
+    validations:
+      required: true
+
+  - type: input
+    id: client
+    attributes:
+      label: Client and version
+      description: >
+        CLI: the output of `cairn --version`. MCP: the client's name and version,
+        for example `claude --version`. Web: the browser and its version.
+      placeholder: cairn version 0.1.0 (abc1234, 2026-09-12)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: share-type
+    attributes:
+      label: Share type
+      description: The type of the artifact involved.
+      options:
+        - markdown
+        - code
+        - image
+        - file
+        - gz
+        - bundle
+        - trajectory (trace)
+        - webhook
+        - Not about one artifact
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected
+      description: The smallest set of steps that reproduces it.
+      placeholder: |
+        1. cat notes.md | cairn
+        2. …
+        Expected: …
+        Got: …
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Exact error
+      description: >
+        The full error, copied rather than paraphrased. From REST, the whole JSON
+        body, including `request_id`. From MCP, the tool's error text. From the CLI,
+        its output.
+      render: text
+    validations:
+      required: true
