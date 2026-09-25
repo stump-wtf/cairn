@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -150,9 +151,9 @@ func (s *Server) handleUnreactByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	rid, err := strconv.ParseInt(chi.URLParam(r, "rid"), 10, 64)
+	rid, err := parseReactionID(chi.URLParam(r, "rid"))
 	if err != nil {
-		s.writeError(w, r, errs.Validationf("reaction id must be an integer"), map[string]string{"id": id})
+		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
 	if err := s.annot.UnreactByID(r.Context(), id, rid, p.ActorID); err != nil {
@@ -160,6 +161,16 @@ func (s *Server) handleUnreactByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// parseReactionID parses the {rid} path segment (SPEC-0019 VE-1, VE-6).
+func parseReactionID(raw string) (int64, error) {
+	rid, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("reaction id %q: %w", raw, errs.Violate("rid", errs.LocPath, errs.ReasonInvalidFormat,
+			errs.WithValue(raw), errs.WithExpect("an integer reaction id")))
+	}
+	return rid, nil
 }
 
 // handleListReactions returns the per-anchor emoji tallies for one artifact
@@ -243,13 +254,22 @@ func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
 func (s *Server) decodeAnnotationBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxAnnotationRequestBytes)
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			return errs.ErrTooLarge
-		}
-		return errs.Validationf("annotation request body is not valid JSON")
+		return fmt.Errorf("decode annotation body: %w", jsonBodyViolation(err))
 	}
 	return nil
+}
+
+// jsonBodyViolation maps a JSON body decode failure to its violation: body
+// too_large at the MaxBytesReader cap (413), or body invalid_format (400).
+// The decoder's own message is kept for the log line only.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-6
+func jsonBodyViolation(err error) error {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		return errs.Violate("body", errs.LocBody, errs.ReasonTooLarge, errs.WithLimit(maxErr.Limit, errs.UnitBytes)).Because(err)
+	}
+	return errs.Violate("body", errs.LocBody, errs.ReasonInvalidFormat, errs.WithExpect("a JSON object")).Because(err)
 }
 
 // optionalActor resolves the caller's actor id when the read carries valid

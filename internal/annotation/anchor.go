@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
@@ -69,19 +70,34 @@ type Anchor struct {
 // locator into the returned Anchor. Nothing is persisted by callers unless
 // Validate accepts (SPEC-0006 "reject the write with validation_failed and
 // persist nothing").
+//
+// Each rejection is a typed violation naming anchor_type or anchor_ref that
+// still satisfies errors.Is against its sentinel. A disallowed anchor_type
+// names the anchors the share type does take for the kind.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-6
 func Validate(reg *sharetype.Registry, artifactID int64, shareType artifact.ShareType, kind sharetype.AnnotationKind, anchorType sharetype.Anchor, ref json.RawMessage) (Anchor, error) {
 	if !reg.AllowsAnchor(shareType, anchorType, kind) {
-		if kind == sharetype.KindComment && !allowsAnyAnchor(reg, shareType, kind) {
-			return Anchor{}, fmt.Errorf("annotation: comment on non-commentable share type %q: %w", shareType, ErrNotCommentable)
+		allowed := allowedAnchors(reg, shareType, kind)
+		if kind == sharetype.KindComment && len(allowed) == 0 {
+			return Anchor{}, fmt.Errorf("annotation: comment on non-commentable share type %q: %w", shareType,
+				errs.Violate("anchor_type", errs.LocBody, errs.ReasonNotAllowed, errs.WithValue(string(anchorType)),
+					errs.WithExpect(fmt.Sprintf("a %s artifact accepts no comments", shareType))).Because(ErrNotCommentable))
 		}
-		return Anchor{}, fmt.Errorf("annotation: %s on %q anchor for share type %q: %w", kind, anchorType, shareType, ErrAnchorNotAllowed)
+		if anchorType == "" {
+			return Anchor{}, fmt.Errorf("annotation: %s with no anchor_type: %w", kind,
+				errs.Violate("anchor_type", errs.LocBody, errs.ReasonRequired).Because(ErrAnchorNotAllowed))
+		}
+		return Anchor{}, fmt.Errorf("annotation: %s on %q anchor for share type %q: %w", kind, anchorType, shareType,
+			errs.Violate("anchor_type", errs.LocBody, errs.ReasonNotAllowed, errs.WithValue(string(anchorType)),
+				errs.WithExpect(fmt.Sprintf("a %s artifact takes %ss on %s", shareType, kind, strings.Join(allowed, ", ")))).Because(ErrAnchorNotAllowed))
 	}
 	if err := reg.ValidateLocator(shareType, anchorType, ref); err != nil {
-		return Anchor{}, fmt.Errorf("annotation: %q anchor_ref rejected: %v: %w", anchorType, err, ErrLocatorInvalid)
+		return Anchor{}, fmt.Errorf("annotation: %q anchor_ref rejected: %v: %w", anchorType, err, locatorViolation(anchorType))
 	}
 	canonical, err := CanonicalRef(ref)
 	if err != nil {
-		return Anchor{}, fmt.Errorf("annotation: %q anchor_ref not canonicalizable: %v: %w", anchorType, err, ErrLocatorInvalid)
+		return Anchor{}, fmt.Errorf("annotation: %q anchor_ref not canonicalizable: %v: %w", anchorType, err, locatorViolation(anchorType))
 	}
 	return Anchor{
 		ArtifactID: artifactID,
@@ -91,23 +107,27 @@ func Validate(reg *sharetype.Registry, artifactID int64, shareType artifact.Shar
 	}, nil
 }
 
-// allowsAnyAnchor reports whether the share type permits the annotation kind
-// on at least one anchor. Used only to pick the more specific sentinel; the
-// capability data itself lives entirely in the registry.
-func allowsAnyAnchor(reg *sharetype.Registry, shareType artifact.ShareType, kind sharetype.AnnotationKind) bool {
+// locatorViolation is the anchor_ref violation for a locator that fails its
+// anchor_type's schema. The ref is not echoed: it is a JSON object, and a
+// 64-byte cut of one explains nothing.
+func locatorViolation(anchorType sharetype.Anchor) *errs.Invalid {
+	return errs.Violate("anchor_ref", errs.LocBody, errs.ReasonInvalidFormat,
+		errs.WithExpect(fmt.Sprintf("the locator object a %q anchor takes", anchorType))).Because(ErrLocatorInvalid)
+}
+
+// allowedAnchors lists the anchors on which the share type permits the
+// annotation kind, in registry order. Empty means the kind is refused on every
+// anchor (the webhook "reactable, never commentable" asymmetry), which picks
+// the more specific sentinel; the capability data itself lives entirely in
+// the registry.
+func allowedAnchors(reg *sharetype.Registry, shareType artifact.ShareType, kind sharetype.AnnotationKind) []string {
+	var out []string
 	for _, spec := range reg.Resolve(shareType).Anchors() {
-		switch kind {
-		case sharetype.KindReaction:
-			if spec.Reactions {
-				return true
-			}
-		case sharetype.KindComment:
-			if spec.Comments {
-				return true
-			}
+		if (kind == sharetype.KindReaction && spec.Reactions) || (kind == sharetype.KindComment && spec.Comments) {
+			out = append(out, string(spec.Anchor))
 		}
 	}
-	return false
+	return out
 }
 
 // CanonicalRef returns the canonical serialization of an anchor_ref locator:

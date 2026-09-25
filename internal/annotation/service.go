@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -211,7 +212,7 @@ func (s *Service) Unreact(ctx context.Context, publicID string, anchorType share
 	}
 	key, err := CanonicalKey(ref)
 	if err != nil {
-		return false, fmt.Errorf("annotation: unreact: %w", ErrLocatorInvalid)
+		return false, fmt.Errorf("annotation: unreact: %v: %w", err, locatorViolation(anchorType))
 	}
 
 	removed := false
@@ -322,8 +323,8 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 	if in.ActorID == "" {
 		return Comment{}, errs.Validationf("annotation: comment: actor is required")
 	}
-	if in.Body == "" || len(in.Body) > maxCommentBytes {
-		return Comment{}, fmt.Errorf("annotation: comment body length %d: %w", len(in.Body), ErrBodyInvalid)
+	if err := checkCommentBody(in.Body); err != nil {
+		return Comment{}, err
 	}
 
 	var out Comment
@@ -339,19 +340,8 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 			if err != nil {
 				return err
 			}
-			if anchorType == "" {
-				// Inherit the root's anchor (SPEC-0006 "a reply's anchor MUST
-				// match its root's anchor").
-				anchorType, ref = parent.anchorType, parent.anchorRef
-			} else {
-				key, err := CanonicalKey(ref)
-				if err != nil {
-					return fmt.Errorf("annotation: reply anchor_ref: %v: %w", err, ErrLocatorInvalid)
-				}
-				if anchorType != parent.anchorType || key != parent.anchorKey {
-					return fmt.Errorf("annotation: reply anchor %q/%s differs from root %q/%s: %w",
-						anchorType, key, parent.anchorType, parent.anchorKey, ErrAnchorMismatch)
-				}
+			if anchorType, ref, err = CheckReply(*in.ParentID, parent, anchorType, ref); err != nil {
+				return err
 			}
 		}
 
@@ -392,8 +382,8 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 // EditComment replaces the body of the actor's own live comment and stamps
 // edited_at (SPEC-0006 "edits MUST record edited_at"). Author-only.
 func (s *Service) EditComment(ctx context.Context, publicID string, commentID int64, actorID, body string) error {
-	if body == "" || len(body) > maxCommentBytes {
-		return fmt.Errorf("annotation: comment body length %d: %w", len(body), ErrBodyInvalid)
+	if err := checkCommentBody(body); err != nil {
+		return err
 	}
 	return s.inTx(ctx, func(tx pgx.Tx) error {
 		art, err := resolveArtifact(ctx, tx, publicID)
@@ -522,18 +512,23 @@ func resolveArtifact(ctx context.Context, q queryRower, publicID string) (resolv
 	return art, nil
 }
 
-// parentComment is the slice of a root comment a reply is validated against.
-type parentComment struct {
-	anchorType sharetype.Anchor
-	anchorRef  json.RawMessage
-	anchorKey  string
+// ReplyParent is the stored state of the comment a reply's parent_id names:
+// what CheckReply validates the reply against.
+type ReplyParent struct {
+	// Exists reports a live comment with that id on the annotated artifact.
+	Exists bool
+	// IsReply reports that the parent is itself a reply.
+	IsReply    bool
+	AnchorType sharetype.Anchor
+	AnchorRef  json.RawMessage
+	AnchorKey  string
 }
 
-// loadParent fetches a reply's parent, rejecting a missing/deleted parent
-// (ErrParentNotFound) and a parent that is itself a reply (ErrThreadTooDeep).
-func loadParent(ctx context.Context, tx pgx.Tx, artifactID, parentID int64) (parentComment, error) {
+// loadParent fetches the state of a reply's parent. A missing or soft-deleted
+// parent is not an error here; CheckReply turns it into a violation.
+func loadParent(ctx context.Context, tx pgx.Tx, artifactID, parentID int64) (ReplyParent, error) {
 	var (
-		p            parentComment
+		p            ReplyParent
 		anchorType   string
 		parentParent *int64
 	)
@@ -541,18 +536,59 @@ func loadParent(ctx context.Context, tx pgx.Tx, artifactID, parentID int64) (par
 		SELECT anchor_type, anchor_ref, anchor_key, parent_id
 		FROM comments
 		WHERE id = $1 AND artifact_id = $2 AND deleted_at IS NULL`,
-		parentID, artifactID).Scan(&anchorType, &p.anchorRef, &p.anchorKey, &parentParent)
+		parentID, artifactID).Scan(&anchorType, &p.AnchorRef, &p.AnchorKey, &parentParent)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return p, fmt.Errorf("annotation: parent comment %d: %w", parentID, ErrParentNotFound)
+		return p, nil
 	}
 	if err != nil {
 		return p, fmt.Errorf("annotation: load parent comment %d: %w", parentID, err)
 	}
-	if parentParent != nil {
-		return p, fmt.Errorf("annotation: comment %d is itself a reply: %w", parentID, ErrThreadTooDeep)
-	}
-	p.anchorType = sharetype.Anchor(anchorType)
+	p.Exists, p.IsReply, p.AnchorType = true, parentParent != nil, sharetype.Anchor(anchorType)
 	return p, nil
+}
+
+// CheckReply validates a reply against its parent and returns the anchor the
+// reply takes. The parent must be a live root comment on the same artifact
+// (ErrParentNotFound, ErrThreadTooDeep, both on parent_id). A zero anchorType
+// inherits the root's anchor; a supplied anchor must match it (ErrAnchorMismatch,
+// on the anchor field that differs). It is pure, so the rules are testable
+// without a database.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-6; SPEC-0006 REQ "Threaded Comments"
+func CheckReply(parentID int64, p ReplyParent, anchorType sharetype.Anchor, ref json.RawMessage) (sharetype.Anchor, json.RawMessage, error) {
+	id := errs.WithValue(strconv.FormatInt(parentID, 10))
+	switch {
+	case !p.Exists:
+		return "", nil, fmt.Errorf("annotation: parent comment %d: %w", parentID,
+			errs.Violate("parent_id", errs.LocBody, errs.ReasonNotAllowed, id,
+				errs.WithExpect("it names no live comment on this artifact")).Because(ErrParentNotFound))
+	case p.IsReply:
+		return "", nil, fmt.Errorf("annotation: comment %d is itself a reply: %w", parentID,
+			errs.Violate("parent_id", errs.LocBody, errs.ReasonNotAllowed, id,
+				errs.WithExpect("it is itself a reply, and comments nest one level deep; reply to its root")).Because(ErrThreadTooDeep))
+	case anchorType == "":
+		// Inherit the root's anchor (SPEC-0006 "a reply's anchor MUST match
+		// its root's anchor").
+		return p.AnchorType, p.AnchorRef, nil
+	}
+	key, err := CanonicalKey(ref)
+	if err != nil {
+		return "", nil, fmt.Errorf("annotation: reply anchor_ref: %v: %w", err, locatorViolation(anchorType))
+	}
+	const inherit = " (omit the anchor to inherit it)"
+	var inv *errs.Invalid
+	switch {
+	case anchorType != p.AnchorType:
+		inv = errs.Violate("anchor_type", errs.LocBody, errs.ReasonMismatch, errs.WithValue(string(anchorType)),
+			errs.WithExpect(fmt.Sprintf("the root comment's anchor_type %q", p.AnchorType)+inherit))
+	case key != p.AnchorKey:
+		inv = errs.Violate("anchor_ref", errs.LocBody, errs.ReasonMismatch,
+			errs.WithExpect("the root comment's anchor_ref"+inherit))
+	default:
+		return anchorType, ref, nil
+	}
+	return "", nil, fmt.Errorf("annotation: reply anchor %q/%s differs from root %q/%s: %w",
+		anchorType, key, p.AnchorType, p.AnchorKey, inv.Because(ErrAnchorMismatch))
 }
 
 // commentWriteRefusal explains why an author-scoped comment mutation matched
@@ -626,16 +662,47 @@ func (s *Service) inTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 // (the issue explicitly permits any emoji); strict single-grapheme
 // segmentation would need a Unicode segmentation library and is deliberately
 // deferred.
+//
+// A rejection is an emoji violation (required, or invalid_format with the
+// offending value echoed) that still satisfies errors.Is(err, ErrEmojiInvalid).
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-6
 func validateEmoji(emoji string) error {
-	if emoji == "" || len(emoji) > maxEmojiBytes || !utf8.ValidString(emoji) {
-		return fmt.Errorf("annotation: emoji %q: %w", emoji, ErrEmojiInvalid)
+	if emoji == "" {
+		return fmt.Errorf("annotation: emoji: %w", errs.Violate("emoji", errs.LocBody, errs.ReasonRequired).Because(ErrEmojiInvalid))
 	}
-	runes := 0
-	for _, r := range emoji {
-		runes++
-		if runes > maxEmojiRunes || unicode.IsSpace(r) || unicode.IsControl(r) {
-			return fmt.Errorf("annotation: emoji %q: %w", emoji, ErrEmojiInvalid)
+	bad := len(emoji) > maxEmojiBytes || !utf8.ValidString(emoji)
+	if !bad {
+		runes := 0
+		for _, r := range emoji {
+			runes++
+			if runes > maxEmojiRunes || unicode.IsSpace(r) || unicode.IsControl(r) {
+				bad = true
+				break
+			}
 		}
 	}
+	if bad {
+		return fmt.Errorf("annotation: emoji %q: %w", emoji, errs.Violate("emoji", errs.LocBody, errs.ReasonInvalidFormat,
+			errs.WithValue(emoji), errs.WithExpect("a single emoji")).Because(ErrEmojiInvalid))
+	}
 	return nil
+}
+
+// checkCommentBody bounds a comment body: non-empty, and at most
+// maxCommentBytes. The body is never echoed (SPEC-0019 VE-3), and a rejection
+// still satisfies errors.Is(err, ErrBodyInvalid).
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-3, VE-6
+func checkCommentBody(body string) error {
+	var inv *errs.Invalid
+	switch {
+	case body == "":
+		inv = errs.Violate("body", errs.LocBody, errs.ReasonRequired)
+	case len(body) > maxCommentBytes:
+		inv = errs.Violate("body", errs.LocBody, errs.ReasonTooLong, errs.WithLimit(maxCommentBytes, errs.UnitBytes))
+	default:
+		return nil
+	}
+	return fmt.Errorf("annotation: comment body length %d: %w", len(body), inv.Because(ErrBodyInvalid))
 }
