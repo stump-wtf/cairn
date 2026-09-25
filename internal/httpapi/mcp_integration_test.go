@@ -17,6 +17,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/oauth"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/pat"
@@ -439,8 +440,12 @@ func TestIntegrationMCPOversizeCreateBody(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("oversize create must fail, not persist a partial artifact")
 	}
-	if !strings.HasPrefix(toolText(t, res), "payload_too_large:") {
-		t.Fatalf("oversize create failure = %q, want a payload_too_large error", toolText(t, res))
+	// SPEC-0019 VE-7: the code and the violation ride in structured content,
+	// naming the body and the cap as REST's 413 does.
+	code, vs := toolViolations(t, res)
+	if code != errs.CodePayloadTooLarge || len(vs) != 1 || vs[0].Field != "body" ||
+		vs[0].Reason != errs.ReasonTooLarge || vs[0].Limit != float64(256) {
+		t.Fatalf("oversize create failure = %s %+v (text %q), want payload_too_large body too_large 256", code, vs, toolText(t, res))
 	}
 }
 
@@ -787,12 +792,16 @@ func TestIntegrationMCPRunCreateRejectsUnknownMode(t *testing.T) {
 			{"span_id": "root", "category": "reason", "name": "step", "start_offset_ms": 0, "duration_ms": 1},
 		},
 	})
-	// The text is the uniform validation_failed envelope, not the internal
+	// The failure is the uniform validation_failed one, not the internal
 	// "mode must be ..." detail — mcpToolErr deliberately does not leak core
 	// error strings over the transport; the valid values live in the field's
-	// schema description instead.
-	if !res.IsError || !strings.HasPrefix(toolText(t, res), "validation_failed:") {
-		t.Fatalf("run_create with mode=live: IsError=%v text=%q, want a validation failure", res.IsError, toolText(t, res))
+	// schema description instead. Until the mode check is migrated (#283) it
+	// is the generic violation (SPEC-0019 VE-6, VE-7).
+	if !res.IsError {
+		t.Fatalf("run_create with mode=live: IsError=false text=%q, want a validation failure", toolText(t, res))
+	}
+	if code, vs := toolViolations(t, res); code != errs.CodeValidation || len(vs) == 0 {
+		t.Fatalf("run_create with mode=live: %s %+v, want a validation failure", code, vs)
 	}
 }
 
