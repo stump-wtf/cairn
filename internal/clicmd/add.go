@@ -85,7 +85,7 @@ func runAdd(cmd *cobra.Command, streams IOStreams, flags *globalFlags, configPat
 		return cliexit.ErrInterrupted
 	}
 	if err != nil {
-		return err
+		return withSent(err, sentRequest{ttl: flags.ttl, tags: tags, files: deduped})
 	}
 
 	if flags.jsonOut {

@@ -25,10 +25,11 @@ type jsonErrorEnvelope struct {
 }
 
 type jsonErrorBody struct {
-	Code      string            `json:"code"`
-	Message   string            `json:"message"`
-	Details   map[string]string `json:"details,omitempty"`
-	RequestID string            `json:"request_id,omitempty"`
+	Code       string                `json:"code"`
+	Message    string                `json:"message"`
+	Details    map[string]string     `json:"details,omitempty"`
+	Violations []cliclient.Violation `json:"violations,omitempty"`
+	RequestID  string                `json:"request_id,omitempty"`
 }
 
 // printError writes err to errOut in the CLI's stable, greppable stderr
@@ -51,6 +52,7 @@ func printError(errOut io.Writer, err error, jsonOut bool) {
 			body.Code = string(apiErr.Code)
 			body.Message = apiErr.Message
 			body.Details = apiErr.Details
+			body.Violations = apiErr.Violations
 			body.RequestID = apiErr.RequestID
 		} else {
 			body.Code = jsonCodeFor(code)
@@ -59,12 +61,24 @@ func printError(errOut io.Writer, err error, jsonOut bool) {
 		return
 	}
 
-	tag := tagFor(code)
-	msg := err.Error()
+	// A validation rejection names each field it refused: one line per
+	// violation, in the flags the user typed (SPEC-0019 VE-8). Without
+	// violations (an older server) the top-level message stands alone.
+	var lines []string
 	if hasAPIErr {
-		msg = apiErr.Message
+		lines = violationLines(apiErr.Violations, sentOf(err))
 	}
-	fmt.Fprintf(errOut, "cairn: %s: %s\n", tag, msg)
+	if len(lines) > 0 {
+		for _, line := range lines {
+			fmt.Fprintf(errOut, "cairn: %s\n", line)
+		}
+	} else {
+		msg := err.Error()
+		if hasAPIErr {
+			msg = apiErr.Message
+		}
+		fmt.Fprintf(errOut, "cairn: %s: %s\n", tagFor(code), msg)
+	}
 	if hasAPIErr && apiErr.RequestID != "" {
 		fmt.Fprintf(errOut, "cairn: request_id=%s\n", apiErr.RequestID)
 	}
