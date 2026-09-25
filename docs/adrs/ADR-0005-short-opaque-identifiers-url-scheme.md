@@ -109,7 +109,8 @@ the point the ADR was always making: the host is deployment configuration
 (`CAIRN_BASE_URL`), not part of the identifier scheme this ADR decides. Nothing
 about the decision itself — the base62 alphabet, the entropy target, collision
 retry, or which types take a sub-path — changed. The dead host also reached the
-`cairn` CLI, whose compiled-in default pointed at `cairn.sh` until #184.
+`cairn` CLI, whose compiled-in default pointed at `cairn.sh` until a later fix moved it to
+`cairn.stump.wtf`.
 
 **One id, every surface.** There is exactly one public id per artifact, reused
 verbatim across web, MCP, and CLI; only the surrounding scheme/prefix changes.
