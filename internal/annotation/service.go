@@ -120,16 +120,14 @@ type CommentInput struct {
 	Body  string
 }
 
-// validateActor refuses a write whose actor has no identity or no derived kind.
-// Every adapter derives the kind from the authenticated principal, so an empty
-// one means a caller skipped that step: fail closed rather than record an
-// annotation nobody can classify (SPEC-0016 EV-4).
+// validateActor refuses a write whose actor has no identity, no derived kind,
+// no recorded auth method, or a kind that contradicts its auth method. Every
+// adapter derives the actor from the authenticated principal, so a gap means a
+// caller skipped that step: fail closed rather than record an annotation nobody
+// can classify (SPEC-0016 EV-3, EV-4).
 func validateActor(op string, a event.Actor) error {
-	if a.ID == "" {
-		return errs.Validationf("annotation: %s: actor is required", op)
-	}
-	if !a.Kind.Valid() {
-		return errs.Validationf("annotation: %s: actor kind is required", op)
+	if err := a.Check(); err != nil {
+		return errs.Validationf("annotation: %s: %v", op, err)
 	}
 	return nil
 }

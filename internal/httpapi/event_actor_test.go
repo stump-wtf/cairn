@@ -31,6 +31,9 @@ func TestPrincipalEventActor(t *testing.T) {
 		{"human api token", Principal{ActorID: "alice", Channel: artifact.ChannelAPI, Auth: event.AuthAPIToken}, event.KindAgent},
 		// A principal nobody classified is still never human.
 		{"zero principal", Principal{ActorID: "alice"}, event.KindAgent},
+		// Ambient alone is not enough: human needs the session stamp too.
+		{"ambient, no auth", Principal{ActorID: "alice", Ambient: true}, event.KindAgent},
+		{"ambient PAT", Principal{ActorID: "alice", Ambient: true, Auth: event.AuthPAT}, event.KindAgent},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,6 +46,11 @@ func TestPrincipalEventActor(t *testing.T) {
 			}
 			if got.OnBehalfOf != "" {
 				t.Errorf("OnBehalfOf = %q, want empty (left for the caller)", got.OnBehalfOf)
+			}
+			// A principal without an Auth stamp derives an actor every
+			// producer refuses; a stamped one derives an acceptable actor.
+			if ok := got.Check() == nil; ok != tc.p.Auth.Valid() {
+				t.Errorf("Check(%+v) ok = %v, want %v", got, ok, tc.p.Auth.Valid())
 			}
 		})
 	}
@@ -86,10 +94,12 @@ func TestStaticAuthenticatorsDeriveAuth(t *testing.T) {
 
 // TestMCPEventActorIsAlwaysAgent proves the MCP surface cannot yield a human
 // actor, and records the credential the verifier accepted. The verifier's
-// stash is the only input to Auth; nothing a tool call carries reaches it.
+// stash is the only input to Auth; nothing a tool call carries reaches it, and
+// a stash the verifier never writes yields no Auth, which every producer
+// refuses, rather than a guessed one.
 func TestMCPEventActorIsAlwaysAgent(t *testing.T) {
-	if a := mcpEventActor(nil); a.Kind != event.KindAgent || a.Auth != event.AuthOAuth {
-		t.Errorf("nil request: (auth, kind) = (%q, %q), want (oauth, agent)", a.Auth, a.Kind)
+	if a := mcpEventActor(nil); a.Kind != event.KindAgent || a.Auth != "" || a.Check() == nil {
+		t.Errorf("nil request: actor %+v, want an unstamped agent that Check refuses", a)
 	}
 	withAuth := func(v any) *mcp.CallToolRequest {
 		ti := &sdkauth.TokenInfo{UserID: "alice", Extra: map[string]any{}}
@@ -105,17 +115,21 @@ func TestMCPEventActorIsAlwaysAgent(t *testing.T) {
 	}{
 		{"PAT verified", withAuth(string(event.AuthPAT)), event.AuthPAT},
 		{"OAuth verified", withAuth(string(event.AuthOAuth)), event.AuthOAuth},
-		// Anything the verifier did not stamp as a PAT is the OAuth token, the
-		// transport's only other credential; it can never become a session.
-		{"unstamped", withAuth(nil), event.AuthOAuth},
-		{"session claimed", withAuth(string(event.AuthSession)), event.AuthOAuth},
-		{"non-string", withAuth(42), event.AuthOAuth},
+		// Anything the verifier did not stamp is left empty, not guessed: it
+		// can never become a session, and Check refuses it.
+		{"unstamped", withAuth(nil), ""},
+		{"session claimed", withAuth(string(event.AuthSession)), ""},
+		{"api token claimed", withAuth(string(event.AuthAPIToken)), ""},
+		{"non-string", withAuth(42), ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			a := mcpEventActor(tc.req)
 			if a.Kind != event.KindAgent || a.Auth != tc.want {
 				t.Errorf("(auth, kind) = (%q, %q), want (%q, agent)", a.Auth, a.Kind, tc.want)
+			}
+			if ok := a.Check() == nil; ok != (tc.want != "") {
+				t.Errorf("Check(%+v) ok = %v, want %v", a, ok, tc.want != "")
 			}
 			if a.ID != "alice" || a.Channel != artifact.ChannelMCP {
 				t.Errorf("actor = %+v, want id alice on the mcp channel", a)

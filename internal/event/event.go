@@ -13,6 +13,7 @@
 package event
 
 import (
+	"errors"
 	"time"
 
 	"github.com/stump-wtf/cairn/internal/artifact"
@@ -90,6 +91,17 @@ const (
 	AuthAPIToken AuthMethod = "api_token"
 )
 
+// Valid reports whether m is one of the four methods an authenticator records
+// (SPEC-0016 EV-4). The empty method is not valid: a principal nobody stamped
+// must not act.
+func (m AuthMethod) Valid() bool {
+	switch m {
+	case AuthSession, AuthOAuth, AuthPAT, AuthAPIToken:
+		return true
+	}
+	return false
+}
+
 // Actor is who caused an event, derived from the authenticated principal and
 // never from request content. OnBehalfOf is the one asserted field: it names a
 // harness or agent for display, and consumers MUST NOT gate trust on it.
@@ -99,6 +111,26 @@ type Actor struct {
 	OnBehalfOf string
 	Kind       ActorKind
 	Auth       AuthMethod
+}
+
+// Check reports why a is not a fully server-derived actor, or nil when it is.
+// It requires an id, a valid kind, a valid auth method, and a consistent pair:
+// the kind is human if and only if the method is a browser session (EV-4). A
+// producer calls it before it writes, so an adapter that skipped a derivation
+// step fails closed instead of recording a fact nobody can classify, and a
+// human-classified actor holding a bearer credential can never slip through.
+func (a Actor) Check() error {
+	switch {
+	case a.ID == "":
+		return errors.New("actor id is required")
+	case !a.Kind.Valid():
+		return errors.New("actor kind is required")
+	case !a.Auth.Valid():
+		return errors.New("actor auth method is required")
+	case (a.Kind == KindHuman) != (a.Auth == AuthSession):
+		return errors.New("actor kind is inconsistent with its auth method")
+	}
+	return nil
 }
 
 // Subject is the artifact an event is about.

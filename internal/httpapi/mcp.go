@@ -496,19 +496,24 @@ func mcpActor(extra *mcp.RequestExtra) string {
 
 // mcpEventActor is the event actor for an MCP tool call. Every MCP caller holds
 // a bearer credential, so the kind is always agent; no tool argument reaches it.
-// The auth method is the one mcpTokenVerifier recorded, and anything other than
-// a PAT is the OAuth access token that is the transport's only other way in.
+// The auth method is exactly the one mcpTokenVerifier recorded, a PAT or an
+// OAuth access token. Anything else (no stamp, or a value the verifier never
+// writes) leaves Auth empty rather than guessing, so every producer refuses the
+// actor (event.Actor.Check) instead of mislabelling a future credential type.
 //
 // Governing: ADR-0022, SPEC-0016 EV-4 "Server-Derived Actor Kind".
 func mcpEventActor(req *mcp.CallToolRequest) event.Actor {
-	a := event.Actor{Channel: artifact.ChannelMCP, Kind: event.KindAgent, Auth: event.AuthOAuth}
+	a := event.Actor{Channel: artifact.ChannelMCP, Kind: event.KindAgent}
 	if req == nil {
 		return a
 	}
 	a.ID = mcpActor(req.Extra)
 	a.OnBehalfOf = mcpModelActor(req.Session)
-	if req.Extra != nil && mcpExtraString(req.Extra.TokenInfo, mcpExtraAuth) == string(event.AuthPAT) {
-		a.Auth = event.AuthPAT
+	if req.Extra != nil {
+		switch m := event.AuthMethod(mcpExtraString(req.Extra.TokenInfo, mcpExtraAuth)); m {
+		case event.AuthPAT, event.AuthOAuth:
+			a.Auth = m
+		}
 	}
 	return a
 }
@@ -1010,7 +1015,9 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 	}
 	creator := mcpEventActor(req)
 	actorID := creator.ID
-	if actorID == "" {
+	// No subject, or a credential the verifier never stamped: refuse rather
+	// than create an artifact whose creation event carries no auth (EV-4).
+	if creator.Check() != nil {
 		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", errs.ErrUnauthorized)
 	}
 	if in.Body == "" {
@@ -1105,7 +1112,7 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 	}
 	creator := mcpEventActor(req)
 	actorID := creator.ID
-	if actorID == "" {
+	if creator.Check() != nil {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", errs.ErrUnauthorized)
 	}
 	members := make([]store.MemberInput, 0, len(in.Members))
@@ -1411,7 +1418,7 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 	}
 	creator := mcpEventActor(req)
 	actorID := creator.ID
-	if actorID == "" {
+	if creator.Check() != nil {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", errs.ErrUnauthorized)
 	}
 	spans, err := toRunSpanInputs("run_create", in.Spans)

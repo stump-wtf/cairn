@@ -351,11 +351,12 @@ func (s *Service) AppendSpans(ctx context.Context, publicID, actorID string, spa
 // "Non-owner cannot close a run"). The actor is the closer, derived from the
 // authenticated principal (SPEC-0016 EV-4).
 func (s *Service) CloseRun(ctx context.Context, publicID string, actor event.Actor) (*Run, error) {
-	// Every adapter derives the actor from the authenticated principal, so an
-	// empty id or kind means a caller skipped that step: fail closed before the
-	// transaction rather than close a run nobody can attribute (EV-4).
-	if actor.ID == "" || !actor.Kind.Valid() {
-		return nil, errs.Validationf("trajectory: close run: actor id and kind are required")
+	// Every adapter derives the actor from the authenticated principal, so a
+	// missing id, kind or auth method (or a kind that contradicts the method)
+	// means a caller skipped that step: fail closed before the transaction
+	// rather than close a run nobody can attribute (EV-3, EV-4).
+	if err := actor.Check(); err != nil {
+		return nil, errs.Validationf("trajectory: close run: %v", err)
 	}
 	actorID := actor.ID
 	tx, err := s.pool.Begin(ctx)
