@@ -35,7 +35,9 @@ type jsonErrorBody struct {
 // printError writes err to errOut in the CLI's stable, greppable stderr
 // format ("cairn: <tag>: <message>"), or as a JSON envelope when jsonOut is
 // set (SPEC-0008 "Machine-Readable Error Mapping and Exit Codes",
-// "JSON error payload"). It never writes to stdout, so a JSON-mode caller's
+// "JSON error payload"). An API error carrying specific violations prints
+// one "cairn: <flag> <problem>" line per violation in place of the tagged
+// message (SPEC-0019 VE-8). It never writes to stdout, so a JSON-mode caller's
 // stdout is never polluted with a partial success object.
 func printError(errOut io.Writer, err error, jsonOut bool) {
 	if err == nil {
