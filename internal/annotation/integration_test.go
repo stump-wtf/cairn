@@ -63,8 +63,19 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// Authors are users (SPEC-0023 REQ "Owner Model").
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, actor_key, display_handle)
+		VALUES ($1, 'u1', 'u1'), ($2, 'u2', 'u2')`, u1ID, u2ID); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
 	return pool
 }
+
+// u1ID and u2ID are the users newTestPool seeds, rendered "u1" and "u2".
+const (
+	u1ID = "00000000-0000-4000-8000-0000000000d1"
+	u2ID = "00000000-0000-4000-8000-0000000000d2"
+)
 
 // insertArtifact seeds a minimal artifact row of the given share type and
 // returns its internal id.
@@ -72,8 +83,8 @@ func insertArtifact(t *testing.T, pool *pgxpool.Pool, publicID string, shareType
 	t.Helper()
 	var id int64
 	err := pool.QueryRow(context.Background(), `
-		INSERT INTO artifacts (public_id, share_type, actor_id, channel, captured_at, owner_id, expires_at)
-		VALUES ($1, $2, 'u1', 'cli', now(), 'u1', now() + interval '1 hour')
+		INSERT INTO artifacts (public_id, share_type, created_by_user_id, channel, captured_at, owner_user_id, expires_at)
+		VALUES ($1, $2, '00000000-0000-4000-8000-0000000000d1', 'cli', now(), '00000000-0000-4000-8000-0000000000d1', now() + interval '1 hour')
 		RETURNING id`, publicID, string(shareType)).Scan(&id)
 	if err != nil {
 		t.Fatalf("insert artifact: %v", err)
@@ -84,13 +95,13 @@ func insertArtifact(t *testing.T, pool *pgxpool.Pool, publicID string, shareType
 // insertReaction persists a validated anchor as a reaction row using the
 // idempotent upsert the unique constraint supports (parameterized per
 // SPEC-0006 REQ "Database Operation Standards").
-func insertReaction(t *testing.T, pool *pgxpool.Pool, a Anchor, emoji, actorID string) {
+func insertReaction(t *testing.T, pool *pgxpool.Pool, a Anchor, emoji, userID string) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
-		INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, actor_id)
+		INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, user_id)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (artifact_id, anchor_type, anchor_key, emoji, actor_id) DO NOTHING`,
-		a.ArtifactID, string(a.Type), a.Ref, a.Key, emoji, actorID)
+		ON CONFLICT (artifact_id, anchor_type, anchor_key, emoji, user_id) DO NOTHING`,
+		a.ArtifactID, string(a.Type), a.Ref, a.Key, emoji, userID)
 	if err != nil {
 		t.Fatalf("insert reaction: %v", err)
 	}
@@ -120,8 +131,8 @@ func TestReactionIdempotentAcrossKeyOrder(t *testing.T) {
 		t.Fatalf("canonical keys differ across key order: %q vs %q", a1.Key, a2.Key)
 	}
 
-	insertReaction(t, pool, a1, "🔥", "u1")
-	insertReaction(t, pool, a2, "🔥", "u1") // same actor+emoji+anchor → no-op
+	insertReaction(t, pool, a1, "🔥", u1ID)
+	insertReaction(t, pool, a2, "🔥", u1ID) // same actor+emoji+anchor → no-op
 
 	var n int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM reactions`).Scan(&n); err != nil {
@@ -132,8 +143,8 @@ func TestReactionIdempotentAcrossKeyOrder(t *testing.T) {
 	}
 
 	// A different actor or emoji is NOT deduped.
-	insertReaction(t, pool, a1, "🔥", "u2")
-	insertReaction(t, pool, a1, "🎉", "u1")
+	insertReaction(t, pool, a1, "🔥", u2ID)
+	insertReaction(t, pool, a1, "🎉", u1ID)
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM reactions`).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
@@ -144,8 +155,8 @@ func TestReactionIdempotentAcrossKeyOrder(t *testing.T) {
 	// Un-react deletes exactly that row.
 	tag, err := pool.Exec(ctx, `
 		DELETE FROM reactions
-		WHERE artifact_id = $1 AND anchor_type = $2 AND anchor_key = $3 AND emoji = $4 AND actor_id = $5`,
-		artID, string(a1.Type), a1.Key, "🔥", "u1")
+		WHERE artifact_id = $1 AND anchor_type = $2 AND anchor_key = $3 AND emoji = $4 AND user_id = $5`,
+		artID, string(a1.Type), a1.Key, "🔥", u1ID)
 	if err != nil {
 		t.Fatalf("un-react: %v", err)
 	}
@@ -191,11 +202,11 @@ func TestAnchorMatrixPersistence(t *testing.T) {
 					continue
 				}
 				if kind == sharetype.KindReaction {
-					insertReaction(t, pool, a, "🔥", "u1")
+					insertReaction(t, pool, a, "🔥", u1ID)
 				} else {
 					if _, err := pool.Exec(ctx, `
-						INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, actor_id, body)
-						VALUES ($1, $2, $3, $4, 'u1', 'looks great')`,
+						INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, user_id, body)
+						VALUES ($1, $2, $3, $4, '00000000-0000-4000-8000-0000000000d1', 'looks great')`,
 						a.ArtifactID, string(a.Type), a.Ref, a.Key); err != nil {
 						t.Errorf("%s/%s: insert comment: %v", shareType, anchor, err)
 						continue
@@ -258,24 +269,24 @@ func TestCommentThreadSubstrate(t *testing.T) {
 
 	var rootID int64
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, actor_id, body)
-		VALUES ($1, $2, $3, $4, 'u1', 'root comment') RETURNING id`,
+		INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, user_id, body)
+		VALUES ($1, $2, $3, $4, '00000000-0000-4000-8000-0000000000d1', 'root comment') RETURNING id`,
 		a.ArtifactID, string(a.Type), a.Ref, a.Key).Scan(&rootID); err != nil {
 		t.Fatalf("insert root: %v", err)
 	}
 	// A reply shares its root's anchor (SPEC-0006 "Reply to a comment").
 	var replyID int64
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, parent_id, actor_id, body)
-		VALUES ($1, $2, $3, $4, $5, 'u2', 'agreed') RETURNING id`,
+		INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, parent_id, user_id, body)
+		VALUES ($1, $2, $3, $4, $5, '00000000-0000-4000-8000-0000000000d2', 'agreed') RETURNING id`,
 		a.ArtifactID, string(a.Type), a.Ref, a.Key, rootID).Scan(&replyID); err != nil {
 		t.Fatalf("insert reply: %v", err)
 	}
 
 	// A reply to a nonexistent parent violates the FK.
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, parent_id, actor_id, body)
-		VALUES ($1, $2, $3, $4, 999999, 'u2', 'orphan')`,
+		INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, parent_id, user_id, body)
+		VALUES ($1, $2, $3, $4, 999999, '00000000-0000-4000-8000-0000000000d2', 'orphan')`,
 		a.ArtifactID, string(a.Type), a.Ref, a.Key); err == nil {
 		t.Fatal("reply referencing a missing parent must be rejected by the FK")
 	}
@@ -308,7 +319,7 @@ func TestArtifactDeleteCascades(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	insertReaction(t, pool, a, "👀", "u1")
+	insertReaction(t, pool, a, "👀", u1ID)
 
 	if _, err := pool.Exec(ctx, `DELETE FROM artifacts WHERE id = $1`, artID); err != nil {
 		t.Fatalf("delete artifact: %v", err)

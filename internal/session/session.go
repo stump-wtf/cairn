@@ -42,7 +42,8 @@ type Session struct {
 	Token   string
 	ActorID string
 	// UserID is the users row the session acts for (SPEC-0023 REQ "Users and
-	// Identities"). Empty for sessions minted before users existed.
+	// Identities"); ActorID is that user as rendered on the wire. The Postgres
+	// store requires a user and renders ActorID from it on every Get.
 	UserID    string
 	Issuer    string
 	Subject   string
@@ -62,7 +63,7 @@ type Store interface {
 	// and the subject that provider asserted — empty for the dev-password
 	// login, the OIDC issuer and ID-token subject for Pocket ID, and the
 	// GitHub origin and numeric account id for GitHub. userID is the users row
-	// the session acts for.
+	// the session acts for and actorID its wire rendering.
 	Create(ctx context.Context, issuer, subject, actorID, userID string, ttl time.Duration) (*Session, error)
 	// Get resolves a raw session token to its live session, or ErrNotFound when
 	// the token is unknown, expired, or revoked.

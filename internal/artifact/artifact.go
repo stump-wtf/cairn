@@ -55,9 +55,14 @@ const (
 
 // Provenance is the immutable, server-derived record of who created an artifact
 // and how. OnBehalfOf names an agent acting for the human ActorID.
+//
+// CreatedByUserID is the creator's users row; it records who made the
+// artifact and confers no permission (SPEC-0023 REQ "Owner Model"). ActorID
+// is that user as rendered on the wire, read from the user row, never stored.
 type Provenance struct {
-	ActorID    string
-	OnBehalfOf string
+	CreatedByUserID string
+	ActorID         string
+	OnBehalfOf      string
 	// Model names the model that produced the artifact, e.g. "claude-opus-5".
 	// Empty means the creator did not report one, which is the honest state for
 	// a human posting from the CLI — a viewer omits the row rather than showing
@@ -69,10 +74,22 @@ type Provenance struct {
 	CapturedAt time.Time
 }
 
-// AccessPolicy is the owner + link visibility for an artifact.
+// AccessPolicy is the owner + link visibility for an artifact. Exactly one of
+// OwnerUserID and OwnerTeamID is set, and the database enforces it too
+// (artifacts_one_owner). Ownership checks compare user ids, never a rendered
+// actor string.
+//
+// Governing: ADR-0029, SPEC-0023 REQ "Owner Model".
 type AccessPolicy struct {
-	OwnerID    string
-	Visibility Visibility
+	OwnerUserID string
+	OwnerTeamID string
+	Visibility  Visibility
+}
+
+// OwnedByUser reports whether userID is the owning user. An empty userID owns
+// nothing.
+func (p AccessPolicy) OwnedByUser(userID string) bool {
+	return userID != "" && p.OwnerUserID == userID
 }
 
 // Artifact is the aggregate root. ID is the never-exposed internal primary key;
@@ -133,10 +150,12 @@ func (a *Artifact) Validate() error {
 		return errs.Validationf("artifact: provenance channel is required")
 	case a.Provenance.ActorID == "":
 		return errs.Validationf("artifact: provenance actor is required")
+	case a.Provenance.CreatedByUserID == "":
+		return errs.Validationf("artifact: provenance creator is required")
 	case a.Provenance.CapturedAt.IsZero():
 		return errs.Validationf("artifact: provenance capture time is required")
-	case a.Access.OwnerID == "":
-		return errs.Validationf("artifact: access owner is required")
+	case (a.Access.OwnerUserID == "") == (a.Access.OwnerTeamID == ""):
+		return errs.Validationf("artifact: exactly one owning user or team is required")
 	case a.Access.Visibility == "":
 		return errs.Validationf("artifact: access visibility is required")
 	case a.ExpiresAt.IsZero():

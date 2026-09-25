@@ -14,14 +14,21 @@ var zeroTime time.Time
 // by the unit and integration tests in this package.
 func validProvenance() artifact.Provenance {
 	return artifact.Provenance{
-		ActorID:    "joe",
-		Channel:    artifact.ChannelAPI,
-		CapturedAt: time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC),
+		CreatedByUserID: joeUser,
+		ActorID:         "joe",
+		Channel:         artifact.ChannelAPI,
+		CapturedAt:      time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC),
 	}
 }
 
+// joeUser and ownerAUser are user ids the integration harness seeds.
+const (
+	joeUser    = "00000000-0000-4000-8000-0000000000c1"
+	ownerAUser = "00000000-0000-4000-8000-0000000000c2"
+)
+
 func validAccess() artifact.AccessPolicy {
-	return artifact.AccessPolicy{OwnerID: "joe", Visibility: artifact.VisibilityLink}
+	return artifact.AccessPolicy{OwnerUserID: joeUser, Visibility: artifact.VisibilityLink}
 }
 
 // future is a comfortably-future expiry so an endpoint resolves under the

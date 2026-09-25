@@ -20,6 +20,13 @@ var schemaSeq atomic.Int64
 // newTestPool connects to CAIRN_TEST_DATABASE_URL (skipping otherwise) and
 // applies the embedded migrations inside a private, per-test schema — the
 // same isolation discipline internal/oauth's integration suite uses.
+// sam, alice and bob are the users newTestPool seeds.
+const (
+	sam   = "00000000-0000-4000-8000-0000000000e1"
+	alice = "00000000-0000-4000-8000-0000000000e2"
+	bob   = "00000000-0000-4000-8000-0000000000e3"
+)
+
 func newTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("CAIRN_TEST_DATABASE_URL")
@@ -58,6 +65,12 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// Tokens belong to users (SPEC-0023 REQ "Owner Model").
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, actor_key, display_handle) VALUES
+		($1, 'sam@stump.rocks', 'sam'), ($2, 'alice@stump.rocks', 'alice'), ($3, 'bob@stump.rocks', 'bob')`,
+		sam, alice, bob); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
 	return pool
 }
 
@@ -70,7 +83,7 @@ func TestIntegrationCreateAuthenticateRevoke(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(pool)
 
-	secret, tok, err := svc.Create(ctx, "sam@stump.rocks", "laptop agent", []string{ScopeArtifactsRead, ScopeArtifactsWrite}, true)
+	secret, tok, err := svc.Create(ctx, sam, "laptop agent", []string{ScopeArtifactsRead, ScopeArtifactsWrite}, true)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -85,8 +98,8 @@ func TestIntegrationCreateAuthenticateRevoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	if got.OwnerID != "sam@stump.rocks" {
-		t.Fatalf("owner = %q, want sam@stump.rocks", got.OwnerID)
+	if got.UserID != sam || got.Actor != "sam@stump.rocks" {
+		t.Fatalf("owner = %q (%q), want sam@stump.rocks", got.UserID, got.Actor)
 	}
 	if !got.IsAgent {
 		t.Fatal("is_agent flag did not round-trip")
@@ -98,14 +111,14 @@ func TestIntegrationCreateAuthenticateRevoke(t *testing.T) {
 		t.Fatalf("scopes = %v, want exactly the granted two", got.Scopes)
 	}
 
-	if err := svc.Revoke(ctx, "sam@stump.rocks", tok.ID); err != nil {
+	if err := svc.Revoke(ctx, sam, tok.ID); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	if _, err := svc.Authenticate(ctx, secret); !errors.Is(err, errs.ErrUnauthorized) {
 		t.Fatalf("post-revoke authenticate = %v, want errs.ErrUnauthorized", err)
 	}
 
-	toks, err := svc.List(ctx, "sam@stump.rocks")
+	toks, err := svc.List(ctx, sam)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -125,17 +138,17 @@ func TestIntegrationOwnerIsolation(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(pool)
 
-	_, tokA, err := svc.Create(ctx, "alice@stump.rocks", "alice's token", AllScopes(), false)
+	_, tokA, err := svc.Create(ctx, alice, "alice's token", AllScopes(), false)
 	if err != nil {
 		t.Fatalf("create A: %v", err)
 	}
-	secretB, tokB, err := svc.Create(ctx, "bob@stump.rocks", "bob's token", AllScopes(), false)
+	secretB, tokB, err := svc.Create(ctx, bob, "bob's token", AllScopes(), false)
 	if err != nil {
 		t.Fatalf("create B: %v", err)
 	}
 
 	// Bob cannot revoke Alice's token by id.
-	if err := svc.Revoke(ctx, "bob@stump.rocks", tokA.ID); !errors.Is(err, errs.ErrNotFound) {
+	if err := svc.Revoke(ctx, bob, tokA.ID); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("cross-owner revoke = %v, want errs.ErrNotFound", err)
 	}
 	// Bob's own token still authenticates — Alice's failed revoke attempt did
@@ -144,14 +157,14 @@ func TestIntegrationOwnerIsolation(t *testing.T) {
 		t.Fatalf("bob's token should still authenticate: %v", err)
 	}
 
-	aliceList, err := svc.List(ctx, "alice@stump.rocks")
+	aliceList, err := svc.List(ctx, alice)
 	if err != nil {
 		t.Fatalf("list alice: %v", err)
 	}
 	if len(aliceList) != 1 || aliceList[0].ID != tokA.ID {
 		t.Fatalf("alice's list = %+v, want exactly her own token", aliceList)
 	}
-	bobList, err := svc.List(ctx, "bob@stump.rocks")
+	bobList, err := svc.List(ctx, bob)
 	if err != nil {
 		t.Fatalf("list bob: %v", err)
 	}
@@ -168,7 +181,7 @@ func TestIntegrationRevokeUnknownIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(pool)
 
-	if err := svc.Revoke(ctx, "sam@stump.rocks", "pat-does-not-exist"); !errors.Is(err, errs.ErrNotFound) {
+	if err := svc.Revoke(ctx, sam, "pat-does-not-exist"); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("revoke unknown id = %v, want errs.ErrNotFound", err)
 	}
 }
@@ -181,14 +194,14 @@ func TestIntegrationRevokeIsIdempotentFailure(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(pool)
 
-	_, tok, err := svc.Create(ctx, "sam@stump.rocks", "one-shot", AllScopes(), false)
+	_, tok, err := svc.Create(ctx, sam, "one-shot", AllScopes(), false)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := svc.Revoke(ctx, "sam@stump.rocks", tok.ID); err != nil {
+	if err := svc.Revoke(ctx, sam, tok.ID); err != nil {
 		t.Fatalf("first revoke: %v", err)
 	}
-	if err := svc.Revoke(ctx, "sam@stump.rocks", tok.ID); !errors.Is(err, errs.ErrNotFound) {
+	if err := svc.Revoke(ctx, sam, tok.ID); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("second revoke = %v, want errs.ErrNotFound", err)
 	}
 }
@@ -213,7 +226,7 @@ func TestIntegrationCreateRejectsEmptyScopes(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(pool)
 
-	if _, _, err := svc.Create(ctx, "sam@stump.rocks", "empty", nil, false); !errors.Is(err, errs.ErrValidation) {
+	if _, _, err := svc.Create(ctx, sam, "empty", nil, false); !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("create with no scopes = %v, want errs.ErrValidation", err)
 	}
 }

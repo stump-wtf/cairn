@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // Service is the MCP session core over Postgres, sharing the same pool the
@@ -35,27 +36,27 @@ func NewService(pool *pgxpool.Pool) *Service {
 // the connected/activity clocks and client identity to this call's view
 // rather than erroring or silently keeping stale data.
 func (s *Service) Record(ctx context.Context, in RecordInput) (*Session, error) {
-	if in.ID == "" || in.OwnerID == "" || in.GrantID == "" {
+	if in.ID == "" || !user.ValidID(in.UserID) || in.GrantID == "" {
 		return nil, errs.Validationf("mcp session: id, owner, and grant are required")
 	}
 	now := s.now().UTC()
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO mcp_sessions (id, owner_id, grant_id, client_id, client_name, client_version, connected_at, last_activity_at)
+		INSERT INTO mcp_sessions (id, user_id, grant_id, client_id, client_name, client_version, connected_at, last_activity_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
 		ON CONFLICT (id) DO UPDATE SET
-			owner_id = EXCLUDED.owner_id,
+			user_id = EXCLUDED.user_id,
 			grant_id = EXCLUDED.grant_id,
 			client_id = EXCLUDED.client_id,
 			client_name = EXCLUDED.client_name,
 			client_version = EXCLUDED.client_version,
 			connected_at = EXCLUDED.connected_at,
 			last_activity_at = EXCLUDED.last_activity_at`,
-		in.ID, in.OwnerID, in.GrantID, in.ClientID, in.ClientName, in.ClientVersion, now,
+		in.ID, in.UserID, in.GrantID, in.ClientID, in.ClientName, in.ClientVersion, now,
 	); err != nil {
 		return nil, fmt.Errorf("mcpsession: record session: %w", err)
 	}
 	return &Session{
-		ID: in.ID, OwnerID: in.OwnerID, GrantID: in.GrantID, ClientID: in.ClientID,
+		ID: in.ID, UserID: in.UserID, GrantID: in.GrantID, ClientID: in.ClientID,
 		ClientName: in.ClientName, ClientVersion: in.ClientVersion,
 		ConnectedAt: now, LastActivityAt: now,
 	}, nil
@@ -96,16 +97,16 @@ func (s *Service) Touch(ctx context.Context, sessionID string, kind Activity) er
 // oauth_grants for its revoked_at so a caller can tell a live connection from
 // an ended one without a second query.
 const sessionColumns = `
-	s.id, s.owner_id, s.grant_id, s.client_id, s.client_name, s.client_version,
+	s.id, s.user_id::text, s.grant_id, s.client_id, s.client_name, s.client_version,
 	s.connected_at, s.last_activity_at, s.tool_calls, s.artifacts_created, s.annotations_posted,
 	g.revoked_at`
 
-// List returns ownerID's MCP sessions (most recently active first),
+// List returns userID's MCP sessions (most recently active first),
 // owner-scoped (SPEC-0007 acceptance: "owner isolation"). It reports both
 // live and ended (grant-revoked) sessions — recent history, not just active
 // connections — so limit bounds how far back "recent" reaches.
-func (s *Service) List(ctx context.Context, ownerID string, limit int) ([]*Session, error) {
-	if ownerID == "" {
+func (s *Service) List(ctx context.Context, userID string, limit int) ([]*Session, error) {
+	if userID == "" {
 		return nil, errs.Validationf("mcp session: owner is required")
 	}
 	if limit <= 0 {
@@ -115,10 +116,10 @@ func (s *Service) List(ctx context.Context, ownerID string, limit int) ([]*Sessi
 		SELECT `+sessionColumns+`
 		FROM mcp_sessions s
 		JOIN oauth_grants g ON g.grant_id = s.grant_id
-		WHERE s.owner_id = $1
+		WHERE s.user_id = $1
 		ORDER BY s.last_activity_at DESC
 		LIMIT $2`,
-		ownerID, limit,
+		user.IDParam(userID), limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("mcpsession: list sessions: %w", err)
@@ -139,20 +140,20 @@ func (s *Service) List(ctx context.Context, ownerID string, limit int) ([]*Sessi
 	return out, nil
 }
 
-// Get returns ownerID's session id, owner-scoped and uniform: a session that
+// Get returns userID's session id, owner-scoped and uniform: a session that
 // does not exist or belongs to a different owner is errs.ErrNotFound, so the
 // endpoint discloses nothing about another owner's sessions (mirrors
 // pat.Service.Revoke's owner-scoped-uniform-404 shape).
-func (s *Service) Get(ctx context.Context, ownerID, id string) (*Session, error) {
-	if ownerID == "" || id == "" {
+func (s *Service) Get(ctx context.Context, userID, id string) (*Session, error) {
+	if userID == "" || id == "" {
 		return nil, errs.Validationf("mcp session: owner and id are required")
 	}
 	row := s.pool.QueryRow(ctx, `
 		SELECT `+sessionColumns+`
 		FROM mcp_sessions s
 		JOIN oauth_grants g ON g.grant_id = s.grant_id
-		WHERE s.id = $1 AND s.owner_id = $2`,
-		id, ownerID,
+		WHERE s.id = $1 AND s.user_id = $2`,
+		id, user.IDParam(userID),
 	)
 	sess, err := scanSession(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -172,7 +173,7 @@ type rowScanner interface {
 func scanSession(row rowScanner) (*Session, error) {
 	var s Session
 	if err := row.Scan(
-		&s.ID, &s.OwnerID, &s.GrantID, &s.ClientID, &s.ClientName, &s.ClientVersion,
+		&s.ID, &s.UserID, &s.GrantID, &s.ClientID, &s.ClientName, &s.ClientVersion,
 		&s.ConnectedAt, &s.LastActivityAt, &s.ToolCalls, &s.ArtifactsCreated, &s.AnnotationsPosted,
 		&s.GrantRevokedAt,
 	); err != nil {

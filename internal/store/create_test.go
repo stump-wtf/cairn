@@ -15,8 +15,8 @@ func validCreateInput() CreateArtifactInput {
 	return CreateArtifactInput{
 		ShareType:  artifact.TypeFile,
 		Body:       strings.NewReader("x"),
-		Provenance: artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Unix(1, 0)},
-		Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: testOwner, ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Unix(1, 0)},
+		Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  time.Unix(100, 0),
 	}
 }
@@ -32,7 +32,7 @@ func TestCreateArtifactInputValidate(t *testing.T) {
 		{"bundle rejected on single path", func(in *CreateArtifactInput) { in.ShareType = artifact.TypeBundle }, true},
 		{"missing channel", func(in *CreateArtifactInput) { in.Provenance.Channel = "" }, true},
 		{"missing actor", func(in *CreateArtifactInput) { in.Provenance.ActorID = "" }, true},
-		{"missing owner", func(in *CreateArtifactInput) { in.Access.OwnerID = "" }, true},
+		{"missing owner", func(in *CreateArtifactInput) { in.Access.OwnerUserID = "" }, true},
 		{"missing visibility", func(in *CreateArtifactInput) { in.Access.Visibility = "" }, true},
 		{"zero expiry", func(in *CreateArtifactInput) { in.ExpiresAt = time.Time{} }, true},
 		{"nil body", func(in *CreateArtifactInput) { in.Body = nil }, true},

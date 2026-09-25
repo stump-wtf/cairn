@@ -13,6 +13,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // GetRun resolves a run by its public id and returns the run header, its
@@ -60,15 +61,18 @@ func (s *Service) loadRunHeader(ctx context.Context, publicID string) (*Run, int
 	err := s.pool.QueryRow(ctx, `
 		SELECT r.id, a.public_id, a.title, r.prompt, r.model, r.status,
 		       r.started_at, r.ended_at, r.token_count,
-		       a.actor_id, a.on_behalf_of, a.channel, a.captured_at,
-		       a.owner_id, a.visibility, a.expires_at
+		       COALESCE(a.created_by_user_id::text, ''), COALESCE(`+user.ActorSQL("cu")+`, ''),
+		       a.on_behalf_of, a.channel, a.captured_at,
+		       COALESCE(a.owner_user_id::text, ''), COALESCE(a.owner_team_id::text, ''),
+		       a.visibility, a.expires_at
 		FROM runs r
 		JOIN artifacts a ON a.id = r.artifact_id
+		LEFT JOIN users cu ON cu.id = a.created_by_user_id
 		WHERE a.public_id = $1 AND a.expires_at > now()`, publicID).Scan(
 		&runID, &run.PublicID, &run.Title, &run.Prompt, &run.Model, &run.Status,
 		&run.StartedAt, &endedAt, &run.TokenCount,
-		&run.Provenance.ActorID, &run.Provenance.OnBehalfOf, &run.Provenance.Channel,
-		&run.Provenance.CapturedAt, &run.Access.OwnerID, &run.Access.Visibility,
+		&run.Provenance.CreatedByUserID, &run.Provenance.ActorID, &run.Provenance.OnBehalfOf, &run.Provenance.Channel,
+		&run.Provenance.CapturedAt, &run.Access.OwnerUserID, &run.Access.OwnerTeamID, &run.Access.Visibility,
 		&run.ExpiresAt,
 	)
 	if err != nil {

@@ -26,10 +26,14 @@ import (
 // Governing: SPEC-0009 REQ "Owner-Only Policy Changes", REQ "Error Handling
 // Standards" ("distinct not-owner error"), REQ "Database Operation Standards"
 // (row-locked, transactional multi-step mutation).
+//
+// ownerID is the caller's user id; it is compared with the owning user id,
+// never with a rendered actor string (SPEC-0023 REQ "Owner Model").
 func (s *Store) resolveOwned(ctx context.Context, tx pgx.Tx, publicID, ownerID string) (internalID int64, err error) {
 	var owner string
 	err = tx.QueryRow(ctx,
-		`SELECT id, owner_id FROM artifacts WHERE public_id = $1 AND expires_at > now() FOR UPDATE`,
+		`SELECT id, COALESCE(owner_user_id::text, '') FROM artifacts
+		  WHERE public_id = $1 AND expires_at > now() FOR UPDATE`,
 		publicID,
 	).Scan(&internalID, &owner)
 	if err != nil {
@@ -38,7 +42,7 @@ func (s *Store) resolveOwned(ctx context.Context, tx pgx.Tx, publicID, ownerID s
 		}
 		return 0, fmt.Errorf("resolve artifact %s: %w", publicID, err)
 	}
-	if owner != ownerID {
+	if owner == "" || owner != ownerID {
 		return 0, fmt.Errorf("policy change on artifact %s: %w", publicID, errs.ErrForbidden)
 	}
 	return internalID, nil

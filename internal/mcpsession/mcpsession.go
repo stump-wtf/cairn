@@ -27,9 +27,9 @@ type Session struct {
 	// Mcp-Session-Id) — globally unique per connection, so it is also this
 	// row's primary key (no separate id minted).
 	ID string
-	// OwnerID is the human subject the OAuth grant is bound to (ADR-0004:
-	// agents inherit, never exceed, the human's reach).
-	OwnerID string
+	// UserID is the user the OAuth grant is bound to (ADR-0004: agents
+	// inherit, never exceed, the human's reach; SPEC-0023 REQ "Owner Model").
+	UserID string
 	// GrantID ties the session to the OAuth grant it authenticated with;
 	// revoking that grant ends the session.
 	GrantID string
@@ -84,8 +84,8 @@ const (
 type RecordInput struct {
 	// ID is the MCP transport session id (primary key).
 	ID string
-	// OwnerID is the human subject (the grant's actor_id).
-	OwnerID string
+	// UserID is the grant's user.
+	UserID string
 	// GrantID is the OAuth grant the connecting token authenticated with.
 	GrantID string
 	// ClientID is the OAuth client_id the grant belongs to.

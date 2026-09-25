@@ -20,8 +20,8 @@ func typedInput(shareType artifact.ShareType, body []byte) CreateArtifactInput {
 		ShareType:  shareType,
 		Title:      "preview test",
 		Body:       bytes.NewReader(body),
-		Provenance: artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
-		Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: testOwner, ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
+		Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  time.Now().Add(time.Hour),
 	}
 }

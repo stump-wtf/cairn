@@ -67,6 +67,11 @@ func newHarness(t *testing.T) (*Service, *pgxpool.Pool) {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// Owners are users (SPEC-0023 REQ "Owner Model").
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, actor_key, display_handle)
+		VALUES ($1, 'joe', 'joe'), ($2, 'owner-a', 'owner-a')`, joeUser, ownerAUser); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
 
 	var obj objectstore.ObjectStore
 	if ep := os.Getenv("CAIRN_TEST_S3_ENDPOINT"); ep != "" {
@@ -139,7 +144,7 @@ func TestIntegrationCreateEndpoint(t *testing.T) {
 	if ep.RequestCap != DefaultRequestCap {
 		t.Fatalf("request cap = %d, want default %d", ep.RequestCap, DefaultRequestCap)
 	}
-	if ep.Provenance.ActorID != "joe" || ep.Access.OwnerID != "joe" {
+	if ep.Provenance.ActorID != "joe" || ep.Access.OwnerUserID != joeUser {
 		t.Fatalf("provenance/access did not round-trip: %+v / %+v", ep.Provenance, ep.Access)
 	}
 
@@ -343,8 +348,8 @@ func TestIntegrationManagementReadIsLinkScoped(t *testing.T) {
 	svc, _ := newHarness(t)
 	ctx := context.Background()
 	ep := newEndpoint(t, svc, EndpointInput{
-		Provenance: artifact.Provenance{ActorID: "owner-a", Channel: artifact.ChannelAPI, CapturedAt: time.Now()},
-		Access:     artifact.AccessPolicy{OwnerID: "owner-a", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: ownerAUser, ActorID: "owner-a", Channel: artifact.ChannelAPI, CapturedAt: time.Now()},
+		Access:     artifact.AccessPolicy{OwnerUserID: ownerAUser, Visibility: artifact.VisibilityLink},
 	})
 	if _, err := svc.Capture(ctx, ep.PublicID, CaptureInput{Method: "GET", Status: 200}); err != nil {
 		t.Fatalf("capture: %v", err)

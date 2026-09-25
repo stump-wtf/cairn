@@ -17,6 +17,9 @@ import (
 
 var schemaSeq atomic.Int64
 
+// sam is the user newTestPool seeds, rendered "sam@stump.rocks".
+const sam = "00000000-0000-4000-8000-000000000101"
+
 // newTestPool connects to CAIRN_TEST_DATABASE_URL (skipping otherwise) and
 // applies the embedded migrations inside a private, per-test schema — the same
 // isolation discipline as the other packages' integration suites.
@@ -58,11 +61,15 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// Grants belong to users (SPEC-0023 REQ "Owner Model").
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, actor_key, display_handle) VALUES ($1, 'sam@stump.rocks', 'sam')`, sam); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
 	return pool
 }
 
 // issueGrant walks a full code issue + redemption for tests, returning the set.
-func issueGrant(t *testing.T, svc *Service, actor string) (*Client, *TokenSet, string) {
+func issueGrant(t *testing.T, svc *Service, userID string) (*Client, *TokenSet, string) {
 	t.Helper()
 	ctx := context.Background()
 	client, err := svc.RegisterClient(ctx, "Test Agent", []string{"https://client.example/cb"})
@@ -70,7 +77,7 @@ func issueGrant(t *testing.T, svc *Service, actor string) (*Client, *TokenSet, s
 		t.Fatalf("register client: %v", err)
 	}
 	verifier := strings.Repeat("v", 64)
-	code, err := svc.CreateAuthCode(ctx, client.ID, actor, "https://client.example/cb", AllScopes(), S256Challenge(verifier))
+	code, err := svc.CreateAuthCode(ctx, client.ID, userID, "https://client.example/cb", AllScopes(), S256Challenge(verifier))
 	if err != nil {
 		t.Fatalf("create code: %v", err)
 	}
@@ -90,14 +97,14 @@ func TestIntegrationAudienceBinding(t *testing.T) {
 	cairn := NewService(pool, "https://cairn.test", Options{})
 	other := NewService(pool, "https://other.example", Options{})
 
-	_, set, _ := issueGrant(t, cairn, "sam@stump.rocks")
+	_, set, _ := issueGrant(t, cairn, sam)
 
 	ident, err := cairn.AuthenticateAccess(ctx, set.AccessToken)
 	if err != nil {
 		t.Fatalf("own-audience authenticate: %v", err)
 	}
-	if ident.ActorID != "sam@stump.rocks" {
-		t.Fatalf("subject = %q, want the human", ident.ActorID)
+	if ident.UserID != sam || ident.ActorID != "sam@stump.rocks" {
+		t.Fatalf("subject = %q (%q), want the human", ident.UserID, ident.ActorID)
 	}
 	if _, err := other.AuthenticateAccess(ctx, set.AccessToken); !errors.Is(err, ErrInvalidGrant) {
 		t.Fatalf("foreign-audience authenticate = %v, want ErrInvalidGrant", err)
@@ -113,7 +120,7 @@ func TestIntegrationRefreshRotationAndReuseRevokesFamily(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(pool, "https://cairn.test", Options{})
 
-	client, set, _ := issueGrant(t, svc, "sam@stump.rocks")
+	client, set, _ := issueGrant(t, svc, sam)
 
 	rotated, err := svc.Refresh(ctx, set.RefreshToken, client.ID)
 	if err != nil {
@@ -158,8 +165,8 @@ func TestIntegrationRevokeIsolation(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(pool, "https://cairn.test", Options{})
 
-	clientA, setA, _ := issueGrant(t, svc, "sam@stump.rocks")
-	_, setB, _ := issueGrant(t, svc, "sam@stump.rocks")
+	clientA, setA, _ := issueGrant(t, svc, sam)
+	_, setB, _ := issueGrant(t, svc, sam)
 
 	if err := svc.Revoke(ctx, setA.RefreshToken, clientA.ID); err != nil {
 		t.Fatalf("revoke: %v", err)
@@ -183,8 +190,8 @@ func TestIntegrationRevokeUnknownAndForeignTokens(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(pool, "https://cairn.test", Options{})
 
-	clientA, setA, _ := issueGrant(t, svc, "sam@stump.rocks")
-	clientB, _, _ := issueGrant(t, svc, "sam@stump.rocks")
+	clientA, setA, _ := issueGrant(t, svc, sam)
+	clientB, _, _ := issueGrant(t, svc, sam)
 
 	if err := svc.Revoke(ctx, "cairn_rt_unknown", clientA.ID); err != nil {
 		t.Fatalf("revoke unknown token: %v, want nil per RFC 7009", err)
@@ -211,7 +218,7 @@ func TestIntegrationCodeBurnsOnFailedExchange(t *testing.T) {
 		t.Fatalf("register client: %v", err)
 	}
 	verifier := strings.Repeat("v", 64)
-	code, err := svc.CreateAuthCode(ctx, client.ID, "sam@stump.rocks", "https://client.example/cb", AllScopes(), S256Challenge(verifier))
+	code, err := svc.CreateAuthCode(ctx, client.ID, sam, "https://client.example/cb", AllScopes(), S256Challenge(verifier))
 	if err != nil {
 		t.Fatalf("create code: %v", err)
 	}

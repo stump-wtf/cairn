@@ -102,8 +102,8 @@ func artifactForTags() *Artifact {
 		PublicID:   "abc12",
 		ShareType:  TypeFile,
 		BodySHA256: "deadbeef",
-		Provenance: Provenance{ActorID: "u1", Channel: ChannelMCP, CapturedAt: time.Unix(1, 0)},
-		Access:     AccessPolicy{OwnerID: "u1", Visibility: VisibilityLink},
+		Provenance: Provenance{CreatedByUserID: "u1", ActorID: "u1", Channel: ChannelMCP, CapturedAt: time.Unix(1, 0)},
+		Access:     AccessPolicy{OwnerUserID: "u1", Visibility: VisibilityLink},
 		ExpiresAt:  time.Unix(100, 0),
 	}
 }
