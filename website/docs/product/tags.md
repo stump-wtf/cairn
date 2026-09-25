@@ -84,6 +84,14 @@ looks like. Then tag it:
 | `source:<harness>/<run>` | The run that produced the handoff. Optional. |
 | `reply:cairn-comment` · `reply:signal` | How the executing agent reports back. `cairn-comment` means comment on this artifact. Optional. |
 
+:::note[`reply:cairn-comment` notifies nobody yet]
+
+The reply is left as a comment on the handoff, and nothing notifies the author that it
+exists. Cairn's only outbound event today is `artifact.created`; comments and reactions
+emit none. Whoever sent the handoff has to open the artifact to see the reply.
+
+:::
+
 Cairn checks only the rules above, not this vocabulary. A misspelled lane is accepted
 here and then misroutes downstream.
 
@@ -116,7 +124,7 @@ The `artifact.created` event for a tagged bundle created over MCP looks like thi
     "url": "https://cairn.example/7Kq2mZ",
     "channel": "via MCP",
     "model": "claude-opus-5",
-    "actor_id": "joestump",
+    "actor_id": "you@example.com",
     "expires_at": "2026-09-18T08:00:00Z",
     "on_behalf_of": "claude-code/2.1.0",
     "tags": [
@@ -134,6 +142,22 @@ The `artifact.created` event for a tagged bundle created over MCP looks like thi
 
 A routing rule matches on `handoff` and the `lane:` tag in `data.tags`. The worker
 that claims the todo reads the artifact at `data.url` and follows it, semi-trusted.
+
+### What `actor_id` holds
+
+`actor_id` is the principal Cairn authenticated, never a value the creator sends. Its
+shape depends on the credential:
+
+| Credential | `actor_id` |
+|---|---|
+| Web sign-in through your identity provider (OIDC), or an MCP client you authorized through OAuth | Your sign-in: the email your identity provider asserts, or its subject id when it sends no email, e.g. `you@example.com` |
+| Personal access token | The token's owner, the same value as their sign-in, e.g. `you@example.com` |
+| Static token from `CAIRN_API_TOKENS` | The actor configured for it in `secret:actor[:role]`, exactly as written |
+
+This matters for routing. A Switchboard rule that trusts handoffs by `actor_id` has to
+list the value Cairn records, so a rule written for a forge login such as `octocat`
+drops every handoff you create while signed in as `you@example.com`. Read the real value
+off a stored event before you write the rule.
 
 See [SPEC-0002](../specs/artifact-core-and-share-types/index.md) for the tag
 requirement and [SPEC-0012](../specs/outbound-webhooks/index.md) for the event

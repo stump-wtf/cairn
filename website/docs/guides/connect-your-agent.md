@@ -273,6 +273,49 @@ Pick one category vocabulary and stick to it for the whole run: either operation
 context window, so page a large capture in modest batches, or post the whole thing as
 JSON to `POST /v1/runs` instead. The server's `run_capture` prompt has the full guidance.
 
+### Link a span to the artifact it produced
+
+When a run creates an artifact, such as a report, a receipt, or a summary of a pull
+request, set `produced_artifact_id` on the span that created it. The trace then renders
+that span as a link to the artifact, so a reader can go from the run to what it made.
+
+Create the artifact first, then send the span with its id. In this two-span example the
+`reason` span drafts a report, and the `write` span that shared it links to the result:
+
+```json
+[
+  {
+    "span_id": "s7",
+    "category": "reason",
+    "name": "Summarize the test failures",
+    "start_offset_ms": 41000,
+    "duration_ms": 3200,
+    "output": "Three failures, all in the reaper integration test. Writing them up."
+  },
+  {
+    "span_id": "s8",
+    "category": "write",
+    "tool": "artifact_create",
+    "name": "Share the failure report",
+    "args": {"share_type": "markdown", "title": "reaper test failures"},
+    "start_offset_ms": 44200,
+    "duration_ms": 600,
+    "output": "Created https://cairn.stump.wtf/7Kq2mZ",
+    "produced_artifact_id": "7Kq2mZ"
+  }
+]
+```
+
+- Only a span whose `category` is `write` can carry `produced_artifact_id`. On any other
+  category, the whole batch is rejected.
+- The artifact has to exist, and not have expired, when the span arrives. Otherwise the
+  batch fails validation, so create the artifact before you append the span.
+- The value can be the bare id or the `mcp://cairn/<id>` handle.
+- The field is the same on `run_create`, `run_append_spans`, `POST /v1/runs`, and
+  `POST /v1/runs/<id>/spans`. The example is the MCP shape; over REST, `output` is
+  base64-encoded. When you read the run back, each linked span lists its artifacts in
+  `produced_artifact_ids`, an array.
+
 ## A2UI views
 
 Some MCP hosts can render A2UI, a structured UI format, straight to the person using

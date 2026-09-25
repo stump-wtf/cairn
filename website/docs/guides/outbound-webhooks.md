@@ -62,7 +62,7 @@ its content:
 | `data.url` | The artifact's web link, which opens it for anyone who has it |
 | `data.channel` | How it was created: `via MCP`, `via API`, or `via web` |
 | `data.model` | The model the creator reported, if any |
-| `data.actor_id` | The person whose credential created it; the only field here that identifies anyone |
+| `data.actor_id` | The person whose credential created it; the only field here that identifies anyone. For a sign-in or a personal access token it's the sign-in, usually an email; for a static token it's the actor configured for it. See [what `actor_id` holds](../product/tags.md#what-actor_id-holds) |
 | `data.expires_at` | When the artifact expires |
 | `data.on_behalf_of` | For artifacts created over MCP, the client's self-reported name and version |
 | `data.tags` | The creator's [tags](../product/tags.md), if any; routing hints, never authorization |
@@ -209,7 +209,8 @@ for step 2.
    claims the todo, takes `data.id` from the event, calls `artifact_read`, checks
    `provenance.actor` (see [the trust model](./agent-handoffs.md#the-trust-model)), does
    the work, comments on the artifact with a link to its result (that's what
-   `reply:cairn-comment` asks for), and completes the todo.
+   `reply:cairn-comment` asks for), and completes the todo. Cairn emits no event for
+   that comment, so nothing tells you it's there: open the artifact to see it.
 
 Tags pick the pool; they never vouch for the sender. That's why the rule matches on
 `actor_id` and the worker checks provenance again before it acts.
