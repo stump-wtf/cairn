@@ -10,6 +10,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 )
 
 // Scopes gate capabilities across every authenticated surface. They are the MVP
@@ -62,6 +63,27 @@ type Principal struct {
 	// (SPEC-0006 REQ "CSRF Protection"). The token authenticators leave it false;
 	// the web-session Authenticator (#11) sets it true.
 	Ambient bool
+	// Auth records which authenticator resolved the principal. Each one sets
+	// it; nothing in the request can (SPEC-0016 EV-4).
+	Auth event.AuthMethod
+}
+
+// EventActor is the principal as an event actor. The kind is human if and only
+// if the principal authenticated with an ambient browser session: every bearer
+// credential — OAuth, a PAT whatever its is_agent flag, a CAIRN_API_TOKENS
+// entry, the dev shortcut — is an agent, because any agent sharing the human's
+// shell can read a token on disk, while a CSRF-guarded session cookie cannot be
+// replayed cross-site. OnBehalfOf is left for the caller, which knows whether
+// the surface has one.
+//
+// Governing: ADR-0022 (server-derived actor kind), SPEC-0016 EV-4 "Server-Derived
+// Actor Kind".
+func (p *Principal) EventActor() event.Actor {
+	kind := event.KindAgent
+	if p.Ambient {
+		kind = event.KindHuman
+	}
+	return event.Actor{ID: p.ActorID, Channel: p.Channel, Kind: kind, Auth: p.Auth}
 }
 
 // HasScope reports whether the principal holds scope.
@@ -216,6 +238,7 @@ func (a *TokenAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 		Channel: artifact.ChannelAPI,
 		IsAgent: grant.IsAgent,
 		Scopes:  scopes,
+		Auth:    event.AuthAPIToken,
 	}, nil
 }
 
@@ -246,6 +269,7 @@ func (DevActorAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 		ActorID: token,
 		Channel: artifact.ChannelAPI,
 		Scopes:  agentScopes(),
+		Auth:    event.AuthAPIToken,
 	}, nil
 }
 

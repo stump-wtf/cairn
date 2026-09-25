@@ -164,7 +164,7 @@ func (s *Server) handleWebComment(w http.ResponseWriter, r *http.Request) {
 	comment, err := s.annot.AddComment(r.Context(), id, annotation.CommentInput{
 		AnchorType: anchorType,
 		AnchorRef:  ref,
-		ActorID:    p.ActorID,
+		Actor:      p.EventActor(),
 		Body:       r.PostFormValue("body"),
 	})
 	if err != nil {

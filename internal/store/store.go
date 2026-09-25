@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/id"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/sharetype"
@@ -78,6 +79,10 @@ type CreationEvent struct {
 	// Tags are client-asserted (ADR-0018): carried so a consumer can route on
 	// them, never so it can trust them.
 	Tags []string
+	// ActorKind and Auth are the creator's server-derived credential class
+	// (ADR-0022, SPEC-0016 EV-4).
+	ActorKind event.ActorKind
+	Auth      event.AuthMethod
 }
 
 // CreationEmitter receives post-commit creation events. Implementations MUST
@@ -144,7 +149,7 @@ func New(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *Store {
 //
 // Governing: ADR-0017 (Outbound Webhooks), SPEC-0012 REQ "Event Emission on
 // Artifact Creation"
-func (s *Store) emitCreated(a *artifact.Artifact) {
+func (s *Store) emitCreated(a *artifact.Artifact, kind event.ActorKind, auth event.AuthMethod) {
 	if s.emitter == nil {
 		return
 	}
@@ -161,7 +166,9 @@ func (s *Store) emitCreated(a *artifact.Artifact) {
 		OnBehalfOf: a.Provenance.OnBehalfOf,
 		// Cloned so the emitter never shares a backing array with the
 		// artifact the create call hands back to its caller.
-		Tags: slices.Clone(a.Tags),
+		Tags:      slices.Clone(a.Tags),
+		ActorKind: kind,
+		Auth:      auth,
 	})
 }
 

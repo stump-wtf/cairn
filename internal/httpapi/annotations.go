@@ -11,6 +11,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
@@ -108,7 +109,7 @@ func (s *Server) handleReact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reaction, created, err := s.annot.React(
-		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, p.ActorID)
+		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, p.EventActor())
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id, "anchor_type": req.AnchorType})
 		return
@@ -137,7 +138,7 @@ func (s *Server) handleUnreact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.annot.Unreact(
-		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, p.ActorID); err != nil {
+		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, p.EventActor()); err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id, "anchor_type": req.AnchorType})
 		return
 	}
@@ -159,7 +160,7 @@ func (s *Server) handleUnreactByID(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, errs.Validationf("reaction id must be an integer"), map[string]string{"id": id})
 		return
 	}
-	if err := s.annot.UnreactByID(r.Context(), id, rid, p.ActorID); err != nil {
+	if err := s.annot.UnreactByID(r.Context(), id, rid, p.EventActor()); err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
@@ -211,8 +212,7 @@ func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
 		AnchorType: sharetype.Anchor(req.AnchorType),
 		AnchorRef:  req.AnchorRef,
 		ParentID:   req.ParentID,
-		ActorID:    p.ActorID,
-		OnBehalfOf: req.OnBehalfOf,
+		Actor:      commentActor(p, req),
 		Body:       req.Body,
 	})
 	if err != nil {
@@ -222,6 +222,17 @@ func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
 	resp := toCommentResponse(comment)
 	resp.OwnerRedaction = ownerRedactionOf(comment.Redaction)
 	s.writeJSON(w, http.StatusCreated, resp)
+}
+
+// commentActor is the author of a REST comment. The actor — and so its kind
+// and auth — comes from the principal alone. on_behalf_of is the one asserted
+// field the body may set: it names a harness for display and never changes the
+// derived kind, and commentRequest has no field a client could use to assert
+// one (SPEC-0016 EV-4 "Client cannot assert the kind").
+func commentActor(p *Principal, req commentRequest) event.Actor {
+	a := p.EventActor()
+	a.OnBehalfOf = req.OnBehalfOf
+	return a
 }
 
 // handleListComments returns one artifact's comments in thread order with

@@ -52,6 +52,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	publicid "github.com/stump-wtf/cairn/internal/id"
 	"github.com/stump-wtf/cairn/internal/mcpsession"
 	"github.com/stump-wtf/cairn/internal/oauth"
@@ -134,6 +135,9 @@ func (s *Server) mcpBodyLimit(next http.Handler) http.Handler {
 const (
 	mcpExtraGrantID  = "grant_id"
 	mcpExtraClientID = "client_id"
+	// mcpExtraAuth records which credential the verifier accepted — a PAT or
+	// an OAuth access token — for the event actor's `auth` (SPEC-0016 EV-4).
+	mcpExtraAuth = "auth"
 
 	// patTokenInfoTTL is the validity window reported for a PAT-authenticated
 	// MCP request. PATs never expire, but the bearer middleware reads a zero
@@ -173,6 +177,7 @@ func (s *Server) mcpTokenVerifier() sdkauth.TokenVerifier {
 				Extra: map[string]any{
 					mcpExtraGrantID:  "",
 					mcpExtraClientID: "",
+					mcpExtraAuth:     string(event.AuthPAT),
 				},
 			}, nil
 		}
@@ -187,6 +192,7 @@ func (s *Server) mcpTokenVerifier() sdkauth.TokenVerifier {
 			Extra: map[string]any{
 				mcpExtraGrantID:  ident.GrantID,
 				mcpExtraClientID: ident.ClientID,
+				mcpExtraAuth:     string(event.AuthOAuth),
 			},
 		}, nil
 	}
@@ -487,6 +493,25 @@ func mcpActor(extra *mcp.RequestExtra) string {
 		return ""
 	}
 	return extra.TokenInfo.UserID
+}
+
+// mcpEventActor is the event actor for an MCP tool call. Every MCP caller holds
+// a bearer credential, so the kind is always agent; no tool argument reaches it.
+// The auth method is the one mcpTokenVerifier recorded, and anything other than
+// a PAT is the OAuth access token that is the transport's only other way in.
+//
+// Governing: ADR-0022, SPEC-0016 EV-4 "Server-Derived Actor Kind".
+func mcpEventActor(req *mcp.CallToolRequest) event.Actor {
+	a := event.Actor{Channel: artifact.ChannelMCP, Kind: event.KindAgent, Auth: event.AuthOAuth}
+	if req == nil {
+		return a
+	}
+	a.ID = mcpActor(req.Extra)
+	a.OnBehalfOf = mcpModelActor(req.Session)
+	if req.Extra != nil && mcpExtraString(req.Extra.TokenInfo, mcpExtraAuth) == string(event.AuthPAT) {
+		a.Auth = event.AuthPAT
+	}
+	return a
 }
 
 // mcpModelActor derives the provenance OnBehalfOf value from the connected
@@ -989,7 +1014,8 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
 		return nil, mcpCreateOutput{}, s.mcpScopeErr(ctx, "artifact_create", oauth.ScopeArtifactsWrite)
 	}
-	actorID := mcpActor(req.Extra)
+	creator := mcpEventActor(req)
+	actorID := creator.ID
 	if actorID == "" {
 		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", errs.ErrUnauthorized)
 	}
@@ -1020,6 +1046,8 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 		Access:    artifact.AccessPolicy{OwnerID: actorID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 		Tags:      in.Tags,
+		ActorKind: creator.Kind,
+		Auth:      creator.Auth,
 	})
 	if err != nil {
 		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", err)
@@ -1081,7 +1109,8 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
 		return nil, mcpBundleCreateOutput{}, s.mcpScopeErr(ctx, "bundle_create", oauth.ScopeArtifactsWrite)
 	}
-	actorID := mcpActor(req.Extra)
+	creator := mcpEventActor(req)
+	actorID := creator.ID
 	if actorID == "" {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", errs.ErrUnauthorized)
 	}
@@ -1107,6 +1136,8 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 		Access:    artifact.AccessPolicy{OwnerID: actorID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 		Tags:      in.Tags,
+		ActorKind: creator.Kind,
+		Auth:      creator.Auth,
 	})
 	if err != nil {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", err)
@@ -1389,7 +1420,8 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
 		return nil, mcpRunOutput{}, s.mcpScopeErr(ctx, "run_create", oauth.ScopeArtifactsWrite)
 	}
-	actorID := mcpActor(req.Extra)
+	creator := mcpEventActor(req)
+	actorID := creator.ID
 	if actorID == "" {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", errs.ErrUnauthorized)
 	}
@@ -1418,6 +1450,8 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 		Access:    artifact.AccessPolicy{OwnerID: actorID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 		Spans:     spans,
+		ActorKind: creator.Kind,
+		Auth:      creator.Auth,
 	}
 	var run *trajectory.Run
 	switch in.Mode {
@@ -1601,8 +1635,7 @@ func (s *Server) mcpComment(ctx context.Context, req *mcp.CallToolRequest, in mc
 		AnchorType: sharetype.Anchor(in.AnchorType),
 		AnchorRef:  ref,
 		ParentID:   in.ParentID,
-		ActorID:    actorID,
-		OnBehalfOf: mcpModelActor(req.Session),
+		Actor:      mcpEventActor(req),
 		Body:       in.Body,
 	})
 	if err != nil {
@@ -1658,7 +1691,7 @@ func (s *Server) mcpReact(ctx context.Context, req *mcp.CallToolRequest, in mcpR
 	if err != nil {
 		return nil, mcpReactOutput{}, err
 	}
-	reaction, _, err := s.annot.React(ctx, id, sharetype.Anchor(in.AnchorType), ref, in.Emoji, actorID)
+	reaction, _, err := s.annot.React(ctx, id, sharetype.Anchor(in.AnchorType), ref, in.Emoji, mcpEventActor(req))
 	if err != nil {
 		return nil, mcpReactOutput{}, s.mcpToolErr(ctx, "artifact_react", err)
 	}
