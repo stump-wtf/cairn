@@ -255,7 +255,7 @@ over REST or with the CLI.
 A tool call that fails validation returns an error result whose text says what was
 wrong, such as `tags[0]: "Handoff" must be lowercase`. Its structured content is
 `{"code": "validation_failed", "violations": [...]}`: one entry per problem, each naming
-the argument (`field`), a stable `reason` code, and the `limit` it broke. An agent
+the argument (`field`), a stable `reason` code, and any `limit` it broke. An agent
 should fix the named arguments and call again, rather than retry the same call.
 [Errors](../product/errors.md) lists every reason, with an example of each.
 

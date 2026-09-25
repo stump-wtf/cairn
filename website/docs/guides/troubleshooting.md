@@ -145,10 +145,10 @@ from them is rejected.
 
 ### Payload too large
 
-`413 payload too large` means an upload is over the size limit (64 MiB per body by
+`413 payload_too_large` means an upload is over the size limit (64 MiB per body by
 default), a webhook capture is over 5 MiB, or an MCP call is too big. Its violation has
-reason `too_large`, and `limit` is the cap in bytes. For a large trace, page the spans or
-post it over REST.
+reason `too_large`. On an upload, `limit` is the cap in bytes; the other 413s don't
+state their cap yet. For a large trace, page the spans or post it over REST.
 
 ### Rate limited
 
