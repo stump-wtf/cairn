@@ -21,12 +21,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
 	"github.com/stump-wtf/cairn/internal/session"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 const (
@@ -196,17 +198,34 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var claims struct {
-		Email string `json:"email"`
+		Email             string `json:"email"`
+		EmailVerified     any    `json:"email_verified"`
+		PreferredUsername string `json:"preferred_username"`
 	}
 	_ = idToken.Claims(&claims)
-	actor := firstNonEmpty(claims.Email, idToken.Subject)
-	if actor == "" {
+	if idToken.Subject == "" {
 		s.log.ErrorContext(r.Context(), "oidc callback rejected", "reason", "empty subject")
 		http.Error(w, "id_token has no usable subject", http.StatusBadGateway)
 		return
 	}
+	// The identity is (issuer, subject). The email only counts when the IdP
+	// says it is verified: an IdP that lets a user type their own email must
+	// not let them claim someone else's user (SPEC-0023 "Unverified email
+	// cannot claim a user", audit A5).
+	u, actor, err := s.resolveSignIn(r.Context(), user.Identity{
+		Issuer:        s.cfg.OIDCIssuer,
+		Subject:       idToken.Subject,
+		Email:         claims.Email,
+		EmailVerified: claimTrue(claims.EmailVerified),
+		Handle:        claims.PreferredUsername,
+	})
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "oidc: resolve user failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
-	sess, err := s.sessions.Create(r.Context(), s.cfg.OIDCIssuer, idToken.Subject, actor, s.cfg.SessionTTL)
+	sess, err := s.sessions.Create(r.Context(), s.cfg.OIDCIssuer, idToken.Subject, actor, u.ID, s.cfg.SessionTTL)
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "oidc: create session failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -215,4 +234,17 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	s.setCookie(w, r, sessionCookieName, sess.Token, s.cfg.SessionTTL, true)
 	s.setCookie(w, r, csrfCookieName, sess.CSRFToken, s.cfg.SessionTTL, false)
 	http.Redirect(w, r, st.Next, http.StatusSeeOther)
+}
+
+// claimTrue reads a boolean ID-token claim. `email_verified` is a JSON boolean
+// per OIDC Core, but some IdPs send the string "true"; anything else, absence
+// included, is false.
+func claimTrue(v any) bool {
+	switch b := v.(type) {
+	case bool:
+		return b
+	case string:
+		return strings.EqualFold(b, "true")
+	}
+	return false
 }

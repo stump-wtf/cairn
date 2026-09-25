@@ -54,6 +54,11 @@ type fakeIdP struct {
 	badSignature bool
 	noEmail      bool
 	lastVerifier string
+	// subject, email and emailVerified override the minted identity; zero
+	// values mean testOIDCSubject, testOIDCEmail and email_verified: true.
+	subject       string
+	email         string
+	emailVerified any
 }
 
 func newFakeIdP(t *testing.T) *fakeIdP {
@@ -97,6 +102,12 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		nonce := f.nonce
 		expiresIn := f.expiresIn
 		noEmail := f.noEmail
+		subject := firstNonEmpty(f.subject, testOIDCSubject)
+		email := firstNonEmpty(f.email, testOIDCEmail)
+		var emailVerified any = true
+		if f.emailVerified != nil {
+			emailVerified = f.emailVerified
+		}
 		signKey := f.key
 		if f.badSignature {
 			signKey = f.wrongKey
@@ -105,14 +116,15 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		now := time.Now()
 		claims := map[string]any{
 			"iss":   f.srv.URL,
-			"sub":   testOIDCSubject,
+			"sub":   subject,
 			"aud":   testOIDCClientID,
 			"exp":   now.Add(expiresIn).Unix(),
 			"iat":   now.Unix(),
 			"nonce": nonce,
 		}
 		if !noEmail {
-			claims["email"] = testOIDCEmail
+			claims["email"] = email
+			claims["email_verified"] = emailVerified
 		}
 		idToken := signJWT(t, signKey, claims)
 		writeJSON(w, map[string]any{
@@ -149,6 +161,14 @@ func (f *fakeIdP) setNoEmail(v bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.noEmail = v
+}
+
+// setIdentity steers the next minted ID token's sub, email and
+// email_verified claim (a bool, or a string for IdPs that send "true").
+func (f *fakeIdP) setIdentity(subject, email string, emailVerified any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.subject, f.email, f.emailVerified = subject, email, emailVerified
 }
 
 func (f *fakeIdP) verifierSeen() string {
@@ -499,8 +519,8 @@ func TestIntegrationOIDCConfiguredRejectsDevPassword(t *testing.T) {
 
 	resp := doLogin(t, srv, client, "joe", "devpass")
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("dev-password login with OIDC configured = %d, want 403", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("dev-password login with OIDC configured = %d, want 404", resp.StatusCode)
 	}
 	if cookieValue(t, client, srv.URL, sessionCookieName) != "" {
 		t.Fatal("a refused dev-password login must not establish a session")

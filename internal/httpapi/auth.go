@@ -51,6 +51,11 @@ func humanScopes() map[string]bool {
 // agents do not receive (SPEC-0002 "Agent cannot broaden sharing").
 type Principal struct {
 	ActorID string
+	// UserID is the users row this principal acts for (SPEC-0023 REQ "Users and
+	// Identities"), set by the session authenticator for sessions minted since
+	// users existed. Empty for bearer credentials until ownership moves to
+	// user ids (#327).
+	UserID  string
 	Channel artifact.Channel
 	IsAgent bool
 	Scopes  map[string]bool

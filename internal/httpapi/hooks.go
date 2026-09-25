@@ -164,7 +164,10 @@ func (s *Server) handleGetHook(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	s.writeJSON(w, http.StatusOK, s.toHookResponse(ep, page.Requests, page.NextBefore))
+	resp := s.toHookResponse(ep, page.Requests, page.NextBefore)
+	viewer, _ := s.optionalPrincipal(r)
+	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // handleListHookRequests lists an endpoint's captured requests, keyset

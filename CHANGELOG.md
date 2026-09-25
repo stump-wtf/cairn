@@ -7,6 +7,28 @@ reaches 1.0.
 
 ## [Unreleased]
 
+### Security
+
+- **Users and identities** (SPEC-0023, #326). Sign-ins now resolve to user rows
+  keyed on the provider's `(issuer, subject)`. A new identity joins an existing
+  user only through a verified email equal (case-insensitively) to that user's
+  primary email; the OIDC callback ignores an email whose `email_verified`
+  claim is not true, closing a takeover where an IdP-typed email became the
+  owner (audit A5). GitHub identities key on the numeric account id. The dev
+  password login is disabled whenever OIDC or GitHub is configured, and answers
+  `404` (A6). Anonymous and other readers see the creator's display handle, not
+  their email (A18).
+
+### Upgrade notes
+
+- **Take a database backup first.** Migration `0017_users` adds the `users`
+  and `user_identities` tables and `sessions.user_id`.
+- **OIDC must send `email_verified: true`.** A sign-in whose email is not
+  verified is keyed on its subject and no longer reaches artifacts owned by
+  that email. Confirm your provider marks the operator's email verified.
+- **`CAIRN_DEV_INSECURE_BEARER_AUTH` with an `https` `CAIRN_BASE_URL` now fails
+  boot** (A21). It was never safe there.
+
 ## [0.1.1] - Unreleased
 
 Changes since `v0.1.0`, staged for the next patch release.

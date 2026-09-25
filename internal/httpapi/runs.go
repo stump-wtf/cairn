@@ -230,7 +230,10 @@ func (s *Server) handleAppendSpans(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	s.writeJSON(w, http.StatusOK, s.toRunResponse(run))
+	resp := s.toRunResponse(run)
+	viewer, _ := s.optionalPrincipal(r)
+	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // handleCloseRun closes an open run, stamping ended_at from the span tree so it
@@ -261,7 +264,10 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	s.writeJSON(w, http.StatusOK, s.toRunResponse(run))
+	resp := s.toRunResponse(run)
+	viewer, _ := s.optionalPrincipal(r)
+	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // handleGetSpanOutput lazily streams a span's output — the deferred fetch the
