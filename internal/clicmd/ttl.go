@@ -52,6 +52,25 @@ func parseTTLFlag(s string) (int64, error) {
 	return int64(d / time.Second), nil
 }
 
+// formatTTLSeconds renders a whole number of seconds in the largest unit that
+// divides it exactly — days, then hours, minutes, seconds — in the syntax
+// parseTTLFlag reads back, so a limit the server states (2592000 seconds)
+// reads as the flag a user would type (30d).
+//
+// Governing: ADR-0025, SPEC-0019 VE-8
+func formatTTLSeconds(secs int64) string {
+	units := []struct {
+		suffix string
+		secs   int64
+	}{{"d", 86400}, {"h", 3600}, {"m", 60}}
+	for _, u := range units {
+		if secs != 0 && secs%u.secs == 0 {
+			return strconv.FormatInt(secs/u.secs, 10) + u.suffix
+		}
+	}
+	return strconv.FormatInt(secs, 10) + "s"
+}
+
 // formatAccess renders the server's visibility value the way SPEC-0008's
 // decorated output wants it ("🔒 you + anyone with link"). It is purely
 // presentational — the CLI never decides access, only displays what the

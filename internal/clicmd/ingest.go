@@ -121,7 +121,7 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 		sp.Stop()
 	}
 	if err != nil {
-		return err
+		return withSent(err, sentRequest{ttl: flags.ttl, tags: tags, files: args})
 	}
 
 	if flags.jsonOut {
