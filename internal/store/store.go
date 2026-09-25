@@ -83,12 +83,47 @@ type CreationEvent struct {
 	// (ADR-0022, SPEC-0016 EV-4).
 	ActorKind event.ActorKind
 	Auth      event.AuthMethod
+	// OwnerID is the artifact's owner, carried so owned subscriptions can be
+	// selected without a lookup (ADR-0029). It is never put on the wire
+	// (SPEC-0016 EV-7).
+	OwnerID string
+}
+
+// Event is the artifact.created lifecycle event this creation announces. It is
+// what makes CreationEmitter a thin adapter over event.Emitter: an
+// implementation forwards Emit(ev.Event()), so the creation path and every
+// other kind share one encoder.
+//
+// Governing: ADR-0022, SPEC-0016 EV-1 "Event Kind Registry", EV-3 "Payload
+// Shape"
+func (c CreationEvent) Event() event.Event {
+	return event.Event{
+		Kind: event.ArtifactCreated,
+		Subject: event.Subject{
+			PublicID:  c.PublicID,
+			ShareType: c.ShareType,
+			Title:     c.Title,
+			WebPath:   c.WebPath,
+			Tags:      c.Tags,
+			ExpiresAt: c.ExpiresAt,
+			OwnerID:   c.OwnerID,
+		},
+		Actor: event.Actor{
+			ID:         c.ActorID,
+			Channel:    artifact.Channel(c.Channel),
+			OnBehalfOf: c.OnBehalfOf,
+			Kind:       c.ActorKind,
+			Auth:       c.Auth,
+		},
+		Model: c.Model,
+	}
 }
 
 // CreationEmitter receives post-commit creation events. Implementations MUST
 // be safe for concurrent use and MUST NOT block or panic the caller: an emit
 // failure is the emitter's problem, never the create request's
-// (SPEC-0012 REQ "Event Emission on Artifact Creation").
+// (SPEC-0012 REQ "Event Emission on Artifact Creation"). The outbound emitter
+// implements it by forwarding CreationEvent.Event to event.Emitter.
 type CreationEmitter interface {
 	EmitArtifactCreated(CreationEvent)
 }
@@ -169,6 +204,7 @@ func (s *Store) emitCreated(a *artifact.Artifact, kind event.ActorKind, auth eve
 		Tags:      slices.Clone(a.Tags),
 		ActorKind: kind,
 		Auth:      auth,
+		OwnerID:   a.Access.OwnerID,
 	})
 }
 
