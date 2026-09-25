@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/redact"
 )
 
 // ShareType classifies an artifact and (via the registry in SPEC-0002 story #9)
@@ -103,7 +104,13 @@ type Artifact struct {
 	CommentCount  int
 	// PinCount counts image-region annotations — image-region reactions plus
 	// pinned comments (ADR-0006).
-	PinCount  int
+	PinCount int
+	// Redaction is what the ingest secret scanner did to this artifact's
+	// content: a status, a count and counts per rule ID, never a value
+	// (SPEC-0017 RD-9). It is the owner's to see; an adapter shows it only when
+	// the viewer owns the artifact. The zero value is stored as "unscanned", so
+	// a create path the scanner is not wired into never claims to be clean.
+	Redaction redact.Summary
 	ExpiresAt time.Time
 	CreatedAt time.Time
 }

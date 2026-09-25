@@ -28,6 +28,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
@@ -360,16 +361,28 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 			return err
 		}
 
+		// The scan outcome commits with the comment it describes. Nothing
+		// scans comments yet, so the zero Summary records "unscanned" until
+		// #291 sets it from the scanner.
+		//
+		// Governing: ADR-0023, SPEC-0017 RD-9
+		outcome, err := redact.Summary{}.Normalized()
+		if err != nil {
+			return fmt.Errorf("annotation: comment redaction outcome: %w", err)
+		}
+
 		var (
 			id        int64
 			createdAt time.Time
 		)
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, parent_id, actor_id, on_behalf_of, body)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, parent_id, actor_id, on_behalf_of, body,
+			                      redaction_status, redaction_count, redaction_rules)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			RETURNING id, created_at`,
 			anchor.ArtifactID, string(anchor.Type), anchor.Ref, anchor.Key,
 			in.ParentID, in.ActorID, in.OnBehalfOf, in.Body,
+			string(outcome.Status), outcome.Count, outcome.Rules,
 		).Scan(&id, &createdAt); err != nil {
 			return fmt.Errorf("annotation: insert comment: %w", err)
 		}
