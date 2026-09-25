@@ -15,6 +15,20 @@ reaches 1.0.
   changes. The encoder now handles every SPEC-0016 event kind; kinds other than
   `artifact.created` are counted and never sent to `CAIRN_OUTBOUND_WEBHOOK_URLS`.
   (ADR-0022, SPEC-0016, #305)
+- **Reactions and comments are owned per actor kind.** Each row stores the
+  server-derived `actor_kind` (`human` for a browser session, `agent` for every
+  bearer credential), and reaction idempotency is keyed per
+  `(actor_id, actor_kind)`. An agent reacting with your credentials no longer
+  shares, occupies or can withdraw your own reaction: un-react, delete-by-id
+  (403 on the other kind's row) and comment edit/delete all match the kind.
+  Reactions gain `on_behalf_of`, set exactly as on comments (the REST body
+  field, or the MCP client's name). Reaction and comment responses carry
+  `actor_kind`; reaction tallies add `human_count` and `agent_count`, and
+  `reacted` now means "a row you, as this kind, can remove". Rows written
+  before the upgrade read back `actor_kind: ""`, are never counted as human,
+  and only their own actor removes them. Migration 0022 builds the new unique
+  index concurrently and runs outside a transaction; it is safe to rerun.
+  (ADR-0022, SPEC-0016 EV-6, #159)
 
 ## [0.1.1] - Unreleased
 
