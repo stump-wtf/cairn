@@ -87,7 +87,9 @@ and access policy to the user.
 A repeatable `--tag` flag MUST attach tags to the created artifact (SPEC-0002 REQ
 "Artifact Tags"). Each flag holds one tag or a comma-separated list. Locally the CLI
 rejects only an empty tag, as a usage error reported before any network call. The tag
-charset, size and count bounds, and deduplication, are the server's to decide.
+charset, size and count bounds, and deduplication, are the server's to decide. The one
+exception is case: the CLI lower-cases ASCII uppercase in each tag before sending, and
+warns on stderr for each tag it changes (SPEC-0019 VE-9, ADR-0025).
 
 #### Scenario: Tag a piped artifact
 
