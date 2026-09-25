@@ -635,11 +635,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
 
   # ---- 13. Homebrew tap bump ----------------------------------------------
-  # Bumps stump.wtf/homebrew-tap from the assets the release job just
-  # published. cairn's formula is a BINARY formula — unlike harness, msgbrowse
-  # and reduit, which build from a public source tarball, an option cairn does
-  # not have — so the formula pins four url/sha256 pairs and this job rewrites
-  # all of them.
+  # Writes stump.wtf/homebrew-tap's Formula/cairn.rb from the assets the release
+  # job just published. cairn's formula is a BINARY formula (four url/sha256
+  # pairs), unlike harness, msgbrowse and reduit, which build from source.
+  #
+  # The formula is RENDERED from packaging/homebrew/cairn.rb.tmpl on every
+  # release, not edited in place. The in-place edit needed a formula already in
+  # the tap before the first release, and no placeholder could pass the tap's
+  # CI: `brew audit --online` 404s on urls that don't exist yet, and `--strict`
+  # rejects the `version` line the edit keyed on (cairn#183, tap#26).
   tap-bump:
     needs: [release]
     runs-on: ubuntu-latest
@@ -678,42 +682,40 @@ jobs:
           echo "::error::${TAG} assets never appeared on ${GH_REPO_URL} after 10m."
           exit 1
 
-      - name: Download, checksum, and bump the tap
+      # For the renderer and its template, packaging/homebrew/cairn.rb.tmpl.
+      # The tag's own tree, so a release renders the template it shipped with.
+      - uses: actions/checkout@v4
+
+      - name: Download, checksum, and render the formula
+        shell: bash
         run: |
           set -euo pipefail
           git clone -q "https://gitea.stump.rocks/stump.wtf/homebrew-tap.git" tap
-          F="tap/Formula/cairn.rb"
+          mkdir -p tap/Formula
 
-          # The formula interpolates v#{version} into its urls, so a bump only
-          # has to rewrite the version line and the four sha256 lines. Each
-          # sha256 carries a trailing arch marker (`# darwin_arm64`), so a
-          # rewrite cannot land on the wrong architecture — which is exactly
-          # what a positional edit would get wrong, silently, and ship.
-          sed -i -E "s|^(  version \")[^\"]+(\")|\1${VER}\2|" "$F"
-          grep -q "version \"${VER}\"" "$F"
-
+          # One checksum per architecture, in the renderer's argument order.
+          # Download to a file and hash the file: a failed download inside a
+          # pipeline would hash the empty stream and look like a checksum.
+          shas=()
           for pair in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
             url="${GH_REPO_URL}/releases/download/${TAG}/cairn_${VER}_${pair}.tar.gz"
-            sha="$(curl -sfL --retry 3 --retry-all-errors "$url" | sha256sum | cut -d' ' -f1)"
-            if [ -z "$sha" ]; then
-              echo "::error::empty checksum for ${pair} — refusing to write the formula"
-              exit 1
-            fi
-            sed -i -E "s|^([[:space:]]*sha256 \")[0-9a-f]{64}(\" # ${pair})\$|\1${sha}\2|" "$F"
-            # sed exits 0 when its pattern misses, so assert the edit landed
-            # rather than trusting it. A missed rewrite leaves the previous
-            # release's bytes pinned, and `brew install` then fails the
-            # checksum for every user rather than for us.
-            grep -q "sha256 \"${sha}\" # ${pair}" "$F"
+            curl -sfL --retry 3 --retry-all-errors -o "asset_${pair}.tar.gz" "$url"
+            sha="$(sha256sum "asset_${pair}.tar.gz" | cut -d' ' -f1)"
+            shas+=("$sha")
           done
+
+          # Validates the version and every checksum, and refuses to write a
+          # formula with a placeholder left in it.
+          scripts/render-brew-formula.sh "$VER" "${shas[@]}" > tap/Formula/cairn.rb
 
           cd tap
           git config user.name "joestump-agent"
           git config user.email "joestump-agent@noreply.stump.rocks"
-          if git diff --quiet; then
+          git add Formula/cairn.rb
+          if git diff --cached --quiet; then
             echo "tap already at v${VER} — nothing to push"
           else
-            git commit -aqm "toil(cairn): bump formula to v${VER} (automated tap bump)"
+            git commit -qm "toil(cairn): bump formula to v${VER} (automated tap bump)"
             git -c http.extraheader="Authorization: token ${TAP_PUSH_TOKEN}" \
               push -q origin HEAD:main
             echo "tap bumped to v${VER}" >> "$GITHUB_STEP_SUMMARY"
