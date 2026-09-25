@@ -74,8 +74,26 @@ claude plugin install cairn@claude-plugin-cairn
 
 ## Crush
 
-Add Cairn to `crush.json`, either in your project or in `~/.config/crush/crush.json`, and
-export `CAIRN_TOKEN` wherever Crush runs:
+Crush reads two config formats. `crushrc` is Bash with a few Crush builtins, and it's the
+current one. `crush.json` is the original format: Crush still reads it, but its own config
+docs now call it deprecated, and new options only land in `crushrc`. Both hold the same
+settings, so use `crushrc` for anything new.
+
+Add Cairn to `~/.config/crush/crushrc`, or to a `crushrc` in your project, and export
+`CAIRN_TOKEN` wherever Crush runs:
+
+```bash
+mcp add cairn --type http \
+  --url "https://cairn.stump.wtf/mcp" \
+  --header Authorization "Bearer $CAIRN_TOKEN" \
+  --timeout 120
+```
+
+`crushrc` runs as Bash when Crush starts, so `$CAIRN_TOKEN` is expanded then and the token
+itself never lands in the file.
+
+If you're still on `crush.json`, this is the equivalent. Crush expands `$CAIRN_TOKEN` in
+it when it loads the config:
 
 ```json
 {
@@ -90,17 +108,25 @@ export `CAIRN_TOKEN` wherever Crush runs:
 }
 ```
 
-Crush expands `$CAIRN_TOKEN` when it loads the config, so the token itself never lands in
-the file.
-
 ### Add the Cairn skill (optional)
 
-Crush finds skills by path instead of installing a plugin. Clone the plugin, then add its
-`skills` directory to `options.skills_paths` in the same `crush.json`:
+Crush finds skills by path instead of installing a plugin. Clone the plugin first. A clone
+does nothing on its own: either tell Crush where it is, or copy the skill somewhere Crush
+already looks.
 
 ```bash
 git clone https://github.com/stump-wtf/claude-plugin-cairn.git ~/src/claude-plugin-cairn
 ```
+
+**Register the clone** with one line in your `crushrc`:
+
+```bash
+option skill-path ~/src/claude-plugin-cairn/skills
+```
+
+`option skill-path` adds to the list of skill directories rather than replacing it, and
+`~` is expanded for you. In the deprecated `crush.json`, the same list is
+`options.skills_paths`:
 
 ```json
 {
@@ -110,18 +136,26 @@ git clone https://github.com/stump-wtf/claude-plugin-cairn.git ~/src/claude-plug
 }
 ```
 
-Add to that list rather than replacing it, and note that `~` is expanded for you. Crush
-also scans a few directories with no configuration at all, among them
-`~/.config/crush/skills` and `~/.agents/skills`, plus `.crush/skills` and `.agents/skills`
-inside the project you're working in. Copying the skill's folder into one of those works
-too, and the project ones are handy when only one repo should get it.
+**Or copy the skill into a directory Crush scans**, with no configuration at all:
+
+```bash
+mkdir -p ~/.config/crush/skills
+cp -R ~/src/claude-plugin-cairn/skills/* ~/.config/crush/skills/
+```
+
+Crush also scans `~/.agents/skills` and `~/.claude/skills`, plus `.crush/skills` and
+`.agents/skills` inside the project you're working in. The project ones are handy when
+only one repo should get the skill.
 
 Copy it, though — don't symlink it. Crush resolves symlinks before deciding whether a file
-sits inside a configured skills directory, so a symlinked skill still loads, while the
-files it wants to read resolve back to wherever you cloned them, outside that directory.
-Those reads then get truncated and ask for permission, which looks like the skill
-misbehaving rather than a path problem. To keep the files where you cloned them, add that
-path to `skills_paths` instead.
+sits inside a skills directory, so a symlinked skill still loads, while the files it wants
+to read resolve back to wherever you cloned them, outside that directory. Those reads then
+get truncated and ask for permission, which looks like the skill misbehaving rather than a
+path problem. To keep the files where you cloned them, register the clone's path instead.
+
+The plugin's README, in the repository you just cloned
+(`github.com/stump-wtf/claude-plugin-cairn`), is the canonical version of these steps. If
+the two ever disagree, follow the README.
 
 ## Did the skill load?
 
