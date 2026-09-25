@@ -73,14 +73,16 @@ type Principal struct {
 // credential — OAuth, a PAT whatever its is_agent flag, a CAIRN_API_TOKENS
 // entry, the dev shortcut — is an agent, because any agent sharing the human's
 // shell can read a token on disk, while a CSRF-guarded session cookie cannot be
-// replayed cross-site. OnBehalfOf is left for the caller, which knows whether
-// the surface has one.
+// replayed cross-site. Human needs both the ambient flag and the session auth
+// stamp, so a principal an authenticator built without Auth is never human,
+// and every producer then refuses its empty Auth (event.Actor.Check).
+// OnBehalfOf is left for the caller, which knows whether the surface has one.
 //
 // Governing: ADR-0022 (server-derived actor kind), SPEC-0016 EV-4 "Server-Derived
 // Actor Kind".
 func (p *Principal) EventActor() event.Actor {
 	kind := event.KindAgent
-	if p.Ambient {
+	if p.Ambient && p.Auth == event.AuthSession {
 		kind = event.KindHuman
 	}
 	return event.Actor{ID: p.ActorID, Channel: p.Channel, Kind: kind, Auth: p.Auth}
