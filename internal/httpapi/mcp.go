@@ -240,6 +240,9 @@ func (s *Server) newMCPServer() *mcp.Server {
 	// rely on. The published-schema fix in mcp_schema.go removes the usual
 	// cause; this stays for clients holding an older, flattened schema.
 	srv.AddReceivingMiddleware(s.mcpArrayUnwrapMiddleware())
+	// mcpToolErrorMiddleware gives a validation failure its structured
+	// violations (SPEC-0019 VE-7); see its doc for why it is middleware.
+	srv.AddReceivingMiddleware(s.mcpToolErrorMiddleware())
 
 	addTool(srv, &mcp.Tool{
 		Name:        "artifact_read",
@@ -746,6 +749,14 @@ func (s *Server) mcpScopeErr(ctx context.Context, tool, scope string) error {
 // structurally at info (client-caused) or error (server-caused) level
 // (SPEC-0007 REQ "Error Handling Standards": distinguishable typed errors,
 // no silent swallowing, no secrets in logs).
+//
+// A validation_failed or payload_too_large error also carries the violations
+// REST would render for it (violationsFor, so an unmigrated site gives the
+// generic violation); mcpToolErrorMiddleware turns those into the VE-7 tool
+// result. The error's own text stays "<code>: <message>", which is what a
+// resource read (a JSON-RPC error, with no structured content) still shows.
+//
+// Governing: ADR-0025, SPEC-0019 VE-7, ADR-0003 (parity)
 func (s *Server) mcpToolErr(ctx context.Context, tool string, err error) error {
 	code := errs.CodeOf(err)
 	attrs := []any{"tool", tool, "code", code, "error", err}
@@ -754,7 +765,61 @@ func (s *Server) mcpToolErr(ctx context.Context, tool string, err error) error {
 	} else {
 		s.log.InfoContext(ctx, "mcp: tool call rejected", attrs...)
 	}
-	return fmt.Errorf("%s: %s", code, messageFor(code))
+	te := &mcpToolError{code: code}
+	if code == errs.CodeValidation || code == errs.CodePayloadTooLarge {
+		te.violations, te.summary = violationsFor(code, err)
+	}
+	return te
+}
+
+// mcpToolError is the error mcpToolErr returns. Its text is the uniform
+// "<code>: <message>" every surface has always shown; the violations ride
+// alongside, never parsed out of a string.
+type mcpToolError struct {
+	code       errs.Code
+	violations []errs.Violation
+	summary    string
+}
+
+func (e *mcpToolError) Error() string { return fmt.Sprintf("%s: %s", e.code, messageFor(e.code)) }
+
+// mcpToolErrorContent is a failed tool call's structured content (VE-7): the
+// same code and violations the REST envelope carries.
+type mcpToolErrorContent struct {
+	Code       errs.Code        `json:"code"`
+	Violations []errs.Violation `json:"violations"`
+}
+
+// mcpToolErrorMiddleware is receiving middleware that gives a tools/call
+// failed by validation its VE-7 shape: the text content is the top-level
+// message REST would send, and the structured content is {code, violations}.
+//
+// It has to run after the tool, not in it: the SDK's typed-handler wrapper
+// overwrites a returned result's StructuredContent with the marshalled Out
+// value, so a handler cannot hand back error content of its own. A returned
+// error is instead packed with SetError, which keeps it for GetError. Every
+// other failure passes through untouched.
+//
+// Governing: ADR-0025, SPEC-0019 VE-7
+func (s *Server) mcpToolErrorMiddleware() mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if method != "tools/call" || err != nil {
+				return result, err
+			}
+			res, ok := result.(*mcp.CallToolResult)
+			if !ok || res == nil || !res.IsError {
+				return result, err
+			}
+			var te *mcpToolError
+			if errors.As(res.GetError(), &te) && len(te.violations) > 0 {
+				res.Content = []mcp.Content{&mcp.TextContent{Text: te.summary}}
+				res.StructuredContent = mcpToolErrorContent{Code: te.code, Violations: te.violations}
+			}
+			return result, err
+		}
+	}
 }
 
 // normalizeMCPHandle resolves a bare public id or an mcp://cairn/<id> agent
@@ -809,7 +874,7 @@ func (s *Server) mcpReadArtifact(ctx context.Context, req *mcp.CallToolRequest, 
 	}
 	id := normalizeMCPHandle(in.ID)
 	if id == "" {
-		return nil, mcpReadOutput{}, fmt.Errorf("validation_failed: id is required")
+		return nil, mcpReadOutput{}, s.mcpToolErr(ctx, "artifact_read", errs.Violate("id", errs.LocBody, errs.ReasonRequired))
 	}
 	art, err := s.store.GetByPublicID(ctx, id)
 	if err != nil {
@@ -987,12 +1052,15 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 	if actorID == "" {
 		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", errs.ErrUnauthorized)
 	}
+	// Governing: ADR-0025, SPEC-0019 VE-7 (these adapter checks carry
+	// violations too, so every validation failure here is structured)
 	if in.Body == "" {
-		return nil, mcpCreateOutput{}, fmt.Errorf("validation_failed: body must not be empty")
+		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", errs.Violate("body", errs.LocBody, errs.ReasonRequired))
 	}
 	shareType := artifact.ShareType(firstNonEmpty(in.ShareType, string(artifact.TypeFile)))
 	if shareType == artifact.TypeBundle || shareType == artifact.TypeTrajectory {
-		return nil, mcpCreateOutput{}, fmt.Errorf("validation_failed: share_type must not be %q; use bundle_create for bundles or run_create for traces", shareType)
+		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", errs.Violate("share_type", errs.LocBody, errs.ReasonNotAllowed,
+			errs.WithValue(string(shareType)), errs.WithExpect("use bundle_create for bundles or run_create for traces")))
 	}
 	mediaType := in.MediaType
 	if mediaType == "" {
@@ -1016,7 +1084,8 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 		Tags:      in.Tags,
 	})
 	if err != nil {
-		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", err)
+		// mapUploadErr names the upload cap on a too-large body, as REST does.
+		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", s.mapUploadErr(err))
 	}
 	return nil, mcpCreateOutput{artifactResponse: s.toArtifactResponse(art)}, nil
 }
