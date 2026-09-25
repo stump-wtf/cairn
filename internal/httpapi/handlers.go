@@ -267,7 +267,10 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	s.writeJSON(w, http.StatusOK, s.toArtifactResponse(art))
+	resp := s.toArtifactResponse(art)
+	viewer, _ := s.optionalPrincipal(r)
+	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // handleGetBody streams the raw body, re-verifiable against the stored SHA-256.

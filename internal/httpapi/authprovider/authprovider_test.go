@@ -69,12 +69,13 @@ const okEmails = `[{"email":"jo@example.com","primary":true,"verified":true}]`
 func TestGitHubFinishLoginHappyPath(t *testing.T) {
 	g, exchanges, _ := fakeGitHub(t,
 		`{"access_token":"tok","token_type":"bearer"}`, http.StatusOK,
-		`{"login":"octocat"}`, okEmails)
+		`{"id":583231,"login":"octocat"}`, okEmails)
 	id, err := g.FinishLogin(context.Background(), State{State: "s1"}, callback("s1", "c1"))
 	if err != nil {
 		t.Fatalf("FinishLogin: %v", err)
 	}
-	if id.Issuer != GitHubIssuer || id.Subject != "octocat" || id.Actor != "jo@example.com" {
+	if id.Issuer != GitHubIssuer || id.Subject != "583231" || id.Email != "jo@example.com" ||
+		!id.EmailVerified || id.Handle != "octocat" {
 		t.Errorf("identity = %+v", id)
 	}
 	if *exchanges != 1 {
@@ -82,9 +83,28 @@ func TestGitHubFinishLoginHappyPath(t *testing.T) {
 	}
 }
 
+// TestGitHubFinishLoginKeysOnNumericID pins the identity key to the numeric
+// account id: a login is renameable and re-claimable, so two sign-ins with
+// the same login but different ids are different identities, and a profile
+// without an id is refused rather than keyed on the login.
+func TestGitHubFinishLoginKeysOnNumericID(t *testing.T) {
+	g, _, _ := fakeGitHub(t, `{"access_token":"tok"}`, http.StatusOK, `{"id":42,"login":"octocat"}`, okEmails)
+	id, err := g.FinishLogin(context.Background(), State{State: "s"}, callback("s", "c"))
+	if err != nil {
+		t.Fatalf("FinishLogin: %v", err)
+	}
+	if id.Subject != "42" {
+		t.Errorf("subject = %q, want the numeric id 42", id.Subject)
+	}
+	g, _, _ = fakeGitHub(t, `{"access_token":"tok"}`, http.StatusOK, `{"login":"octocat"}`, okEmails)
+	if _, err := g.FinishLogin(context.Background(), State{State: "s"}, callback("s", "c")); err == nil {
+		t.Fatal("a profile with no numeric id was accepted")
+	}
+}
+
 func TestGitHubFinishLoginStateMismatchBeforeExchange(t *testing.T) {
 	g, exchanges, _ := fakeGitHub(t,
-		`{"access_token":"tok"}`, http.StatusOK, `{"login":"x"}`, okEmails)
+		`{"access_token":"tok"}`, http.StatusOK, `{"id":7,"login":"x"}`, okEmails)
 	if _, err := g.FinishLogin(context.Background(), State{State: "expected"}, callback("WRONG", "c1")); err == nil {
 		t.Fatal("state mismatch accepted")
 	}
@@ -101,7 +121,7 @@ func TestGitHubFinishLoginRequiresPrimaryVerifiedEmail(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g, _, emailFetches := fakeGitHub(t,
-				`{"access_token":"tok"}`, http.StatusOK, `{"login":"octocat"}`, emails)
+				`{"access_token":"tok"}`, http.StatusOK, `{"id":583231,"login":"octocat"}`, emails)
 			if _, err := g.FinishLogin(context.Background(), State{State: "s"}, callback("s", "c")); err == nil {
 				t.Fatalf("accepted %s", name)
 			}

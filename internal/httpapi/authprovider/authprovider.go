@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"golang.org/x/oauth2"
@@ -25,12 +26,16 @@ import (
 const GitHubIssuer = "https://github.com"
 
 // Identity is the verified outcome of a finished login: who issued it, the
-// subject that issuer asserts, and the actor id the session is keyed on (the
-// primary verified email, matching what the OIDC flow keys sessions on).
+// subject that issuer asserts, the email it asserts and whether that email is
+// verified, and a display-handle hint. The caller resolves it to a user by
+// (Issuer, Subject); the email only links a first sign-in to an existing user
+// when it is verified (SPEC-0023 REQ "Users and Identities").
 type Identity struct {
-	Issuer  string
-	Subject string
-	Actor   string
+	Issuer        string
+	Subject       string
+	Email         string
+	EmailVerified bool
+	Handle        string
 }
 
 // Provider is one human login provider. StartLogin returns the authorization
@@ -110,6 +115,10 @@ func (g *GitHubProvider) StartLogin(state, _ string) (string, error) {
 
 // githubUser is the slice of GET /user this provider keys identity on.
 type githubUser struct {
+	// ID is the numeric account id: the identity key. A login can be renamed
+	// and then claimed by someone else; the id cannot (SPEC-0023 REQ "Users and
+	// Identities": GitHub identities key on the numeric account id).
+	ID    int64  `json:"id"`
 	Login string `json:"login"`
 }
 
@@ -144,27 +153,33 @@ func (g *GitHubProvider) FinishLogin(ctx context.Context, st State, r *http.Requ
 	if err := getJSON(client, g.api("/user"), &user); err != nil {
 		return Identity{}, fmt.Errorf("github: fetch user: %w", err)
 	}
-	if user.Login == "" {
-		return Identity{}, fmt.Errorf("github: user has no login")
+	if user.ID <= 0 {
+		return Identity{}, fmt.Errorf("github: user %q has no numeric id", user.Login)
 	}
 	var emails []githubEmail
 	if err := getJSON(client, g.api("/user/emails"), &emails); err != nil {
 		return Identity{}, fmt.Errorf("github: fetch emails: %w", err)
 	}
-	actor := ""
+	email := ""
 	for _, e := range emails {
 		if e.Primary && e.Verified {
-			actor = strings.ToLower(strings.TrimSpace(e.Email))
+			email = strings.ToLower(strings.TrimSpace(e.Email))
 			break
 		}
 	}
-	if actor == "" {
+	if email == "" {
 		return Identity{}, fmt.Errorf("github: user %s has no primary verified email", user.Login)
 	}
 	// tok (the GitHub access token) is deliberately dropped here: it
 	// authenticated nothing but this one profile fetch, and SPEC-0012's token
 	// containment forbids persisting or logging it.
-	return Identity{Issuer: GitHubIssuer, Subject: user.Login, Actor: actor}, nil
+	return Identity{
+		Issuer:        GitHubIssuer,
+		Subject:       strconv.FormatInt(user.ID, 10),
+		Email:         email,
+		EmailVerified: true,
+		Handle:        user.Login,
+	}, nil
 }
 
 // getJSON fetches url as the authenticated user and decodes the JSON body.

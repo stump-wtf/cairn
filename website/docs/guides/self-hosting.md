@@ -73,9 +73,16 @@ Three settings are easy to get wrong:
   bearer token until a human mints a personal access token or an agent
   completes OAuth. That is the safe direction.
 - **`CAIRN_DEV_LOGIN_PASSWORD` and `CAIRN_DEV_INSECURE_BEARER_AUTH` are
-  development seams.** The dev password loses to OIDC the moment
-  `CAIRN_OIDC_ISSUER` is set; the insecure bearer shortcut defaults off and
-  has no production reason to exist. Leave both alone on a real deployment.
+  development seams.** The dev password is disabled the moment any real
+  provider is configured, OIDC (`CAIRN_OIDC_ISSUER`) or GitHub
+  (`CAIRN_GITHUB_CLIENT_ID`), and its route then answers `404`. The insecure
+  bearer shortcut defaults off, and `cairnd` refuses to start with it on
+  while `CAIRN_BASE_URL` is `https`. Leave both alone on a real deployment.
+- **Your IdP must mark emails verified.** A sign-in is keyed on the provider's
+  `(issuer, subject)`. Its email only identifies a person when the ID token
+  says `email_verified: true`; otherwise the user is keyed on their subject
+  and does not see artifacts owned by that email. Check that your OIDC
+  provider sends the claim before upgrading.
 
 ## Get the image
 

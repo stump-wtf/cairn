@@ -85,7 +85,8 @@ context, never proof. Route on them if you like; never authorize on them.
 
 `CAIRN_DEV_INSECURE_BEARER_AUTH` exists for local development only. It makes the
 API trust a raw bearer token *as* an actor id without verification. It defaults
-to **off**, and turning it on logs a warning at startup. Never set it on a host
+to **off**, turning it on logs a warning at startup, and `cairnd` refuses to
+start with it on while `CAIRN_BASE_URL` is `https`. Never set it on a host
 anyone else can reach.
 
 ## Bring it up

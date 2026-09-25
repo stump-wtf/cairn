@@ -816,6 +816,7 @@ func (s *Server) mcpReadArtifact(ctx context.Context, req *mcp.CallToolRequest, 
 		return nil, mcpReadOutput{}, s.mcpToolErr(ctx, "artifact_read", err)
 	}
 	out := mcpReadOutput{artifactResponse: s.toArtifactResponse(art)}
+	out.Provenance.Actor = s.displayActor(ctx, &Principal{ActorID: mcpActor(req.Extra)}, out.Provenance.Actor)
 
 	if art.ShareType == artifact.TypeBundle && in.Path == "" {
 		members, err := s.store.ListMembers(ctx, id)

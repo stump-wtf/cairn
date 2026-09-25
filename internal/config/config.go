@@ -182,6 +182,12 @@ func Load() (*Config, error) {
 	if c.DevInsecureBearerAuth, err = envBool("CAIRN_DEV_INSECURE_BEARER_AUTH", false); err != nil {
 		return nil, err
 	}
+	// The insecure bearer lets anyone act as anyone, delete included (audit
+	// A21). An https base URL means a real deployment, so refuse to boot
+	// rather than serve it (SPEC-0023 REQ "Users and Identities").
+	if c.DevInsecureBearerAuth && strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.BaseURL)), "https://") {
+		return nil, fmt.Errorf("CAIRN_DEV_INSECURE_BEARER_AUTH is enabled with an https CAIRN_BASE_URL (%s): the insecure bearer trusts any token as any actor and is for local http development only", c.BaseURL)
+	}
 	if c.S3UseSSL, err = envBool("CAIRN_S3_USE_SSL", false); err != nil {
 		return nil, err
 	}

@@ -311,14 +311,17 @@ func (s *Server) handleRunShell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	vm := s.buildTrajectoryView(r.Context(), a, run)
-	if p, ok := s.optionalPrincipal(r); ok {
+	viewer, ok := s.optionalPrincipal(r)
+	if ok {
 		vm.Authenticated = true
-		vm.Actor = p.ActorID
-		vm.ShareDialog.IsOwner = p.ActorID == a.Access.OwnerID
+		vm.Actor = viewer.ActorID
+		vm.ShareDialog.IsOwner = viewer.ActorID == a.Access.OwnerID
 		if c, cerr := r.Cookie(csrfCookieName); cerr == nil {
 			vm.CSRFToken = c.Value
 		}
 	}
+	s.maskActors(r.Context(), viewer, &vm.Provenance, vm.Comments)
+	vm.ShareDialog.Provenance.Actor = vm.Provenance.Actor
 	s.renderWeb(w, r, "trajectory", vm)
 }
 

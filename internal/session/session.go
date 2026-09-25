@@ -39,8 +39,11 @@ var ErrNotFound = errors.New("session: not found")
 // provenance (SPEC-0012): which provider established the session and the
 // subject that provider asserted. Both are empty for the dev-password login.
 type Session struct {
-	Token     string
-	ActorID   string
+	Token   string
+	ActorID string
+	// UserID is the users row the session acts for (SPEC-0023 REQ "Users and
+	// Identities"). Empty for sessions minted before users existed.
+	UserID    string
 	Issuer    string
 	Subject   string
 	CSRFToken string
@@ -58,8 +61,9 @@ type Store interface {
 	// session's auth provenance (SPEC-0012): the provider that established it
 	// and the subject that provider asserted — empty for the dev-password
 	// login, the OIDC issuer and ID-token subject for Pocket ID, and the
-	// GitHub origin and login for GitHub.
-	Create(ctx context.Context, issuer, subject, actorID string, ttl time.Duration) (*Session, error)
+	// GitHub origin and numeric account id for GitHub. userID is the users row
+	// the session acts for.
+	Create(ctx context.Context, issuer, subject, actorID, userID string, ttl time.Duration) (*Session, error)
 	// Get resolves a raw session token to its live session, or ErrNotFound when
 	// the token is unknown, expired, or revoked.
 	Get(ctx context.Context, token string) (*Session, error)
