@@ -19,15 +19,18 @@ Markdown · Code · Image · File · Bundle (multi-file) · Webhook (live reques
 - **Web** — one app shell for every share type: logo · type · one URL control ·
   share · collapsible metadata + comments panel. Plus **the Bin**, your artifact
   listing.
-- **CLI** (`cairn`) — pipe or add files, `cairn ls` TUI to browse the Bin.
+- **CLI** (`cairn`) — pipe or add files, log in, and check who you are. A
+  `cairn ls` TUI to browse the Bin is planned, not shipped.
 - **MCP** — agents read/create/comment/react over MCP, authorized via MCP OAuth.
 
 ## CLI — install, login, push
 
 The `cairn` CLI is a single static Go binary — a pure REST client of the core `/v1`
 API, with no domain logic of its own (see [ADR-0003](docs/adrs/ADR-0003-triple-surface-parity-web-cli-mcp.md)).
-Cross-platform release binaries aren't published yet (tracked for a future
-`goreleaser` job); until then, install straight from the module:
+The release pipeline publishes cross-platform binaries to
+[stump-wtf/cairn-cli](https://github.com/stump-wtf/cairn-cli) on each tag, but
+no release there carries them yet. Until one does, install straight from the
+module:
 
 ```bash
 go install github.com/stump-wtf/cairn/cmd/cairn@latest
