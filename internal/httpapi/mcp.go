@@ -1415,7 +1415,7 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 	case "open":
 		run, err = s.traj.OpenRun(ctx, rin)
 	default:
-		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", errs.Validationf("mode must be \"batch\" or \"open\""))
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", checkRunMode(in.Mode))
 	}
 	if err != nil {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", err)

@@ -18,8 +18,11 @@ package trajectory
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -305,70 +308,110 @@ type preparedSpan struct {
 // fails with ErrUnknownParent. On any error nothing is prepared, so the caller's
 // transaction persists none of the payload (SPEC-0004 "Malformed tree rejected
 // atomically").
+//
+// Every problem in the batch is reported, not only the first: each is a
+// violation on spans[n].<field>, where n is the span's index in the payload,
+// and the error still satisfies errors.Is against ErrEmptyCategory and
+// ErrUnknownParent when either kind is present.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-4, VE-6
 func prepareSpans(existingDepth map[string]int, existingChildCount map[string]int, existingIDs map[string]bool, news []SpanInput) ([]preparedSpan, error) {
-	byID := make(map[string]SpanInput, len(news))
-	for _, s := range news {
-		if s.SpanID == "" {
-			return nil, errs.Validationf("trajectory: span is missing a span_id")
+	var b spanProblems
+	b.perSpan = make([][]*errs.Invalid, len(news))
+
+	byID := make(map[string]int, len(news)) // span_id -> index of its first occurrence
+	for i, s := range news {
+		switch _, dup := byID[s.SpanID]; {
+		case s.SpanID == "":
+			b.add(i, "span_id", errs.ReasonRequired, nil)
+		case existingIDs[s.SpanID], dup:
+			b.add(i, "span_id", errs.ReasonDuplicate, nil, errs.WithValue(s.SpanID))
+		default:
+			byID[s.SpanID] = i
 		}
-		if existingIDs[s.SpanID] {
-			return nil, errs.Validationf("trajectory: span %q already exists in the run", s.SpanID)
-		}
-		if _, dup := byID[s.SpanID]; dup {
-			return nil, errs.Validationf("trajectory: duplicate span_id %q in payload", s.SpanID)
-		}
-		byID[s.SpanID] = s
 		if !s.Category.valid() {
-			return nil, fmt.Errorf("trajectory: span %q category %q: %w", s.SpanID, s.Category, ErrEmptyCategory)
+			if strings.TrimSpace(string(s.Category)) == "" {
+				b.add(i, "category", errs.ReasonRequired, ErrEmptyCategory)
+			} else {
+				b.add(i, "category", errs.ReasonTooLong, ErrEmptyCategory,
+					errs.WithValue(string(s.Category)), errs.WithLimit(MaxCategoryLen, errs.UnitChars))
+			}
 		}
 		if s.Tool != "" && !s.Category.toolCapable() {
-			return nil, errs.Validationf("trajectory: span %q carries tool %q but category %q takes no tool", s.SpanID, s.Tool, s.Category)
+			b.add(i, "tool", errs.ReasonNotAllowed, nil, errs.WithValue(s.Tool),
+				errs.WithExpect(fmt.Sprintf("a %q span runs no tool", CategoryReason)))
 		}
 		if s.ProducedArtifactID != "" && s.Category != CategoryWrite {
-			return nil, errs.Validationf("trajectory: span %q declares a produced artifact but is not a write span", s.SpanID)
+			b.add(i, "produced_artifact_id", errs.ReasonNotAllowed, nil, errs.WithValue(s.ProducedArtifactID),
+				errs.WithExpect(fmt.Sprintf("only a %q span declares a produced artifact", CategoryWrite)))
 		}
-		if s.StartOffsetMS < 0 || s.DurationMS < 0 {
-			return nil, errs.Validationf("trajectory: span %q has negative timing", s.SpanID)
+		for _, t := range []struct {
+			field string
+			ms    int
+		}{{"start_offset_ms", s.StartOffsetMS}, {"duration_ms", s.DurationMS}} {
+			if t.ms < 0 {
+				b.add(i, t.field, errs.ReasonNotPositive, nil, errs.WithValue(strconv.Itoa(t.ms)),
+					errs.WithExpect("a non-negative number of milliseconds"))
+			}
 		}
 	}
 
 	// Resolve depths by fixpoint so the payload need not be topologically
 	// pre-sorted: a span resolves once its parent's depth is known (persisted or
 	// resolved earlier in this pass). A pass with no progress means every
-	// unresolved span points at a missing or cyclic parent.
+	// unresolved span points at a missing or cyclic parent, or descends from one.
 	newDepth := make(map[string]int, len(news))
-	resolved := make(map[string]bool, len(news))
-	remaining := len(news)
-	for remaining > 0 {
-		progress := false
-		for _, s := range news {
-			if resolved[s.SpanID] {
+	resolved := make([]bool, len(news))
+	for progress := true; progress; {
+		progress = false
+		for i, s := range news {
+			if resolved[i] {
 				continue
 			}
+			var depth int
 			p := s.ParentSpanID
+			parentDepth, parentResolved := newDepth[p]
 			switch {
 			case p == "":
-				newDepth[s.SpanID] = 0
+				depth = 0
 			case p == s.SpanID:
-				return nil, fmt.Errorf("trajectory: span %q is its own parent: %w", s.SpanID, ErrUnknownParent)
+				continue // its own parent: never resolves
 			case hasKey(existingDepth, p):
-				newDepth[s.SpanID] = existingDepth[p] + 1
-			case resolved[p]:
-				newDepth[s.SpanID] = newDepth[p] + 1
+				depth = existingDepth[p] + 1
+			case parentResolved:
+				depth = parentDepth + 1
 			default:
 				continue // parent not resolved yet (or unknown)
 			}
-			resolved[s.SpanID] = true
-			progress = true
-			remaining--
-		}
-		if !progress {
-			for _, s := range news {
-				if !resolved[s.SpanID] {
-					return nil, fmt.Errorf("trajectory: span %q parent %q: %w", s.SpanID, s.ParentSpanID, ErrUnknownParent)
-				}
+			if _, seen := newDepth[s.SpanID]; !seen && s.SpanID != "" {
+				newDepth[s.SpanID] = depth
 			}
+			resolved[i], progress = true, true
 		}
+	}
+	// Report each unresolved span that is itself the fault: its own parent, a
+	// parent that exists nowhere, or a member of a cycle. A span merely
+	// descending from one of those is not reported again.
+	for i, s := range news {
+		if resolved[i] {
+			continue
+		}
+		p := s.ParentSpanID
+		_, inBatch := byID[p]
+		switch {
+		case p == s.SpanID:
+			b.add(i, "parent_span_id", errs.ReasonNotAllowed, ErrUnknownParent, errs.WithValue(p),
+				errs.WithExpect("a span cannot be its own parent"))
+		case !inBatch:
+			b.add(i, "parent_span_id", errs.ReasonNotAllowed, ErrUnknownParent, errs.WithValue(p),
+				errs.WithExpect("it names no span in the run or in this batch"))
+		case inParentCycle(news, byID, i):
+			b.add(i, "parent_span_id", errs.ReasonNotAllowed, ErrUnknownParent, errs.WithValue(p),
+				errs.WithExpect("it makes a parent cycle"))
+		}
+	}
+	if err := b.err(); err != nil {
+		return nil, fmt.Errorf("trajectory: span batch rejected: %w", err)
 	}
 
 	// Assign seq per parent in input order, continuing persisted siblings.
@@ -395,6 +438,54 @@ func prepareSpans(existingDepth map[string]int, existingChildCount map[string]in
 func hasKey(m map[string]int, k string) bool {
 	_, ok := m[k]
 	return ok
+}
+
+// spanField is the caller-facing name of a field of the span at index i of a
+// batch: spans[i].field, the JSON path of the REST and MCP bodies.
+func spanField(i int, field string) string { return fmt.Sprintf("spans[%d].%s", i, field) }
+
+// spanProblems collects a batch's span violations per span, so they read in
+// payload order, together with the sentinels they stand for.
+type spanProblems struct {
+	perSpan [][]*errs.Invalid
+	causes  []error
+}
+
+func (b *spanProblems) add(i int, field string, r errs.Reason, cause error, opts ...errs.Opt) {
+	b.perSpan[i] = append(b.perSpan[i], errs.Violate(spanField(i, field), errs.LocBody, r, opts...))
+	if cause != nil && !slices.Contains(b.causes, cause) {
+		b.causes = append(b.causes, cause)
+	}
+}
+
+// err joins every violation (bounded by errs.MaxViolations), or is nil. Each
+// sentinel met is kept as a cause, so errors.Is holds for all of them.
+func (b *spanProblems) err() error {
+	var all []*errs.Invalid
+	for _, vs := range b.perSpan {
+		all = append(all, vs...)
+	}
+	inv := errs.Join(all...)
+	if inv == nil {
+		return nil
+	}
+	return inv.Because(errors.Join(b.causes...))
+}
+
+// inParentCycle reports whether following parent links from the span at index
+// i, through spans of the same batch, leads back to it.
+func inParentCycle(news []SpanInput, byID map[string]int, i int) bool {
+	cur := news[i].ParentSpanID
+	for range news {
+		j, ok := byID[cur]
+		if !ok {
+			return false
+		}
+		if cur = news[j].ParentSpanID; cur == news[i].SpanID {
+			return true
+		}
+	}
+	return false
 }
 
 // normalizeArtifactID resolves a bare public id or an mcp://cairn/<id> agent
