@@ -440,9 +440,11 @@ jobs:
           password: ${{ secrets.GIT_AUTH_TOKEN }}
 
       - name: Deploy Cairn to cloud01
-        # v2.1.0 exactly: the first release where ssh_private_key is a real,
-        # delivered input. @v2 was not moved forward to it, so do not "tidy"
-        # this back to the major alias without checking what v2 points at.
+        # Pinned to an exact release, not the @v2 alias, so a runner change
+        # reaches this deploy only through a reviewed bump. v2.1.0 is the floor:
+        # the first release where ssh_private_key is a real, delivered input.
+        # v2.1.1 reads playbook/inventory/ssh_hosts from INPUT_* rather than
+        # argv; stump.wtf/switchboard deploys to the same cloud01 host on it.
         uses: https://gitea.stump.rocks/stumpcloud/ansible-runner@v2.1.1
         with:
           playbook: playbooks/services/cairn.yaml
