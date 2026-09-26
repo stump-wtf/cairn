@@ -15,8 +15,10 @@ import (
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/httpapi/authprovider"
 	"github.com/stump-wtf/cairn/internal/mcpsession"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/oauth"
 	"github.com/stump-wtf/cairn/internal/pat"
+	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/session"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/store"
@@ -119,6 +121,11 @@ type Config struct {
 	HookIngressRateBurst      int
 	HookEndpointRatePerSecond float64
 	HookEndpointRateBurst     int
+	// Redaction is the ingest secret scanner (ADR-0023, SPEC-0017) the
+	// services New builds scan with; cairnd always sets it. Metrics counts
+	// their scans in cairn_redactions_total and may be nil.
+	Redaction *redact.Scanner
+	Metrics   *metrics.Registry
 }
 
 // Server is the /v1 REST adapter over the core store and the ADR-0011 web app
@@ -267,7 +274,11 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	if st != nil {
 		annot = annotation.NewService(st.Pool(), reg)
 		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{Registry: reg})
-		hookSvc = webhook.NewService(st.Pool(), st.ObjectStore(), webhook.Options{})
+		hookSvc = webhook.NewService(st.Pool(), st.ObjectStore(), webhook.Options{
+			Scanner: cfg.Redaction,
+			Metrics: cfg.Metrics,
+			Logger:  logger,
+		})
 		// The web session store lives in the same Postgres as the core, so the
 		// single binary carries its schema and a scaled deployment shares one
 		// session table (ADR-0012).

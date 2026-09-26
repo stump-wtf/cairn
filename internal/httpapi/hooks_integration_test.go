@@ -24,12 +24,15 @@ import (
 func hookTestServer(t *testing.T, cfg Config, opts store.Options) (*httptest.Server, *webhook.Service) {
 	t.Helper()
 	cfg.DevInsecureBearerAuth = true
+	if cfg.Redaction == nil {
+		cfg.Redaction = sharedTestScanner(t)
+	}
 	pool := newTestPool(t)
 	obj := objectstore.NewMemory()
 	st := store.New(pool, obj, opts)
 	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
-	hookSvc := webhook.NewService(pool, obj, webhook.Options{})
+	hookSvc := webhook.NewService(pool, obj, webhook.Options{Scanner: cfg.Redaction})
 	return srv, hookSvc
 }
 

@@ -24,6 +24,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/config"
 	"github.com/stump-wtf/cairn/internal/db"
 	"github.com/stump-wtf/cairn/internal/httpapi"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/outboundhook"
 	"github.com/stump-wtf/cairn/internal/redact"
@@ -124,7 +125,9 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	_ = scanner // wired into the write paths by the SPEC-0017 follow-up stories
+	// One metrics registry for the process (ADR-0021). Not served until #256;
+	// the services count into it from the start.
+	metricsReg := metrics.New()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -237,6 +240,9 @@ func run(logger *slog.Logger) error {
 		HookIngressRateBurst:      cfg.HookIngressRateBurst,
 		HookEndpointRatePerSecond: cfg.HookEndpointRatePerSecond,
 		HookEndpointRateBurst:     cfg.HookEndpointRateBurst,
+
+		Redaction: scanner,
+		Metrics:   metricsReg,
 	}, logger)
 
 	// Discover the OIDC issuer and wire the "Sign in with Pocket ID" relying
