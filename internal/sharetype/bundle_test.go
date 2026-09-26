@@ -3,7 +3,7 @@ package sharetype
 import (
 	"testing"
 
-	"github.com/joestump/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/artifact"
 )
 
 // TestBundleComposedViewer asserts the bundle type carries the ComposedViewer

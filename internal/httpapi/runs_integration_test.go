@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // fixedRunStart is the runs' started_at; span offsets are relative to it, so the

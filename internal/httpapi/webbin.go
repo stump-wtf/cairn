@@ -8,10 +8,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/joestump/cairn/internal/annotation"
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/annotation"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
 // The authenticated Bin (SPEC-0001 REQ "The Bin Listing") and the shell's web

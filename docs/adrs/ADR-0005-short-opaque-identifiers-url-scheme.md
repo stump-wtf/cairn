@@ -11,8 +11,8 @@ related: [ADR-0003, ADR-0008]
 ## Context and Problem Statement
 
 Every Cairn artifact is addressed by a short, opaque, URL-safe public identifier
-that appears in the human web URL (`cairn.sh/9qz1a`), the trajectory sub-path
-(`cairn.sh/run/8kd2p`), and the agent handle (`mcp://cairn/hook/<id>`). Because
+that appears in the human web URL (`cairn.stump.wtf/9qz1a`), the trajectory sub-path
+(`cairn.stump.wtf/run/8kd2p`), and the agent handle (`mcp://cairn/hook/<id>`). Because
 Cairn's access model is link-based capability — possession of the URL grants read
 (ADR-0007) — these identifiers *are* secrets. How do we design the id (its
 alphabet, length, and entropy versus guessability), handle collisions, decide
@@ -88,18 +88,28 @@ exactly as the design mandates:
 
 | Surface | Scheme | Example |
 |---------|--------|---------|
-| Web, default artifact | `cairn.sh/<id>` | `cairn.sh/9qz1a` |
-| Web, trajectory | `cairn.sh/run/<id>` | `cairn.sh/run/8kd2p` |
+| Web, default artifact | `<base>/<id>` | `cairn.stump.wtf/9qz1a` |
+| Web, trajectory | `<base>/run/<id>` | `cairn.stump.wtf/run/8kd2p` |
 | Agent handle, artifact | `mcp://cairn/<id>` | `mcp://cairn/9qz1a` |
 | Agent handle, webhook stream | `mcp://cairn/hook/<id>` | `mcp://cairn/hook/7m3xq` |
 | Agent handle, trajectory stream | `mcp://cairn/run/<id>` | `mcp://cairn/run/8kd2p` |
 
-Markdown, code, image, file, and bundle all live at the bare `cairn.sh/<id>` and
+Markdown, code, image, file, and bundle all live at the bare `<base>/<id>` and
 are disambiguated by their stored type, not the URL. Trajectories get the `/run/`
 sub-path and webhooks get the `mcp://cairn/hook/` handle because the design calls
 for those specific, legible forms — they are routing and presentation choices, not
 bits inside the secret. The `◆ mcp` affordance beside any web URL emits the
 corresponding `mcp://` handle for the same id.
+
+**Correction, 2026-09-12.** This ADR was written with `cairn.sh` as the host in
+every example, and other records copied it. That domain was never acquired, and it
+has no DNS record at all. The examples above now use `cairn.stump.wtf`, the origin
+the service is actually deployed at, and the *Scheme* column says `<base>` to make
+the point the ADR was always making: the host is deployment configuration
+(`CAIRN_BASE_URL`), not part of the identifier scheme this ADR decides. Nothing
+about the decision itself — the base62 alphabet, the entropy target, collision
+retry, or which types take a sub-path — changed. The dead host also reached the
+`cairn` CLI, whose compiled-in default pointed at `cairn.sh` until #184.
 
 **One id, every surface.** There is exactly one public id per artifact, reused
 verbatim across web, MCP, and CLI; only the surrounding scheme/prefix changes.
@@ -157,7 +167,7 @@ Unit tests cover the generator: base62 alphabet only, correct default length,
 sufficient entropy, reserved-word exclusion, and the collision-retry path
 (exercised by injecting a forced first-attempt conflict). A property test asserts
 that an unknown id and an unauthorized/expired id both return an identical 404
-(indistinguishability). Routing tests assert `cairn.sh/<id>`, `cairn.sh/run/<id>`,
+(indistinguishability). Routing tests assert `<base>/<id>`, `<base>/run/<id>`,
 and the `mcp://cairn/...` handles all resolve to the same underlying artifact where
 applicable, and that the `◆ mcp` affordance emits the correct handle for a given
 id. A security test asserts a `public_id` never equals its artifact's content hash

@@ -13,7 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // errorEnvelope is the single non-2xx response shape (ADR-0012).

@@ -10,12 +10,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/joestump/cairn/internal/annotation"
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/code"
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/sharetype"
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/annotation"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/code"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // The bundle viewer (SPEC-0003 REQ "Bundle Viewer", ADR-0011, issue #19). A

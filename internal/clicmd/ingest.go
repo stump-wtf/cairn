@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/joestump/cairn/internal/cliclient"
+	"github.com/stump-wtf/cairn/internal/cliclient"
 )
 
 // runIngest implements the bare `cairn` command (SPEC-0008 "Pipe and Path
@@ -28,6 +28,10 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 	}
 
 	ttlSeconds, err := parseTTLFlag(flags.ttl)
+	if err != nil {
+		return err
+	}
+	tags, err := parseTagFlags(flags.tags)
 	if err != nil {
 		return err
 	}
@@ -111,6 +115,7 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 		Title:      title,
 		MediaType:  mediaType,
 		TTLSeconds: ttlSeconds,
+		Tags:       tags,
 	})
 	if sp != nil {
 		sp.Stop()

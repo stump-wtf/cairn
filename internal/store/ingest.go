@@ -9,8 +9,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/objectstore"
 )
 
 // stagedBlob is the result of streaming a body into a temporary staging object:

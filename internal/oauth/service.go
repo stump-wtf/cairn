@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/joestump/cairn/internal/id"
+	"github.com/stump-wtf/cairn/internal/id"
 )
 
 // Defaults for the token model (SPEC-0007 REQ "Token Model": ~1h access,

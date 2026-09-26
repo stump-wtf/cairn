@@ -238,7 +238,7 @@ function Typography(): ReactNode {
                 style={{fontFamily: `var(${family.token})`}}
               >
                 {isMono
-                  ? 'cairn.sh/aB3xQ7 · TRC · 11 spans · 34.2s · ttl 7d'
+                  ? 'cairn.stump.wtf/aB3xQ7 · TRC · 11 spans · 34.2s · ttl 7d'
                   : 'Everything above was decided in public.'}
               </p>
               <p className={styles.familyStack}>

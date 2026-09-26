@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
 func TestCanonicalKeyOrderInvariance(t *testing.T) {

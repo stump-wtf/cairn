@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/code"
-	"github.com/joestump/cairn/internal/sharetype"
-	"github.com/joestump/cairn/internal/webhook"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/code"
+	"github.com/stump-wtf/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/webhook"
 )
 
 // The webhook inspector viewer (SPEC-0005 REQ "Inspector Viewer", ADR-0011,

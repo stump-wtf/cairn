@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/joestump/cairn/internal/cliclient"
-	"github.com/joestump/cairn/internal/cliconfig"
+	"github.com/stump-wtf/cairn/internal/cliclient"
+	"github.com/stump-wtf/cairn/internal/cliconfig"
 )
 
 // loginResult is the --json payload for `cairn login`.

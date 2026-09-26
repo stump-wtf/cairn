@@ -24,7 +24,7 @@ import (
 	"bytes"
 	"encoding/json"
 
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // defaultLocators maps each built-in anchor to its locator schema, per the

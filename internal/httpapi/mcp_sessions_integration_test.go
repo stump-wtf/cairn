@@ -11,7 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // The MCP agent-sessions integration suite (issue #76, SPEC-0007, ADR-0004):

@@ -26,7 +26,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/joestump/cairn/internal/cliconfig"
+	"github.com/stump-wtf/cairn/internal/cliconfig"
 )
 
 // IOStreams lets tests substitute stdin/stdout/stderr instead of the
@@ -51,6 +51,7 @@ type globalFlags struct {
 
 	title       string
 	ttl         string
+	tags        []string
 	mediaType   string
 	noCopy      bool
 	concurrency int
@@ -65,9 +66,9 @@ func NewRootCmd(streams IOStreams, configPathOverride string) *cobra.Command {
 
 	root := &cobra.Command{
 		Use:   "cairn [file...]",
-		Short: "cairn is pbcopy for cairn.sh: pipe or pass files in, get a shareable link back",
+		Short: "cairn is pbcopy for Cairn: pipe or pass files in, get a shareable link back",
 		Long: `cairn pipes or passes content and files in and prints a shareable,
-agent-native cairn.sh/<id> link back — printed to stdout and, on an
+agent-native short link back — printed to stdout and, on an
 interactive terminal, copied to the clipboard.
 
   cat notes.md | cairn        create one artifact from stdin
@@ -98,6 +99,7 @@ decided by the server and only ever displayed here (SPEC-0008).`,
 	root.PersistentFlags().BoolVarP(&flags.verbose, "verbose", "v", false, "structured diagnostic output on stderr (tokens redacted)")
 	root.PersistentFlags().StringVar(&flags.title, "title", "", "optional display title for the artifact/bundle")
 	root.PersistentFlags().StringVar(&flags.ttl, "ttl", "", "request an expiry (e.g. \"24h\", \"7d\"); the server decides whether to honor it")
+	root.PersistentFlags().StringArrayVar(&flags.tags, "tag", nil, "attach a routing tag; repeatable or comma-separated (e.g. --tag handoff --tag lane:auto)")
 	root.PersistentFlags().StringVar(&flags.mediaType, "type", "", "override the detected Content-Type")
 	root.PersistentFlags().BoolVar(&flags.noCopy, "no-copy", false, "never copy the resulting link to the clipboard")
 	root.PersistentFlags().IntVar(&flags.concurrency, "concurrency", defaultUploadConcurrency, "bounded worker pool size for `cairn add`'s local file preparation")

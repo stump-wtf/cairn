@@ -21,9 +21,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/joestump/cairn/internal/db"
-	"github.com/joestump/cairn/internal/objectstore"
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/db"
+	"github.com/stump-wtf/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // schemaSeq disambiguates test schemas created within the same nanosecond.

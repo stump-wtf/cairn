@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joestump/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/artifact"
 )
 
 // a2uiANSIPattern strips the ANSI 256-color sequences a2uiColorize emits, so

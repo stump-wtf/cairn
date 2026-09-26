@@ -9,8 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // MemberInput is one file to place in a bundle. Body is streamed and dedup'd
@@ -28,6 +28,9 @@ type CreateBundleInput struct {
 	Provenance artifact.Provenance
 	Access     artifact.AccessPolicy
 	ExpiresAt  time.Time
+	// Tags are client-asserted routing strings on the bundle as a whole
+	// (ADR-0018); members carry none of their own.
+	Tags []string
 }
 
 func (in CreateBundleInput) validate() error {
@@ -81,6 +84,13 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	if err := in.validate(); err != nil {
 		return nil, err
 	}
+	// Normalized before any member streams, as CreateArtifact does.
+	//
+	// Governing: ADR-0018, SPEC-0002 REQ "Artifact Tags"
+	tags, err := artifact.NormalizeTags(in.Tags)
+	if err != nil {
+		return nil, err
+	}
 
 	// Stream every member to a staging object first. Each member's staging object
 	// is transient on EVERY path (committed OR rolled back); reclaim each
@@ -114,6 +124,7 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 		Previewable: s.registry.Resolve(artifact.TypeBundle).PreviewableMedia(""),
 		Provenance:  in.Provenance,
 		Access:      in.Access,
+		Tags:        tags,
 		ExpiresAt:   in.ExpiresAt,
 	}
 
@@ -143,6 +154,7 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("bundle: commit: %w", err)
 	}
+	s.emitCreated(art)
 	return art, nil
 }
 

@@ -32,7 +32,7 @@ panel), a code line, an image-region pin, or the whole artifact.
 | Webhook | **single request**, whole | — *(reactions only)* |
 | Trace | turn, tool call, span, whole | span, text selection, whole |
 
-:::note The webhook exception
+:::note[The webhook exception]
 Webhook requests are **reactable but not comment-threaded** — a shared triage signal,
 by design. *"Discussion happens on the artifacts they produce, not here."*
 :::

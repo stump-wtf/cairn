@@ -17,10 +17,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/joestump/cairn/internal/oauth"
-	"github.com/joestump/cairn/internal/objectstore"
-	"github.com/joestump/cairn/internal/pat"
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/oauth"
+	"github.com/stump-wtf/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/pat"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // The MCP surface integration suite (SPEC-0007, ADR-0003/0004, issue #44):

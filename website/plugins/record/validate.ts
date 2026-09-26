@@ -20,8 +20,18 @@ import {repoRelative, type RecordPaths} from './paths.ts';
 import type {AuthoredEdgeKind, ParsedRecord, RecordData} from './types.ts';
 
 /** Which kind of record each authored edge is allowed to name. */
-export function edgeTargetKind(kind: AuthoredEdgeKind): 'ADR' | 'SPEC' {
-  return kind === 'requires' ? 'SPEC' : 'ADR';
+export function edgeTargetKind(kind: AuthoredEdgeKind): 'ADR' | 'SPEC' | 'ADR or SPEC' {
+  switch (kind) {
+    case 'requires':
+      return 'SPEC';
+    case 'related':
+      // A related edge may name either kind: SPEC-0012's `related:` names
+      // both an ADR and a SPEC, and the graph renders related edges to
+      // records of either kind.
+      return 'ADR or SPEC';
+    default:
+      return 'ADR';
+  }
 }
 
 export interface ValidationInput {
@@ -47,12 +57,21 @@ export function validateRecord(input: ValidationInput): void {
   for (const record of [...decisions, ...specs]) {
     for (const edge of authoredEdges(record)) {
       const expected = edgeTargetKind(edge.kind);
-      const known = expected === 'ADR' ? adrIds : specIds;
+      const known =
+        expected === 'ADR'
+          ? adrIds
+          : expected === 'SPEC'
+            ? specIds
+            : new Set([...adrIds, ...specIds]);
       if (!known.has(edge.target)) {
         throw new RecordError(
           record.sourcePath,
           `front-matter '${edge.kind}' names '${edge.target}', which resolves to no ${
-            expected === 'ADR' ? 'decision record' : 'capability specification'
+            expected === 'ADR'
+              ? 'decision record'
+              : expected === 'SPEC'
+                ? 'capability specification'
+                : 'decision record or capability specification'
           }`,
         );
       }

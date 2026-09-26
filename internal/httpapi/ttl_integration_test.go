@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // doWithTTLHeader is `do` plus an optional X-Cairn-Ttl-Seconds header, for

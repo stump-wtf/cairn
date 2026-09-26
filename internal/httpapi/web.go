@@ -14,10 +14,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/joestump/cairn/internal/annotation"
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/annotation"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
 // The web app shell (ADR-0011, SPEC-0001): a single server-rendered
@@ -120,8 +120,11 @@ func (s *Server) mountWeb(r chi.Router) {
 	// redirect straight here (loginRedirectPath) when OIDC is configured. Both
 	// routes 503 when OIDC is unconfigured (see oidc.go). "auth" is a reserved
 	// id word (internal/id), so no artifact id can shadow these paths.
-	r.Get("/auth/login", s.handleOIDCLogin)
-	r.Get("/auth/callback", s.handleOIDCCallback)
+	// SPEC-0012: both /auth routes are two-provider dispatchers selected by
+	// ?provider= (empty = Pocket ID, the pre-SPEC-0012 default); the state
+	// cookie decides which flow a callback completes.
+	r.Get("/auth/login", s.handleLoginStart)
+	r.Get("/auth/callback", s.handleLoginCallback)
 	r.With(s.requireWebSession).Get("/whoami", s.handleWhoami)
 	r.With(s.requireWebSession).Get("/bin", s.handleBinPage)
 	// Settings (issue #75): API tokens, MCP connection, CLI, and Account, all
@@ -211,12 +214,16 @@ func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
 type landingView struct {
 	LoginPath   string
 	OIDCEnabled bool
+	// GitHubLogin gates the login page's GitHub button (SPEC-0012): rendered
+	// only when the provider is configured.
+	GitHubLogin bool
 }
 
 func newLandingView(s *Server) landingView {
 	return landingView{
 		LoginPath:   s.loginRedirectPath(),
 		OIDCEnabled: s.oidc != nil,
+		GitHubLogin: s.gh != nil,
 	}
 }
 
@@ -362,6 +369,7 @@ type shellView struct {
 	Provenance    provenanceLine
 	PanelFields   []sharetype.PanelField // type-specific (registry MetadataPanel)
 	Details       []sharetype.PanelField // shell-owned artifact facts
+	Tags          []string               // client-asserted tags, stored order (ADR-0018)
 	Comments      []commentLine
 	ReactionCount int
 	CommentCount  int
@@ -498,6 +506,7 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activ
 		MetaLine:      s.metaLine(a),
 		PanelFields:   s.reg.MetadataPanelFor(a),
 		Details:       detailFields(a),
+		Tags:          a.Tags,
 		ReactionCount: a.ReactionCount,
 		CommentCount:  a.CommentCount,
 		PinCount:      a.PinCount,
