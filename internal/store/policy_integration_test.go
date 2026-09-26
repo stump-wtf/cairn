@@ -134,8 +134,11 @@ func TestUpdateTTLShortenToExpiredThenUniformNotFound(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	// A whisker in the future so UpdateTTL's own future-check accepts it, but
-	// it will have elapsed by the time we read it back.
-	if _, err := s.UpdateTTL(ctx, art.PublicID, testOwner, time.Now().Add(50*time.Millisecond)); err != nil {
+	// it will have elapsed by the time we read it back. On a slow runner the
+	// commit alone can outlast the whisker, so UpdateTTL's own read-back may
+	// already see the artifact expired: that uniform not-found is the property
+	// under test too, so it is accepted rather than failed (CI run 14260).
+	if _, err := s.UpdateTTL(ctx, art.PublicID, testOwner, time.Now().Add(50*time.Millisecond)); err != nil && errs.CodeOf(err) != errs.CodeNotFound {
 		t.Fatalf("shorten near-immediately: %v", err)
 	}
 	time.Sleep(150 * time.Millisecond)
