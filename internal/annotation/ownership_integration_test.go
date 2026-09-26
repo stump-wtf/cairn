@@ -300,6 +300,60 @@ func TestCommentOwnershipPerKind(t *testing.T) {
 	assertCountsMatchAggregates(t, pool, artID)
 }
 
+// TestListReactionsCarriesProvenance is the per-row reaction read path: each
+// row comes back with its actor, stored kind and on_behalf_of — the fields a
+// comment read carries — so a viewer can tell alice's agent's 👍 from her
+// own. A legacy row reads back with an empty kind, never as human; rows of
+// another artifact never appear; an unknown id is the uniform not-found.
+func TestListReactionsCarriesProvenance(t *testing.T) {
+	pool := newTestPool(t)
+	ctx := context.Background()
+	svc := NewService(pool, sharetype.Default())
+	artID := insertArtifact(t, pool, "OWNAAAA5", sharetype.KeyMarkdown)
+	insertArtifact(t, pool, "OWNAAAA6", sharetype.KeyMarkdown)
+
+	legacyID := insertLegacyReaction(t, pool, artID, "👍", "bob")
+	if _, _, err := svc.React(ctx, "OWNAAAA5", sharetype.AnchorArtifact, nil, "👍", withOBO(agent("alice"), "claude-code/1.0")); err != nil {
+		t.Fatalf("agent react: %v", err)
+	}
+	if _, _, err := svc.React(ctx, "OWNAAAA5", sharetype.AnchorArtifact, nil, "👍", human("alice")); err != nil {
+		t.Fatalf("human react: %v", err)
+	}
+	if _, _, err := svc.React(ctx, "OWNAAAA6", sharetype.AnchorArtifact, nil, "👍", human("carol")); err != nil {
+		t.Fatalf("react on the other artifact: %v", err)
+	}
+
+	rows, err := svc.ListReactions(ctx, "OWNAAAA5")
+	if err != nil {
+		t.Fatalf("list reactions: %v", err)
+	}
+	type prov struct{ actor, kind, obo string }
+	var got []prov
+	for _, r := range rows {
+		if r.Emoji != "👍" || r.Anchor.Type != sharetype.AnchorArtifact || r.Anchor.ArtifactID != artID {
+			t.Fatalf("row %+v: want a whole-artifact 👍 on artifact %d", r, artID)
+		}
+		got = append(got, prov{r.ActorID, string(r.ActorKind), r.OnBehalfOf})
+	}
+	// Oldest first: the legacy row, then the agent's, then the human's.
+	want := []prov{{"bob", "", ""}, {"alice", "agent", "claude-code/1.0"}, {"alice", "human", ""}}
+	if len(got) != len(want) {
+		t.Fatalf("rows = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("row %d = %+v, want %+v (all: %+v)", i, got[i], want[i], got)
+		}
+	}
+	if rows[0].ID != legacyID {
+		t.Fatalf("first row id = %d, want the legacy row %d", rows[0].ID, legacyID)
+	}
+
+	if _, err := svc.ListReactions(ctx, "NOPENOPE"); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("list reactions on unknown artifact = %v, want ErrNotFound", err)
+	}
+}
+
 func hasKey(m map[string]string, k string) bool {
 	_, ok := m[k]
 	return ok
