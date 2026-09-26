@@ -13,6 +13,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/httpapi/authprovider"
 	"github.com/stump-wtf/cairn/internal/mcpsession"
 	"github.com/stump-wtf/cairn/internal/oauth"
@@ -57,6 +58,11 @@ type Config struct {
 	// span stream, which keep proxies from idling the connection out and let the
 	// server notice a vanished client on the next write. Defaults to 15s.
 	StreamHeartbeat time.Duration
+	// Events, when non-nil, receives the lifecycle events of the core services
+	// this adapter constructs (ADR-0022, SPEC-0016 EV-2): today the trajectory
+	// service's artifact.created for runs and run.closed. Nil is inert. Artifact
+	// and bundle creations reach their emitter through store.Options instead.
+	Events event.Emitter
 	// DevLoginPassword is the shared secret the MVP dev login (SPEC-0001,
 	// ADR-0004) accepts for any actor id. Demoted to a local-dev-only fallback
 	// by ADR-0013: it is honored only when OIDC is unconfigured (see
@@ -266,7 +272,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	)
 	if st != nil {
 		annot = annotation.NewService(st.Pool(), reg)
-		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{Registry: reg})
+		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{Registry: reg, Emitter: cfg.Events})
 		hookSvc = webhook.NewService(st.Pool(), st.ObjectStore(), webhook.Options{})
 		// The web session store lives in the same Postgres as the core, so the
 		// single binary carries its schema and a scaled deployment shares one
