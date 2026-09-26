@@ -66,6 +66,11 @@ expect_fail "a non-version is refused" "not a release version" "$render" latest 
 expect_fail "an empty checksum is refused" "sha256 for LINUX_AMD64" "$render" 0.1.1 "$A" "$B" "$C" ""
 expect_fail "a short checksum is refused" "sha256 for DARWIN_AMD64" "$render" 0.1.1 "$A" "abc123" "$C" "$D"
 expect_fail "an uppercase checksum is refused" "sha256 for DARWIN_ARM64" "$render" 0.1.1 "$(printf 'A%.0s' $(seq 64))" "$B" "$C" "$D"
+# Computed here rather than copied from the renderer, so a typo in its
+# constant fails this case instead of agreeing with it.
+if command -v sha256sum >/dev/null 2>&1; then E="$(printf '' | sha256sum | cut -d' ' -f1)"
+else E="$(printf '' | shasum -a 256 | cut -d' ' -f1)"; fi
+expect_fail "an empty download's checksum is refused" "sha256 for LINUX_ARM64 is the checksum of an empty file" "$render" 0.1.1 "$A" "$B" "$E" "$D"
 expect_fail "a missing argument is refused" "usage:" "$render" 0.1.1 "$A" "$B" "$C"
 
 # A template placeholder this script does not know must stop the render,
