@@ -108,6 +108,12 @@ type Config struct {
 	OutboundWebhookURLs   []string
 	OutboundWebhookSecret string
 
+	// ApprovalReactions is CAIRN_APPROVAL_REACTIONS split on commas: the emoji
+	// whose reaction is an approval (ADR-0022, SPEC-0016 EV-5). Empty means the
+	// default class, 👍 ✅ ✔️. cmd/cairnd normalizes and validates it with
+	// annotation.NewApprovalClass at startup, so a bad entry fails the process.
+	ApprovalReactions []string
+
 	// OAuth 2.1 authorization-server tuning (SPEC-0007, ADR-0004):
 	// access-token lifetime (~1h default), rotating refresh-token lifetime
 	// (30d default), and the dedicated per-IP rate limit on the OAuth
@@ -176,6 +182,12 @@ func Load() (*Config, error) {
 	}
 	if err := validateWebhookURLs(c.OutboundWebhookURLs); err != nil {
 		return nil, err
+	}
+	// Governing: SPEC-0016 EV-5 "Approval Class and the Approval Bit".
+	for _, raw := range strings.Split(os.Getenv("CAIRN_APPROVAL_REACTIONS"), ",") {
+		if e := strings.TrimSpace(raw); e != "" {
+			c.ApprovalReactions = append(c.ApprovalReactions, e)
+		}
 	}
 
 	var err error

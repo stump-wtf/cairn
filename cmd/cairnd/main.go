@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/config"
 	"github.com/stump-wtf/cairn/internal/db"
 	"github.com/stump-wtf/cairn/internal/event"
@@ -135,8 +137,9 @@ func run(logger *slog.Logger) error {
 	// are configured. One hook at the store choke point covers every creation
 	// surface (REST/web/CLI/MCP); delivery runs on its own worker goroutine,
 	// reaper-style, and stops cleanly on shutdown.
-	// Runs are minted by the trajectory service, not the store, so it receives
-	// the same emitter through httpapi.Config.Events (SPEC-0016 EV-2).
+	// Runs are minted by the trajectory service, and annotations written by the
+	// annotation service, not the store, so both receive the same emitter
+	// through httpapi.Config.Events (SPEC-0016 EV-2).
 	// Kept as the concrete *outboundhook.Emitter, not store.CreationEmitter:
 	// the delivery worker below calls Run, which the interface does not declare.
 	emitter := newOutboundEmitter(cfg, logger)
@@ -185,6 +188,13 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// The EV-5 approval class, parsed at startup for the same reason: a typo in
+	// CAIRN_APPROVAL_REACTIONS fails the process instead of silently making
+	// every approval-class reaction a non-approval.
+	approvalClass, err := annotation.NewApprovalClass(cfg.ApprovalReactions)
+	if err != nil {
+		return fmt.Errorf("config CAIRN_APPROVAL_REACTIONS: %w", err)
+	}
 	if cfg.DevInsecureBearerAuth {
 		logger.Warn("CAIRN_DEV_INSECURE_BEARER_AUTH is enabled: raw bearer tokens are trusted as actor ids without verification — never enable this in production")
 	} else if len(apiTokens) == 0 && cfg.DevLoginPassword == "" && !cfg.OIDCConfigured() {
@@ -198,6 +208,7 @@ func run(logger *slog.Logger) error {
 	api := httpapi.New(svc, nil, nil, httpapi.Config{
 		BaseURL:               cfg.BaseURL,
 		Events:                newEventEmitter(emitter),
+		ApprovalClass:         approvalClass,
 		MaxUploadBytes:        cfg.MaxUploadBytes,
 		DefaultTTL:            cfg.DefaultTTL,
 		RatePerSecond:         cfg.RatePerSecond,
