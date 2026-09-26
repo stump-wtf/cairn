@@ -46,6 +46,10 @@ type Service struct {
 	// capture, so its in-memory fan-out and the persisted span rows are the same
 	// ordered log two transports read (SPEC-0004 "Live Span Stream Delivery").
 	hub *hub
+	// events receives the run's lifecycle events after each transaction
+	// commits: artifact.created when a run is minted, run.closed when it
+	// closes. Nil is inert (SPEC-0016 EV-2).
+	events event.Emitter
 }
 
 // Options configures a Service. Zero values fall back to safe defaults.
@@ -63,6 +67,11 @@ type Options struct {
 	NewID func() (string, error)
 	// Now overrides the clock, for deterministic tests of live wall time.
 	Now func() time.Time
+	// Emitter, when non-nil, receives artifact.created for every run minted
+	// (batch or open) and run.closed for every run that closes, each after its
+	// transaction commits. Nil = inert (ADR-0022, SPEC-0016 EV-2; SPEC-0023
+	// "Creation of runs and hooks MUST emit artifact.created").
+	Emitter event.Emitter
 }
 
 // NewService constructs a Service over a Postgres pool and an object store.
@@ -76,6 +85,7 @@ func NewService(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *
 		newID:           opts.NewID,
 		now:             opts.Now,
 		hub:             newHub(),
+		events:          opts.Emitter,
 	}
 	if s.reg == nil {
 		s.reg = sharetype.Default()
@@ -185,10 +195,11 @@ func (s *Service) CreateBatchRun(ctx context.Context, in RunInput) (*Run, error)
 
 	// ended_at is stamped from the tree so batch and incremental converge.
 	endedAt := in.StartedAt.Add(time.Duration(maxSpanEndMS(spanInputEnds(in.Spans))) * time.Millisecond)
-	runID, err := s.insertRun(ctx, tx, artID, in, StatusClosed, &endedAt)
+	ins, err := s.insertRun(ctx, tx, artID, in, StatusClosed, &endedAt)
 	if err != nil {
 		return nil, err
 	}
+	runID := ins.runID
 
 	prepared, err := prepareSpans(map[string]int{}, map[string]int{}, map[string]bool{}, in.Spans)
 	if err != nil {
@@ -199,10 +210,26 @@ func (s *Service) CreateBatchRun(ctx context.Context, in RunInput) (*Run, error)
 	if err := s.persistSpans(ctx, tx, runID, 0, prepared, dispositions); err != nil {
 		return nil, err
 	}
+	// The run.closed payload is read back inside the creating transaction, so
+	// it describes exactly the rows this commit makes durable (EV-3).
+	closed, err := s.closedPayload(ctx, tx, runID, ins.startedAt, ins.endedAt)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("trajectory: commit: %w", err)
 	}
+	// A run born closed announces its creation and then its closing, in that
+	// order, on the one emitter (SPEC-0016 EV-2 "Batch run emits closed after
+	// created"). The closer is the creator, who is the owner.
+	s.emitCreated(publicID, in)
+	s.emit(event.Event{
+		Kind:    event.RunClosed,
+		Subject: s.subject(publicID, in.Title, in.ExpiresAt, in.Access.OwnerID),
+		Actor:   creatorActor(in),
+		Run:     closed,
+	})
 	return s.GetRun(ctx, publicID)
 }
 
@@ -230,10 +257,11 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	runID, err := s.insertRun(ctx, tx, artID, in, StatusOpen, nil)
+	ins, err := s.insertRun(ctx, tx, artID, in, StatusOpen, nil)
 	if err != nil {
 		return nil, err
 	}
+	runID := ins.runID
 
 	if len(in.Spans) > 0 {
 		prepared, err := prepareSpans(map[string]int{}, map[string]int{}, map[string]bool{}, in.Spans)
@@ -250,6 +278,9 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("trajectory: commit: %w", err)
 	}
+	// An open run is an artifact from this moment; its run.closed comes later,
+	// from CloseRun (SPEC-0023, SPEC-0016 EV-2).
+	s.emitCreated(publicID, in)
 	return s.GetRun(ctx, publicID)
 }
 
@@ -383,10 +414,17 @@ func (s *Service) CloseRun(ctx context.Context, publicID string, actor event.Act
 		return nil, fmt.Errorf("trajectory: max span end for %s: %w", publicID, err)
 	}
 	endedAt := rr.startedAt.Add(time.Duration(maxEnd) * time.Millisecond)
-	if _, err := tx.Exec(ctx,
-		`UPDATE runs SET status = 'closed', ended_at = $2 WHERE id = $1`, rr.runID, endedAt,
-	); err != nil {
+	var storedEnd time.Time
+	if err := tx.QueryRow(ctx,
+		`UPDATE runs SET status = 'closed', ended_at = $2 WHERE id = $1 RETURNING ended_at`, rr.runID, endedAt,
+	).Scan(&storedEnd); err != nil {
 		return nil, fmt.Errorf("trajectory: close run %s: %w", publicID, err)
+	}
+	// Computed under the run lock, in the closing transaction, so the event
+	// describes exactly the run this commit freezes (SPEC-0016 EV-3).
+	closed, err := s.closedPayload(ctx, tx, rr.runID, rr.startedAt, storedEnd)
+	if err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("trajectory: commit: %w", err)
@@ -394,15 +432,91 @@ func (s *Service) CloseRun(ctx context.Context, publicID string, actor event.Act
 	// Signal connected viewers the run is closed so their live badge flips and
 	// their SSE stream ends cleanly (SPEC-0004 "open→live→closed").
 	s.hub.publish(publicID, StreamEvent{Type: EventStatus, Status: StatusClosed})
+	// Only a close that committed reaches here: an already-closed run returned
+	// ErrRunClosed above and emits nothing (SPEC-0016 EV-2).
+	s.emit(event.Event{
+		Kind:    event.RunClosed,
+		Subject: s.subject(publicID, rr.title, rr.expiresAt, rr.ownerID),
+		Actor:   actor,
+		Run:     closed,
+	})
 	return s.GetRun(ctx, publicID)
 }
 
-// runRow is the locked run header used by append/close.
+// closedPayload computes the run.closed payload on the caller's transaction:
+// the span count as stored and the wall time between the stored start and end
+// (SPEC-0016 EV-3, design "run.closed payload").
+func (s *Service) closedPayload(ctx context.Context, tx pgx.Tx, runID int64, startedAt, endedAt time.Time) (*event.Run, error) {
+	var spanCount int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM spans WHERE run_id = $1`, runID).Scan(&spanCount); err != nil {
+		return nil, fmt.Errorf("trajectory: count spans: %w", err)
+	}
+	return &event.Run{
+		Status:     string(StatusClosed),
+		SpanCount:  spanCount,
+		StartedAt:  startedAt,
+		EndedAt:    endedAt,
+		DurationMS: endedAt.Sub(startedAt).Milliseconds(),
+	}, nil
+}
+
+// emit hands a committed event to the emitter, if one is installed. It is
+// best-effort by contract: the emitter never blocks or fails the request that
+// caused the event (SPEC-0016 EV-2).
+func (s *Service) emit(ev event.Event) {
+	if s.events == nil {
+		return
+	}
+	s.events.Emit(ev)
+}
+
+// emitCreated announces a freshly minted run as artifact.created, the same
+// fact every other share type announces (SPEC-0023 "Creation of runs and hooks
+// MUST emit artifact.created"; SPEC-0012 REQ "Event Payload").
+func (s *Service) emitCreated(publicID string, in RunInput) {
+	s.emit(event.Event{
+		Kind:    event.ArtifactCreated,
+		Subject: s.subject(publicID, in.Title, in.ExpiresAt, in.Access.OwnerID),
+		Actor:   creatorActor(in),
+		Model:   in.Provenance.Model,
+	})
+}
+
+// subject describes a run as the artifact an event is about. Runs carry no
+// tags, so Tags stays empty and is omitted on the wire.
+func (s *Service) subject(publicID, title string, expiresAt time.Time, ownerID string) event.Subject {
+	return event.Subject{
+		PublicID:  publicID,
+		ShareType: artifact.TypeTrajectory,
+		Title:     title,
+		WebPath:   store.WebPath(s.reg, artifact.TypeTrajectory, publicID),
+		ExpiresAt: expiresAt,
+		OwnerID:   ownerID,
+	}
+}
+
+// creatorActor is the principal that created a run, as the adapter derived it
+// from the authenticated credential (SPEC-0016 EV-4). OnBehalfOf is the
+// recorded, self-reported client name, never a trust input.
+func creatorActor(in RunInput) event.Actor {
+	return event.Actor{
+		ID:         in.Provenance.ActorID,
+		Channel:    in.Provenance.Channel,
+		OnBehalfOf: in.Provenance.OnBehalfOf,
+		Kind:       in.ActorKind,
+		Auth:       in.Auth,
+	}
+}
+
+// runRow is the locked run header used by append/close. title and expiresAt
+// describe the run's artifact as the subject of a run.closed event.
 type runRow struct {
 	runID     int64
 	ownerID   string
 	status    Status
 	startedAt time.Time
+	title     string
+	expiresAt time.Time
 }
 
 // lockRun loads and row-locks a run header by public id, returning ErrRunNotFound
@@ -411,11 +525,11 @@ type runRow struct {
 func (s *Service) lockRun(ctx context.Context, tx pgx.Tx, publicID string) (runRow, error) {
 	var rr runRow
 	err := tx.QueryRow(ctx, `
-		SELECT r.id, a.owner_id, r.status, r.started_at
+		SELECT r.id, a.owner_id, r.status, r.started_at, a.title, a.expires_at
 		FROM runs r
 		JOIN artifacts a ON a.id = r.artifact_id
 		WHERE a.public_id = $1 AND a.expires_at > now()
-		FOR UPDATE OF r`, publicID).Scan(&rr.runID, &rr.ownerID, &rr.status, &rr.startedAt)
+		FOR UPDATE OF r`, publicID).Scan(&rr.runID, &rr.ownerID, &rr.status, &rr.startedAt, &rr.title, &rr.expiresAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return runRow{}, fmt.Errorf("trajectory: run %s: %w", publicID, ErrRunNotFound)
@@ -600,18 +714,33 @@ func (s *Service) insertRunArtifact(ctx context.Context, tx pgx.Tx, in RunInput)
 	return 0, "", fmt.Errorf("trajectory: exhausted %d id attempts: %w", idMaxAttempts, errs.ErrConflict)
 }
 
-func (s *Service) insertRun(ctx context.Context, tx pgx.Tx, artID int64, in RunInput, status Status, endedAt *time.Time) (int64, error) {
-	var runID int64
+// insertedRun is a freshly inserted run row: its id, and its start and end
+// times as Postgres stored them (microsecond precision), so an event built from
+// them matches a later read of the run exactly (SPEC-0016 EV-3).
+type insertedRun struct {
+	runID     int64
+	startedAt time.Time
+	endedAt   time.Time // zero while open
+}
+
+func (s *Service) insertRun(ctx context.Context, tx pgx.Tx, artID int64, in RunInput, status Status, endedAt *time.Time) (insertedRun, error) {
+	var (
+		ins    insertedRun
+		stored *time.Time
+	)
 	err := tx.QueryRow(ctx, `
 		INSERT INTO runs (artifact_id, prompt, model, status, started_at, ended_at, token_count)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id`,
+		RETURNING id, started_at, ended_at`,
 		artID, in.Prompt, in.Model, string(status), in.StartedAt, endedAt, in.TokenCount,
-	).Scan(&runID)
+	).Scan(&ins.runID, &ins.startedAt, &stored)
 	if err != nil {
-		return 0, fmt.Errorf("trajectory: insert run: %w", err)
+		return insertedRun{}, fmt.Errorf("trajectory: insert run: %w", err)
 	}
-	return runID, nil
+	if stored != nil {
+		ins.endedAt = *stored
+	}
+	return ins, nil
 }
 
 // isPublicIDConflict reports whether err is a unique-violation on public_id.
