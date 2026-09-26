@@ -20,6 +20,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/sharetype"
@@ -197,5 +198,28 @@ func TestArtifactRedactionMode(t *testing.T) {
 		if got := s.artifactRedactionMode(tc.typ, tc.media, tc.downgrade); got != tc.want {
 			t.Errorf("mode(%s, %s, downgrade=%v) = %s, want %s", tc.typ, tc.media, tc.downgrade, got, tc.want)
 		}
+	}
+}
+
+// TestScanBodyReleasesKeptBytes: once a body is scanned, its kept head and
+// body are dropped, so a bundle does not hold every member in memory until it
+// commits.
+func TestScanBodyReleasesKeptBytes(t *testing.T) {
+	obj := objectstore.NewMemory()
+	s := &Store{obj: obj, scanner: testScanner(t)}
+	sb, err := stageBlobKeep(context.Background(), obj, strings.NewReader("clean text\n"), 1<<20, "text/plain", scanInMemoryBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sb.body == nil || sb.head == nil {
+		t.Fatal("the body was not kept for the scan")
+	}
+	var rep scanReport
+	o, err := s.scanBody(context.Background(), metrics.SurfaceArtifact, bodyField, sb, redact.ModeMask, &rep)
+	if err != nil || o.Status != redact.StatusClean {
+		t.Fatalf("scan = %+v, %v, want clean", o, err)
+	}
+	if sb.body != nil || sb.head != nil {
+		t.Error("the scanned body's kept bytes are still held")
 	}
 }
