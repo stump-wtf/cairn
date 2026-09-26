@@ -120,8 +120,11 @@ func (s *Server) mountWeb(r chi.Router) {
 	// redirect straight here (loginRedirectPath) when OIDC is configured. Both
 	// routes 503 when OIDC is unconfigured (see oidc.go). "auth" is a reserved
 	// id word (internal/id), so no artifact id can shadow these paths.
-	r.Get("/auth/login", s.handleOIDCLogin)
-	r.Get("/auth/callback", s.handleOIDCCallback)
+	// SPEC-0012: both /auth routes are two-provider dispatchers selected by
+	// ?provider= (empty = Pocket ID, the pre-SPEC-0012 default); the state
+	// cookie decides which flow a callback completes.
+	r.Get("/auth/login", s.handleLoginStart)
+	r.Get("/auth/callback", s.handleLoginCallback)
 	r.With(s.requireWebSession).Get("/whoami", s.handleWhoami)
 	r.With(s.requireWebSession).Get("/bin", s.handleBinPage)
 	// Settings (issue #75): API tokens, MCP connection, CLI, and Account, all
@@ -211,12 +214,16 @@ func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
 type landingView struct {
 	LoginPath   string
 	OIDCEnabled bool
+	// GitHubLogin gates the login page's GitHub button (SPEC-0012): rendered
+	// only when the provider is configured.
+	GitHubLogin bool
 }
 
 func newLandingView(s *Server) landingView {
 	return landingView{
 		LoginPath:   s.loginRedirectPath(),
 		OIDCEnabled: s.oidc != nil,
+		GitHubLogin: s.gh != nil,
 	}
 }
 

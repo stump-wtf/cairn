@@ -77,8 +77,9 @@ Start with **[What Cairn is for](./guides/what-cairn-is-for.md)**, then
 [agent handoffs](./guides/agent-handoffs.md),
 [outbound webhooks to Switchboard](./guides/outbound-webhooks.md), the
 [webhook inspector](./guides/webhook-inspector.md),
-[how Harness, Switchboard and Cairn fit together](./guides/how-it-fits.md), and
-[troubleshooting](./guides/troubleshooting.md).
+[how Harness, Switchboard and Cairn fit together](./guides/how-it-fits.md),
+[troubleshooting](./guides/troubleshooting.md), and — if you'd rather run your
+own — [self-hosting cairn](./guides/self-hosting.md).
 
 ## How this site is organized
 
