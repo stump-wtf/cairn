@@ -7,11 +7,17 @@ PKGS ?= ./...
 # the import-graph gate runs, which needs no build.
 CLI_BIN ?=
 
+# Extra `go test` flags, empty by default. CI's integration job sets a longer
+# per-package timeout and -count=1 here (#399): the DB-gated httpapi suite runs
+# close to go test's 10m default on a loaded runner, and a warm test cache
+# would report it `(cached)` without running it.
+TEST_FLAGS ?=
+
 build:
 	$(GO) build $(PKGS)
 
 test:
-	$(GO) test $(PKGS)
+	$(GO) test $(TEST_FLAGS) $(PKGS)
 
 # Concurrency-sensitive code (streaming ingest) MUST pass under the race detector.
 test-race:

@@ -122,7 +122,10 @@ jobs:
     # Six runners share one daemon at capacity 3, so a job that hangs holding a
     # network and two sidecars costs a third of the fleet until it is reaped.
     # The bootstrap waits are individually bounded; this bounds the whole job.
-    timeout-minutes: 20
+    # It sits above the go test budget below (TEST_FLAGS -timeout) so a slow
+    # package fails with Go's own per-test stack dump rather than a silent
+    # job kill.
+    timeout-minutes: 30
     env:
       NET: cairn-ci-${{ gitea.run_id }}
       PG: cairn-pg-${{ gitea.run_id }}
@@ -261,6 +264,11 @@ jobs:
           CAIRN_TEST_DATABASE_URL: postgres://cairn:cairn@postgres:5432/cairn?sslmode=disable
           CAIRN_TEST_S3_ENDPOINT: garage:3900
           CAIRN_TEST_S3_BUCKET: cairn
+          # #399: go test's 10m default per package is too tight for the
+          # httpapi suite on a shared runner (it has run 591s when green), and
+          # -count=1 stops a warm toolcache reporting the DB suite `(cached)`
+          # without running it.
+          TEST_FLAGS: -timeout 20m -count=1
         run: make test
 
       # The S3 harnesses are the dangerous half: unlike the DB ones they do not
