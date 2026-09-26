@@ -162,7 +162,7 @@ func TestScrubScanFailureWithholdsEveryField(t *testing.T) {
 func TestScrubUnmaskableWithholds(t *testing.T) {
 	logs := &bytes.Buffer{}
 	s := &Service{scanner: unmaskableScanner{}, log: bufLogger(logs)}
-	got := s.scrub(context.Background(), "ep1", CaptureInput{ContentType: "text/plain", Body: []byte("opaque")}, nil)
+	got := s.scrub(context.Background(), "ep1", CaptureInput{Body: []byte("opaque")}, nil)
 	if !reflect.DeepEqual(got.withheld, []string{FieldBody}) || !strings.Contains(string(got.body), "could not be masked") {
 		t.Fatalf("got withheld %v body %q, want the body withheld", got.withheld, got.body)
 	}
@@ -302,5 +302,39 @@ func TestMaskCredentialHeaders(t *testing.T) {
 		if h["authorization"][0] != want || h["x-other"][0] != in {
 			t.Errorf("mask(%q) = %q (x-other %q), want %q and x-other untouched", in, h["authorization"][0], h["x-other"][0], want)
 		}
+	}
+}
+
+// TestScrubMasksContentType: the content type is stored outside the headers
+// map too (the content_type column, the blob's media type), so a token in it
+// is masked there as well, whether it came from the Content-Type header (the
+// ingress) or from a direct caller with no such header.
+func TestScrubMasksContentType(t *testing.T) {
+	s := &Service{scanner: testScanner(t), log: discardLogger()}
+
+	tok := plantedToken(8)
+	ct := "text/plain; token=" + tok
+	got := s.scrub(context.Background(), "ep1", CaptureInput{ContentType: ct, Body: []byte("hi")},
+		sanitizeHeaders(map[string][]string{"Content-Type": {ct}}))
+	if strings.Contains(got.contentType, tok) || !strings.Contains(got.contentType, redact.Mask) {
+		t.Fatalf("content type from the header = %q, want it masked", got.contentType)
+	}
+	if got.contentType != got.headers["content-type"][0] {
+		t.Fatalf("content type %q differs from the stored header %q", got.contentType, got.headers["content-type"][0])
+	}
+	if got.summary.Count != 1 {
+		t.Fatalf("count = %d, want 1: the header and its column copy are one secret", got.summary.Count)
+	}
+
+	tok = plantedToken(9)
+	got = s.scrub(context.Background(), "ep1", CaptureInput{ContentType: "text/plain; token=" + tok}, nil)
+	if strings.Contains(got.contentType, tok) || got.summary.Status != redact.StatusMasked {
+		t.Fatalf("direct caller's content type = %q (status %q), want it scanned and masked", got.contentType, got.summary.Status)
+	}
+
+	failing := &Service{scanner: failingScanner{}, log: discardLogger()}
+	got = failing.scrub(context.Background(), "ep1", CaptureInput{ContentType: "text/plain; token=" + tok}, nil)
+	if got.contentType != redact.Mask || !reflect.DeepEqual(got.withheld, []string{FieldHeaders}) {
+		t.Fatalf("failed scan: content type %q withheld %v, want the mask and headers withheld", got.contentType, got.withheld)
 	}
 }

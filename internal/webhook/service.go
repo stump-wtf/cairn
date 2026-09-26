@@ -238,7 +238,7 @@ func (s *Service) Capture(ctx context.Context, publicID string, in CaptureInput)
 	// (SPEC-0017 RD-1, RD-4). From here on only the scrubbed form exists;
 	// scrub never fails, so the sender's capture is never refused over it.
 	clean := s.scrub(ctx, publicID, in, sanitizeHeaders(in.Headers))
-	d, err := s.spillBody(ctx, clean.body, in.ContentType)
+	d, err := s.spillBody(ctx, clean.body, clean.contentType)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +310,7 @@ func (s *Service) Capture(ctx context.Context, publicID string, in CaptureInput)
 			 redaction_status, redaction_count, redaction_rules, redaction_withheld)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 		hookID, seq, receivedAt, in.Method, in.Path, clean.query, headersJSON, in.Status,
-		in.ContentType, d.size, d.inline, nullString(d.refSHA()), d.truncated,
+		clean.contentType, d.size, d.inline, nullString(d.refSHA()), d.truncated,
 		string(statusOrUnscanned(clean.summary.Status)), clean.summary.Count, rulesJSON, withheld,
 	); err != nil {
 		return nil, fmt.Errorf("webhook: insert captured request: %w", err)
@@ -337,7 +337,7 @@ func (s *Service) Capture(ctx context.Context, publicID string, in CaptureInput)
 
 	req := &Request{
 		Seq: seq, ReceivedAt: receivedAt, Method: in.Method, Path: in.Path, Query: clean.query,
-		Headers: headers, Status: in.Status, ContentType: in.ContentType, BodySize: d.size,
+		Headers: headers, Status: in.Status, ContentType: clean.contentType, BodySize: d.size,
 		Redaction: clean.summary, Withheld: clean.withheld,
 	}
 	if d.inline != nil {

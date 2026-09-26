@@ -173,6 +173,42 @@ func TestIntegrationCaptureMasksAuthorizationHeader(t *testing.T) {
 	}
 }
 
+// TestIntegrationCaptureMasksContentType: a token in the Content-Type header
+// reaches neither the content_type column, the spilled blob's media type
+// (blobs.media_type) nor any read, and the row's content type is the masked
+// header value.
+func TestIntegrationCaptureMasksContentType(t *testing.T) {
+	h := newRedactionHarness(t)
+	ctx := context.Background()
+	ep := newEndpoint(t, h.svc, EndpointInput{})
+	sub := h.svc.Subscribe(ep.PublicID)
+	defer sub.Close()
+
+	tok := plantedToken(17)
+	ct := "text/plain; token=" + tok
+	got, err := h.svc.Capture(ctx, ep.PublicID, CaptureInput{
+		Method: "POST", Headers: map[string][]string{"Content-Type": {ct}},
+		ContentType: ct, Body: []byte(strings.Repeat("y", 20*1024)), Status: DefaultResponseStatus,
+	})
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if got.Ref == nil {
+		t.Fatal("the body did not spill; the test needs the blob's media type")
+	}
+	if want := "text/plain; token=" + redact.Mask; got.ContentType != want {
+		t.Fatalf("content type = %q, want %q", got.ContentType, want)
+	}
+	if ev := drainEvent(t, sub); ev.Request.ContentType != got.ContentType {
+		t.Fatalf("fanned-out content type = %q, want the masked one", ev.Request.ContentType)
+	}
+	read, err := h.svc.GetRequest(ctx, ep.PublicID, got.Seq)
+	if err != nil || read.ContentType != got.ContentType {
+		t.Fatalf("read content type = %q (%v), want the masked one", read.ContentType, err)
+	}
+	h.assertNowhere(t, tok)
+}
+
 // TestIntegrationCaptureScanFailureStoresNotice: a scan that fails outright
 // never stores the raw bytes and never refuses the capture. A notice stands in
 // for the body, the withheld fields are recorded and read back, and the live
@@ -187,7 +223,7 @@ func TestIntegrationCaptureScanFailureStoresNotice(t *testing.T) {
 
 	tok := plantedToken(14)
 	got, err := h.svc.Capture(ctx, ep.PublicID, CaptureInput{
-		Method: "POST", Query: "t=" + tok, Headers: map[string][]string{"X-Key": {tok}},
+		Method: "POST", Query: "t=" + tok, Headers: map[string][]string{"X-Key": {tok}, "Content-Type": {"text/plain"}},
 		ContentType: "text/plain", Body: []byte("key " + tok), Status: DefaultResponseStatus,
 	})
 	if err != nil {

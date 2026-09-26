@@ -81,11 +81,12 @@ type textScanner interface {
 
 // scrubbed is a capture after the scan: exactly what is stored and fanned out.
 type scrubbed struct {
-	query    string
-	headers  map[string][]string
-	body     []byte
-	summary  redact.Summary
-	withheld []string
+	query       string
+	headers     map[string][]string
+	contentType string
+	body        []byte
+	summary     redact.Summary
+	withheld    []string
 }
 
 // scrub scans a capture's query, sanitized headers and body in mask mode and
@@ -94,7 +95,7 @@ type scrubbed struct {
 // pass through and the outcome is the zero Summary, "unscanned". Header
 // hygiene's credential mask applies either way.
 func (s *Service) scrub(ctx context.Context, publicID string, in CaptureInput, headers map[string][]string) scrubbed {
-	out := scrubbed{query: in.Query, headers: headers, body: in.Body}
+	out := scrubbed{query: in.Query, headers: headers, contentType: in.ContentType, body: in.Body}
 	if s.scanner == nil {
 		out.headers = maskCredentialHeaders(out.headers)
 		return out
@@ -128,6 +129,28 @@ func (s *Service) scrub(ctx context.Context, publicID string, in CaptureInput, h
 		}
 	}
 	out.headers = maskCredentialHeaders(out.headers)
+
+	// The content type is stored three more times, in the content_type
+	// column, the spilled blob's media type and the object's metadata, so it
+	// is scanned like the header it came from. The ingress copies it from
+	// the Content-Type header, so the scanned header is reused (one secret,
+	// one count); a direct caller's own value is scanned by itself.
+	if in.ContentType != "" {
+		if raw, got := headers["content-type"], out.headers["content-type"]; len(raw) > 0 && raw[0] == in.ContentType && len(got) > 0 {
+			out.contentType = got[0]
+		} else {
+			masked, sum, ok := s.scanField(ctx, publicID, FieldHeaders, in.ContentType)
+			out.summary = out.summary.Merge(sum)
+			if ok {
+				out.contentType = masked
+			} else {
+				out.contentType = redact.Mask
+				if !slices.Contains(out.withheld, FieldHeaders) {
+					out.withheld = append(out.withheld, FieldHeaders)
+				}
+			}
+		}
+	}
 
 	if len(in.Body) > 0 {
 		if !isTextBody(in.ContentType, in.Body) {
