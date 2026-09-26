@@ -85,7 +85,7 @@ func newHarness(t *testing.T) (*Service, *pgxpool.Pool) {
 		obj = objectstore.NewMemory()
 	}
 
-	svc := NewService(pool, obj, Options{})
+	svc := NewService(pool, obj, Options{Scanner: testScanner(t)})
 	return svc, pool
 }
 
@@ -185,8 +185,8 @@ func TestIntegrationCaptureSimulatesInboundRequests(t *testing.T) {
 	if r1.Status != DefaultResponseStatus {
 		t.Fatalf("status = %d, want %d (the fixed response, never payload-controlled)", r1.Status, DefaultResponseStatus)
 	}
-	if _, sensitive := r1.Headers["authorization"]; sensitive {
-		t.Fatal("sanitized headers must not carry Authorization")
+	if got := r1.Headers["authorization"]; len(got) != 1 || got[0] != "Bearer [REDACTED]" {
+		t.Fatalf("authorization = %v, want [Bearer [REDACTED]]: sanitized headers must not carry its value", got)
 	}
 	if got := r1.Headers["content-type"]; len(got) != 1 || got[0] != "application/json" {
 		t.Fatalf("content-type header = %v, want [application/json]", got)
@@ -386,7 +386,7 @@ func TestIntegrationCaptureOversizeBodyRejectedNoPersist(t *testing.T) {
 	_, pool := newHarness(t)
 	// A second service over the same migrated pool/object store, configured
 	// with a tight MaxBodyBytes so the cap is easy to exceed deterministically.
-	svc := NewService(pool, objectstore.NewMemory(), Options{MaxBodyBytes: 8})
+	svc := NewService(pool, objectstore.NewMemory(), Options{MaxBodyBytes: 8, Scanner: testScanner(t)})
 	ctx := context.Background()
 	ep := newEndpoint(t, svc, EndpointInput{})
 

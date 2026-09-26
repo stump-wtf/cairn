@@ -20,9 +20,13 @@ func TestSanitizeHeadersDropsSensitiveAndHopByHop(t *testing.T) {
 		"X-Request-Id":        {"r-1", "r-2"},
 	}
 	got := sanitizeHeaders(in)
+	// Authorization is kept, raw, for the scanner to see and count; scrub
+	// masks it before anything is stored (TestMaskCredentialHeaders,
+	// TestIntegrationCaptureMasksAuthorizationHeader).
 	want := map[string][]string{
-		"content-type": {"application/json"},
-		"x-request-id": {"r-1", "r-2"},
+		"authorization": {"Bearer secret"},
+		"content-type":  {"application/json"},
+		"x-request-id":  {"r-1", "r-2"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("sanitizeHeaders = %#v, want %#v", got, want)
@@ -36,8 +40,18 @@ func TestSanitizeHeadersEmpty(t *testing.T) {
 	if got := sanitizeHeaders(nil); got != nil {
 		t.Fatalf("sanitizeHeaders(nil) = %#v, want nil", got)
 	}
-	if got := sanitizeHeaders(map[string][]string{"Authorization": {"x"}}); got != nil {
+	if got := sanitizeHeaders(map[string][]string{"Cookie": {"x"}, "X-Empty": {}}); got != nil {
 		t.Fatalf("sanitizeHeaders(all-dropped) = %#v, want nil", got)
+	}
+}
+
+// TestSanitizeHeadersFoldsLineBreaks: a header value cannot carry CR or LF on
+// the wire, and the scanner reads one value per line, so a direct Capture
+// caller's line breaks become spaces.
+func TestSanitizeHeadersFoldsLineBreaks(t *testing.T) {
+	got := sanitizeHeaders(map[string][]string{"X-Multi": {"a\r\nb", "c\nd"}})
+	if want := []string{"a  b", "c d"}; !reflect.DeepEqual(got["x-multi"], want) {
+		t.Fatalf("x-multi = %q, want %q", got["x-multi"], want)
 	}
 }
 

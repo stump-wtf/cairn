@@ -21,6 +21,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/redact"
 )
 
 // DefaultRequestCap is the per-endpoint ring-buffer size: at most the last N
@@ -143,4 +144,11 @@ type Request struct {
 	// Exactly one of Inline / Ref describes the body (both zero => empty body).
 	Inline []byte
 	Ref    *BodyRef
+	// Redaction is what the ingest scanner did to the query, headers and body
+	// before they were stored (SPEC-0017 RD-4, RD-9). Every field above holds
+	// the stored, masked form. Withheld names the fields (FieldQuery,
+	// FieldHeaders, FieldBody) Cairn replaced with a notice because it could
+	// not store them safely (see redaction.go).
+	Redaction redact.Summary
+	Withheld  []string
 }

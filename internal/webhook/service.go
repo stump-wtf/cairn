@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,7 +16,9 @@ import (
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/id"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/store"
 )
 
@@ -55,6 +58,11 @@ type Service struct {
 	// seq-ordered log both transports read (SPEC-0005 "One Stream, Two
 	// Transports (Live Fan-out)"), exactly mirroring internal/trajectory.Service's hub.
 	hub *hub
+	// scanner, metrics and log serve the capture-time credential scan
+	// (redaction.go). scanner is nil when no Scanner was configured.
+	scanner textScanner
+	metrics *metrics.Registry
+	log     *slog.Logger
 }
 
 // Options configures a Service. Zero values fall back to safe defaults.
@@ -69,6 +77,15 @@ type Options struct {
 	NewID func() (string, error)
 	// Now overrides the clock, for deterministic tests.
 	Now func() time.Time
+	// Scanner masks credentials in every capture before it is stored
+	// (SPEC-0017 RD-4). cairnd always sets it. Without one, captures are
+	// stored as sent, apart from header hygiene, and read "unscanned".
+	Scanner *redact.Scanner
+	// Metrics counts each scan in cairn_redactions_total; nil counts nothing.
+	Metrics *metrics.Registry
+	// Logger receives the WARNs for a withheld or unscanned field (default
+	// slog.Default()).
+	Logger *slog.Logger
 }
 
 // MaxBodyBytes reports the hard per-captured-request body cap this Service
@@ -88,6 +105,14 @@ func NewService(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *
 		newID:           opts.NewID,
 		now:             opts.Now,
 		hub:             newHub(),
+		metrics:         opts.Metrics,
+		log:             opts.Logger,
+	}
+	if opts.Scanner != nil {
+		s.scanner = opts.Scanner
+	}
+	if s.log == nil {
+		s.log = slog.Default()
 	}
 	if s.inlineThreshold <= 0 {
 		s.inlineThreshold = defaultInlineThreshold
@@ -167,11 +192,13 @@ func (d spilled) refSHA() string {
 // (before the transaction); the caller promotes and registers it via
 // store.CommitBlob under the blob-row lock so the write serializes against the
 // SPEC-0009 reaper, and Discards the staging object on every path (ADR-0008).
+//
+// body is the stored form, after masking. Capture enforced the body cap on
+// the bytes the sender sent; masking can lengthen a body slightly (the mask is
+// longer than a short secret), and that must not turn an accepted capture
+// into a refused one.
 func (s *Service) spillBody(ctx context.Context, body []byte, declaredMedia string) (spilled, error) {
 	size := int64(len(body))
-	if size > s.maxBodyBytes {
-		return spilled{}, fmt.Errorf("webhook: captured body: %w", errs.ErrTooLarge)
-	}
 	if size == 0 {
 		return spilled{}, nil
 	}
@@ -180,7 +207,7 @@ func (s *Service) spillBody(ctx context.Context, body []byte, declaredMedia stri
 		copy(cp, body)
 		return spilled{inline: cp, size: size}, nil
 	}
-	staged, err := store.StageBlob(ctx, s.obj, bytes.NewReader(body), s.maxBodyBytes, declaredMedia)
+	staged, err := store.StageBlob(ctx, s.obj, bytes.NewReader(body), size, declaredMedia)
 	if err != nil {
 		return spilled{}, fmt.Errorf("webhook: spill captured body: %w", err)
 	}
@@ -204,7 +231,14 @@ func (s *Service) Capture(ctx context.Context, publicID string, in CaptureInput)
 	if err := in.validate(); err != nil {
 		return nil, err
 	}
-	d, err := s.spillBody(ctx, in.Body, in.ContentType)
+	if int64(len(in.Body)) > s.maxBodyBytes {
+		return nil, fmt.Errorf("webhook: captured body: %w", errs.ErrTooLarge)
+	}
+	// Scan and mask BEFORE anything is staged, inserted or fanned out
+	// (SPEC-0017 RD-1, RD-4). From here on only the scrubbed form exists;
+	// scrub never fails, so the sender's capture is never refused over it.
+	clean := s.scrub(ctx, publicID, in, sanitizeHeaders(in.Headers))
+	d, err := s.spillBody(ctx, clean.body, in.ContentType)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +260,7 @@ func (s *Service) Capture(ctx context.Context, publicID string, in CaptureInput)
 		hookID  int64
 		seq     int64
 		reqCap  int
-		headers = sanitizeHeaders(in.Headers)
+		headers = clean.headers
 	)
 	err = tx.QueryRow(ctx, `
 		UPDATE hooks SET next_seq = hooks.next_seq + 1
@@ -258,14 +292,26 @@ func (s *Service) Capture(ctx context.Context, publicID string, in CaptureInput)
 			return nil, fmt.Errorf("webhook: marshal headers: %w", err)
 		}
 	}
+	// The outcome is written in the same statement as the content it
+	// describes (SPEC-0017 "Database Operation Standards").
+	rulesJSON, err := json.Marshal(nonNilRules(clean.summary.Rules))
+	if err != nil {
+		return nil, fmt.Errorf("webhook: marshal redaction rules: %w", err)
+	}
+	withheld := clean.withheld
+	if withheld == nil {
+		withheld = []string{}
+	}
 	receivedAt := s.now()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO hook_requests
 			(hook_id, seq, received_at, method, path, query, headers, status,
-			 content_type, body_size, body_inline, body_ref_sha256, body_truncated)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		hookID, seq, receivedAt, in.Method, in.Path, in.Query, headersJSON, in.Status,
+			 content_type, body_size, body_inline, body_ref_sha256, body_truncated,
+			 redaction_status, redaction_count, redaction_rules, redaction_withheld)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+		hookID, seq, receivedAt, in.Method, in.Path, clean.query, headersJSON, in.Status,
 		in.ContentType, d.size, d.inline, nullString(d.refSHA()), d.truncated,
+		string(statusOrUnscanned(clean.summary.Status)), clean.summary.Count, rulesJSON, withheld,
 	); err != nil {
 		return nil, fmt.Errorf("webhook: insert captured request: %w", err)
 	}
@@ -290,8 +336,9 @@ func (s *Service) Capture(ctx context.Context, publicID string, in CaptureInput)
 	}
 
 	req := &Request{
-		Seq: seq, ReceivedAt: receivedAt, Method: in.Method, Path: in.Path, Query: in.Query,
+		Seq: seq, ReceivedAt: receivedAt, Method: in.Method, Path: in.Path, Query: clean.query,
 		Headers: headers, Status: in.Status, ContentType: in.ContentType, BodySize: d.size,
+		Redaction: clean.summary, Withheld: clean.withheld,
 	}
 	if d.inline != nil {
 		req.Inline = d.inline
@@ -374,6 +421,23 @@ func isPublicIDConflict(err error) bool {
 		return pgErr.Code == "23505" && pgErr.ConstraintName == "artifacts_public_id_key"
 	}
 	return false
+}
+
+// statusOrUnscanned is the stored form of a Summary's status: the zero value,
+// from a Service with no scanner, is "unscanned".
+func statusOrUnscanned(st redact.Status) redact.Status {
+	if st == "" {
+		return redact.StatusUnscanned
+	}
+	return st
+}
+
+// nonNilRules keeps the redaction_rules column a JSON object, never null.
+func nonNilRules(r map[string]int) map[string]int {
+	if r == nil {
+		return map[string]int{}
+	}
+	return r
 }
 
 func nullString(s string) *string {

@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/redact"
 )
 
 // DefaultListLimit / MaxListLimit bound GET /v1/hooks/{id}/requests
@@ -81,7 +82,8 @@ func (s *Service) ListRequests(ctx context.Context, publicID string, before int6
 	if before > 0 {
 		rows, err = s.pool.Query(ctx, `
 			SELECT seq, received_at, method, path, query, headers, status,
-			       content_type, body_size, body_inline, body_ref_sha256, body_truncated
+			       content_type, body_size, body_inline, body_ref_sha256, body_truncated,
+			       redaction_status, redaction_count, redaction_rules, redaction_withheld
 			FROM hook_requests
 			WHERE hook_id = $1 AND seq < $2
 			ORDER BY seq DESC
@@ -89,7 +91,8 @@ func (s *Service) ListRequests(ctx context.Context, publicID string, before int6
 	} else {
 		rows, err = s.pool.Query(ctx, `
 			SELECT seq, received_at, method, path, query, headers, status,
-			       content_type, body_size, body_inline, body_ref_sha256, body_truncated
+			       content_type, body_size, body_inline, body_ref_sha256, body_truncated,
+			       redaction_status, redaction_count, redaction_rules, redaction_withheld
 			FROM hook_requests
 			WHERE hook_id = $1
 			ORDER BY seq DESC
@@ -132,7 +135,8 @@ func (s *Service) GetRequest(ctx context.Context, publicID string, seq int64) (*
 	}
 	row := s.pool.QueryRow(ctx, `
 		SELECT seq, received_at, method, path, query, headers, status,
-		       content_type, body_size, body_inline, body_ref_sha256, body_truncated
+		       content_type, body_size, body_inline, body_ref_sha256, body_truncated,
+			       redaction_status, redaction_count, redaction_rules, redaction_withheld
 		FROM hook_requests
 		WHERE hook_id = $1 AND seq = $2`, hookID, seq)
 	req, err := scanRequest(row)
@@ -219,7 +223,8 @@ func (s *Service) RequestsAfter(ctx context.Context, publicID string, afterSeq i
 
 	rows, err := s.pool.Query(ctx, `
 		SELECT seq, received_at, method, path, query, headers, status,
-		       content_type, body_size, body_inline, body_ref_sha256, body_truncated
+		       content_type, body_size, body_inline, body_ref_sha256, body_truncated,
+			       redaction_status, redaction_count, redaction_rules, redaction_withheld
 		FROM hook_requests
 		WHERE hook_id = $1 AND seq > $2
 		ORDER BY seq`, hookID, afterSeq)
@@ -275,12 +280,22 @@ func scanRequest(row rowScanner) (Request, error) {
 		refSHA      *string
 		size        int64
 		truncated   bool
+		status      string
+		rulesJSON   []byte
 	)
 	if err := row.Scan(
 		&req.Seq, &receivedAt, &req.Method, &req.Path, &req.Query, &headersJSON, &req.Status,
 		&req.ContentType, &size, &inline, &refSHA, &truncated,
+		&status, &req.Redaction.Count, &rulesJSON, &req.Withheld,
 	); err != nil {
 		return Request{}, err
+	}
+	req.Redaction.Status = redact.Status(status)
+	if err := json.Unmarshal(rulesJSON, &req.Redaction.Rules); err != nil {
+		return Request{}, fmt.Errorf("webhook: decode redaction rules: %w", err)
+	}
+	if len(req.Withheld) == 0 {
+		req.Withheld = nil
 	}
 	req.ReceivedAt = receivedAt
 	req.BodySize = size
