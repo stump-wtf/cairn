@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -151,6 +152,46 @@ func annotationRunHookSites(t *testing.T) []guardSite {
 		{"hook: list before", func() error { _, _, err := parseHookListQuery(hookReq("before=x", "1")); return err }},
 		{"hook: list limit", func() error { _, _, err := parseHookListQuery(hookReq("limit=-1", "1")); return err }},
 		{"hook: seq", func() error { _, err := parseSeq(hookReq("", "0")); return err }},
+
+		// MCP adapters. A decoded JSON object cannot fail to re-encode, so a
+		// NaN (which json.Marshal rejects) stands in for the unreachable case.
+		{"mcp: span args", func() error {
+			_, err := toRunSpanInputs([]mcpRunSpanInput{{SpanID: "s1", Args: map[string]any{"x": math.NaN()}}})
+			return err
+		}},
+		{"mcp: anchor_ref", func() error {
+			_, err := mcpAnchorInput{AnchorRef: map[string]any{"x": math.NaN()}}.anchorRefJSON()
+			return err
+		}},
+	}
+}
+
+// The MCP span-args check names every bad span by index in one error, and the
+// anchor_ref check names anchor_ref; both stay validation_failed.
+func TestViolationMCPSpanArgsAndAnchorRef(t *testing.T) {
+	nan := map[string]any{"x": math.NaN()}
+	_, err := toRunSpanInputs([]mcpRunSpanInput{
+		{SpanID: "a", Args: nan},
+		{SpanID: "b", Args: map[string]any{"ok": true}},
+		{SpanID: "c", Args: nan},
+	})
+	if errs.CodeOf(err) != errs.CodeValidation {
+		t.Fatalf("span args: code = %q, want validation_failed (err %v)", errs.CodeOf(err), err)
+	}
+	if got := fields(errs.ViolationsOf(err)); strings.Join(got, ",") != "spans[0].args invalid_format,spans[2].args invalid_format" {
+		t.Fatalf("span args violations = %v, want spans 0 and 2", got)
+	}
+
+	spans, err := toRunSpanInputs([]mcpRunSpanInput{{SpanID: "a", Args: map[string]any{"ok": true}}})
+	if err != nil || len(spans) != 1 || string(spans[0].Args) != `{"ok":true}` {
+		t.Fatalf("valid args: spans = %+v, err = %v", spans, err)
+	}
+
+	_, err = mcpAnchorInput{AnchorRef: nan}.anchorRefJSON()
+	vs := errs.ViolationsOf(err)
+	if errs.CodeOf(err) != errs.CodeValidation || len(vs) != 1 || vs[0].Field != "anchor_ref" ||
+		vs[0].Location != errs.LocBody || vs[0].Reason != errs.ReasonInvalidFormat || vs[0].Value != nil {
+		t.Fatalf("anchor_ref: err = %v, violations = %+v", err, vs)
 	}
 }
 
