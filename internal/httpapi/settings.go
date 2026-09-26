@@ -46,6 +46,15 @@ type settingsView struct {
 	// which client (name + version), when it connected, when it last acted,
 	// and its activity counts, so Joe can tell his agents apart.
 	MCPSessions []mcpSessionRowView
+	// Provenance is the session's "<issuer>|<subject>", the exact string a
+	// CAIRN_OPERATORS entry names; empty for the development login.
+	Provenance string
+	// IsOperator links the operator console from the Account section.
+	IsOperator bool
+	// OperatorActions are the operator audit rows naming this user, which
+	// the affected user may always read (SPEC-0023 REQ "Operator Surfaces
+	// Bound Tenant Data and Never Read It").
+	OperatorActions []auditRowView
 }
 
 // scopeOptionView is one checkbox in the token-creation form: the wire scope
@@ -182,6 +191,18 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 			for _, sess := range sessions {
 				vm.MCPSessions = append(vm.MCPSessions, toMCPSessionRowView(sess))
 			}
+		}
+	}
+	if p.Issuer != "" && p.Subject != "" {
+		vm.Provenance = p.Issuer + "|" + p.Subject
+	}
+	vm.IsOperator = p.Operator && s.cfg.Operators.Enabled()
+	if s.ops != nil {
+		entries, err := s.ops.AuditFor(r.Context(), p.UserID, 50)
+		if err != nil {
+			s.log.WarnContext(r.Context(), "settings: list operator actions failed", "error", err)
+		} else {
+			vm.OperatorActions = toAuditRows(entries)
 		}
 	}
 	s.renderWeb(w, r, "settings", vm)

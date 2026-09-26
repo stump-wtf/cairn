@@ -16,6 +16,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/httpapi/authprovider"
 	"github.com/stump-wtf/cairn/internal/mcpsession"
 	"github.com/stump-wtf/cairn/internal/oauth"
+	"github.com/stump-wtf/cairn/internal/operator"
 	"github.com/stump-wtf/cairn/internal/pat"
 	"github.com/stump-wtf/cairn/internal/session"
 	"github.com/stump-wtf/cairn/internal/sharetype"
@@ -91,6 +92,11 @@ type Config struct {
 	// declines. It is a development/test-only shortcut that MUST stay false in
 	// production; the production default verifies every bearer token.
 	DevInsecureBearerAuth bool
+	// Operators is the operator profile parsed from CAIRN_OPERATORS and
+	// CAIRN_OPERATOR_GROUP (SPEC-0023 REQ "Operator and User Profiles"). Nil
+	// means the instance has no operator and every operator route answers
+	// 404.
+	Operators *operator.Set
 	// OAuth 2.1 authorization-server tuning (SPEC-0007, ADR-0004).
 	// AccessTokenTTL is the short audience-bound access-token lifetime (default
 	// ~1h); RefreshTokenTTL the rotating refresh-token lifetime (default 30d).
@@ -192,6 +198,10 @@ type Server struct {
 	// session. Nil until mountMCP runs; nil entirely when MCP is disabled
 	// (mcpEnabled() false).
 	mcpSrv *mcp.Server
+	// ops is the operator core (SPEC-0023): the directory, suspension and the
+	// audit trail. Nil on storeless unit wirings; the operator routes are
+	// gated on cfg.Operators as well (requireOperator).
+	ops *operator.Service
 }
 
 // New constructs a Server. If auth is nil, a session-aware Authenticator is used
@@ -268,6 +278,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		oauthSvc   *oauth.Service
 		patSvc     *pat.Service
 		mcpSessSvc *mcpsession.Service
+		opsSvc     *operator.Service
 	)
 	if st != nil {
 		annot = annotation.NewService(st.Pool(), reg)
@@ -294,6 +305,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		// recorded by the MCP transport, read by the Settings page and
 		// GET /v1/mcp/sessions, persisted in the same Postgres pool.
 		mcpSessSvc = mcpsession.NewService(st.Pool())
+		opsSvc = operator.NewService(st.Pool(), cfg.Operators)
 	}
 	// Auth seam (ADR-0004): a caller-supplied Authenticator wins; otherwise build
 	// the bearer surface from configured static tokens (the verifying
@@ -317,7 +329,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		}
 		var bearer Authenticator = bearers
 		if sessions != nil {
-			auth = &SessionAuthenticator{sessions: sessions, bearer: bearer}
+			auth = &SessionAuthenticator{sessions: sessions, bearer: bearer, operators: cfg.Operators}
 		} else {
 			auth = bearer
 		}
@@ -355,6 +367,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		hookMaxBodyBytes:    hookMaxBodyBytes,
 		pat:                 patSvc,
 		mcpSessions:         mcpSessSvc,
+		ops:                 opsSvc,
 	}
 }
 
@@ -464,6 +477,13 @@ func (s *Server) mountAPI(r chi.Router) {
 		// same reasoning as the tokens routes above.
 		r.With(s.requireHumanSession).Get("/mcp/sessions", s.handleListMCPSessions)
 		r.With(s.requireHumanSession, s.enforceCSRF).Delete("/mcp/sessions/{id}", s.handleEndMCPSession)
+
+		// The operator surface (SPEC-0023 HTTP Endpoints): the directory with
+		// counts, and suspension. Browser-session only and operator only;
+		// every other caller, and every caller on an instance with no
+		// operator configured, gets the uniform 404 (see requireOperator).
+		r.With(s.requireOperator).Get("/operator/directory", s.handleOperatorDirectory)
+		r.With(s.requireOperator, s.enforceCSRF).Post("/operator/suspensions", s.handleOperatorSuspension)
 
 		// Link-capability reads: a valid id grants read; unknown/expired ids
 		// return a uniform 404 (ADR-0007).

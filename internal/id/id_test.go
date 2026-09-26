@@ -54,6 +54,7 @@ func TestIsReserved(t *testing.T) {
 		{"api", true},
 		{".well-known", true},
 		{"healthz", true},
+		{"operator", true},
 		{"9qz1aB2c", false},
 		{"", false},
 	}

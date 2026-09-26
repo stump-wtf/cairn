@@ -199,11 +199,12 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		Handle:        identity.Handle,
 	})
 	if err != nil {
-		s.log.ErrorContext(r.Context(), "github: resolve user failed", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		s.refuseSignIn(w, r, "github", err)
 		return
 	}
-	sess, err := s.sessions.Create(r.Context(), identity.Issuer, identity.Subject, actor, u.ID, s.cfg.SessionTTL)
+	// GitHub asserts no groups claim, so a GitHub session is an operator's
+	// only by CAIRN_OPERATORS provenance.
+	sess, err := s.sessions.Create(r.Context(), identity.Issuer, identity.Subject, actor, u.ID, "", s.cfg.SessionTTL)
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "github: create session failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

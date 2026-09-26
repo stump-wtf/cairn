@@ -32,7 +32,7 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 // The row records only the user: the actor a session acts as is rendered
 // from that user on every Get (SPEC-0023 REQ "Migration to Explicit
 // Ownership"), so actorID only fills the returned value.
-func (s *PostgresStore) Create(ctx context.Context, issuer, subject, actorID, userID string, ttl time.Duration) (*Session, error) {
+func (s *PostgresStore) Create(ctx context.Context, issuer, subject, actorID, userID, operatorGroup string, ttl time.Duration) (*Session, error) {
 	if actorID == "" {
 		return nil, errors.New("session: actor id is required")
 	}
@@ -60,32 +60,38 @@ func (s *PostgresStore) Create(ctx context.Context, issuer, subject, actorID, us
 		CSRFToken: csrf,
 		CreatedAt: now,
 		ExpiresAt: now.Add(ttl),
+
+		OperatorGroup: operatorGroup,
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO sessions (token_hash, user_id, issuer, subject, csrf_token, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		hashToken(token), userID, issuer, subject, csrf, sess.CreatedAt, sess.ExpiresAt,
+		INSERT INTO sessions (token_hash, user_id, issuer, subject, operator_group, csrf_token, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		hashToken(token), userID, issuer, subject, operatorGroup, csrf, sess.CreatedAt, sess.ExpiresAt,
 	); err != nil {
 		return nil, fmt.Errorf("session: insert: %w", err)
 	}
 	return sess, nil
 }
 
-// Get resolves a raw token to its live session. An expired row is filtered in
-// the query so it resolves as ErrNotFound, indistinguishable from an unknown or
-// revoked token.
+// Get resolves a raw token to its live session. An expired row, and the row
+// of a suspended user, are filtered in the query so they resolve as
+// ErrNotFound, indistinguishable from an unknown or revoked token. Suspension
+// deletes a user's sessions as well; the filter is what makes a session that
+// raced that delete fail too (SPEC-0023 "Suspending a user offboards them").
 func (s *PostgresStore) Get(ctx context.Context, token string) (*Session, error) {
 	if token == "" {
 		return nil, ErrNotFound
 	}
 	sess := &Session{Token: token}
 	err := s.pool.QueryRow(ctx, `
-		SELECT `+user.ActorSQL("u")+`, s.user_id::text, s.issuer, s.subject, s.csrf_token, s.created_at, s.expires_at
+		SELECT `+user.ActorSQL("u")+`, s.user_id::text, s.issuer, s.subject, s.operator_group,
+		       s.csrf_token, s.created_at, s.expires_at
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
-		WHERE s.token_hash = $1 AND s.expires_at > now()`,
+		WHERE s.token_hash = $1 AND s.expires_at > now() AND u.suspended_at IS NULL`,
 		hashToken(token),
-	).Scan(&sess.ActorID, &sess.UserID, &sess.Issuer, &sess.Subject, &sess.CSRFToken, &sess.CreatedAt, &sess.ExpiresAt)
+	).Scan(&sess.ActorID, &sess.UserID, &sess.Issuer, &sess.Subject, &sess.OperatorGroup,
+		&sess.CSRFToken, &sess.CreatedAt, &sess.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

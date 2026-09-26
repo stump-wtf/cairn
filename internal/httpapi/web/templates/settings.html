@@ -150,7 +150,15 @@
           <dd>{{.Actor}}</dd>
           <dt>Sign-in method</dt>
           <dd>{{.AuthMethod}}</dd>
+          {{if .Provenance}}<dt>Sign-in identity</dt>
+          <dd><code class="connect-code">{{.Provenance}}</code></dd>{{end}}
+          {{if .IsOperator}}<dt>Role</dt>
+          <dd>Operator · <a href="/operator">operator console</a></dd>{{end}}
         </dl>
+        {{if .OperatorActions}}
+        <h3 class="settings-card-h account-audit-h" id="account-audit-h">Operator actions on your account</h3>
+        {{template "audit-table" .OperatorActions}}
+        {{end}}
         <form class="logout-form" method="post" action="/logout">
           <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
           <button type="submit" class="login-btn account-signout-btn">Sign out</button>

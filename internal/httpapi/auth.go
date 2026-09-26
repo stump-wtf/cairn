@@ -70,6 +70,16 @@ type Principal struct {
 	// (SPEC-0006 REQ "CSRF Protection"). The token authenticators leave it false;
 	// the web-session Authenticator (#11) sets it true.
 	Ambient bool
+	// Issuer and Subject are the provenance a browser session recorded at
+	// sign-in (empty for bearer principals and the development login).
+	Issuer  string
+	Subject string
+	// Operator reports that this is an operator's browser session (SPEC-0023
+	// REQ "Operator and User Profiles"). Only the web-session authenticator
+	// sets it: operator routes need a browser session, never a bearer token.
+	// It gates the operator routes and nothing else; it never widens what the
+	// principal may read or own.
+	Operator bool
 }
 
 // HasScope reports whether the principal holds scope.
@@ -240,10 +250,13 @@ func (a *TokenAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 // had before (user.Store.ResolveActor). The principal then renders as that
 // user. Static tokens are reworked to name an operator's user by #333; until
 // then this is the whole of their change. A nil store leaves the principal
-// without a user: it can authenticate but owns and creates nothing.
+// without a user: it can authenticate but owns and creates nothing. A
+// suspended user's credential does not authenticate (SPEC-0023 "Suspending
+// a user offboards them").
 //
 // Governing: ADR-0029, SPEC-0023 REQ "Owner Model", REQ "Migration to
-// Explicit Ownership".
+// Explicit Ownership", REQ "Operator Surfaces Bound Tenant Data and Never
+// Read It".
 func resolveActorUser(ctx context.Context, users *user.Store, p *Principal) error {
 	if users == nil {
 		return nil
@@ -251,6 +264,9 @@ func resolveActorUser(ctx context.Context, users *user.Store, p *Principal) erro
 	u, err := users.ResolveActor(ctx, p.ActorID)
 	if err != nil {
 		return err
+	}
+	if u.SuspendedAt != nil {
+		return errUserSuspended
 	}
 	p.UserID, p.ActorID = u.ID, u.Actor
 	return nil
