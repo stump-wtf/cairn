@@ -55,9 +55,13 @@ func (c *creationSpy) byID(t *testing.T, id string) store.CreationEvent {
 // move the derived pair.
 func TestIntegrationAuthenticatorActorKind(t *testing.T) {
 	spy := &creationSpy{}
+	// Runs are minted and closed by the trajectory service, whose events reach
+	// Config.Events rather than the store's creation emitter (SPEC-0016 EV-2).
+	runSpy := &lifecycleSpy{}
 	pool := newTestPool(t)
 	st := store.New(pool, objectstore.NewMemory(), store.Options{MaxUploadBytes: 1 << 20, Emitter: spy})
 	cfg := mcpConfig()
+	cfg.Events = runSpy
 	cfg.APITokens = []APIToken{
 		{Secret: "static-human-secret", ActorID: "alice"},
 		{Secret: "static-agent-secret", ActorID: "alice", IsAgent: true},
@@ -99,6 +103,53 @@ func TestIntegrationAuthenticatorActorKind(t *testing.T) {
 		return decodeArtifact(t, resp).ID
 	}
 
+	// A hostile bearer run: opened and then closed with the same hints. The
+	// run's artifact.created and its run.closed must both carry the derived
+	// pair, whoever closes it.
+	bearerRun := func(t *testing.T, token string) string {
+		t.Helper()
+		hostile := func(req *http.Request) {
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("X-Cairn-Actor-Kind", "human")
+			req.Header.Set("X-Cairn-Auth", "session")
+		}
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/runs?actor_kind=human&auth=session",
+			jsonReader(t, runRequest{Mode: "open", Title: "probe", OnBehalfOf: "alice",
+				Spans: []spanRequest{{SpanID: "s1", Category: "reason", DurationMS: 5}}}))
+		req.Header.Set("Content-Type", "application/json")
+		hostile(req)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("open run: %v", err)
+		}
+		if resp.StatusCode != http.StatusCreated {
+			resp.Body.Close()
+			t.Fatalf("open run status = %d, want 201", resp.StatusCode)
+		}
+		id := decodeRun(t, resp).ID
+		req, _ = http.NewRequest(http.MethodPost, srv.URL+"/v1/runs/"+id+"/close?actor_kind=human&auth=session", nil)
+		hostile(req)
+		resp, err = http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("close run: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("close run status = %d, want 200", resp.StatusCode)
+		}
+		return id
+	}
+	// assertRunPair checks both of a run's events carry (wantAuth, wantKind).
+	assertRunPair := func(t *testing.T, id string, wantAuth event.AuthMethod, wantKind event.ActorKind) {
+		t.Helper()
+		for _, k := range []event.Kind{event.ArtifactCreated, event.RunClosed} {
+			ev := runSpy.only(t, id, k)
+			if ev.Actor.Auth != wantAuth || ev.Actor.Kind != wantKind {
+				t.Errorf("%s (auth, kind) = (%q, %q), want (%q, %q)", k, ev.Actor.Auth, ev.Actor.Kind, wantAuth, wantKind)
+			}
+		}
+	}
+
 	cases := []struct {
 		name     string
 		token    string
@@ -117,6 +168,9 @@ func TestIntegrationAuthenticatorActorKind(t *testing.T) {
 			if ev.Auth != tc.wantAuth || ev.ActorKind != event.KindAgent {
 				t.Errorf("(auth, kind) = (%q, %q), want (%q, agent)", ev.Auth, ev.ActorKind, tc.wantAuth)
 			}
+		})
+		t.Run("REST run "+tc.name, func(t *testing.T) {
+			assertRunPair(t, bearerRun(t, tc.token), tc.wantAuth, event.KindAgent)
 		})
 	}
 
@@ -142,6 +196,20 @@ func TestIntegrationAuthenticatorActorKind(t *testing.T) {
 				t.Errorf("(auth, kind) = (%q, %q), want (%q, agent)", ev.Auth, ev.ActorKind, tc.wantAuth)
 			}
 		})
+		t.Run(tc.name+" run_create", func(t *testing.T) {
+			sess := mcpClient(t, srv, tc.token, nil, "kind-probe")
+			res := callTool(t, sess, "run_create", map[string]any{
+				"title": "over mcp",
+				"spans": []map[string]any{{"span_id": "s1", "category": "reason", "start_offset_ms": 0, "duration_ms": 5}},
+			})
+			if res.IsError {
+				t.Fatalf("run_create: %s", toolText(t, res))
+			}
+			var out mcpRunOutput
+			decodeToolJSON(t, res, &out)
+			// A batch run is born closed: its creator is also its closer.
+			assertRunPair(t, out.ID, tc.wantAuth, event.KindAgent)
+		})
 	}
 
 	// The browser session: the only human.
@@ -165,6 +233,33 @@ func TestIntegrationAuthenticatorActorKind(t *testing.T) {
 		if ev.Auth != event.AuthSession || ev.ActorKind != event.KindHuman {
 			t.Errorf("(auth, kind) = (%q, %q), want (session, human)", ev.Auth, ev.ActorKind)
 		}
+
+		// A run opened and closed from the browser is the human's on both events.
+		csrf := cookieValue(t, client, srv.URL, csrfCookieName)
+		req, _ = http.NewRequest(http.MethodPost, srv.URL+"/v1/runs",
+			jsonReader(t, runRequest{Mode: "open", Title: "from the browser"}))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(csrfHeaderName, csrf)
+		resp, err = client.Do(req)
+		if err != nil {
+			t.Fatalf("session open run: %v", err)
+		}
+		if resp.StatusCode != http.StatusCreated {
+			resp.Body.Close()
+			t.Fatalf("session open run status = %d, want 201", resp.StatusCode)
+		}
+		runID := decodeRun(t, resp).ID
+		req, _ = http.NewRequest(http.MethodPost, srv.URL+"/v1/runs/"+runID+"/close", nil)
+		req.Header.Set(csrfHeaderName, csrf)
+		resp, err = client.Do(req)
+		if err != nil {
+			t.Fatalf("session close run: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("session close run status = %d, want 200", resp.StatusCode)
+		}
+		assertRunPair(t, runID, event.AuthSession, event.KindHuman)
 	})
 
 	// A bearer sent alongside a live session cookie is still an agent: the
