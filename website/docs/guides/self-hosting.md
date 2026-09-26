@@ -47,7 +47,7 @@ is read from the `CAIRN_` namespace and nothing is ever loaded from a file.
 | `CAIRN_OIDC_CLIENT_ID` | `cairn` | Client id registered at your provider. |
 | `CAIRN_OIDC_CLIENT_SECRET` | *(empty)* | Client secret. The redirect URI is not configurable — it is always `<base>/auth/callback`. |
 | `CAIRN_OPERATORS` | *(empty)* | Who runs this instance: comma-separated `<issuer>\|<subject>` sign-in identities, for example `https://id.example.com\|abc-123`. Listed users get the [operator console](#the-operator). **Empty (with `CAIRN_OPERATOR_GROUP` empty too) means there is no operator** and every operator route answers `404`. A malformed entry fails boot. |
-| `CAIRN_OPERATOR_GROUP` | *(empty)* | An OIDC group whose members are operators, read from the `groups` claim at sign-in. Setting it makes cairn request the `groups` scope. |
+| `CAIRN_OPERATOR_GROUP` | *(empty)* | An OIDC group whose members are operators, read from the `groups` claim at sign-in. Setting it makes cairn request the `groups` scope. Removal from the group at the IdP takes effect only when that user's session ends ([details](#the-operator)). |
 | `CAIRN_DEV_LOGIN_PASSWORD` | *(empty)* | Shared-secret web login accepted for any actor id. Honored **only while `CAIRN_OIDC_ISSUER` is unset** — a deployment that configures OIDC can never fall back to it. Empty disables interactive login entirely. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_DEV_INSECURE_BEARER_AUTH` | `false` | Makes the API trust any bearer token as its own actor id with no verification. A local-development shortcut that must never be enabled in production. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_OUTBOUND_WEBHOOK_URLS` | *(empty)* | Comma-separated URLs that receive a signed `artifact.created` event. Empty = the feature is inert. These URLs are bearer capabilities; never log or share them. |
@@ -317,6 +317,13 @@ set `CAIRN_OPERATOR_GROUP` to a group your IdP puts in the `groups` claim.
 Operator status is decided on every request from the current configuration, so
 removing an entry takes effect on that user's next request; a group operator
 must sign in again after being added to the group.
+
+Group membership works the other way too: the `groups` claim is read only at
+sign-in and kept with the session. **Removing someone from the operator group at
+your IdP takes effect only when their session ends**, up to `CAIRN_SESSION_TTL`
+(7 days by default). To demote them now, rename `CAIRN_OPERATOR_GROUP` (every
+group operator then signs in again under the new name), or delete their
+sessions from the database.
 
 An operator is also an ordinary user. Their Bin holds their own artifacts, and
 being an operator never lets them open anyone else's. The console at
