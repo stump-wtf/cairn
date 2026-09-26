@@ -248,3 +248,35 @@ func BenchmarkStaged16MiB(b *testing.B) {
 		}
 	}
 }
+
+// TestStagedMaskGrowthAtCap: a body at the cap whose values are shorter than
+// Mask grows when masked. The re-scan of that masked copy is Cairn's own
+// output, not an upload, so it must not trip the upload cap and turn a
+// successful mask into an internal failure.
+//
+// @joestump 09/26/2026 - Added in review of cairn#382: the re-scan read the
+// masked copy through the same capReader as the upload, so a body within
+// len(Mask) bytes of the cap failed with ErrScanFailed.
+func TestStagedMaskGrowthAtCap(t *testing.T) {
+	obj := objectstore.NewMemory()
+	secret := "passw" + "ord=" + "hunt" + "er2"
+	body := secret + "\n"
+	body += filler(64<<10 - len(body))
+	key := stage(t, obj, body)
+	s, err := New(Config{MaxScanBytes: int64(len(body))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.window, s.overlap = 8<<10, 4<<10
+	dst, o, err := s.Staged(context.Background(), obj, key, int64(len(body)), ModeMask)
+	if err != nil || o.Status != StatusMasked {
+		t.Fatalf("Staged at the cap = %q, %+v, %v; want masked", dst, o, err)
+	}
+	got := readObject(t, obj, dst)
+	if want := strings.Replace(body, "hunt"+"er2", Mask, 1); got != want {
+		t.Errorf("masked copy is wrong (len %d, want %d)", len(got), len(want))
+	}
+	if len(got) <= len(body) {
+		t.Fatalf("masked copy did not grow (%d <= %d): the test no longer covers the cap", len(got), len(body))
+	}
+}
