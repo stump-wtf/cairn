@@ -173,6 +173,9 @@ func (s *Store) scanBody(ctx context.Context, surface metrics.RedactionSurface, 
 	default:
 		o, err = s.scanStaged(ctx, b, mode)
 	}
+	// The scan is the kept bytes' only reader. Release them, so a bundle does
+	// not hold up to 1 MiB of every member in memory until it commits.
+	b.head, b.body = nil, nil
 	s.metrics.ObserveRedaction(surface, o, err)
 	if err != nil {
 		return redact.Summary{}, scanErr(field, err)
