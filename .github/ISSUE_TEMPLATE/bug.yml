@@ -64,10 +64,12 @@ body:
       label: Client and version
       description: >
         CLI: the output of `cairn --version`. A `go install` build prints only
-        `cairn version dev`, so add the version you installed, for example `@v0.1.0`.
+        `cairn version dev`, so also paste the `mod` line from
+        `go version -m "$(command -v cairn)"`, which names the module version
+        even when you installed `@latest`.
         MCP: the client's name and version, for example `claude --version`.
         Web: the browser and its version.
-      placeholder: cairn version dev, installed with go install …/cmd/cairn@v0.1.0
+      placeholder: cairn version dev, mod github.com/stump-wtf/cairn v0.1.0
     validations:
       required: true
 
