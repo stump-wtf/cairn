@@ -20,6 +20,15 @@
 //
 // Governing: ADR-0022 (per-kind idempotency), SPEC-0016 EV-6 "Per-Kind
 // Reaction and Comment Ownership".
+//
+// Each committed write is announced on the optional event.Emitter, from here
+// and nowhere else, so REST, web and MCP all emit through one choke point:
+// comment.created, reaction.added for an inserted row only, and
+// reaction.removed for each deleted row. A reaction event carries the EV-5
+// approval bit, computed from the kind the row was stored with.
+//
+// Governing: ADR-0022, SPEC-0016 EV-2 "Emission Points", EV-5 "Approval Class
+// and the Approval Bit".
 
 package annotation
 
@@ -39,6 +48,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // Comment body and emoji bounds. The transport additionally enforces its own
@@ -79,15 +89,42 @@ type Service struct {
 	pool *pgxpool.Pool
 	reg  *sharetype.Registry
 	now  func() time.Time
+	// events receives comment.created, reaction.added and reaction.removed
+	// after each write commits. Nil is inert (SPEC-0016 EV-2).
+	events event.Emitter
+	// approval classifies reaction emoji for the EV-5 approval bit.
+	approval ApprovalClass
 }
 
-// NewService constructs a Service over a Postgres pool. A nil registry falls
-// back to the process-wide default.
+// Options configures a Service. Zero values fall back to safe defaults.
+type Options struct {
+	// Registry gates anchors per share type; nil is the process-wide default.
+	Registry *sharetype.Registry
+	// Emitter, when non-nil, receives the service's lifecycle events, each
+	// after its transaction commits (ADR-0022, SPEC-0016 EV-2). Nil = inert.
+	Emitter event.Emitter
+	// Approval is the EV-5 approval class. The zero value is the default class
+	// (👍 ✅ ✔️), never the empty one: an unconfigured deployment still
+	// classifies approvals as the spec documents.
+	Approval ApprovalClass
+}
+
+// NewService constructs a Service over a Postgres pool with no emitter. A nil
+// registry falls back to the process-wide default.
 func NewService(pool *pgxpool.Pool, reg *sharetype.Registry) *Service {
-	if reg == nil {
-		reg = sharetype.Default()
+	return New(pool, Options{Registry: reg})
+}
+
+// New constructs a Service over a Postgres pool from Options.
+func New(pool *pgxpool.Pool, opts Options) *Service {
+	s := &Service{pool: pool, reg: opts.Registry, now: time.Now, events: opts.Emitter, approval: opts.Approval}
+	if s.reg == nil {
+		s.reg = sharetype.Default()
 	}
-	return &Service{pool: pool, reg: reg, now: time.Now}
+	if s.approval.set == nil {
+		s.approval = DefaultApprovalClass()
+	}
+	return s
 }
 
 // Reaction is one stored reaction row. ActorKind is the server-derived kind
@@ -194,9 +231,11 @@ func (s *Service) React(ctx context.Context, publicID string, anchorType sharety
 	var (
 		out     Reaction
 		created bool
+		art     resolvedArtifact
 	)
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
-		art, err := resolveArtifact(ctx, tx, publicID)
+		var err error
+		art, err = resolveArtifact(ctx, tx, publicID)
 		if err != nil {
 			return err
 		}
@@ -251,6 +290,11 @@ func (s *Service) React(ctx context.Context, publicID string, anchorType sharety
 	if err != nil {
 		return Reaction{}, false, err
 	}
+	// Only the transaction that inserted announces the row: a duplicate is
+	// silent (SPEC-0016 EV-2 "Duplicate reaction is silent").
+	if created {
+		s.emitReaction(event.ReactionAdded, art, actor, out.ID, out.Anchor.Type, out.Anchor.Key, emoji, actor.Kind)
+	}
 	return out, created, nil
 }
 
@@ -275,29 +319,61 @@ func (s *Service) Unreact(ctx context.Context, publicID string, anchorType share
 		return false, fmt.Errorf("annotation: unreact: %w", ErrLocatorInvalid)
 	}
 
-	removed := false
+	var (
+		art  resolvedArtifact
+		gone []removedReaction
+	)
 	err = s.inTx(ctx, func(tx pgx.Tx) error {
-		art, err := resolveArtifact(ctx, tx, publicID)
+		var err error
+		art, err = resolveArtifact(ctx, tx, publicID)
 		if err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, `
+		rows, err := tx.Query(ctx, `
 			DELETE FROM reactions
 			WHERE artifact_id = $1 AND anchor_type = $2 AND anchor_key = $3 AND emoji = $4
-			  AND actor_id = $5 AND actor_kind IN ($6, '')`,
+			  AND actor_id = $5 AND actor_kind IN ($6, '')
+			RETURNING id, actor_kind`,
 			art.id, string(anchorType), key, emoji, actor.ID, string(actor.Kind))
 		if err != nil {
 			return fmt.Errorf("annotation: delete reaction: %w", err)
 		}
-		n := tag.RowsAffected()
-		if n == 0 {
+		gone, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (removedReaction, error) {
+			var (
+				r    removedReaction
+				kind string
+			)
+			err := row.Scan(&r.id, &kind)
+			r.kind = event.ActorKind(kind)
+			return r, err
+		})
+		if err != nil {
+			return fmt.Errorf("annotation: delete reaction: %w", err)
+		}
+		if len(gone) == 0 {
 			return nil
 		}
-		removed = true
 		// A legacy row and the caller's own-kind row can both go at once.
-		return bumpCounts(ctx, tx, art.id, sharetype.KindReaction, anchorType, -int(n))
+		return bumpCounts(ctx, tx, art.id, sharetype.KindReaction, anchorType, -len(gone))
 	})
-	return removed, err
+	if err != nil {
+		return false, err
+	}
+	// One reaction.removed per deleted row, each classified by the kind that
+	// row was STORED with: a legacy row is never an approval (SPEC-0016 EV-2,
+	// EV-5 "Withdrawn approval is announced", EV-6 "Legacy row is never an
+	// approval"). Removing nothing announces nothing.
+	for _, r := range gone {
+		s.emitReaction(event.ReactionRemoved, art, actor, r.id, anchorType, key, emoji, r.kind)
+	}
+	return len(gone) > 0, nil
+}
+
+// removedReaction is one row a Unreact deleted: its id and the actor kind it
+// was stored with, which is what decides its approval bit.
+type removedReaction struct {
+	id   int64
+	kind event.ActorKind
 }
 
 // UnreactByID deletes one reaction row by id — the REST
@@ -310,17 +386,21 @@ func (s *Service) UnreactByID(ctx context.Context, publicID string, reactionID i
 	if err := validateActor("unreact", actor); err != nil {
 		return err
 	}
-	return s.inTx(ctx, func(tx pgx.Tx) error {
-		art, err := resolveArtifact(ctx, tx, publicID)
+	var (
+		art                                resolvedArtifact
+		anchorType, anchorKey, emoji, kind string
+	)
+	err := s.inTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		art, err = resolveArtifact(ctx, tx, publicID)
 		if err != nil {
 			return err
 		}
-		var anchorType string
 		err = tx.QueryRow(ctx, `
 			DELETE FROM reactions
 			WHERE id = $1 AND artifact_id = $2 AND actor_id = $3 AND actor_kind IN ($4, '')
-			RETURNING anchor_type`,
-			reactionID, art.id, actor.ID, string(actor.Kind)).Scan(&anchorType)
+			RETURNING anchor_type, anchor_key, emoji, actor_kind`,
+			reactionID, art.id, actor.ID, string(actor.Kind)).Scan(&anchorType, &anchorKey, &emoji, &kind)
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Distinguish "someone else's reaction" (another actor, or the
 			// same actor as the other kind) from "no such reaction" without
@@ -342,6 +422,12 @@ func (s *Service) UnreactByID(ctx context.Context, publicID string, reactionID i
 		}
 		return bumpCounts(ctx, tx, art.id, sharetype.KindReaction, sharetype.Anchor(anchorType), -1)
 	})
+	if err != nil {
+		return err
+	}
+	s.emitReaction(event.ReactionRemoved, art, actor, reactionID,
+		sharetype.Anchor(anchorType), anchorKey, emoji, event.ActorKind(kind))
+	return nil
 }
 
 // ReactionTallies returns the per-anchor emoji tallies for one artifact plus
@@ -454,9 +540,13 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 		return Comment{}, fmt.Errorf("annotation: comment body length %d: %w", len(in.Body), ErrBodyInvalid)
 	}
 
-	var out Comment
+	var (
+		out Comment
+		art resolvedArtifact
+	)
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
-		art, err := resolveArtifact(ctx, tx, publicID)
+		var err error
+		art, err = resolveArtifact(ctx, tx, publicID)
 		if err != nil {
 			return err
 		}
@@ -514,6 +604,21 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 	if err != nil {
 		return Comment{}, err
 	}
+	// Emitted only for a committed insert: a rolled-back write returned above
+	// (SPEC-0016 EV-2 "Rolled-back write emits nothing"). The encoder, not the
+	// service, truncates the body for the wire (EV-3).
+	s.emit(event.Event{
+		Kind:    event.CommentCreated,
+		Subject: art.subject(s.reg),
+		Actor:   in.Actor,
+		Comment: &event.Comment{
+			ID:         out.ID,
+			ParentID:   out.ParentID,
+			AnchorType: string(out.Anchor.Type),
+			AnchorKey:  out.Anchor.Key,
+			Body:       out.Body,
+		},
+	})
 	return out, nil
 }
 
@@ -634,11 +739,66 @@ func (s *Service) ListComments(ctx context.Context, publicID string) ([]Comment,
 // --- internals -------------------------------------------------------------
 
 // resolvedArtifact is the slice of the artifact the service needs: the internal
-// id every annotation query scopes to, and the share type the registry gates
-// anchors against.
+// id every annotation query scopes to, the share type the registry gates
+// anchors against, and the fields that describe it as the subject of a
+// lifecycle event, read in the same statement so the event names the artifact
+// the write resolved.
 type resolvedArtifact struct {
 	id        int64
 	shareType artifact.ShareType
+	publicID  string
+	title     string
+	tags      []string
+	expiresAt time.Time
+	ownerID   string
+}
+
+// subject describes the artifact as the subject of a lifecycle event, exactly
+// as its artifact.created did (SPEC-0016 EV-3 "Subject fields resolve the
+// artifact for every kind"). OwnerID routes it and never reaches the wire
+// (EV-7).
+func (a resolvedArtifact) subject(reg *sharetype.Registry) event.Subject {
+	return event.Subject{
+		PublicID:  a.publicID,
+		ShareType: a.shareType,
+		Title:     a.title,
+		WebPath:   store.WebPath(reg, a.shareType, a.publicID),
+		Tags:      a.tags,
+		ExpiresAt: a.expiresAt,
+		OwnerID:   a.ownerID,
+	}
+}
+
+// emit hands a committed event to the emitter, if one is installed. It is
+// best-effort by contract: the emitter never blocks or fails the request that
+// caused the event (SPEC-0016 EV-2).
+func (s *Service) emit(ev event.Event) {
+	if s.events == nil {
+		return
+	}
+	s.events.Emit(ev)
+}
+
+// emitReaction announces one committed reaction row. stored is the kind the
+// row was written with — for an add, the caller's; for a removal, the deleted
+// row's — and it alone decides the approval bit, so a legacy row (kind "")
+// never announces an approval however it is removed (SPEC-0016 EV-5, EV-6).
+// The actor is always the caller, derived from its credential (EV-4).
+func (s *Service) emitReaction(kind event.Kind, art resolvedArtifact, actor event.Actor, id int64, anchorType sharetype.Anchor, anchorKey, emoji string, stored event.ActorKind) {
+	class, approval := s.approval.Approval(emoji, stored)
+	s.emit(event.Event{
+		Kind:    kind,
+		Subject: art.subject(s.reg),
+		Actor:   actor,
+		Reaction: &event.Reaction{
+			ID:            id,
+			AnchorType:    string(anchorType),
+			AnchorKey:     anchorKey,
+			Emoji:         emoji,
+			ApprovalClass: class,
+			Approval:      approval,
+		},
+	})
 }
 
 // queryRower is satisfied by both *pgxpool.Pool and pgx.Tx.
@@ -651,9 +811,10 @@ type queryRower interface {
 // leaks no signal; expiry is hard non-existence).
 func resolveArtifact(ctx context.Context, q queryRower, publicID string) (resolvedArtifact, error) {
 	var art resolvedArtifact
-	err := q.QueryRow(ctx,
-		`SELECT id, share_type FROM artifacts WHERE public_id = $1 AND expires_at > now()`,
-		publicID).Scan(&art.id, &art.shareType)
+	err := q.QueryRow(ctx, `
+		SELECT id, share_type, public_id, title, tags, expires_at, owner_id
+		FROM artifacts WHERE public_id = $1 AND expires_at > now()`,
+		publicID).Scan(&art.id, &art.shareType, &art.publicID, &art.title, &art.tags, &art.expiresAt, &art.ownerID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return art, fmt.Errorf("annotation: resolve artifact %s: %w", publicID, errs.ErrNotFound)
 	}
