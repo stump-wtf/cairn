@@ -27,9 +27,10 @@ func TestIntegrationAPIWhoamiRoundTrip(t *testing.T) {
 		MaxUploadBytes: 1 << 20,
 		DefaultTTL:     time.Hour,
 		SessionTTL:     time.Hour,
-		APITokens:      []APIToken{{Secret: "sk_live_whoami", ActorID: "sam@stump.rocks"}},
+		APITokens:      []APIToken{{Secret: "sk_live_whoami", User: "sam@stump.rocks", Position: 1}},
 	}
-	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	withTokenOperators(t, pool, &cfg)
+	srv := httptest.NewServer(newResolvedServer(t, st, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
 
 	resp := do(t, http.MethodGet, srv.URL+"/v1/whoami", "sk_live_whoami", nil, "")

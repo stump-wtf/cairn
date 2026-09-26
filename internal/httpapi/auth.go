@@ -2,9 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -107,149 +104,12 @@ func bearerToken(r *http.Request) string {
 	return strings.TrimSpace(strings.TrimPrefix(h, prefix))
 }
 
-// APIToken is a single static bearer credential: an opaque high-entropy secret
-// that maps to an actor identity and its capability. It is the pre-OAuth MVP
-// token seam (ADR-0004 Option B, "static API keys"); full OAuth 2.1 with dynamic
-// client registration and refresh rotation replaces it in #22 by swapping this
-// Authenticator, leaving every downstream authz check unchanged.
-type APIToken struct {
-	// Secret is the bearer value the client presents. It is stored only as a
-	// hash inside TokenAuthenticator, never compared in plaintext.
-	Secret string
-	// ActorID is the identity a request bearing this token authenticates AS. The
-	// secret proves the identity; the client never asserts the actor id itself.
-	ActorID string
-	// IsAgent marks a token minted for an agent/MCP client acting on the human's
-	// behalf, which is granted exactly the three ADR-0004 agent scopes and never
-	// sharing:manage. A human personal token additionally carries sharing:manage.
-	IsAgent bool
-}
-
-// ParseAPITokens parses the CAIRN_API_TOKENS configuration value into a set of
-// static bearer credentials. The format is a comma-separated list of
-// `secret:actor[:role]` entries, where role is `human` (default) or `agent`.
-// Whitespace around entries and fields is trimmed. An empty value yields no
-// tokens (the bearer surface then rejects every token, failing closed). A
-// malformed entry, a blank secret/actor, or a duplicate secret is a
-// configuration error surfaced at startup rather than a silently dropped
-// credential.
-//
-// Governing: ADR-0004 (token seam), ADR-0012 (config from the environment).
-func ParseAPITokens(raw string) ([]APIToken, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, nil
-	}
-	var (
-		tokens []APIToken
-		seen   = map[string]bool{}
-	)
-	for _, entry := range strings.Split(raw, ",") {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		parts := strings.Split(entry, ":")
-		if len(parts) < 2 || len(parts) > 3 {
-			return nil, fmt.Errorf("api token %q: want secret:actor[:role]", entry)
-		}
-		secret := strings.TrimSpace(parts[0])
-		actor := strings.TrimSpace(parts[1])
-		if secret == "" || actor == "" {
-			return nil, fmt.Errorf("api token %q: secret and actor are required", entry)
-		}
-		isAgent := false
-		if len(parts) == 3 {
-			switch strings.TrimSpace(parts[2]) {
-			case "", "human":
-				isAgent = false
-			case "agent":
-				isAgent = true
-			default:
-				return nil, fmt.Errorf("api token %q: role must be human or agent", entry)
-			}
-		}
-		if seen[secret] {
-			return nil, fmt.Errorf("api token: duplicate secret")
-		}
-		seen[secret] = true
-		tokens = append(tokens, APIToken{Secret: secret, ActorID: actor, IsAgent: isAgent})
-	}
-	return tokens, nil
-}
-
-// TokenAuthenticator verifies an `Authorization: Bearer <token>` credential
-// against a static registry of known secrets, resolving each to the actor and
-// scopes it was minted for. This is the security-critical replacement for the
-// old dev stub: a raw bearer string is NEVER trusted as an actor id — it must
-// hash to a registered secret, or the request is unauthorized. Secrets are held
-// only as SHA-256 digests, and lookup hashes the presented token to a
-// fixed-width key so verification cost does not vary with which token matched.
-//
-// The channel is server-derived to `via API` for this surface (SPEC-0002
-// "Channel is server-derived"); an agent token is granted only the ADR-0004
-// agent scopes, so no token can broaden sharing or delete another actor's work.
-//
-// Governing: ADR-0004 (MCP/OAuth token seam — this is the MVP static-token
-// bridge to #22), SPEC-0002 (server-derived channel), SPEC-0006 (auth seam).
-type TokenAuthenticator struct {
-	// grants maps sha256(secret) → the credential. The digest key means the map
-	// stores no plaintext secret and a lookup is a single constant-cost hash.
-	grants map[[sha256.Size]byte]APIToken
-	// users resolves each token's configured actor to its user (nil on
-	// storeless wirings, whose principals then carry no user id).
-	users *user.Store
-}
-
-// NewTokenAuthenticator builds a TokenAuthenticator over the given static
-// credentials. A nil/empty set yields an authenticator that rejects every
-// bearer token — the fail-closed default for a deployment that configured none.
-func NewTokenAuthenticator(tokens []APIToken) *TokenAuthenticator {
-	grants := make(map[[sha256.Size]byte]APIToken, len(tokens))
-	for _, t := range tokens {
-		grants[sha256.Sum256([]byte(t.Secret))] = t
-	}
-	return &TokenAuthenticator{grants: grants}
-}
-
-// Authenticate implements Authenticator. An absent bearer, or one whose secret
-// is not registered, is errs.ErrUnauthorized. A registered secret resolves to
-// its actor with the server-derived `via API` channel and the scopes its role
-// grants — never to whatever the caller typed after `Bearer `.
-func (a *TokenAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
-	token := bearerToken(r)
-	if token == "" {
-		return nil, errs.ErrUnauthorized
-	}
-	grant, ok := a.grants[sha256.Sum256([]byte(token))]
-	if !ok {
-		// Touch a constant-time compare against a fixed sentinel so an unknown
-		// token does not resolve visibly faster than a byte-mismatched one.
-		subtle.ConstantTimeCompare([]byte(token), []byte(token))
-		return nil, errs.ErrUnauthorized
-	}
-	scopes := humanScopes()
-	if grant.IsAgent {
-		scopes = agentScopes()
-	}
-	p := &Principal{
-		ActorID: grant.ActorID,
-		Channel: artifact.ChannelAPI,
-		IsAgent: grant.IsAgent,
-		Scopes:  scopes,
-	}
-	if err := resolveActorUser(r.Context(), a.users, p); err != nil {
-		return nil, errs.ErrUnauthorized
-	}
-	return p, nil
-}
-
-// resolveActorUser binds a string-keyed principal (a CAIRN_API_TOKENS entry
-// or the dev bearer) to the user its actor names, in the order the ownership
-// migration resolved legacy owner strings, so the credential keeps the Bin it
-// had before (user.Store.ResolveActor). The principal then renders as that
-// user. Static tokens are reworked to name an operator's user by #333; until
-// then this is the whole of their change. A nil store leaves the principal
+// resolveActorUser binds a string-keyed principal (the dev bearer or the dev
+// login) to the user its actor names, in the order the ownership migration
+// resolved legacy owner strings, so the credential keeps the Bin it had
+// before (user.Store.ResolveActor). The principal then renders as that user.
+// CAIRN_API_TOKENS entries never come through here: they name an operator's
+// user, resolved once at boot (ResolveAPITokens). A nil store leaves the principal
 // without a user: it can authenticate but owns and creates nothing. A
 // suspended user's credential does not authenticate (SPEC-0023 "Suspending
 // a user offboards them").

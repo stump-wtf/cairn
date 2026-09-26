@@ -130,10 +130,12 @@ type Config struct {
 	HookEndpointRateBurst     int
 
 	// APITokensRaw is the unparsed CAIRN_API_TOKENS value: a comma-separated list
-	// of `secret:actor[:role]` static bearer credentials the API/MCP surface
-	// accepts (ADR-0004 MVP token seam). Parsed and validated at startup; an empty
-	// value means the bearer surface accepts no tokens. Real per-agent OAuth
-	// tokens replace this in #22.
+	// of `secret:<user>[:agent|:human]` static bearer credentials, each acting
+	// as an operator's user named by "<issuer>|<subject>" or verified email
+	// (SPEC-0023 REQ "Static API Tokens Act as an Operator's User"). Parsed
+	// and resolved at startup; a legacy `secret:actor` entry, or one naming a
+	// non-operator, fails boot. Empty means the bearer surface accepts no
+	// static tokens.
 	APITokensRaw string
 
 	// OperatorsRaw is the unparsed CAIRN_OPERATORS value: comma-separated

@@ -26,9 +26,9 @@ var ttlPattern = regexp.MustCompile(`^in \d+[dhm]$`)
 func policyTestConfig() Config {
 	cfg := noRateLimit()
 	cfg.APITokens = []APIToken{
-		{Secret: "owner-token", ActorID: "alice", IsAgent: false},      // human, owns artifacts it creates
-		{Secret: "other-token", ActorID: "mallory", IsAgent: false},    // human, but never the owner below
-		{Secret: "agent-token", ActorID: "alice-agent", IsAgent: true}, // agent acting for alice, no sharing:manage
+		{Secret: "owner-token", User: "alice@example.com", IsAgent: false, Position: 1},   // human, owns artifacts it creates
+		{Secret: "other-token", User: "mallory@example.com", IsAgent: false, Position: 2}, // human, but never the owner below
+		{Secret: "agent-token", User: "alice@example.com", IsAgent: true, Position: 3},    // agent acting for alice, no sharing:manage
 	}
 	return cfg
 }

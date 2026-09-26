@@ -27,10 +27,11 @@ func secureServer(t *testing.T) (*httptest.Server, *http.Client) {
 		DefaultTTL:       time.Hour,
 		DevLoginPassword: "devpass",
 		SessionTTL:       time.Hour,
-		APITokens:        []APIToken{{Secret: "sk_live_alice", ActorID: "alice"}},
+		APITokens:        []APIToken{{Secret: "sk_live_alice", User: "alice@example.com", Position: 1}},
 		// DevInsecureBearerAuth intentionally left false.
 	}
-	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	withTokenOperators(t, pool, &cfg)
+	srv := httptest.NewServer(newResolvedServer(t, st, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{
@@ -54,20 +55,23 @@ func TestIntegrationTokenAuthNoImpersonation(t *testing.T) {
 		t.Fatalf("configured token create = %d, want 201", resp.StatusCode)
 	}
 	art := decodeArtifact(t, resp)
-	if art.Provenance.Actor != "alice" {
-		t.Fatalf("actor = %q, want alice (from the token registry)", art.Provenance.Actor)
+	if art.Provenance.Actor != "alice@example.com" {
+		t.Fatalf("actor = %q, want alice@example.com (from the token registry)", art.Provenance.Actor)
 	}
 	if art.Provenance.Channel != "via API" {
 		t.Fatalf("channel = %q, want via API", art.Provenance.Channel)
 	}
 
-	// Presenting the actor id as a bearer (the old bearer==actor trust) → 401.
-	resp = do(t, http.MethodPost, srv.URL+"/v1/artifacts?type=markdown", "alice",
-		strings.NewReader("# body"), "text/markdown")
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("impersonation via Bearer alice = %d, want 401", resp.StatusCode)
+	// Presenting the user reference as a bearer (the old bearer==actor
+	// trust) → 401.
+	for _, bearer := range []string{"alice", "alice@example.com"} {
+		resp = do(t, http.MethodPost, srv.URL+"/v1/artifacts?type=markdown", bearer,
+			strings.NewReader("# body"), "text/markdown")
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("impersonation via Bearer %s = %d, want 401", bearer, resp.StatusCode)
+		}
+		resp.Body.Close()
 	}
-	resp.Body.Close()
 
 	// An unknown secret → 401.
 	resp = do(t, http.MethodPost, srv.URL+"/v1/artifacts?type=markdown", "sk_not_real",
