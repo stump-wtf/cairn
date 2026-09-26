@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -201,5 +202,50 @@ func TestHandleFromEmail(t *testing.T) {
 		if got := HandleFromEmail(in); got != want {
 			t.Errorf("HandleFromEmail(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// FindByIdentity and FindByVerifiedEmail name an existing user and never
+// create one: an unknown identity, an unknown email and an unverified email
+// all answer ErrNotFound, and the lookups leave the users table untouched.
+// They back the boot-time resolution of CAIRN_API_TOKENS (SPEC-0023 REQ
+// "Static API Tokens Act as an Operator's User").
+func TestFindExistingUserOnly(t *testing.T) {
+	s, pool := newTestStore(t)
+	ctx := context.Background()
+	joe := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "joe-sub", Email: "joe@example.com", EmailVerified: true})
+	sam := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "sam-sub", Email: "sam@example.com"})
+
+	u, err := s.FindByIdentity(ctx, pocketIssuer, "joe-sub")
+	if err != nil || u.ID != joe.ID {
+		t.Fatalf("FindByIdentity(joe) = %+v, %v; want %s", u, err, joe.ID)
+	}
+	u, err = s.FindByVerifiedEmail(ctx, "  Joe@Example.COM ")
+	if err != nil || u.ID != joe.ID {
+		t.Fatalf("FindByVerifiedEmail(joe) = %+v, %v; want %s", u, err, joe.ID)
+	}
+	if u, err := s.FindByIdentity(ctx, pocketIssuer, "sam-sub"); err != nil || u.ID != sam.ID {
+		t.Fatalf("FindByIdentity(sam) = %+v, %v; want %s", u, err, sam.ID)
+	}
+
+	for name, find := range map[string]func() (*User, error){
+		"unknown subject":   func() (*User, error) { return s.FindByIdentity(ctx, pocketIssuer, "nobody") },
+		"subject elsewhere": func() (*User, error) { return s.FindByIdentity(ctx, githubIssuer, "joe-sub") },
+		"blank identity":    func() (*User, error) { return s.FindByIdentity(ctx, "", "") },
+		"unknown email":     func() (*User, error) { return s.FindByVerifiedEmail(ctx, "nobody@example.com") },
+		"unverified email":  func() (*User, error) { return s.FindByVerifiedEmail(ctx, "sam@example.com") },
+		"blank email":       func() (*User, error) { return s.FindByVerifiedEmail(ctx, " ") },
+	} {
+		if u, err := find(); !errors.Is(err, ErrNotFound) {
+			t.Errorf("%s: got %+v, %v; want ErrNotFound", name, u, err)
+		}
+	}
+
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&n); err != nil {
+		t.Fatalf("count users: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("users = %d after lookups, want 2 (a lookup created a user)", n)
 	}
 }

@@ -305,6 +305,32 @@ func (s *Store) ResolveActor(ctx context.Context, key string) (*User, error) {
 	}
 }
 
+// FindByIdentity returns the user a sign-in identity belongs to, or
+// ErrNotFound when no one has signed in with it. Unlike Resolve it never
+// creates anything: it is for configuration that must name a user who
+// already exists (SPEC-0023 REQ "Static API Tokens Act as an Operator's
+// User").
+func (s *Store) FindByIdentity(ctx context.Context, issuer, subject string) (*User, error) {
+	if issuer == "" || subject == "" {
+		return nil, ErrNotFound
+	}
+	return scanUser(s.pool.QueryRow(ctx, selectUser+`
+		 WHERE id = (SELECT user_id FROM user_identities WHERE issuer = $1 AND subject = $2)`,
+		issuer, subject))
+}
+
+// FindByVerifiedEmail returns the user whose VERIFIED primary email is email
+// (compared after NormalizeEmail), or ErrNotFound. An unverified email never
+// names a user, and nothing is created.
+func (s *Store) FindByVerifiedEmail(ctx context.Context, email string) (*User, error) {
+	email = NormalizeEmail(email)
+	if email == "" {
+		return nil, ErrNotFound
+	}
+	return scanUser(s.pool.QueryRow(ctx, selectUser+`
+		 WHERE primary_email = $1 AND email_verified`, email))
+}
+
 // Get returns a user by id, or ErrNotFound (a malformed id included).
 func (s *Store) Get(ctx context.Context, id string) (*User, error) {
 	if !ValidID(id) {
