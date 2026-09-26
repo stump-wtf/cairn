@@ -109,20 +109,20 @@ func maskCredential(v string) string {
 	return redact.Mask
 }
 
-// isSchemeWord reports whether s looks like an auth scheme (Bearer, Basic,
-// token, AWS4-HMAC-SHA256): a letter, then letters, digits and hyphens, and
-// short.
+// isSchemeWord reports whether s is a known auth scheme, case-insensitively.
+// The first word is kept verbatim, so it must come from a closed list: a
+// shape test ("a short run of letters and digits") also passes an API key
+// sent as "Authorization: <key> <signature>", and would store the key.
 func isSchemeWord(s string) bool {
-	if s == "" || len(s) > 32 {
-		return false
-	}
-	for i, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
-		case i > 0 && (r >= '0' && r <= '9' || r == '-'):
-		default:
-			return false
-		}
-	}
-	return true
+	_, ok := authSchemes[strings.ToLower(s)]
+	return ok
+}
+
+// authSchemes is the IANA HTTP Authentication Scheme Registry plus the
+// unregistered schemes webhook senders commonly use.
+var authSchemes = map[string]struct{}{
+	"basic": {}, "bearer": {}, "concealed": {}, "digest": {}, "dpop": {}, "gnap": {},
+	"hoba": {}, "mutual": {}, "negotiate": {}, "ntlm": {}, "oauth": {},
+	"privatetoken": {}, "scram-sha-1": {}, "scram-sha-256": {}, "vapid": {},
+	"apikey": {}, "aws4-hmac-sha256": {}, "sharedkey": {}, "token": {},
 }

@@ -298,7 +298,11 @@ func TestMaskCredentialHeaders(t *testing.T) {
 		"AWS4-HMAC-SHA256 Cred=a/b": "AWS4-HMAC-SHA256 [REDACTED]",
 		"rawtokenvalue":             "[REDACTED]",
 		"1bad scheme":               "[REDACTED]",
-		"":                          "[REDACTED]",
+		"token abc":                 "token [REDACTED]",
+		// An API key in the scheme position is not a scheme: a shape test
+		// would keep it verbatim.
+		"k" + strings.Repeat("Q7", 15) + " sig": "[REDACTED]",
+		"":                                      "[REDACTED]",
 	} {
 		h := maskCredentialHeaders(map[string][]string{"authorization": {in}, "x-other": {in}})
 		if h["authorization"][0] != want || h["x-other"][0] != in {
