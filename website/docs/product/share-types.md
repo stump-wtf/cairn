@@ -12,6 +12,11 @@ you can react to or comment on. The set is **extensible** — traces were added
 as a new type without disturbing the others (see
 [ADR-0002](../decisions/ADR-0002.md)).
 
+Every text body is scanned for credentials before it is stored. Markdown, text files,
+traces and webhook captures store a detected value as `[REDACTED]`; code and bundles
+are refused unless the writer asks for masking (see
+[Secret redaction](../guides/self-hosting.md#secret-redaction)).
+
 ## <span class="chip chip-read">MD</span> Markdown
 
 Rendered markdown with a table of contents. React under blocks and to the left of

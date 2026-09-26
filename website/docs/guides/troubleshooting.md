@@ -88,12 +88,82 @@ suspects:
 The MCP create tools also reject any field they don't define, such as `visibility` or
 `ttl`.
 
+### `secret_detected`: a credential was found
+
+Cairn scans what you store for credentials. Code artifacts and bundles are refused when
+one turns up; everything else is masked (see
+[Secret redaction](./self-hosting.md#secret-redaction)). A refusal is a
+`400 validation_failed` with one violation per finding. Each names the field, the rule,
+and the line and column, and never the value:
+
+```json
+{"error": {"code": "validation_failed", "message": "…", "violations": [
+  {"field": "members[2].content", "location": "body", "reason": "secret_detected",
+   "rule": "github-pat", "line": 42, "column": 10,
+   "message": "a credential was detected (rule github-pat, line 42); remove it or resend with --redact=mask"}
+], "request_id": "…"}}
+```
+
+The field is `body` or `title` for a single artifact, and `members[n].content` for a
+bundle member, counted from zero. Nothing from a refused create is stored.
+
+- **Remove the credential** and send again. If it was real, rotate it too: it has already
+  left the machine it came from.
+- **Or store it masked.** The value becomes `[REDACTED]` and the rest is kept. With the
+  CLI, pass `--redact=mask`, for example `cairn add patch.diff --redact=mask`. Over REST,
+  send `X-Cairn-Redaction: mask`. Over MCP, pass `redaction: "mask"` to `artifact_create`
+  or `bundle_create`.
+- **`mask` is the only accepted value.** Scanning can't be turned off, so
+  `X-Cairn-Redaction: off` is itself `validation_failed`, with reason `unknown_value`.
+- **Refused although the content masks.** Rarely, Cairn finds a value it can't replace
+  cleanly. It refuses the write rather than store it, and `--redact=mask` doesn't help.
+  Remove the value and send again.
+- **The value is a harmless fixture.** Cairn can't tell a test value from a real one. The
+  operator can exempt known fixture values in the
+  [allowlist](./self-hosting.md#operator-allowlist); no request can.
+
+### `too_large_to_scan`: a field is over the scan cap
+
+Each text field is scanned up to a cap, 16 MiB by default. A larger text field is refused
+with reason `too_large_to_scan`, and `limit` gives the cap in bytes:
+
+```json
+{"field": "body", "location": "body", "reason": "too_large_to_scan", "limit": 16777216, "unit": "bytes", "message": "…"}
+```
+
+Split the content into smaller artifacts, or ask the operator whether the cap
+(`CAIRN_REDACTION_MAX_SCAN_BYTES`) can be raised. Binary bodies such as images and
+archives aren't scanned, so the cap doesn't apply to them. A webhook capture is never
+refused for being over the scan cap: the field is replaced with a notice and listed in
+the capture's `redaction_withheld`.
+
+### Other size limits
+
 `413 payload too large` means an upload is over the size limit (64 MiB per body by
 default), a webhook capture is over 5 MiB, or an MCP call is too big. For a large trace,
 page the spans or post it over REST.
 
 `429 rate limit exceeded` comes from a webhook ingress URL, which limits requests per
 sending address and per endpoint. Back off and try again.
+
+## A checksum differs after upload
+
+You hashed your file, uploaded it, and the `checksum` in the response (or the
+`X-Cairn-Checksum` header on a read) is different. Look for `redacted: true` in the
+create response. It means Cairn found a credential and masked it: the stored body has
+`[REDACTED]` where the value was, and the stored SHA-256 is the hash of those masked
+bytes, not of your file.
+
+- **A declared checksum still works.** If you send `X-Cairn-Sha256` with your file's hash,
+  Cairn checks it against the bytes it received, before masking. The upload is accepted,
+  and the response carries the masked body's hash.
+- **Downloads match the masked hash.** Hash what you download from Cairn, not your local
+  copy.
+- **Deduplication uses the masked bytes.** Two uploads that differ only in the masked
+  value are stored once.
+
+The owner can see what was masked: the artifact's metadata shows status `masked`, a count,
+and the rule IDs, never the values.
 
 ## Webhook signature mismatches
 
