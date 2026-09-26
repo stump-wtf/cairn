@@ -13,61 +13,14 @@ import (
 	"github.com/stump-wtf/cairn/internal/session"
 )
 
-// TestParseAPITokens covers the CAIRN_API_TOKENS grammar: valid single and
-// multi-entry sets, the optional role, whitespace tolerance, and every malformed
-// shape a misconfiguration could take (surfaced as an error, never silently
-// dropped).
-func TestParseAPITokens(t *testing.T) {
-	t.Run("empty yields no tokens", func(t *testing.T) {
-		got, err := ParseAPITokens("   ")
-		if err != nil || got != nil {
-			t.Fatalf("ParseAPITokens(empty) = %v, %v; want nil, nil", got, err)
-		}
-	})
-
-	t.Run("valid set with roles", func(t *testing.T) {
-		got, err := ParseAPITokens(" sk_alice:alice , sk_bot:alice:agent ,sk_joe:joe:human")
-		if err != nil {
-			t.Fatalf("parse: %v", err)
-		}
-		if len(got) != 3 {
-			t.Fatalf("len = %d, want 3", len(got))
-		}
-		if got[0] != (APIToken{Secret: "sk_alice", ActorID: "alice", IsAgent: false}) {
-			t.Errorf("token[0] = %+v", got[0])
-		}
-		if !got[1].IsAgent {
-			t.Errorf("token[1] should be an agent: %+v", got[1])
-		}
-		if got[2].IsAgent {
-			t.Errorf("token[2] explicit human should not be an agent: %+v", got[2])
-		}
-	})
-
-	for _, bad := range []string{
-		"noactor",           // missing actor
-		":alice",            // blank secret
-		"sk_x:",             // blank actor
-		"sk_x:alice:root",   // unknown role
-		"a:b:c:d",           // too many fields
-		"sk_dup:a,sk_dup:b", // duplicate secret
-	} {
-		t.Run("rejects "+bad, func(t *testing.T) {
-			if _, err := ParseAPITokens(bad); err == nil {
-				t.Fatalf("ParseAPITokens(%q) should have errored", bad)
-			}
-		})
-	}
-}
-
 // TestTokenAuthenticatorVerifies is the core security invariant: a raw bearer
 // string is NEVER trusted as an actor id. Only a registered secret authenticates,
 // it resolves to the token's configured actor (not the presented text), and the
 // server-derived channel is via API.
 func TestTokenAuthenticatorVerifies(t *testing.T) {
 	auth := NewTokenAuthenticator([]APIToken{
-		{Secret: "sk_secret_alice", ActorID: "alice"},
-		{Secret: "sk_secret_bot", ActorID: "alice", IsAgent: true},
+		{Secret: "sk_secret_alice", UserID: testTokenUserID, User: "alice"},
+		{Secret: "sk_secret_bot", UserID: testTokenUserID, User: "alice", IsAgent: true},
 	})
 
 	req := func(bearer string) *http.Request {
@@ -91,8 +44,8 @@ func TestTokenAuthenticatorVerifies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("valid token: %v", err)
 	}
-	if p.ActorID != "alice" {
-		t.Fatalf("actor = %q, want alice (from the registry, not the token text)", p.ActorID)
+	if p.ActorID != "alice" || p.UserID != testTokenUserID {
+		t.Fatalf("principal = %q/%q, want alice/%s (from the registry, not the token text)", p.ActorID, p.UserID, testTokenUserID)
 	}
 	if p.Channel != artifact.ChannelAPI {
 		t.Fatalf("channel = %q, want via API (server-derived)", p.Channel)
@@ -139,7 +92,7 @@ func TestTokenAuthenticatorEmptyFailsClosed(t *testing.T) {
 func TestSessionAuthenticatorTokenPathVerifies(t *testing.T) {
 	sa := &SessionAuthenticator{
 		sessions: session.NewMemoryStore(),
-		bearer:   NewTokenAuthenticator([]APIToken{{Secret: "sk_live", ActorID: "sam"}}),
+		bearer:   NewTokenAuthenticator([]APIToken{{Secret: "sk_live", UserID: testTokenUserID, User: "sam"}}),
 	}
 	req := func(bearer string) *http.Request {
 		r := httptest.NewRequest(http.MethodPost, "/v1/artifacts", nil)
@@ -164,7 +117,7 @@ func TestSessionAuthenticatorTokenPathVerifies(t *testing.T) {
 // to the dev actor mapping.
 func TestChainAuthenticatorPrefersToken(t *testing.T) {
 	chain := chainAuthenticator{
-		NewTokenAuthenticator([]APIToken{{Secret: "sk_real", ActorID: "verified"}}),
+		NewTokenAuthenticator([]APIToken{{Secret: "sk_real", UserID: testTokenUserID, User: "verified"}}),
 		DevActorAuthenticator{},
 	}
 	req := func(bearer string) *http.Request {
@@ -270,7 +223,7 @@ func TestRequireHuman(t *testing.T) {
 // storeless: requireHuman short-circuits ahead of handleDelete, so reaching the
 // nil store at all would itself be the bug this test guards against.
 func TestDeleteRouteRejectsAgentToken(t *testing.T) {
-	auth := NewTokenAuthenticator([]APIToken{{Secret: "sk_bot", ActorID: "alice", IsAgent: true}})
+	auth := NewTokenAuthenticator([]APIToken{{Secret: "sk_bot", UserID: testTokenUserID, User: "alice", IsAgent: true}})
 	s := New(nil, nil, auth, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv := httptest.NewServer(s.Handler())
 	defer srv.Close()

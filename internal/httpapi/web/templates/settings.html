@@ -93,6 +93,25 @@
             {{range .Tokens}}{{template "token-row" .}}{{else}}<tr class="token-empty-row" data-token-empty><td colspan="5">No tokens yet.</td></tr>{{end}}
           </tbody>
         </table>
+
+        {{if .StaticTokens}}
+        <h3 class="settings-card-h" id="static-tokens-h">Operator-provisioned</h3>
+        <p class="settings-card-note">Set in this server's <code class="connect-code">CAIRN_API_TOKENS</code>, acting as you. They can't be revoked here: remove the entry from the configuration and restart.</p>
+        <table class="token-table" data-static-token-table aria-labelledby="static-tokens-h">
+          <thead>
+            <tr>
+              <th scope="col">Entry</th>
+              <th scope="col">Scopes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range .StaticTokens}}<tr class="token-row" data-static-token="{{.Position}}">
+              <td class="token-cell-name">CAIRN_API_TOKENS entry {{.Position}} <span class="token-agent-badge" title="operator-provisioned">operator-provisioned</span>{{if .IsAgent}} <span class="token-agent-badge" title="agent role">◆ agent</span>{{end}}</td>
+              <td class="token-cell-scopes"><code>{{.ScopeLabel}}</code></td>
+            </tr>{{end}}
+          </tbody>
+        </table>
+        {{end}}
       </section>
 
       <section class="settings-card" id="mcp" aria-labelledby="mcp-h">

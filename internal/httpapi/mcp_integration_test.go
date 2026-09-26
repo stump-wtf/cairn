@@ -54,8 +54,9 @@ func mcpConfig() Config {
 func mcpTestServer(t *testing.T, cfg Config, opts store.Options) (*httptest.Server, *store.Store) {
 	t.Helper()
 	pool := newTestPool(t)
+	withTokenOperators(t, pool, &cfg)
 	st := store.New(pool, objectstore.NewMemory(), opts)
-	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	srv := httptest.NewServer(newResolvedServer(t, st, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
 	return srv, st
 }
@@ -340,7 +341,7 @@ func TestIntegrationMCPCreateRejectsNonBroadenedPolicy(t *testing.T) {
 // audience-bound to Cairn, and nothing else.
 func TestIntegrationMCPStaticTokenRejected(t *testing.T) {
 	cfg := mcpConfig()
-	cfg.APITokens = []APIToken{{Secret: "static-secret-1234567890", ActorID: "sam@stump.rocks", IsAgent: true}}
+	cfg.APITokens = []APIToken{{Secret: "static-secret-1234567890", User: "sam@stump.rocks", IsAgent: true, Position: 1}}
 	srv, _ := mcpTestServer(t, cfg, store.Options{})
 
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))

@@ -163,9 +163,10 @@ func run(logger *slog.Logger) error {
 	}()
 
 	// Parse the static API bearer credentials (ADR-0004 MVP token seam) at
-	// startup so a malformed CAIRN_API_TOKENS fails the process rather than
-	// silently dropping a credential. A raw bearer token is only ever trusted when
-	// it verifies against this set (or, in dev, when the insecure shortcut is on).
+	// startup so a malformed or legacy CAIRN_API_TOKENS entry fails the process
+	// rather than silently dropping a credential. A raw bearer token is only
+	// ever trusted when it verifies against this set once ResolveAPITokens has
+	// bound it below (or, in dev, when the insecure shortcut is on).
 	apiTokens, err := httpapi.ParseAPITokens(cfg.APITokensRaw)
 	if err != nil {
 		return err
@@ -219,6 +220,17 @@ func run(logger *slog.Logger) error {
 		HookEndpointRatePerSecond: cfg.HookEndpointRatePerSecond,
 		HookEndpointRateBurst:     cfg.HookEndpointRateBurst,
 	}, logger)
+
+	// Bind each CAIRN_API_TOKENS entry to the operator's user it names
+	// (SPEC-0023 REQ "Static API Tokens Act as an Operator's User"). An entry
+	// naming anyone else, or no one yet, fails boot; the error names the
+	// entry's position, never its secret.
+	if err := api.ResolveAPITokens(ctx); err != nil {
+		return err
+	}
+	if len(apiTokens) > 0 {
+		logger.Info("static API tokens resolved to operator users", "tokens", len(apiTokens))
+	}
 
 	// Discover the OIDC issuer and wire the "Sign in with Pocket ID" relying
 	// party (ADR-0013). A no-op when CAIRN_OIDC_ISSUER is unset; a discovery

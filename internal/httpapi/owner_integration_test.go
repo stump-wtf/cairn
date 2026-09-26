@@ -34,16 +34,15 @@ func ownedIDs(t *testing.T, srv *httptest.Server, token string) map[string]bool 
 	return ids
 }
 
-// A CAIRN_API_TOKENS entry acts as the user its actor names: the same user a
-// dev bearer with that name resolves to, so it keeps that Bin; an entry
-// naming anyone else owns nothing of it, cannot delete it, and cannot change
-// its policy. Against string ownership the second token's refusal would hold
-// but the shared Bin would not survive the move to user ids.
+// A CAIRN_API_TOKENS entry acts as the user it names: the same user a dev
+// bearer with that verified email resolves to, so it shares that Bin; a
+// token naming another operator owns nothing of it, cannot delete it, and
+// cannot change its policy.
 func TestIntegrationStaticTokenActsAsItsUser(t *testing.T) {
 	cfg := noRateLimit()
 	cfg.APITokens = []APIToken{
-		{Secret: "sk_live_joe_owner", ActorID: "joe@example.com"},
-		{Secret: "sk_live_someone_else", ActorID: "pat@example.com"},
+		{Secret: "sk_live_joe_owner", User: "joe@example.com", Position: 1},
+		{Secret: "sk_live_someone_else", User: "pat@example.com", Position: 2},
 	}
 	srv := testServer(t, cfg, store.Options{MaxUploadBytes: 1 << 20})
 

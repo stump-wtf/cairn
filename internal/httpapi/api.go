@@ -82,10 +82,12 @@ type Config struct {
 	// redirect URI is derived as BaseURL + /auth/callback like OIDC's.
 	GitHubClientID     string
 	GitHubClientSecret string
-	// APITokens are the static bearer credentials the API/MCP surface accepts
-	// (ADR-0004 MVP token seam). Each secret maps to an actor and role; an absent
-	// set means the bearer surface rejects every token (fail closed). A raw
-	// bearer string is never trusted as an actor id.
+	// APITokens are the CAIRN_API_TOKENS entries (ADR-0004 token seam), each
+	// naming an operator's user (SPEC-0023 REQ "Static API Tokens Act as an
+	// Operator's User"). None authenticates until Server.ResolveAPITokens has
+	// bound it to that user; an absent set means the bearer surface rejects
+	// every token (fail closed). A raw bearer string is never trusted as an
+	// actor id.
 	APITokens []APIToken
 	// DevInsecureBearerAuth, when true, additionally trusts a raw bearer token AS
 	// the actor id (DevActorAuthenticator) after the verifying TokenAuthenticator
@@ -202,6 +204,10 @@ type Server struct {
 	// audit trail. Nil on storeless unit wirings; the operator routes are
 	// gated on cfg.Operators as well (requireOperator).
 	ops *operator.Service
+	// staticTokens is the CAIRN_API_TOKENS bearer surface, holding no
+	// credential until ResolveAPITokens binds the entries to their
+	// operators' users. Nil when the caller supplied its own Authenticator.
+	staticTokens *TokenAuthenticator
 }
 
 // New constructs a Server. If auth is nil, a session-aware Authenticator is used
@@ -314,8 +320,9 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 	// with the INSECURE dev shortcut when explicitly enabled. The bearer surface
 	// backs both the standalone API wiring and the session-aware adapter, so the
 	// web binary authenticates browser sessions AND verified bearer tokens.
+	var static *TokenAuthenticator
 	if auth == nil {
-		static := NewTokenAuthenticator(cfg.APITokens)
+		static = NewTokenAuthenticator(cfg.APITokens)
 		static.users = users
 		bearers := chainAuthenticator{static}
 		if patSvc != nil {
@@ -368,6 +375,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		pat:                 patSvc,
 		mcpSessions:         mcpSessSvc,
 		ops:                 opsSvc,
+		staticTokens:        static,
 	}
 }
 
