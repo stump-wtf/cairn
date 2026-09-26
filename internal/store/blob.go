@@ -30,6 +30,10 @@ type StagedBlob struct {
 	MediaType  string
 	StorageKey string // content-addressed blobs/ key it commits to
 	stagingKey string // transient staging/ key holding the bytes until commit
+	// head and body feed the ingest scan (scan.go): the first 8 KiB, and the
+	// whole body when it was small enough to keep (nil otherwise).
+	head []byte
+	body []byte
 }
 
 // StageBlob streams r into a transient staging object, computing its SHA-256
@@ -48,7 +52,13 @@ type StagedBlob struct {
 // SPEC-0004 REQ "Span Output Storage and Content Addressing",
 // SPEC-0009 REQ "Concurrency Safety (Expiry Reaper)".
 func StageBlob(ctx context.Context, obj objectstore.ObjectStore, r io.Reader, maxBytes int64, declaredMedia string) (*StagedBlob, error) {
-	staged, err := streamBlob(ctx, obj, r, maxBytes, declaredMedia)
+	return stageBlobKeep(ctx, obj, r, maxBytes, declaredMedia, 0)
+}
+
+// stageBlobKeep is StageBlob that keeps a body of at most keep bytes in
+// memory for the ingest scan.
+func stageBlobKeep(ctx context.Context, obj objectstore.ObjectStore, r io.Reader, maxBytes int64, declaredMedia string, keep int64) (*StagedBlob, error) {
+	staged, err := streamBlobKeep(ctx, obj, r, maxBytes, declaredMedia, keep)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +68,26 @@ func StageBlob(ctx context.Context, obj objectstore.ObjectStore, r io.Reader, ma
 		MediaType:  staged.mediaType,
 		StorageKey: shardedKey(staged.sha256),
 		stagingKey: staged.stagingKey,
+		head:       staged.head,
+		body:       staged.body,
 	}, nil
+}
+
+// replaceStaged points b at a different staging object, one holding the
+// masked copy of its bytes, and removes the raw one. The stored SHA-256, size
+// and content-addressed key become the masked bytes', so dedup keys on what
+// is actually stored (SPEC-0017 RD-10). The raw object is removed here rather
+// than left for Discard, which only knows the current key.
+//
+// Governing: ADR-0023, SPEC-0017 RD-1, RD-10
+func (b *StagedBlob) replaceStaged(ctx context.Context, obj objectstore.ObjectStore, key, sha string, size int64) error {
+	raw := b.stagingKey
+	b.stagingKey, b.SHA256, b.Size, b.StorageKey = key, sha, size, shardedKey(sha)
+	b.head, b.body = nil, nil
+	if err := obj.Remove(context.WithoutCancel(ctx), raw); err != nil {
+		return fmt.Errorf("remove the unmasked staging object: %w", err)
+	}
+	return nil
 }
 
 // Discard removes the transient staging object. It is a no-op if the blob was

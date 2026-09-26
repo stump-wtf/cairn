@@ -73,7 +73,7 @@ func newHarness(t *testing.T) (*Service, *store.Store, *pgxpool.Pool, *objectsto
 
 	obj := objectstore.NewMemory()
 	svc := NewService(pool, obj, Options{})
-	st := store.New(pool, obj, store.Options{})
+	st := store.New(pool, obj, store.Options{Scanner: storeScanner(t)})
 	return svc, st, pool, obj
 }
 

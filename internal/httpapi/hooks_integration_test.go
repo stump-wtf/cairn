@@ -26,7 +26,7 @@ func hookTestServer(t *testing.T, cfg Config, opts store.Options) (*httptest.Ser
 	cfg.DevInsecureBearerAuth = true
 	pool := newTestPool(t)
 	obj := objectstore.NewMemory()
-	st := store.New(pool, obj, opts)
+	st := store.New(pool, obj, withScanner(opts))
 	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
 	hookSvc := webhook.NewService(pool, obj, webhook.Options{})

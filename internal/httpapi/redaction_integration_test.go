@@ -7,13 +7,16 @@ package httpapi
 // surface (REST, MCP artifact_read, the web viewer), a non-owner sees none of
 // it, and no response, log line or rendered page holds a planted token.
 //
-// Nothing scans yet (#291-#293 wire the scanner in), so the "Owner sees a
-// summary" outcome is seeded with store.RecordRedaction over a body the real
-// scanner masked. Credentials are assembled at run time from split literals.
+// The create paths scan (cairn#292), so the "Owner sees a summary" outcome is
+// the one the create itself recorded over a body holding real tokens.
+// Credentials are assembled at run time from split literals.
 //
 // Governing: ADR-0023, SPEC-0017 RD-9, "Accessibility Requirements"
 //
 // @joestump 09/25/2026 - Added for cairn#290.
+// @joestump 09/26/2026 - cairn#292: creates are scanned, so these tests post
+// raw tokens instead of seeding the outcome, and seed "unscanned" only to
+// stand in for a legacy row.
 
 import (
 	"bytes"
@@ -77,23 +80,17 @@ func redactionServer(t *testing.T) (*httptest.Server, *store.Store, *syncBuffer)
 	return srv, st, logs
 }
 
-// maskedBody runs the real scanner over a body holding two planted tokens and
-// returns what a wired create path would store, its outcome, and the tokens.
-func maskedBody(t *testing.T) (string, redact.Summary, []string) {
-	t.Helper()
-	sc, err := redact.New(redact.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
+// tokenBody is a markdown body holding two planted tokens, and the tokens.
+func tokenBody() (string, []string) {
 	a, b := plantedToken(1), plantedToken(2)
-	out, o, err := sc.Text(context.Background(), "body", "# deploy\n\nfirst "+a+"\nsecond "+b+"\n", redact.ModeMask)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return out, o.Summary(), []string{a, b}
+	return "# deploy\n\nfirst " + a + "\nsecond " + b + "\n", []string{a, b}
 }
 
-// seedOutcome records s on the artifact, the way a wired create path will.
+// maskedOutcome is what the scanner records for tokenBody.
+var maskedOutcome = map[string]int{"github-pat": 2}
+
+// seedOutcome records s on the artifact. The zero Summary stands in for a row
+// written before the scan existed ("unscanned").
 func seedOutcome(t *testing.T, st *store.Store, publicID string, s redact.Summary) {
 	t.Helper()
 	ctx := context.Background()
@@ -154,8 +151,8 @@ func wantOwnerOutcome(t *testing.T, got artifactResponse, status string, count i
 // appears nowhere in any response or log line. A non-owner and an anonymous
 // reader see no outcome fields at all.
 func TestRedactionOwnerSeesSummary(t *testing.T) {
-	srv, st, logs := redactionServer(t)
-	body, outcome, tokens := maskedBody(t)
+	srv, _, logs := redactionServer(t)
+	body, tokens := tokenBody()
 
 	resp := do(t, http.MethodPost, srv.URL+"/v1/artifacts?type=markdown&title=deploy", "alice", strings.NewReader(body), "text/markdown")
 	created := readBody(t, resp)
@@ -166,10 +163,7 @@ func TestRedactionOwnerSeesSummary(t *testing.T) {
 	if err := json.Unmarshal([]byte(created), &art); err != nil {
 		t.Fatal(err)
 	}
-	// Nothing scans yet, so the create response says so honestly.
-	wantOwnerOutcome(t, art, "unscanned", 0, map[string]int{})
-
-	seedOutcome(t, st, art.ID, outcome)
+	wantOwnerOutcome(t, art, "masked", 2, maskedOutcome)
 
 	resp = do(t, http.MethodGet, srv.URL+"/v1/artifacts/"+art.ID, "alice", nil, "")
 	ownerRaw := readBody(t, resp)
@@ -200,14 +194,16 @@ func TestRedactionOwnerSeesSummary(t *testing.T) {
 // TestRedactionLegacyArtifactReadsUnscanned: an artifact with no recorded
 // outcome reads "unscanned" to its owner (SPEC-0017 "Legacy artifact status").
 func TestRedactionLegacyArtifactReadsUnscanned(t *testing.T) {
-	srv, _, _ := redactionServer(t)
+	srv, st, _ := redactionServer(t)
 	id := createArtifact(t, srv.URL, "markdown", "alice", "# old")
+	seedOutcome(t, st, id, redact.Summary{})
 	resp := do(t, http.MethodGet, srv.URL+"/v1/artifacts/"+id, "alice", nil, "")
 	wantOwnerOutcome(t, decodeArtifact(t, resp), "unscanned", 0, map[string]int{})
 }
 
 // TestRedactionCreateResponsesCarryOutcome: every REST create shape (raw,
-// single multipart file, multipart bundle) carries redacted and redactions.
+// single multipart file, multipart bundle) carries redacted and redactions,
+// and a body with nothing in it is scanned clean.
 func TestRedactionCreateResponsesCarryOutcome(t *testing.T) {
 	srv, _, _ := redactionServer(t)
 	for _, files := range [][]string{{"one.txt"}, {"a.txt", "b.txt"}} {
@@ -225,29 +221,27 @@ func TestRedactionCreateResponsesCarryOutcome(t *testing.T) {
 		if resp.StatusCode != http.StatusCreated {
 			t.Fatalf("create %v = %d", files, resp.StatusCode)
 		}
-		wantOwnerOutcome(t, decodeArtifact(t, resp), "unscanned", 0, map[string]int{})
+		wantOwnerOutcome(t, decodeArtifact(t, resp), "clean", 0, map[string]int{})
 	}
 }
 
 // TestRedactionMCPOwnerOnly: artifact_create and bundle_create carry the
 // outcome; artifact_read shows it to the owner and not to another user.
 func TestRedactionMCPOwnerOnly(t *testing.T) {
-	srv, st := mcpTestServer(t, mcpConfig(), store.Options{})
-	body, outcome, tokens := maskedBody(t)
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	body, tokens := tokenBody()
 	owner := mcpClient(t, srv, mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"}), nil, "claude-desktop")
 
 	res := callTool(t, owner, "artifact_create", map[string]any{"body": body, "title": "deploy"})
 	var created mcpCreateOutput
 	decodeToolJSON(t, res, &created)
-	wantOwnerOutcome(t, created.artifactResponse, "unscanned", 0, map[string]int{})
+	wantOwnerOutcome(t, created.artifactResponse, "masked", 2, maskedOutcome)
 	assertNoToken(t, "artifact_create output", toolText(t, res), tokens)
 
 	res = callTool(t, owner, "bundle_create", map[string]any{"members": []map[string]any{{"name": "a.md", "body": "a"}, {"name": "b.md", "body": "b"}}})
 	var bundle mcpBundleCreateOutput
 	decodeToolJSON(t, res, &bundle)
-	wantOwnerOutcome(t, bundle.artifactResponse, "unscanned", 0, map[string]int{})
-
-	seedOutcome(t, st, created.ID, outcome)
+	wantOwnerOutcome(t, bundle.artifactResponse, "clean", 0, map[string]int{})
 
 	res = callTool(t, owner, "artifact_read", map[string]any{"id": created.ID})
 	var read mcpReadOutput
@@ -270,10 +264,9 @@ func TestRedactionMCPOwnerOnly(t *testing.T) {
 // the rule IDs, and the post-create notice in a polite live region. A
 // non-owner and an anonymous reader get none of it.
 func TestRedactionWebBadgeOwnerOnly(t *testing.T) {
-	srv, st, logs := redactionServer(t)
-	body, outcome, tokens := maskedBody(t)
+	srv, _, logs := redactionServer(t)
+	body, tokens := tokenBody()
 	id := createArtifact(t, srv.URL, "markdown", "alice", body)
-	seedOutcome(t, st, id, outcome)
 
 	resp := do(t, http.MethodGet, srv.URL+"/"+id, "alice", nil, "")
 	html := readBody(t, resp)
@@ -308,8 +301,9 @@ func TestRedactionWebBadgeOwnerOnly(t *testing.T) {
 // its status in the panel but no badge and no notice, since nothing was
 // masked.
 func TestRedactionWebUnscannedHasNoBadge(t *testing.T) {
-	srv, _, _ := redactionServer(t)
+	srv, st, _ := redactionServer(t)
 	id := createArtifact(t, srv.URL, "markdown", "alice", "# plain")
+	seedOutcome(t, st, id, redact.Summary{})
 	resp := do(t, http.MethodGet, srv.URL+"/"+id, "alice", nil, "")
 	html := readBody(t, resp)
 	if !strings.Contains(html, `<dd data-redaction-status>unscanned</dd>`) {

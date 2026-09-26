@@ -42,7 +42,7 @@ func testServer(t *testing.T, cfg Config, opts store.Options) *httptest.Server {
 	// verifies every token (see the security tests).
 	cfg.DevInsecureBearerAuth = true
 	pool := newTestPool(t)
-	st := store.New(pool, objectstore.NewMemory(), opts)
+	st := store.New(pool, objectstore.NewMemory(), withScanner(opts))
 	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
 	return srv

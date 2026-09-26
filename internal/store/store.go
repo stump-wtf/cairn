@@ -13,6 +13,7 @@
 package store
 
 import (
+	"log/slog"
 	"slices"
 	"time"
 
@@ -20,7 +21,9 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/id"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
@@ -53,6 +56,12 @@ type Store struct {
 	registry   *sharetype.Registry
 	newID      func() (string, error)
 	emitter    CreationEmitter
+
+	// The ingest secret scan (scan.go).
+	scanner     *redact.Scanner
+	rejectTypes []artifact.ShareType
+	metrics     *metrics.Registry
+	log         *slog.Logger
 }
 
 // CreationEvent is the transport-agnostic fact that an artifact came into
@@ -107,6 +116,20 @@ type Options struct {
 	// (REST/web/CLI/MCP) at this single choke point. Nil = inert
 	// (SPEC-0012 REQ "Delivery Targets from Configuration").
 	Emitter CreationEmitter
+	// Scanner is the ingest secret scanner (ADR-0023, SPEC-0017). Every
+	// artifact and bundle create scans its title and bodies with it before
+	// anything is stored. There is no unscanned mode: with a nil Scanner,
+	// every create fails closed as an internal error.
+	Scanner *redact.Scanner
+	// RedactionRejectTypes lists the share types whose creates refuse a
+	// detected secret rather than mask it (CAIRN_REDACTION_REJECT_TYPES). Nil
+	// means DefaultRedactionRejectTypes; an empty, non-nil list rejects none.
+	RedactionRejectTypes []string
+	// Metrics counts each scan in cairn_redactions_total. Nil counts nothing.
+	Metrics *metrics.Registry
+	// Logger receives the WARN for each field stored unscanned under
+	// CAIRN_REDACTION_OVERSIZE=store_unscanned. Nil means slog.Default().
+	Logger *slog.Logger
 }
 
 // New constructs a Store over a Postgres pool and an object store.
@@ -127,6 +150,10 @@ func New(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *Store {
 	if registry == nil {
 		registry = sharetype.Default()
 	}
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Store{
 		pool:       pool,
 		obj:        obj,
@@ -135,6 +162,11 @@ func New(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *Store {
 		registry:   registry,
 		newID:      newID,
 		emitter:    opts.Emitter,
+
+		scanner:     opts.Scanner,
+		rejectTypes: rejectTypesOf(opts.RedactionRejectTypes),
+		metrics:     opts.Metrics,
+		log:         logger,
 	}
 }
 
