@@ -212,8 +212,8 @@ func TestIntegrationSettingsRefusesBearerTokens(t *testing.T) {
 // A20: an OAuth grant used purely over REST — which never opens an MCP
 // session, so the Agent sessions table cannot show it — is listed on the
 // settings page and its JSON twin, and revoking it kills the whole token
-// family immediately. A caller never sees another actor's grants, and an
-// unknown or foreign id is a uniform 404.
+// family immediately. Owner scoping — a foreign caller neither sees nor
+// revokes a LIVE grant — is TestIntegrationSettingsGrantsAreOwnerScoped.
 func TestIntegrationSettingsGrantsListedAndRevoked(t *testing.T) {
 	srv, client := patServer(t)
 	doLogin(t, srv, client, "sam@stump.rocks", "devpass").Body.Close()
@@ -288,23 +288,6 @@ func TestIntegrationSettingsGrantsListedAndRevoked(t *testing.T) {
 			t.Errorf("revoke of %q = %d, want 404", id, resp.StatusCode)
 		}
 	}
-
-	// Another actor's grants are never listed to this one.
-	other := &http.Client{Jar: client.Jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	_ = other
-	otherJar, _ := cookiejar.New(nil)
-	otherClient := &http.Client{Jar: otherJar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	doLogin(t, srv, otherClient, "other@stump.rocks", "devpass").Body.Close()
-	listResp = sessionJSON(t, srv.URL, otherClient, http.MethodGet, "/v1/oauth/grants", nil)
-	body, _ = io.ReadAll(listResp.Body)
-	listResp.Body.Close()
-	var foreign grantsResponse
-	if err := json.Unmarshal(body, &foreign); err != nil {
-		t.Fatalf("decode other actor's grants: %v", err)
-	}
-	if len(foreign.Grants) != 0 {
-		t.Errorf("other actor's grants = %+v, want none — grants are owner-scoped", foreign.Grants)
-	}
 }
 
 // TestIntegrationSettingsGrantRevokeFailureIsNotA404 pins the one error the
@@ -337,5 +320,109 @@ func TestIntegrationSettingsGrantRevokeFailureIsNotA404(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("revoke with a failing store = %d, want 500 (a 404 claims the live grant is gone)", resp.StatusCode)
+	}
+}
+
+// TestIntegrationSettingsGrantsAreOwnerScoped is the disclosure half of A20:
+// while sam's grant is LIVE, another signed-in human neither lists it nor
+// revokes it (a uniform 404), and sam's token keeps working afterwards. The
+// grant must still be live when the foreign caller looks — checking after
+// sam revoked it would pass even if the queries ignored actor_id entirely.
+func TestIntegrationSettingsGrantsAreOwnerScoped(t *testing.T) {
+	srv, client := patServer(t)
+	clientID, code := obtainCode(t, srv, client, "sam@stump.rocks", "artifacts:read", []string{"artifacts:read"})
+	tok := decodeToken(t, exchangeCode(t, srv, clientID, code, pkceVerifier))
+
+	listGrants := func(c *http.Client) grantsResponse {
+		t.Helper()
+		resp := sessionJSON(t, srv.URL, c, http.MethodGet, "/v1/oauth/grants", nil)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /v1/oauth/grants = %d, want 200", resp.StatusCode)
+		}
+		var out grantsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode grants list: %v", err)
+		}
+		return out
+	}
+	samGrants := listGrants(client)
+	if len(samGrants.Grants) != 1 {
+		t.Fatalf("sam's grants = %+v, want one", samGrants.Grants)
+	}
+	grantID := samGrants.Grants[0].ID
+
+	otherJar, _ := cookiejar.New(nil)
+	other := &http.Client{Jar: otherJar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	doLogin(t, srv, other, "other@stump.rocks", "devpass").Body.Close()
+
+	if got := listGrants(other); len(got.Grants) != 0 {
+		t.Errorf("other actor lists %+v, want none — sam's live grant must not be disclosed", got.Grants)
+	}
+	if _, html := getHTMLClient(t, other, srv.URL+"/settings"); strings.Contains(html, grantID) {
+		t.Errorf("other actor's /settings renders sam's grant id %q", grantID)
+	}
+	resp := sessionJSON(t, srv.URL, other, http.MethodDelete, "/v1/oauth/grants/"+grantID, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("other actor revoking sam's grant = %d, want 404", resp.StatusCode)
+	}
+
+	// The foreign revoke touched nothing: sam's token still authenticates and
+	// the grant is still listed for sam.
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/whoami", nil)
+	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	whoami, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("whoami: %v", err)
+	}
+	whoami.Body.Close()
+	if whoami.StatusCode != http.StatusOK {
+		t.Errorf("sam's token after a foreign revoke = %d, want 200", whoami.StatusCode)
+	}
+	if got := listGrants(client); len(got.Grants) != 1 || got.Grants[0].ID != grantID {
+		t.Errorf("sam's grants after a foreign revoke = %+v, want the original grant", got.Grants)
+	}
+}
+
+// TestIntegrationWebPagesRefuseStaticBearer covers the third bearer shape the
+// A20 fix names: a static CAIRN_API_TOKENS entry. It is deliberately a
+// NON-agent (human) token — the one bearer that passes the !IsAgent half of
+// sessionPrincipal — so only the Ambient check stands between it and the page.
+// requireWebSession guards /bin and /whoami too, so all three are covered: the
+// JSON twins under /v1 remain the bearer surface.
+func TestIntegrationWebPagesRefuseStaticBearer(t *testing.T) {
+	pool := newTestPool(t)
+	cfg := patConfig()
+	cfg.APITokens = []APIToken{{Secret: "static-human-1234567890", ActorID: "sam@stump.rocks"}}
+	st := store.New(pool, objectstore.NewMemory(), storeOpts())
+	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	t.Cleanup(srv.Close)
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	for _, path := range []string{"/settings", "/bin", "/whoami"} {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+		req.Header.Set("Authorization", "Bearer static-human-1234567890")
+		resp, err := noFollow.Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusSeeOther {
+			t.Errorf("GET %s with a static human bearer = %d, want 303 to sign in", path, resp.StatusCode)
+		}
+	}
+
+	// The same token still works on the API surface — the fix narrows the
+	// web pages, not bearer auth.
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/whoami", nil)
+	req.Header.Set("Authorization", "Bearer static-human-1234567890")
+	resp, err := noFollow.Do(req)
+	if err != nil {
+		t.Fatalf("GET /v1/whoami: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /v1/whoami with a static human bearer = %d, want 200", resp.StatusCode)
 	}
 }
