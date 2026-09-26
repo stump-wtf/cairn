@@ -42,7 +42,7 @@ is read from the `CAIRN_` namespace and nothing is ever loaded from a file.
 | `CAIRN_S3_BUCKET` | `cairn` | Bucket name; created on connect if missing. |
 | `CAIRN_S3_REGION` | `us-east-1` | Region string most S3 implementations accept. |
 | `CAIRN_S3_USE_SSL` | `false` | Set `true` when the endpoint speaks HTTPS. |
-| `CAIRN_API_TOKENS` | *(empty)* | Static bearer credentials for headless agents, comma-separated `secret:actor[:role]`. **Empty means the bearer surface accepts no tokens** — it fails closed. Real per-agent tokens come from OAuth or a personal access token minted in Settings. Wired through the compose file above; on the Docker path with no OIDC provider yet this is the only way to get a working credential. |
+| `CAIRN_API_TOKENS` | *(empty)* | Static bearer credentials for **the operator's own automation**, comma-separated `secret:<user>[:agent\|:human]`. `<user>` is an [operator](#the-operator)'s `<issuer>\|<subject>` or verified email, and they must have signed in once. Tokens default to agent scopes. An entry naming anyone else, and every legacy `secret:actor` entry, **fails boot** ([details](#static-tokens-for-the-operator)). **Empty means the bearer surface accepts no static tokens** — it fails closed. Everyone else uses OAuth or a personal access token minted in Settings. Wired through the compose file above. |
 | `CAIRN_OIDC_ISSUER` | *(empty)* | Issuer URL of your OIDC provider. **Its presence is the switch that turns OIDC on** and, just as importantly, turns the dev-password login off (below). |
 | `CAIRN_OIDC_CLIENT_ID` | `cairn` | Client id registered at your provider. |
 | `CAIRN_OIDC_CLIENT_SECRET` | *(empty)* | Client secret. The redirect URI is not configurable — it is always `<base>/auth/callback`. |
@@ -73,7 +73,9 @@ Three settings are easy to get wrong:
   also means a wrong base URL points your login flow at the wrong origin.
 - **`CAIRN_API_TOKENS` fails closed.** Unset, nothing can call the API with a
   bearer token until a human mints a personal access token or an agent
-  completes OAuth. That is the safe direction.
+  completes OAuth. That is the safe direction. Set, every entry must name an
+  operator who has already signed in, so on a fresh instance configure sign-in
+  and `CAIRN_OPERATORS` first, sign in once, then add the tokens.
 - **`CAIRN_DEV_LOGIN_PASSWORD` and `CAIRN_DEV_INSECURE_BEARER_AUTH` are
   development seams.** The dev password is disabled the moment any real
   provider is configured, OIDC (`CAIRN_OIDC_ISSUER`) or GitHub
@@ -261,9 +263,13 @@ healthy-start logs are the same two lines as the Docker path.
 |---|---|
 | `db: ping: failed to connect … connection refused` | The DSN is right but nothing is listening — the database isn't up yet, or the hostname is wrong inside the compose network. |
 | `s3: …` connect errors on boot | Wrong `CAIRN_S3_ENDPOINT` (host:port, no scheme) or the store isn't reachable. Cairn retries via the container restart policy in the Docker path; as a binary it exits and it is yours to restart. |
+| `CAIRN_API_TOKENS entry N: legacy secret:actor entries are no longer accepted …` | The Nth token is in the old free-form shape. Rewrite it as `secret:<user>[:agent\|:human]` ([details](#static-tokens-for-the-operator)). |
+| `CAIRN_API_TOKENS entry N: user is not an operator` | The Nth token names a real user who is not listed in `CAIRN_OPERATORS`. Give them a personal access token instead. |
+| `CAIRN_API_TOKENS entry N: no user; …` | Nobody with that identity or verified email has signed in yet. Sign in once, then restart. |
 
-All of them say which one failed in the log line — `db:`, `s3:` — and fail
-closed rather than starting half-configured.
+All of them say which one failed in the log line — `db:`, `s3:`,
+`CAIRN_API_TOKENS entry N` — and fail closed rather than starting
+half-configured. A token error names the entry's position, never its secret.
 
 ### Behind a reverse proxy
 
@@ -368,6 +374,40 @@ Two ways to authorize an agent, both documented in
 Minting a PAT is deliberately a browser-only action (Settings is
 session-authenticated and CSRF-guarded); there is no API to mint tokens with a
 token, by design.
+
+### Static tokens for the operator
+
+`CAIRN_API_TOKENS` exists for one job: the operator automating their own
+account from the server's configuration. A credential its user cannot see or
+revoke must not be able to act as them, so every entry names **an operator's
+own user** and nobody else:
+
+```text
+# By sign-in identity, with the default agent role:
+CAIRN_API_TOKENS=<secret>:https://id.example.com|abc-123
+# By verified email, with the human role:
+CAIRN_API_TOKENS=<secret>:you@example.com:human
+```
+
+Several entries go in one value, separated by commas.
+
+- `<user>` is either your sign-in identity, `<issuer>|<subject>`, exactly as
+  Settings → **Account** shows it, or your **verified** email. Either way it
+  must resolve at boot to an existing user who is an operator through
+  `CAIRN_OPERATORS`. An operator only through `CAIRN_OPERATOR_GROUP` cannot
+  hold one, because the group is read from a browser sign-in.
+- The role defaults to **agent**: artifacts, reads and annotations, never
+  sharing, expiry or delete. `:human` adds those, and like every credential it
+  still reaches only your own artifacts.
+- A token acts as its user and cannot choose another. Whatever it creates is
+  owned by the operator's user.
+- Each token shows up on its user's Settings page as **operator-provisioned**,
+  by position, never by secret. To revoke one, remove it and restart.
+- Anything else fails boot: an entry naming a non-operator, a user who has
+  never signed in, a suspended user, or any **legacy `secret:actor[:role]`
+  entry**. The legacy form is refused outright; there is no grace period.
+- Generate secrets with something like `openssl rand -hex 32`. Cairn keeps
+  only their SHA-256 digests in memory and never logs one.
 
 ## Verify the whole loop
 
