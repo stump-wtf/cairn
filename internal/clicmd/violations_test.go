@@ -242,7 +242,7 @@ func TestViolationLines(t *testing.T) {
 			`"my notes.md" is too large: the server's maximum is 10 MiB`},
 		{"member secret", cliclient.Violation{Field: "members[0].content", Reason: "secret_detected", Rule: "generic-api-key", Line: num("3"),
 			Message: "a credential was detected (rule generic-api-key, line 3); remove it or resend with --redact=mask"},
-			"a.log: a credential was detected (rule generic-api-key, line 3); remove it or resend with --redact=mask"},
+			"a.log line 3: credential detected (rule generic-api-key); remove it or resend with --redact=mask"},
 		{"member out of range", cliclient.Violation{Field: "members[9].name", Reason: "duplicate", Message: "is a duplicate"},
 			"members[9].name is a duplicate"},
 		{"uneven byte cap", cliclient.Violation{Field: "body", Reason: "too_large", Limit: num("10000000"), Unit: "bytes"},
