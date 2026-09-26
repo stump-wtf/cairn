@@ -44,9 +44,9 @@ func run(args []string) int {
 	// routes: usage errors get fang's ERROR layout (Cairn-skinned, on an
 	// interactive terminal only), everything else keeps the greppable
 	// "cairn: <tag>: <message>" shape (or one line per violation, SPEC-0019
-	// VE-8) or its --json envelope, and a
-	// SIGINT-canceled error prints nothing here — main's interrupted
-	// branch below owns that message and exit code 130.
+	// VE-8) or its --json envelope, and a SIGINT-canceled error prints
+	// nothing here — main's interrupted branch below owns that message and
+	// exit code 130.
 	errHandler := func(w io.Writer, styles fang.Styles, err error) {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return
