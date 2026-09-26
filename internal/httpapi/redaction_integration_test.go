@@ -402,3 +402,43 @@ func TestOwnerRedactionHoldsNoSecret(t *testing.T) {
 		t.Errorf("zero outcome renders as %q, want unscanned", got)
 	}
 }
+
+// TestMCPToolErrLogsRequestIDOverTransport: TestMCPToolErrLogsRejectionSurface
+// hands mcpToolErr a context it built itself, so it would still pass if the
+// real streamable-HTTP transport ran tool handlers on a context that had lost
+// the HTTP request id. This drives a failing tool call through the SDK client
+// and the real /mcp handler, and requires the logged tool error to carry the
+// request id chi's middleware assigned (SPEC-0017 RD-9 "Logs carry no value":
+// the line names the request).
+//
+// @joestump 09/26/2026 - Added in review of cairn#386.
+func TestMCPToolErrLogsRequestIDOverTransport(t *testing.T) {
+	logs := &syncBuffer{}
+	st := store.New(newTestPool(t), objectstore.NewMemory(), storeOpts())
+	srv := httptest.NewServer(New(st, nil, nil, mcpConfig(), slog.New(slog.NewTextHandler(logs, nil))).Handler())
+	t.Cleanup(srv.Close)
+
+	sess := mcpClient(t, srv, mintMCPToken(t, srv, "alice", nil), nil, "rd9-probe")
+	if res := callTool(t, sess, "artifact_read", map[string]any{"id": "nosuchid1"}); !res.IsError {
+		t.Fatal("artifact_read of an unknown id did not fail")
+	}
+
+	var line string
+	for _, l := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(l, "mcp: tool call") && strings.Contains(l, "tool=artifact_read") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("no mcp tool error was logged:\n%s", logs.String())
+	}
+	var reqID string
+	for _, f := range strings.Fields(line) {
+		if v, ok := strings.CutPrefix(f, "request_id="); ok {
+			reqID = v
+		}
+	}
+	if reqID == "" {
+		t.Errorf("the tool error logged over the real transport has no request_id: %s", line)
+	}
+}
