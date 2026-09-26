@@ -78,6 +78,12 @@ type CreationEvent struct {
 	// Tags are client-asserted (ADR-0018): carried so a consumer can route on
 	// them, never so it can trust them.
 	Tags []string
+	// OwnerUserID and OwnerTeamID name the workspace that owns the artifact
+	// (exactly one is set). They select the owned subscriptions the event is
+	// delivered to and are never put on the wire (SPEC-0023 REQ "Events Go
+	// Only to the Artifact's Workspace").
+	OwnerUserID string
+	OwnerTeamID string
 }
 
 // CreationEmitter receives post-commit creation events. Implementations MUST
@@ -104,8 +110,9 @@ type Options struct {
 	NewID func() (string, error)
 	// Emitter, when non-nil, receives a CreationEvent after every durable
 	// artifact creation (single-body and bundle), covering every surface
-	// (REST/web/CLI/MCP) at this single choke point. Nil = inert
-	// (SPEC-0012 REQ "Delivery Targets from Configuration").
+	// (REST/web/CLI/MCP) at this single choke point. Nil = inert. Delivery
+	// targets are the artifact owner's subscriptions (SPEC-0023 REQ "Owned
+	// Outbound Subscriptions").
 	Emitter CreationEmitter
 }
 
@@ -161,7 +168,9 @@ func (s *Store) emitCreated(a *artifact.Artifact) {
 		OnBehalfOf: a.Provenance.OnBehalfOf,
 		// Cloned so the emitter never shares a backing array with the
 		// artifact the create call hands back to its caller.
-		Tags: slices.Clone(a.Tags),
+		Tags:        slices.Clone(a.Tags),
+		OwnerUserID: a.Access.OwnerUserID,
+		OwnerTeamID: a.Access.OwnerTeamID,
 	})
 }
 

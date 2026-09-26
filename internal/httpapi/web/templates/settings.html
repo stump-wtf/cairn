@@ -23,7 +23,7 @@
 <main id="settings-main" class="bin-main settings-main" role="main" tabindex="-1">
   <a class="connect-back" href="/bin">← back to the bin</a>
   <h1 class="connect-h1">Settings</h1>
-  <p class="connect-lede">Your API tokens, MCP connection, CLI, and account — all in one place.</p>
+  <p class="connect-lede">Your API tokens, MCP connection, outbound subscriptions, CLI, and account — all in one place.</p>
 
   <div class="settings-shell">
     {{/* The left-nav (design: "sectioned, left-nav or stacked cards" — issue
@@ -34,6 +34,7 @@
       <a class="settings-nav-link" href="#tokens">API tokens</a>
       <a class="settings-nav-link" href="#mcp">MCP connection</a>
       <a class="settings-nav-link" href="#sessions">Agent sessions</a>
+      {{if .Subscriptions}}<a class="settings-nav-link" href="#subscriptions">Outbound subscriptions</a>{{end}}
       <a class="settings-nav-link" href="#cli">CLI</a>
       <a class="settings-nav-link" href="#account">Account</a>
     </nav>
@@ -150,6 +151,85 @@
           </tbody>
         </table>
       </section>
+
+      {{with .Subscriptions}}
+      <section class="settings-card" id="subscriptions" aria-labelledby="subscriptions-h">
+        <h2 id="subscriptions-h" class="settings-card-h">Outbound subscriptions</h2>
+        <p class="settings-card-note">Send a signed event to a URL you own — your Switchboard webhook, say — whenever one of your artifacts is created. Events about your artifacts go only to your subscriptions, never to anyone else's. Up to {{.Limit}}.</p>
+
+        {{if .NewSecret}}
+        <div class="token-secret-card" data-subscription-secret>
+          <p class="token-secret-warn" aria-live="polite">⚠ Store this signing secret now — you won't see it again. Deliveries carry <code>X-Cairn-Signature: sha256=&lt;HMAC of the body&gt;</code> under it.</p>
+          <div class="token-secret-row">
+            <code class="token-secret-value" data-subscription-secret-value>{{.NewSecret}}</code>
+          </div>
+        </div>
+        {{end}}
+        {{if .Error}}<p class="token-form-error" role="alert" data-subscription-error>{{.Error}}</p>{{end}}
+        {{if .Done}}<p class="settings-card-note" role="status" data-subscription-done>Subscription {{.Done}}.</p>{{end}}
+
+        {{if not .Available}}
+        <p class="token-form-error" data-subscription-unavailable>This server has no <code class="connect-code">CAIRN_ENCRYPTION_KEY</code>, so subscription secrets cannot be stored and no subscription can be created. Ask the operator to set one.</p>
+        {{else if .AtLimit}}
+        <p class="settings-card-note" data-subscription-at-limit>You have {{.Limit}} subscriptions, the most allowed. Delete one to add another.</p>
+        {{else}}
+        <form class="token-form" method="post" action="/settings/subscriptions" data-subscription-form>
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="action" value="create">
+          <div class="token-form-row">
+            <label class="login-label" for="subscription-url">Target URL</label>
+            <input class="login-input" id="subscription-url" name="url" type="url" maxlength="2048" placeholder="https://switchboard.example/webhooks/w/…" autocomplete="off" required>
+          </div>
+          <div class="token-form-row">
+            <label class="login-label" for="subscription-secret">Signing secret (optional)</label>
+            <input class="login-input" id="subscription-secret" name="secret" type="password" maxlength="512" autocomplete="off" aria-describedby="subscription-secret-note">
+            <p class="settings-card-note" id="subscription-secret-note">Paste the secret your receiver issued (at least 32 characters) so it verifies deliveries unchanged, or leave it empty and Cairn mints one.</p>
+          </div>
+          <fieldset class="consent-scopes token-scopes">
+            <legend class="login-label">Events (none checked: all)</legend>
+            {{range .EventTypes}}
+            <label class="consent-scope"><input type="checkbox" name="event_types" value="{{.}}"><span>{{.}}</span></label>
+            {{end}}
+          </fieldset>
+          <div class="token-form-row">
+            <label class="login-label" for="subscription-tags">Tags (optional, any of)</label>
+            <input class="login-input" id="subscription-tags" name="tags" type="text" maxlength="2048" placeholder="handoff, lane:m" autocomplete="off">
+          </div>
+          <div class="token-form-row">
+            <label class="login-label" for="subscription-share-types">Share types (optional)</label>
+            <input class="login-input" id="subscription-share-types" name="share_types" type="text" maxlength="512" placeholder="markdown, bundle" autocomplete="off">
+          </div>
+          <button type="submit" class="login-btn token-create-btn">Add subscription</button>
+        </form>
+        {{end}}
+
+        <table class="token-table" data-subscription-table>
+          <caption class="sr-only">Your outbound subscriptions</caption>
+          <thead>
+            <tr>
+              <th scope="col">Target</th>
+              <th scope="col">Filters</th>
+              <th scope="col">Status</th>
+              <th scope="col">Last delivery</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range .Rows}}<tr class="token-row{{if not .Active}} token-row-revoked{{end}}" id="subscription-{{.ID}}" data-subscription-id="{{.ID}}">
+              <td class="token-cell-name subscription-url"><code>{{.URL}}</code></td>
+              <td class="token-cell-scopes"><code>{{.Filters}}</code></td>
+              <td class="token-cell-created" data-subscription-status>{{.Status}}{{if .Failures}} · {{.Failures}} failed in a row{{end}}</td>
+              <td class="token-cell-lastused">{{.LastAttempt}}{{if .LastResult}} · {{.LastResult}}{{end}}</td>
+              <td class="token-cell-action subscription-actions">
+                <form method="post" action="/settings/subscriptions"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}">{{if .Active}}<button type="submit" name="action" value="pause" class="token-revoke-btn subscription-btn">Pause</button>{{else}}<button type="submit" name="action" value="resume" class="token-revoke-btn subscription-btn">Resume</button>{{end}}</form>
+                {{if $.Subscriptions.Available}}<form method="post" action="/settings/subscriptions"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit" name="action" value="rotate" class="token-revoke-btn subscription-btn">Rotate secret</button></form>{{end}}
+                <form method="post" action="/settings/subscriptions"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit" name="action" value="delete" class="token-revoke-btn">Delete</button></form>
+              </td>
+            </tr>{{else}}<tr class="token-empty-row" data-subscription-empty><td colspan="5">No subscriptions yet.</td></tr>{{end}}
+          </tbody>
+        </table>
+      </section>
+      {{end}}
 
       <section class="settings-card" id="cli" aria-labelledby="cli-h">
         <h2 id="cli-h" class="settings-card-h"><span class="connect-h2-glyph" aria-hidden="true">&gt;_</span> CLI <span class="connect-badge connect-badge-live">available now</span></h2>

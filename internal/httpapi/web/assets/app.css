@@ -668,6 +668,12 @@ body.landing { display: flex; flex-direction: column; align-items: center; justi
 .token-revoke-btn:hover { border-color: #4a2b2b; background: rgba(255,107,107,.10); }
 .token-empty-row td { color: var(--t7); font: 400 12px var(--mono); text-align: center; padding: 18px 10px; }
 
+/* ---- Settings: Outbound subscriptions (SPEC-0023) ---- */
+.subscription-url code { color: var(--t2); font: 400 11.5px var(--mono); word-break: break-all; }
+.subscription-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.subscription-actions form { margin: 0; }
+.subscription-btn { color: var(--t3); }
+
 /* ---- Settings: Account (#75) ---- */
 .account-facts { margin: 14px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; }
 .account-facts dt { color: var(--t6); font: 400 11px var(--mono); }

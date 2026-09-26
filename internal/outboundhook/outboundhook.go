@@ -1,15 +1,26 @@
-// Package outboundhook delivers post-commit artifact-creation events to
-// configured HTTP targets (outbound webhooks). It is the producer-side twin of
-// the inbound Webhook Inspector (internal/webhook, SPEC-0005): that feature
-// captures inbound requests as artifacts; this one announces new artifacts to
-// the outside world, notably Switchboard ingest URLs that turn events into
-// durable todos.
+// Package outboundhook delivers post-commit artifact events to the owned
+// outbound subscriptions of the workspace that owns the artifact. It is the
+// producer-side twin of the inbound Webhook Inspector (internal/webhook,
+// SPEC-0005): that feature captures inbound requests as artifacts; this one
+// announces new artifacts to the outside world, notably Switchboard ingest
+// URLs that turn events into durable todos.
 //
-// Delivery is deliberately best-effort: a bounded in-memory queue and one
-// worker goroutine with three attempts per target. Events in flight at process
-// death are lost — the artifact URL remains the record; the doorbell is a hint.
+// Targets are rows, never configuration: each event carries the owner of its
+// subject artifact, and a worker asks internal/subscription for that
+// workspace's active subscriptions whose filters admit it. Each delivery is
+// signed with that subscription's own secret, dialled through the target
+// policy (which re-checks the resolved address on every dial and never
+// follows a redirect), and its outcome is recorded as the subscription's
+// health. There is no instance-wide target list.
 //
-// Governing: ADR-0017 (Outbound Webhooks), SPEC-0012
+// Delivery is deliberately best-effort: a bounded in-memory queue, a few
+// workers, and three attempts per subscription. Events in flight at process
+// death are lost — the artifact URL remains the record; the doorbell is a
+// hint.
+//
+// Governing: ADR-0017 (Outbound Webhooks), SPEC-0012; ADR-0029 (section 6),
+// SPEC-0023 REQ "Owned Outbound Subscriptions", REQ "Events Go Only to the
+// Artifact's Workspace", REQ "Subscription Target Safety"
 package outboundhook
 
 import (
@@ -19,23 +30,29 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/subscription"
 )
 
 // Tunables. The queue cap bounds memory under burst; the retry schedule is
 // short because consumers are few and internal (SPEC-0012 REQ "Bounded Async
-// Delivery with Retry").
+// Delivery with Retry"). The per-attempt timeout is the target policy's
+// (subscription.AttemptTimeout, 5 seconds).
 const (
-	queueCap       = 256
-	maxAttempts    = 3
-	requestTimeout = 5 * time.Second
+	queueCap    = 256
+	maxAttempts = 3
+	// workers deliver concurrently, so one slow subscription (up to three
+	// 5-second attempts) does not hold every other owner's events behind it.
+	workers = 4
 )
 
 // backoffFor returns the wait before attempt n (0-based). Package-level so
@@ -54,10 +71,16 @@ var backoffFor = func(attempt int) time.Duration {
 // EventKind is the sole event kind today; the envelope leaves room for more.
 const EventKind = "artifact.created"
 
+// Subscriptions is the target source: internal/subscription.Service.
+type Subscriptions interface {
+	Targets(ctx context.Context, owner subscription.Owner, m subscription.Match) ([]subscription.Target, int, error)
+	Record(ctx context.Context, id string, r subscription.Result) (bool, error)
+}
+
 // Emitter implements store.CreationEmitter.
 type Emitter struct {
-	targets []string
-	secret  []byte
+	subs    Subscriptions
+	policy  *subscription.Policy
 	baseURL string
 	log     *slog.Logger
 	client  *http.Client
@@ -68,6 +91,9 @@ type envelope struct {
 	id        string
 	createdAt time.Time
 	body      []byte
+	// owner and match select the targets; neither is on the wire.
+	owner subscription.Owner
+	match subscription.Match
 }
 
 // eventBody is the wire format (SPEC-0012 REQ "Event Payload").
@@ -102,34 +128,29 @@ type eventData struct {
 	Tags       []string `json:"tags,omitempty"`
 }
 
-// New builds an emitter delivering to each target URL. baseURL is the public
-// origin joined onto the store-provided web path; secret, when non-empty,
-// signs every delivery with X-Cairn-Signature. Call Run to start delivery.
-func New(targets []string, secret, baseURL string, log *slog.Logger) *Emitter {
-	e := &Emitter{
-		targets: append([]string(nil), targets...),
+// New builds an emitter delivering to subs' targets through policy, whose
+// client dials every attempt. baseURL is the public origin joined onto the
+// store-provided web path. Call Run to start delivery.
+func New(subs Subscriptions, policy *subscription.Policy, baseURL string, log *slog.Logger) *Emitter {
+	if policy == nil {
+		policy = &subscription.Policy{}
+	}
+	return &Emitter{
+		subs:    subs,
+		policy:  policy,
 		baseURL: baseURL,
 		log:     log,
 		ch:      make(chan envelope, queueCap),
-		client: &http.Client{
-			Timeout: requestTimeout,
-			// Never follow redirects: a redirecting target would leak the
-			// signed body (and the capability URL) to an unconfigured host
-			// (SPEC-0012 Security Requirements — redirect validation).
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
+		client:  policy.Client(),
 	}
-	if secret != "" {
-		e.secret = []byte(secret)
-	}
-	return e
 }
 
 // EmitArtifactCreated enqueues an event without ever blocking the caller. On a
 // full queue the event is dropped with a warning — the doorbell is a hint, not
-// a ledger (SPEC-0012 REQ "Bounded Async Delivery with Retry").
+// a ledger (SPEC-0012 REQ "Bounded Async Delivery with Retry"). The event
+// goes only to the artifact owner's subscriptions, never the actor's unless
+// the actor is the owner (SPEC-0023 REQ "Events Go Only to the Artifact's
+// Workspace"); the lookup runs on a worker, so creation never waits on it.
 func (e *Emitter) EmitArtifactCreated(ev store.CreationEvent) {
 	// A nil receiver is a no-op rather than a panic. store.Options.Emitter is an
 	// INTERFACE field, so a nil *Emitter assigned into it yields a non-nil
@@ -141,6 +162,12 @@ func (e *Emitter) EmitArtifactCreated(ev store.CreationEvent) {
 	if e == nil {
 		return
 	}
+	owner := subscription.Owner{UserID: ev.OwnerUserID, TeamID: ev.OwnerTeamID}
+	if !owner.Valid() {
+		// An artifact always has exactly one owner (SPEC-0023 REQ "Owner
+		// Model"); an event without one has nowhere it may go.
+		return
+	}
 	eventID, createdAt := uuid.NewString(), time.Now().UTC()
 	raw, err := e.encode(ev, eventID, createdAt)
 	if err != nil {
@@ -148,8 +175,12 @@ func (e *Emitter) EmitArtifactCreated(ev store.CreationEvent) {
 		e.log.Error("outboundhook: marshal event", "error", err)
 		return
 	}
+	env := envelope{
+		id: eventID, createdAt: createdAt, body: raw, owner: owner,
+		match: subscription.Match{Kind: EventKind, ShareType: string(ev.ShareType), Tags: ev.Tags},
+	}
 	select {
-	case e.ch <- envelope{id: eventID, createdAt: createdAt, body: raw}:
+	case e.ch <- env:
 	default:
 		e.log.Warn("outboundhook: queue full, dropping event",
 			"event_id", eventID, "queue_cap", queueCap)
@@ -159,7 +190,7 @@ func (e *Emitter) EmitArtifactCreated(ev store.CreationEvent) {
 // encode renders the wire body for one event — the exact bytes
 // X-Cairn-Signature covers. It takes the event id and clock as arguments so
 // golden tests can pin those bytes, which is how a payload change is proven
-// additive rather than merely asserted to be.
+// additive rather than merely asserted to be. The owner is never encoded.
 func (e *Emitter) encode(ev store.CreationEvent, eventID string, createdAt time.Time) ([]byte, error) {
 	body := eventBody{
 		Source:    "cairn",
@@ -188,63 +219,130 @@ func (e *Emitter) encode(ev store.CreationEvent, eventID string, createdAt time.
 // Run delivers queued events until ctx is cancelled. Start it as a goroutine,
 // reaper-style; it returns when ctx is done and in-flight attempts unwind.
 func (e *Emitter) Run(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case env := <-e.ch:
-			e.deliver(ctx, env)
-		}
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case env := <-e.ch:
+					e.deliver(ctx, env)
+				}
+			}
+		}()
 	}
+	wg.Wait()
 }
 
-// deliver fans one event out to every target, independently retried.
+// deliver fans one event out to the owning workspace's matching
+// subscriptions, each independently retried and recorded. Target URLs are
+// bearer capabilities, so only subscription ids are ever logged.
 func (e *Emitter) deliver(ctx context.Context, env envelope) {
-	for i, target := range e.targets {
-		if err := e.deliverOne(ctx, env, target); err != nil {
-			// Target URLs are bearer capabilities: never log them (SPEC-0012
-			// REQ "Delivery Targets from Configuration").
-			e.log.Error("outboundhook: delivery abandoned",
-				"target_index", i, "event_id", env.id, "attempts", maxAttempts, "error", err)
+	if e.subs == nil {
+		return
+	}
+	targets, skipped, err := e.subs.Targets(ctx, env.owner, env.match)
+	if err != nil {
+		if ctx.Err() == nil {
+			e.log.Error("outboundhook: look up subscriptions", "event_id", env.id, "error", err)
+		}
+		return
+	}
+	if skipped > 0 {
+		e.log.Error("outboundhook: subscription secrets do not open under CAIRN_ENCRYPTION_KEY; not delivering to them",
+			"event_id", env.id, "skipped", skipped)
+	}
+	for _, t := range targets {
+		res := e.deliverOne(ctx, env, t)
+		if ctx.Err() != nil {
+			// Shutdown interrupted the attempt: that is not the target's fault.
+			return
+		}
+		disabled, err := e.subs.Record(ctx, t.ID, res)
+		if err != nil {
+			e.log.Error("outboundhook: record delivery", "subscription_id", t.ID, "event_id", env.id, "error", err)
+		}
+		if !res.OK {
+			e.log.Warn("outboundhook: delivery failed",
+				"subscription_id", t.ID, "event_id", env.id, "reason", res.Reason, "status", res.Status)
+		}
+		if disabled {
+			e.log.Warn("outboundhook: subscription disabled after consecutive failures",
+				"subscription_id", t.ID, "failures", subscription.DisableAfter)
 		}
 	}
 }
 
-func (e *Emitter) deliverOne(ctx context.Context, env envelope, target string) error {
-	var lastErr error
+// deliverOne posts one event to one subscription with retries, signed with
+// that subscription's secret (SPEC-0012 REQ "Signed Delivery"). The target's
+// shape is re-checked first, so turning CAIRN_OUTBOUND_ALLOW_HTTP off stops
+// http:// targets at once; its addresses are re-checked by the policy's
+// dialer on every attempt.
+func (e *Emitter) deliverOne(ctx context.Context, env envelope, t subscription.Target) subscription.Result {
+	if err := e.policy.CheckTarget(t.URL); err != nil {
+		return subscription.Result{Reason: subscription.ReasonTargetRefused}
+	}
+	mac := hmac.New(sha256.New, t.Secret)
+	mac.Write(env.body)
+	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	var last subscription.Result
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if err := sleepCtx(ctx, backoffFor(attempt)); err != nil {
-			return ctx.Err()
+			return last
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(env.body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.URL, bytes.NewReader(env.body))
 		if err != nil {
-			return fmt.Errorf("build request: %w", err)
+			return subscription.Result{Reason: subscription.ReasonTargetRefused}
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "cairn-outboundhook/1")
 		req.Header.Set("X-Cairn-Event", EventKind)
 		req.Header.Set("X-Cairn-Event-Id", env.id)
-		if e.secret != nil {
-			mac := hmac.New(sha256.New, e.secret)
-			mac.Write(env.body)
-			req.Header.Set("X-Cairn-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
-		}
+		req.Header.Set("X-Cairn-Signature", sig)
 		resp, err := e.client.Do(req)
 		if err != nil {
-			lastErr = fmt.Errorf("attempt %d: %w", attempt+1, err)
+			last = subscription.Result{Reason: failureReason(err)}
+			if last.Reason == subscription.ReasonBlockedAddress {
+				// The address will not become public on a retry.
+				return last
+			}
 			continue
 		}
 		_ = resp.Body.Close()
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil
+		switch code := resp.StatusCode; {
+		case code >= 200 && code < 300:
+			return subscription.Result{OK: true, Status: code}
+		case code >= 300 && code < 400:
+			// Redirects are never followed: a 3xx is a failed delivery, and a
+			// retry would only be redirected again (SPEC-0023 REQ
+			// "Subscription Target Safety").
+			return subscription.Result{Status: code, Reason: subscription.ReasonRedirect}
+		case code >= 400 && code < 500 && code != http.StatusTooManyRequests:
+			// 4xx (other than 429) will not improve on retry; abandon early.
+			return subscription.Result{Status: code, Reason: subscription.ReasonHTTPStatus}
+		default:
+			last = subscription.Result{Status: code, Reason: subscription.ReasonHTTPStatus}
 		}
-		// 4xx (other than 429) will not improve on retry; abandon early.
-		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
-			return fmt.Errorf("attempt %d: status %d", attempt+1, resp.StatusCode)
-		}
-		lastErr = fmt.Errorf("attempt %d: status %d", attempt+1, resp.StatusCode)
 	}
-	return lastErr
+	return last
+}
+
+// failureReason classifies a transport error into the fixed vocabulary
+// recorded as last_error, which never carries a host or URL.
+func failureReason(err error) string {
+	var ne net.Error
+	switch {
+	case errors.Is(err, subscription.ErrBlockedAddress):
+		return subscription.ReasonBlockedAddress
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &ne) && ne.Timeout():
+		return subscription.ReasonTimeout
+	default:
+		return subscription.ReasonConnection
+	}
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {

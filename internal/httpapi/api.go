@@ -21,6 +21,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/session"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/subscription"
 	"github.com/stump-wtf/cairn/internal/trajectory"
 	"github.com/stump-wtf/cairn/internal/user"
 	"github.com/stump-wtf/cairn/internal/webhook"
@@ -99,6 +100,11 @@ type Config struct {
 	// means the instance has no operator and every operator route answers
 	// 404.
 	Operators *operator.Set
+	// Subscriptions is the owned outbound subscription core (SPEC-0023 REQ
+	// "Owned Outbound Subscriptions"), shared with the outbound emitter the
+	// store was built with. Nil leaves /v1/subscriptions and the Settings
+	// section absent.
+	Subscriptions *subscription.Service
 	// OAuth 2.1 authorization-server tuning (SPEC-0007, ADR-0004).
 	// AccessTokenTTL is the short audience-bound access-token lifetime (default
 	// ~1h); RefreshTokenTTL the rotating refresh-token lifetime (default 30d).
@@ -204,6 +210,8 @@ type Server struct {
 	// audit trail. Nil on storeless unit wirings; the operator routes are
 	// gated on cfg.Operators as well (requireOperator).
 	ops *operator.Service
+	// subs is the owned outbound subscription core (Config.Subscriptions).
+	subs *subscription.Service
 	// staticTokens is the CAIRN_API_TOKENS bearer surface, holding no
 	// credential until ResolveAPITokens binds the entries to their
 	// operators' users. Nil when the caller supplied its own Authenticator.
@@ -375,6 +383,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		pat:                 patSvc,
 		mcpSessions:         mcpSessSvc,
 		ops:                 opsSvc,
+		subs:                cfg.Subscriptions,
 		staticTokens:        static,
 	}
 }
@@ -492,6 +501,21 @@ func (s *Server) mountAPI(r chi.Router) {
 		// operator configured, gets the uniform 404 (see requireOperator).
 		r.With(s.requireOperator).Get("/operator/directory", s.handleOperatorDirectory)
 		r.With(s.requireOperator, s.enforceCSRF).Post("/operator/suspensions", s.handleOperatorSuspension)
+
+		// Owned outbound subscriptions (SPEC-0023 REQ "Owned Outbound
+		// Subscriptions"): a human principal with sharing:manage manages its
+		// workspace's delivery targets. Agent tokens and PATs are refused, so
+		// no agent can point its human's events at a new URL. Writes are
+		// CSRF-guarded for browser sessions.
+		r.Route("/subscriptions", func(r chi.Router) {
+			r.Use(s.requireSubscriptions, s.requireAuth, s.requireScope(scopeSharingManage), s.requireHuman)
+			r.Get("/", s.handleListSubscriptions)
+			r.With(s.enforceCSRF).Post("/", s.handleCreateSubscription)
+			r.Get("/{id}", s.handleGetSubscription)
+			r.With(s.enforceCSRF).Patch("/{id}", s.handleUpdateSubscription)
+			r.With(s.enforceCSRF).Delete("/{id}", s.handleDeleteSubscription)
+			r.With(s.enforceCSRF).Post("/{id}/rotate", s.handleRotateSubscription)
+		})
 
 		// Link-capability reads: a valid id grants read; unknown/expired ids
 		// return a uniform 404 (ADR-0007).

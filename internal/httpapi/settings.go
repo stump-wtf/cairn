@@ -61,6 +61,10 @@ type settingsView struct {
 	// listed as operator-provisioned (SPEC-0023 REQ "Static API Tokens Act as
 	// an Operator's User"). Only an operator can have any.
 	StaticTokens []staticTokenRowView
+	// Subscriptions is the Outbound subscriptions section (SPEC-0023 REQ
+	// "Owned Outbound Subscriptions"); nil when the server has no
+	// subscription core.
+	Subscriptions *subscriptionsSectionView
 }
 
 // staticTokenRowView is one operator-provisioned token: its position in
@@ -199,6 +203,13 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, errs.ErrUnauthorized, nil)
 		return
 	}
+	s.renderWeb(w, r, "settings", s.settingsView(r, p, nil))
+}
+
+// settingsView builds the Settings page's view model for p. sub, when
+// non-nil, carries the outcome of a subscription form post: the one-time
+// secret or the refusal to show.
+func (s *Server) settingsView(r *http.Request, p *Principal, sub *subscriptionOutcome) settingsView {
 	vm := settingsView{
 		Actor:        p.ActorID,
 		AuthMethod:   s.authMethodLabel(),
@@ -243,7 +254,8 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 			vm.OperatorActions = toAuditRows(entries)
 		}
 	}
-	s.renderWeb(w, r, "settings", vm)
+	vm.Subscriptions = s.subscriptionsSection(r, p, sub)
+	return vm
 }
 
 // authMethodLabel names how the current session was established, for the
