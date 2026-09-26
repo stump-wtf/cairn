@@ -62,7 +62,7 @@ func assertCountsMatchAggregates(t *testing.T, pool *pgxpool.Pool, artID int64) 
 func TestServiceReactToggle(t *testing.T) {
 	pool := newTestPool(t)
 	ctx := context.Background()
-	svc := NewService(pool, sharetype.Default())
+	svc := NewService(pool, sharetype.Default(), WithRedaction(testScanner(t), nil))
 	artID := insertArtifact(t, pool, "SVCAAAA1", sharetype.KeyCode)
 
 	ref := json.RawMessage(`{"start":40,"end":47}`)
@@ -158,7 +158,7 @@ func TestServiceReactToggle(t *testing.T) {
 func TestServiceReactConcurrentIdempotent(t *testing.T) {
 	pool := newTestPool(t)
 	ctx := context.Background()
-	svc := NewService(pool, sharetype.Default())
+	svc := NewService(pool, sharetype.Default(), WithRedaction(testScanner(t), nil))
 	artID := insertArtifact(t, pool, "SVCAAAA2", sharetype.KeyMarkdown)
 
 	const goroutines = 16
@@ -227,7 +227,7 @@ func TestServiceReactConcurrentIdempotent(t *testing.T) {
 func TestServiceUnreactByID(t *testing.T) {
 	pool := newTestPool(t)
 	ctx := context.Background()
-	svc := NewService(pool, sharetype.Default())
+	svc := NewService(pool, sharetype.Default(), WithRedaction(testScanner(t), nil))
 	artID := insertArtifact(t, pool, "SVCAAAA3", sharetype.KeyWebhook)
 
 	r, created, err := svc.React(ctx, "SVCAAAA3", sharetype.AnchorWebhookRequest,
@@ -260,7 +260,7 @@ func TestServiceUnreactByID(t *testing.T) {
 func TestServiceCommentThreading(t *testing.T) {
 	pool := newTestPool(t)
 	ctx := context.Background()
-	svc := NewService(pool, sharetype.Default())
+	svc := NewService(pool, sharetype.Default(), WithRedaction(testScanner(t), nil))
 	artID := insertArtifact(t, pool, "SVCAAAA4", sharetype.KeyMarkdown)
 
 	sel := json.RawMessage(`{"quote":"ship it","start":10,"end":17}`)
@@ -399,7 +399,7 @@ func TestServiceCommentThreading(t *testing.T) {
 func TestServicePinCount(t *testing.T) {
 	pool := newTestPool(t)
 	ctx := context.Background()
-	svc := NewService(pool, sharetype.Default())
+	svc := NewService(pool, sharetype.Default(), WithRedaction(testScanner(t), nil))
 	artID := insertArtifact(t, pool, "SVCAAAA5", sharetype.KeyImage)
 
 	region := json.RawMessage(`{"x":0.42,"y":0.31}`)
@@ -442,7 +442,7 @@ func TestServicePinCount(t *testing.T) {
 func TestServiceExpiredArtifactUniformNotFound(t *testing.T) {
 	pool := newTestPool(t)
 	ctx := context.Background()
-	svc := NewService(pool, sharetype.Default())
+	svc := NewService(pool, sharetype.Default(), WithRedaction(testScanner(t), nil))
 	insertArtifact(t, pool, "SVCAAAA6", sharetype.KeyMarkdown)
 	if _, err := pool.Exec(ctx,
 		`UPDATE artifacts SET expires_at = now() - interval '1 minute' WHERE public_id = 'SVCAAAA6'`); err != nil {

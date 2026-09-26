@@ -28,8 +28,10 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // Comment body and emoji bounds. The transport additionally enforces its own
@@ -70,15 +72,35 @@ type Service struct {
 	pool *pgxpool.Pool
 	reg  *sharetype.Registry
 	now  func() time.Time
+	// scanner masks credentials in comment bodies before they are stored, and
+	// metrics counts each scan (SPEC-0017). A Service built without them stores
+	// bodies as written and records the outcome "unscanned", never "clean";
+	// cairnd always wires both.
+	scanner *redact.Scanner
+	metrics *metrics.Registry
+}
+
+// Option configures a Service at construction.
+type Option func(*Service)
+
+// WithRedaction wires the ingest secret scanner and the metrics registry the
+// comment write paths use (ADR-0023, SPEC-0017 RD-4). A nil registry counts
+// nothing.
+func WithRedaction(scanner *redact.Scanner, m *metrics.Registry) Option {
+	return func(s *Service) { s.scanner, s.metrics = scanner, m }
 }
 
 // NewService constructs a Service over a Postgres pool. A nil registry falls
 // back to the process-wide default.
-func NewService(pool *pgxpool.Pool, reg *sharetype.Registry) *Service {
+func NewService(pool *pgxpool.Pool, reg *sharetype.Registry, opts ...Option) *Service {
 	if reg == nil {
 		reg = sharetype.Default()
 	}
-	return &Service{pool: pool, reg: reg, now: time.Now}
+	s := &Service{pool: pool, reg: reg, now: time.Now}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Reaction is one stored reaction row.
@@ -103,6 +125,9 @@ type Comment struct {
 	CreatedAt  time.Time
 	EditedAt   *time.Time
 	Deleted    bool
+	// Redaction is what the ingest scan did to Body. AddComment sets it for
+	// the create response; reads leave it zero (SPEC-0017 RD-9).
+	Redaction redact.Summary
 }
 
 // CommentInput is the surface-agnostic input to AddComment.
@@ -326,9 +351,16 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 	if in.Body == "" || len(in.Body) > maxCommentBytes {
 		return Comment{}, fmt.Errorf("annotation: comment body length %d: %w", len(in.Body), ErrBodyInvalid)
 	}
+	// The body is scanned before the transaction opens, so a scan that fails
+	// closed leaves nothing behind, and only the masked text is ever written
+	// or returned (SPEC-0017 RD-1).
+	body, outcome, err := s.scanBody(ctx, in.Body)
+	if err != nil {
+		return Comment{}, err
+	}
 
 	var out Comment
-	err := s.inTx(ctx, func(tx pgx.Tx) error {
+	err = s.inTx(ctx, func(tx pgx.Tx) error {
 		art, err := resolveArtifact(ctx, tx, publicID)
 		if err != nil {
 			return err
@@ -361,12 +393,10 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 			return err
 		}
 
-		// The scan outcome commits with the comment it describes. Nothing
-		// scans comments yet, so the zero Summary records "unscanned" until
-		// #291 sets it from the scanner.
+		// The scan outcome commits with the comment it describes.
 		//
 		// Governing: ADR-0023, SPEC-0017 RD-9
-		outcome, err := redact.Summary{}.Normalized()
+		stored, err := outcome.Normalized()
 		if err != nil {
 			return fmt.Errorf("annotation: comment redaction outcome: %w", err)
 		}
@@ -381,8 +411,8 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			RETURNING id, created_at`,
 			anchor.ArtifactID, string(anchor.Type), anchor.Ref, anchor.Key,
-			in.ParentID, in.ActorID, in.OnBehalfOf, in.Body,
-			string(outcome.Status), outcome.Count, outcome.Rules,
+			in.ParentID, in.ActorID, in.OnBehalfOf, body,
+			string(stored.Status), stored.Count, stored.Rules,
 		).Scan(&id, &createdAt); err != nil {
 			return fmt.Errorf("annotation: insert comment: %w", err)
 		}
@@ -391,8 +421,8 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 		}
 		out = Comment{
 			ID: id, Anchor: anchor, ParentID: in.ParentID,
-			ActorID: in.ActorID, OnBehalfOf: in.OnBehalfOf, Body: in.Body,
-			CreatedAt: createdAt,
+			ActorID: in.ActorID, OnBehalfOf: in.OnBehalfOf, Body: body,
+			CreatedAt: createdAt, Redaction: stored,
 		}
 		return nil
 	})
@@ -408,6 +438,12 @@ func (s *Service) EditComment(ctx context.Context, publicID string, commentID in
 	if body == "" || len(body) > maxCommentBytes {
 		return fmt.Errorf("annotation: comment body length %d: %w", len(body), ErrBodyInvalid)
 	}
+	// An edit is scanned like a create, and its outcome replaces the old one
+	// in the same transaction as the new body (SPEC-0017 RD-4, RD-9).
+	body, outcome, err := s.scanBody(ctx, body)
+	if err != nil {
+		return err
+	}
 	return s.inTx(ctx, func(tx pgx.Tx) error {
 		art, err := resolveArtifact(ctx, tx, publicID)
 		if err != nil {
@@ -422,6 +458,9 @@ func (s *Service) EditComment(ctx context.Context, publicID string, commentID in
 		}
 		if tag.RowsAffected() == 0 {
 			return commentWriteRefusal(ctx, tx, art.id, commentID)
+		}
+		if err := store.RecordRedaction(ctx, tx, store.RedactionComment, commentID, outcome); err != nil {
+			return fmt.Errorf("annotation: edit comment %d: %w", commentID, err)
 		}
 		return nil
 	})
