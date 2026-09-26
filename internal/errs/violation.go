@@ -415,14 +415,17 @@ func limitText(limit any, unit string) string {
 	return s + " " + unit
 }
 
-// truncateUTF8 cuts s to at most n bytes without splitting a rune.
+// truncateUTF8 cuts s to at most n bytes without splitting a rune. Only the
+// cut point is examined: it backs off to the start of the rune straddling it,
+// by at most UTFMax-1 bytes. An invalid byte earlier in s is kept (encoding/json
+// replaces it with U+FFFD) rather than emptying the whole echo, which trimming
+// until the prefix validated would do.
 func truncateUTF8(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	s = s[:n]
-	for len(s) > 0 && !utf8.ValidString(s) {
-		s = s[:len(s)-1]
+	for i := 1; i < utf8.UTFMax && n > 0 && !utf8.RuneStart(s[n]); i++ {
+		n--
 	}
-	return s
+	return s[:n]
 }
