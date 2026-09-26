@@ -25,6 +25,9 @@ type sentRequest struct {
 	ttl   string   // --ttl as typed ("60d"), not the seconds sent
 	tags  []string // tags as sent, after case folding, in order
 	files []string // file arguments, in bundle member order
+	// redact is --redact as sent: "mask" when the writer already downgraded,
+	// so a rejection does not advise sending it again.
+	redact string
 }
 
 // requestError carries sentRequest to printError alongside the failure. It is

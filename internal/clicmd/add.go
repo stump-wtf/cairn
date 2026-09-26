@@ -39,6 +39,10 @@ func runAdd(cmd *cobra.Command, streams IOStreams, flags *globalFlags, configPat
 	if err != nil {
 		return err
 	}
+	redaction, err := parseRedactFlag(flags.redact, cmd.Flags().Changed("redact"))
+	if err != nil {
+		return err
+	}
 
 	// Local file validation (missing path, duplicate path, a directory) is a
 	// usage error and is checked before auth/network, same as the bare
@@ -65,7 +69,7 @@ func runAdd(cmd *cobra.Command, streams IOStreams, flags *globalFlags, configPat
 	defer cancel()
 
 	client := cliclient.New(cfg.APIBaseURL, cfg.Token)
-	opts := cliclient.CreateBundleOptions{Title: flags.title, TTLSeconds: ttlSeconds, Tags: tags}
+	opts := cliclient.CreateBundleOptions{Title: flags.title, TTLSeconds: ttlSeconds, Tags: tags, Redaction: redaction}
 
 	var (
 		art         *cliclient.Artifact
@@ -85,8 +89,9 @@ func runAdd(cmd *cobra.Command, streams IOStreams, flags *globalFlags, configPat
 		return cliexit.ErrInterrupted
 	}
 	if err != nil {
-		return withSent(err, sentRequest{ttl: flags.ttl, tags: tags, files: deduped})
+		return withSent(err, sentRequest{ttl: flags.ttl, tags: tags, files: deduped, redact: redaction})
 	}
+	warnRedacted(streams.ErrOut, art)
 
 	if flags.jsonOut {
 		return writeJSON(streams.Out, art)

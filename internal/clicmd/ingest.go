@@ -35,6 +35,10 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 	if err != nil {
 		return err
 	}
+	redaction, err := parseRedactFlag(flags.redact, cmd.Flags().Changed("redact"))
+	if err != nil {
+		return err
+	}
 
 	// Determine and validate the body *before* checking auth: an empty
 	// stdin or a bad path is a usage error regardless of authentication
@@ -116,13 +120,15 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 		MediaType:  mediaType,
 		TTLSeconds: ttlSeconds,
 		Tags:       tags,
+		Redaction:  redaction,
 	})
 	if sp != nil {
 		sp.Stop()
 	}
 	if err != nil {
-		return withSent(err, sentRequest{ttl: flags.ttl, tags: tags, files: args})
+		return withSent(err, sentRequest{ttl: flags.ttl, tags: tags, files: args, redact: redaction})
 	}
+	warnRedacted(streams.ErrOut, art)
 
 	if flags.jsonOut {
 		return writeJSON(streams.Out, art)
