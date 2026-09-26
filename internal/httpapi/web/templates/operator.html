@@ -1,0 +1,119 @@
+{{define "operator"}}<!doctype html>
+<html lang="en">
+<head>
+{{template "doc-head" .}}
+<title>operator · cairn</title>
+</head>
+<body>
+<a class="skip-link" href="#operator-main">Skip to content</a>
+
+<header class="app-header" role="banner">
+  <a class="brand" href="/bin" aria-label="cairn bin">{{template "stone-logo" .}}<span class="wordmark">cairn</span></a>
+  <span class="crumb-sep" aria-hidden="true">▸</span>
+  <span class="artifact-title">operator</span>
+  <div class="header-spacer"></div>
+  <a class="settings-gear" href="/settings" aria-label="Settings">⚙</a>
+  <span class="whoami" title="signed in">{{.Actor}}</span>
+  <form class="logout-form" method="post" action="/logout">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <button type="submit" class="logout-btn">Sign out</button>
+  </form>
+</header>
+
+<main id="operator-main" class="bin-main settings-main" role="main" tabindex="-1">
+  <a class="connect-back" href="/bin">← back to the bin</a>
+  <h1 class="connect-h1">Operator console</h1>
+  <p class="connect-lede">You run this instance. This console bounds tenant data and never reads it: it shows who has an account and how much they store, and lets you suspend an account. It never shows an artifact's title, body, link, tags or comments, and being an operator does not let you open anyone else's artifacts.</p>
+  <p class="connect-note connect-note-muted">Whoever controls the database and the object store can still read everything in them. This console removes the easy path and records what you do here; it does not pretend to more.</p>
+
+  {{if .Notice}}<p class="operator-notice" role="status">{{.Notice}}</p>{{end}}
+  {{if .Error}}<p class="token-form-error operator-error" role="alert">{{.Error}}</p>{{end}}
+
+  <div class="settings-cards operator-cards">
+    <section class="settings-card" id="directory" aria-labelledby="directory-h">
+      <h2 id="directory-h" class="settings-card-h">Users</h2>
+      <p class="settings-card-note">Suspending a user signs them out everywhere at once: their browser sessions, API tokens and OAuth grants (with every access and refresh token) stop working on their next request, and they cannot sign in until you reinstate them. Reinstating restores nothing; they sign in again. Every action needs a reason, which the user can read on their Settings page.</p>
+      <div class="operator-table-wrap">
+        <table class="token-table operator-table">
+          <caption class="sr-only">Users on this instance, with artifact counts</caption>
+          <thead>
+            <tr>
+              <th scope="col">User</th>
+              <th scope="col">Joined</th>
+              <th scope="col">Last sign-in</th>
+              <th scope="col">Artifacts</th>
+              <th scope="col">Stored</th>
+              <th scope="col">Status and action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range .Users}}
+            <tr class="token-row{{if .Suspended}} token-row-revoked{{end}}" id="user-{{.ID}}">
+              <td class="token-cell-name">{{.Handle}}{{if .Operator}} <span class="token-agent-badge" title="listed in CAIRN_OPERATORS">operator</span>{{end}}<br><code class="operator-actor">{{.Actor}}</code></td>
+              <td>{{.Created}}</td>
+              <td>{{.LastSeen}}</td>
+              <td>{{.Artifacts}}</td>
+              <td>{{.Bytes}}</td>
+              <td>
+                {{if .Suspended}}<span class="token-revoked-label">suspended {{.Suspended}}</span>{{end}}
+                {{if .Self}}<span class="token-revoked-label">you</span>
+                {{else if and .Operator (not .Suspended)}}<span class="token-revoked-label">operator</span>
+                {{else}}
+                <form class="operator-form" method="post" action="/operator/suspensions">
+                  <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                  <input type="hidden" name="user_id" value="{{.ID}}">
+                  <input type="hidden" name="action" value="{{if .Suspended}}unsuspend{{else}}suspend{{end}}">
+                  <label class="sr-only" for="reason-{{.ID}}">Reason for {{if .Suspended}}reinstating{{else}}suspending{{end}} {{.Handle}}</label>
+                  <input class="login-input operator-reason" id="reason-{{.ID}}" name="reason" type="text" maxlength="1000" required placeholder="reason (the user will see it)" autocomplete="off">
+                  <button type="submit" class="token-revoke-btn" aria-label="{{if .Suspended}}Reinstate{{else}}Suspend{{end}} {{.Handle}}">{{if .Suspended}}Reinstate{{else}}Suspend{{end}}</button>
+                </form>
+                {{end}}
+              </td>
+            </tr>
+            {{else}}<tr class="token-empty-row"><td colspan="6">No users yet.</td></tr>{{end}}
+          </tbody>
+        </table>
+      </div>
+      {{if or .HasPrev .HasNext}}
+      <nav class="operator-pager" aria-label="Directory pages">
+        {{if .HasPrev}}<a href="/operator?offset={{.PrevOffset}}">← previous</a>{{end}}
+        {{if .HasNext}}<a href="/operator?offset={{.NextOffset}}">next →</a>{{end}}
+      </nav>
+      {{end}}
+    </section>
+
+    <section class="settings-card" id="audit" aria-labelledby="audit-h">
+      <h2 id="audit-h" class="settings-card-h">Audit log</h2>
+      <p class="settings-card-note">Every operator action, newest first. Each row was written in the same transaction as the action it records.</p>
+      {{template "audit-table" .Audit}}
+    </section>
+  </div>
+</main>
+
+{{template "footer" .}}
+</body>
+</html>{{end}}
+
+{{/* The audit rows, shared by the operator console and the affected user's
+     Settings page. Handles only, never emails. */}}
+{{define "audit-table"}}<table class="token-table">
+  <caption class="sr-only">Operator actions</caption>
+  <thead>
+    <tr>
+      <th scope="col">When</th>
+      <th scope="col">Action</th>
+      <th scope="col">By</th>
+      <th scope="col">Reason</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .}}
+    <tr class="token-row">
+      <td>{{.When}}</td>
+      <td class="token-cell-name">{{.Action}} {{.Target}}{{if .Revoked}}<br><code class="operator-actor">{{.Revoked}}</code>{{end}}</td>
+      <td>{{.Operator}}</td>
+      <td>{{.Reason}}</td>
+    </tr>
+    {{else}}<tr class="token-empty-row"><td colspan="4">No operator actions.</td></tr>{{end}}
+  </tbody>
+</table>{{end}}

@@ -36,6 +36,7 @@ var reserved = map[string]struct{}{
 	"static":      {},
 	"assets":      {},
 	"healthz":     {},
+	"operator":    {},
 }
 
 // New returns a random base62 id of the default length.

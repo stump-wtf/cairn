@@ -59,6 +59,8 @@ type fakeIdP struct {
 	subject       string
 	email         string
 	emailVerified any
+	// groups, when non-nil, is minted as the groups claim.
+	groups any
 }
 
 func newFakeIdP(t *testing.T) *fakeIdP {
@@ -108,6 +110,7 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		if f.emailVerified != nil {
 			emailVerified = f.emailVerified
 		}
+		groups := f.groups
 		signKey := f.key
 		if f.badSignature {
 			signKey = f.wrongKey
@@ -125,6 +128,9 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		if !noEmail {
 			claims["email"] = email
 			claims["email_verified"] = emailVerified
+		}
+		if groups != nil {
+			claims["groups"] = groups
 		}
 		idToken := signJWT(t, signKey, claims)
 		writeJSON(w, map[string]any{
@@ -169,6 +175,13 @@ func (f *fakeIdP) setIdentity(subject, email string, emailVerified any) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.subject, f.email, f.emailVerified = subject, email, emailVerified
+}
+
+// setGroups steers the next minted ID token's groups claim; nil omits it.
+func (f *fakeIdP) setGroups(groups any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.groups = groups
 }
 
 func (f *fakeIdP) verifierSeen() string {

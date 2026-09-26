@@ -65,13 +65,21 @@ func (s *Server) EnableOIDC(ctx context.Context) error {
 		return fmt.Errorf("oidc: discover issuer %s: %w", s.cfg.OIDCIssuer, err)
 	}
 	clientID := firstNonEmpty(s.cfg.OIDCClientID, "cairn")
+	scopes := []string{oidc.ScopeOpenID, "profile", "email"}
+	if s.cfg.Operators.Group() != "" {
+		// CAIRN_OPERATOR_GROUP is read from the groups claim, which Pocket ID
+		// and most IdPs release only for the "groups" scope. It is requested
+		// only when an operator group is configured, so an IdP that rejects
+		// unknown scopes is unaffected otherwise.
+		scopes = append(scopes, "groups")
+	}
 	s.oidc = &oidcRP{
 		oauth: oauth2.Config{
 			ClientID:     clientID,
 			ClientSecret: s.cfg.OIDCClientSecret,
 			RedirectURL:  s.cfg.BaseURL + "/auth/callback",
 			Endpoint:     provider.Endpoint(),
-			Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+			Scopes:       scopes,
 		},
 		verifier: provider.Verifier(&oidc.Config{ClientID: clientID}),
 	}
@@ -201,6 +209,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		Email             string `json:"email"`
 		EmailVerified     any    `json:"email_verified"`
 		PreferredUsername string `json:"preferred_username"`
+		Groups            any    `json:"groups"`
 	}
 	_ = idToken.Claims(&claims)
 	if idToken.Subject == "" {
@@ -220,12 +229,18 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		Handle:        claims.PreferredUsername,
 	})
 	if err != nil {
-		s.log.ErrorContext(r.Context(), "oidc: resolve user failed", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		s.refuseSignIn(w, r, "oidc", err)
 		return
 	}
 
-	sess, err := s.sessions.Create(r.Context(), s.cfg.OIDCIssuer, idToken.Subject, actor, u.ID, s.cfg.SessionTTL)
+	// The groups claim exists only now, so the session records whether it
+	// carried the configured operator group (SPEC-0023 REQ "Operator and User
+	// Profiles"); every later request decides operator status from that.
+	var operatorGroup string
+	if g := s.cfg.Operators.Group(); g != "" && claimHas(claims.Groups, g) {
+		operatorGroup = g
+	}
+	sess, err := s.sessions.Create(r.Context(), s.cfg.OIDCIssuer, idToken.Subject, actor, u.ID, operatorGroup, s.cfg.SessionTTL)
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "oidc: create session failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -234,6 +249,23 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	s.setCookie(w, r, sessionCookieName, sess.Token, s.cfg.SessionTTL, true)
 	s.setCookie(w, r, csrfCookieName, sess.CSRFToken, s.cfg.SessionTTL, false)
 	http.Redirect(w, r, st.Next, http.StatusSeeOther)
+}
+
+// claimHas reports whether a groups claim — a JSON array of strings, or a
+// single string from IdPs that collapse a one-element array — contains want
+// exactly.
+func claimHas(v any, want string) bool {
+	switch g := v.(type) {
+	case string:
+		return g == want
+	case []any:
+		for _, e := range g {
+			if s, ok := e.(string); ok && s == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // claimTrue reads a boolean ID-token claim. `email_verified` is a JSON boolean

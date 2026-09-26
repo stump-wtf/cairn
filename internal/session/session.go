@@ -44,12 +44,17 @@ type Session struct {
 	// UserID is the users row the session acts for (SPEC-0023 REQ "Users and
 	// Identities"); ActorID is that user as rendered on the wire. The Postgres
 	// store requires a user and renders ActorID from it on every Get.
-	UserID    string
-	Issuer    string
-	Subject   string
-	CSRFToken string
-	CreatedAt time.Time
-	ExpiresAt time.Time
+	UserID  string
+	Issuer  string
+	Subject string
+	// OperatorGroup is the configured CAIRN_OPERATOR_GROUP the OIDC groups
+	// claim carried when this session was minted, or "" (SPEC-0023 REQ
+	// "Operator and User Profiles"). The claim exists only at sign-in, so the
+	// session records the one fact the operator check needs from it.
+	OperatorGroup string
+	CSRFToken     string
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
 }
 
 // Store is the session persistence seam. The Postgres implementation backs the
@@ -63,10 +68,11 @@ type Store interface {
 	// and the subject that provider asserted — empty for the dev-password
 	// login, the OIDC issuer and ID-token subject for Pocket ID, and the
 	// GitHub origin and numeric account id for GitHub. userID is the users row
-	// the session acts for and actorID its wire rendering.
-	Create(ctx context.Context, issuer, subject, actorID, userID string, ttl time.Duration) (*Session, error)
+	// the session acts for and actorID its wire rendering. operatorGroup is the
+	// configured operator group the sign-in's groups claim carried, or "".
+	Create(ctx context.Context, issuer, subject, actorID, userID, operatorGroup string, ttl time.Duration) (*Session, error)
 	// Get resolves a raw session token to its live session, or ErrNotFound when
-	// the token is unknown, expired, or revoked.
+	// the token is unknown, expired, or revoked, or its user is suspended.
 	Get(ctx context.Context, token string) (*Session, error)
 	// Delete revokes the session addressed by its raw token. Revoking an absent
 	// session is a no-op (logout is idempotent).

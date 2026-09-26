@@ -136,6 +136,15 @@ type Config struct {
 	// tokens replace this in #22.
 	APITokensRaw string
 
+	// OperatorsRaw is the unparsed CAIRN_OPERATORS value: comma-separated
+	// "<issuer>|<subject>" sign-in identities of the instance's operators
+	// (SPEC-0023 REQ "Operator and User Profiles"). OperatorGroup is
+	// CAIRN_OPERATOR_GROUP, an OIDC group whose members are operators. With
+	// both empty the instance has no operator. Parsed at startup
+	// (operator.Parse); a malformed entry fails boot.
+	OperatorsRaw  string
+	OperatorGroup string
+
 	// DevInsecureBearerAuth, when true, makes the API trust a raw bearer token AS
 	// the actor id with no verification. It is an INSECURE local-development
 	// shortcut that must never be enabled in production; the default is false, so
@@ -158,6 +167,8 @@ func Load() (*Config, error) {
 
 		DevLoginPassword: os.Getenv("CAIRN_DEV_LOGIN_PASSWORD"),
 		APITokensRaw:     os.Getenv("CAIRN_API_TOKENS"),
+		OperatorsRaw:     os.Getenv("CAIRN_OPERATORS"),
+		OperatorGroup:    strings.TrimSpace(os.Getenv("CAIRN_OPERATOR_GROUP")),
 
 		OIDCIssuer:       os.Getenv("CAIRN_OIDC_ISSUER"),
 		OIDCClientID:     env("CAIRN_OIDC_CLIENT_ID", "cairn"),

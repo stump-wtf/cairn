@@ -3,8 +3,10 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 
+	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/user"
 )
 
@@ -23,8 +25,14 @@ import (
 // errNoUserStore reports a sign-in on a wiring with no users store.
 var errNoUserStore = errors.New("httpapi: no users store configured")
 
+// errUserSuspended reports a sign-in or credential of a suspended user
+// (SPEC-0023 "Suspending a user offboards them").
+var errUserSuspended = errors.New("httpapi: user is suspended")
+
 // resolveSignIn resolves a provider identity to its user and the actor the
-// session renders as.
+// session renders as. A suspended user's sign-in is refused with
+// errUserSuspended: suspension deleted their sessions, and signing in again
+// must not mint a new one.
 func (s *Server) resolveSignIn(ctx context.Context, id user.Identity) (*user.User, string, error) {
 	if s.users == nil {
 		return nil, "", errNoUserStore
@@ -33,7 +41,23 @@ func (s *Server) resolveSignIn(ctx context.Context, id user.Identity) (*user.Use
 	if err != nil {
 		return nil, "", err
 	}
+	if u.SuspendedAt != nil {
+		return nil, "", errUserSuspended
+	}
 	return u, u.Actor, nil
+}
+
+// refuseSignIn answers a sign-in resolveSignIn refused. A suspended user
+// gets the uniform forbidden page, with no session minted; anything else is
+// an internal error.
+func (s *Server) refuseSignIn(w http.ResponseWriter, r *http.Request, provider string, err error) {
+	if errors.Is(err, errUserSuspended) {
+		s.log.InfoContext(r.Context(), provider+": sign-in refused", "reason", "user suspended")
+		s.renderWebError(w, r, errs.ErrForbidden)
+		return
+	}
+	s.log.ErrorContext(r.Context(), provider+": resolve user failed", "error", err)
+	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 
 // displayActors maps each actor string a page is about to show to what this

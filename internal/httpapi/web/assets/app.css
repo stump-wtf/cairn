@@ -673,3 +673,18 @@ body.landing { display: flex; flex-direction: column; align-items: center; justi
 .account-facts dt { color: var(--t6); font: 400 11px var(--mono); }
 .account-facts dd { margin: 0; color: var(--t2); font: 400 13px var(--sans); }
 .account-signout-btn { margin-top: 18px; }
+.account-audit-h { margin-top: 22px; font-size: 13px; }
+
+/* ---- Operator console (SPEC-0023) ---- */
+.operator-cards { margin-top: 24px; }
+.operator-notice {
+  margin: 18px 0 0; padding: 8px 11px; border-radius: 7px;
+  border: 1px solid #244034; background: rgba(86,227,159,.08);
+  color: var(--green-2); font: 500 11.5px var(--mono);
+}
+.operator-error { margin-top: 18px; }
+.operator-table-wrap { overflow-x: auto; }
+.operator-actor { color: var(--t5); font: 400 11px var(--mono); overflow-wrap: anywhere; }
+.operator-form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0; }
+.operator-reason { flex: 1 1 160px; min-width: 0; padding: 5px 8px; font-size: 12px; }
+.operator-pager { display: flex; gap: 16px; margin-top: 12px; font: 500 12px var(--mono); }

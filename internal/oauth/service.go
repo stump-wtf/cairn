@@ -172,14 +172,16 @@ func (s *Service) RedeemCode(ctx context.Context, code, clientID, redirectURI, v
 	var (
 		rowClientID, rowUser, rowRedirect, rowScope, rowChallenge string
 		expiresAt                                                 time.Time
-		redeemedAt                                                *time.Time
+		redeemedAt, suspendedAt                                   *time.Time
 		priorGrantID                                              *string
 	)
 	err = tx.QueryRow(ctx, `
-		SELECT client_id, user_id::text, redirect_uri, scope, code_challenge, expires_at, redeemed_at, grant_id
-		FROM oauth_auth_codes WHERE code_hash = $1 FOR UPDATE`,
+		SELECT c.client_id, c.user_id::text, c.redirect_uri, c.scope, c.code_challenge,
+		       c.expires_at, c.redeemed_at, c.grant_id, u.suspended_at
+		FROM oauth_auth_codes c JOIN users u ON u.id = c.user_id
+		WHERE c.code_hash = $1 FOR UPDATE OF c`,
 		hashSecret(code),
-	).Scan(&rowClientID, &rowUser, &rowRedirect, &rowScope, &rowChallenge, &expiresAt, &redeemedAt, &priorGrantID)
+	).Scan(&rowClientID, &rowUser, &rowRedirect, &rowScope, &rowChallenge, &expiresAt, &redeemedAt, &priorGrantID, &suspendedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("unknown authorization code: %w", ErrInvalidGrant)
 	}
@@ -214,6 +216,11 @@ func (s *Service) RedeemCode(ctx context.Context, code, clientID, redirectURI, v
 			_ = tx.Commit(ctx)
 		}
 		return nil, fmt.Errorf("%s: %w", reason, ErrInvalidGrant)
+	}
+	if suspendedAt != nil {
+		// Suspension deletes unredeemed codes; this burns one that raced it
+		// (SPEC-0023 "Suspending a user offboards them").
+		return burn("user suspended")
 	}
 	if rowClientID != clientID {
 		return burn("code was not issued to this client")
@@ -273,18 +280,19 @@ func (s *Service) Refresh(ctx context.Context, refreshToken, clientID string) (*
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	var (
-		grantID, kind, grantClient, scope  string
-		tokenExpires                       time.Time
-		rotatedAt, revokedAt, grantRevoked *time.Time
+		grantID, kind, grantClient, scope               string
+		tokenExpires                                    time.Time
+		rotatedAt, revokedAt, grantRevoked, suspendedAt *time.Time
 	)
 	err = tx.QueryRow(ctx, `
 		SELECT t.grant_id, t.kind, t.expires_at, t.rotated_at, t.revoked_at,
-		       g.client_id, g.scope, g.revoked_at
+		       g.client_id, g.scope, g.revoked_at, u.suspended_at
 		FROM oauth_tokens t
 		JOIN oauth_grants g ON g.grant_id = t.grant_id
+		JOIN users u ON u.id = g.user_id
 		WHERE t.token_hash = $1 FOR UPDATE OF t, g`,
 		hashSecret(refreshToken),
-	).Scan(&grantID, &kind, &tokenExpires, &rotatedAt, &revokedAt, &grantClient, &scope, &grantRevoked)
+	).Scan(&grantID, &kind, &tokenExpires, &rotatedAt, &revokedAt, &grantClient, &scope, &grantRevoked, &suspendedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("unknown refresh token: %w", ErrInvalidGrant)
 	}
@@ -311,6 +319,9 @@ func (s *Service) Refresh(ctx context.Context, refreshToken, clientID string) (*
 	}
 	if grantRevoked != nil {
 		return nil, fmt.Errorf("grant is revoked: %w", ErrInvalidGrant)
+	}
+	if suspendedAt != nil {
+		return nil, fmt.Errorf("user suspended: %w", ErrInvalidGrant)
 	}
 	if now.After(tokenExpires) {
 		return nil, fmt.Errorf("refresh token expired: %w", ErrInvalidGrant)
@@ -459,17 +470,18 @@ func (s *Service) AuthenticateAccess(ctx context.Context, token string) (*Identi
 	var (
 		kind, audience, grantID, clientID, userID, actor, scope string
 		expiresAt                                               time.Time
-		revokedAt, grantRevoked                                 *time.Time
+		revokedAt, grantRevoked, suspendedAt                    *time.Time
 	)
 	err := s.pool.QueryRow(ctx, `
 		SELECT t.kind, t.audience, t.expires_at, t.revoked_at,
-		       g.grant_id, g.client_id, g.user_id::text, `+user.ActorSQL("u")+`, g.scope, g.revoked_at
+		       g.grant_id, g.client_id, g.user_id::text, `+user.ActorSQL("u")+`, g.scope, g.revoked_at,
+		       u.suspended_at
 		FROM oauth_tokens t
 		JOIN oauth_grants g ON g.grant_id = t.grant_id
 		JOIN users u ON u.id = g.user_id
 		WHERE t.token_hash = $1`,
 		hashSecret(token),
-	).Scan(&kind, &audience, &expiresAt, &revokedAt, &grantID, &clientID, &userID, &actor, &scope, &grantRevoked)
+	).Scan(&kind, &audience, &expiresAt, &revokedAt, &grantID, &clientID, &userID, &actor, &scope, &grantRevoked, &suspendedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("unknown access token: %w", ErrInvalidGrant)
 	}
@@ -484,6 +496,11 @@ func (s *Service) AuthenticateAccess(ctx context.Context, token string) (*Identi
 		return nil, fmt.Errorf("token audience mismatch: %w", ErrInvalidGrant)
 	case revokedAt != nil || grantRevoked != nil:
 		return nil, fmt.Errorf("token revoked: %w", ErrInvalidGrant)
+	case suspendedAt != nil:
+		// Suspension revokes the user's grants too; this refuses a token
+		// that raced the revocation (SPEC-0023 "Suspending a user offboards
+		// them").
+		return nil, fmt.Errorf("user suspended: %w", ErrInvalidGrant)
 	case now.After(expiresAt):
 		return nil, fmt.Errorf("token expired: %w", ErrInvalidGrant)
 	}

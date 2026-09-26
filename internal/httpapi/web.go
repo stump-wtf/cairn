@@ -136,6 +136,13 @@ func (s *Server) mountWeb(r chi.Router) {
 	// resolves.
 	r.With(s.requireWebSession).Get("/settings", s.handleSettingsPage)
 	r.Get("/connect", s.handleConnectRedirect)
+	// The operator console (SPEC-0023): operator browser sessions only, the
+	// uniform 404 for everyone else. "operator" is a reserved id word, so no
+	// artifact id can shadow it. The suspension form posts back here rather
+	// than to /v1 so the console works without script, under the same
+	// double-submit form check as login and logout.
+	r.With(s.requireOperatorPage).Get("/operator", s.handleOperatorConsole)
+	r.With(s.requireOperatorPage).Post("/operator/suspensions", s.handleOperatorSuspensionForm)
 
 	// The OAuth 2.1 authorization endpoint (SPEC-0007, ADR-0004): the human
 	// login + consent screen, riding the web session surface above. Its JSON
