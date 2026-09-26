@@ -1,0 +1,8 @@
+# Findings gitleaks reports that are known test fixtures, never credentials.
+# One fingerprint per line: <commit>:<file>:<rule>:<line>. Add an entry only
+# after confirming the value is fabricated test data; a real secret is
+# rotated, not ignored.
+#
+# 0022473: the receiver-issued signing secret fixture in the #185 integration
+# tests, a made-up string. The next commit replaced it with a built value.
+00224730fcbbc90221d07f3d010745a98fe5fda5:internal/httpapi/subscriptions_integration_test.go:generic-api-key:30
