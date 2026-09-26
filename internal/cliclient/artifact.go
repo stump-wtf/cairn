@@ -25,7 +25,37 @@ type Artifact struct {
 	ExpiresAt  time.Time `json:"expires_at"`
 	// Tags echo what the server stored (normalized), so `--json` shows them.
 	Tags []string `json:"tags,omitempty"`
+
+	// RedactionStatus, Redacted and Redactions are the ingest secret scan's
+	// outcome, which a create response carries for its owner (SPEC-0017
+	// RD-9). Redacted is what tells a writer that the stored bytes, and so
+	// the stored SHA-256, differ from what was sent (RD-10). All three are
+	// absent from a server that predates scanning.
+	RedactionStatus string      `json:"redaction_status,omitempty"`
+	Redacted        *bool       `json:"redacted,omitempty"`
+	Redactions      *Redactions `json:"redactions,omitempty"`
 }
+
+// Redactions counts the values the server masked, in total and per rule ID.
+// It never holds a value (SPEC-0017 RD-9).
+type Redactions struct {
+	Count int            `json:"count"`
+	Rules map[string]int `json:"rules"`
+}
+
+// WasRedacted reports whether the server masked anything in the stored copy.
+func (a *Artifact) WasRedacted() bool {
+	return a != nil && a.Redacted != nil && *a.Redacted
+}
+
+// RedactionHeader carries a writer's downgrade of a reject-mode create to
+// mask (SPEC-0017 RD-5), and RedactionMask is the only value it takes.
+//
+// Governing: ADR-0023, SPEC-0017 RD-5
+const (
+	RedactionHeader = "X-Cairn-Redaction"
+	RedactionMask   = "mask"
+)
 
 // CreateArtifactOptions carries the raw-body single-artifact create request
 // (SPEC-0008 "Pipe and Path Ingest"). The server assigns share type,
@@ -51,6 +81,10 @@ type CreateArtifactOptions struct {
 	// as one comma-separated X-Cairn-Tags header. No tag may contain a comma, so
 	// the list survives an intermediary folding repeated headers intact.
 	Tags []string
+	// Redaction is the writer's downgrade (`--redact=mask`), sent as
+	// X-Cairn-Redaction when set. The CLI checks it before sending; the
+	// server is still the judge (SPEC-0017 RD-5).
+	Redaction string
 }
 
 // CreateArtifact streams body to POST /v1/artifacts and decodes the created
@@ -90,6 +124,9 @@ func (c *Client) doCreate(ctx context.Context, path string, body io.Reader, cont
 	}
 	if len(opts.Tags) > 0 {
 		req.Header.Set("X-Cairn-Tags", strings.Join(opts.Tags, ","))
+	}
+	if opts.Redaction != "" {
+		req.Header.Set(RedactionHeader, opts.Redaction)
 	}
 	return c.send(req)
 }
