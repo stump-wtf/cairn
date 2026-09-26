@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -404,5 +405,66 @@ func TestOversizeSpanOutputRejected(t *testing.T) {
 	}
 	if runs != 0 {
 		t.Errorf("%d runs stored; want none", runs)
+	}
+}
+
+// TestOversizeSpanStoredUnscannedWarns: SPEC-0017 RD-7 under
+// CAIRN_REDACTION_OVERSIZE=store_unscanned. A span output over the scan cap is
+// stored as written with status not_scanned_oversize, and every write that
+// stores one, create and append alike, logs a WARN naming the run, the field
+// and its size, and none of its content.
+func TestOversizeSpanStoredUnscannedWarns(t *testing.T) {
+	_, _, pool, obj := newHarness(t)
+	sc, err := redact.New(redact.Config{MaxScanBytes: 1024, Oversize: redact.OversizeStoreUnscanned})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	svc := NewService(pool, obj, Options{Redaction: sc, Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	ctx := context.Background()
+	tok := plantedToken(8)
+	output := append(bytes.Repeat([]byte("z"), 2048-len(tok)), tok...)
+
+	in := openInput("big")
+	in.Spans = []SpanInput{{SpanID: "s1", Category: CategoryExec, Tool: "bash", Name: "x", Output: output, StartOffsetMS: 0, DurationMS: 1}}
+	run, err := svc.OpenRun(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := storedOutcome(t, pool, run.PublicID); got.Status != redact.StatusNotScannedOversize {
+		t.Errorf("run outcome = %+v; want not_scanned_oversize", got)
+	}
+	created := logs.String()
+	for _, want := range []string{"level=WARN", "artifact=" + run.PublicID, "field=spans[0].output", "size_bytes=2048", "max_scan_bytes=1024"} {
+		if !strings.Contains(created, want) {
+			t.Errorf("create log lacks %q:\n%s", want, created)
+		}
+	}
+
+	logs.Reset()
+	if _, _, err := svc.AppendSpansWithOutcome(ctx, run.PublicID, "joe", []SpanInput{
+		{SpanID: "a1", Category: CategoryExec, Tool: "bash", Name: "y", Output: output, StartOffsetMS: 1, DurationMS: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	appended := logs.String()
+	if !strings.Contains(appended, "level=WARN") || !strings.Contains(appended, "field=spans[0].output") {
+		t.Errorf("append logged no WARN for its unscanned output:\n%s", appended)
+	}
+
+	// A clean, in-cap write logs nothing.
+	logs.Reset()
+	if _, _, err := svc.AppendSpansWithOutcome(ctx, run.PublicID, "joe", []SpanInput{
+		{SpanID: "a2", Category: CategoryReason, Name: "thought", StartOffsetMS: 2, DurationMS: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if logs.Len() != 0 {
+		t.Errorf("an in-cap append logged:\n%s", logs.String())
+	}
+	for where, text := range map[string]string{"create log": created, "append log": appended} {
+		if strings.Contains(text, tok) || strings.Contains(text, "zzzz") {
+			t.Errorf("%s carries the field's content", where)
+		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -52,6 +53,9 @@ type Service struct {
 	// stores fields as written and records "unscanned"; cairnd always wires it.
 	scanner *redact.Scanner
 	metrics *metrics.Registry
+	// log receives the WARN for each field stored unscanned under
+	// CAIRN_REDACTION_OVERSIZE=store_unscanned (SPEC-0017 RD-7).
+	log *slog.Logger
 }
 
 // Options configures a Service. Zero values fall back to safe defaults.
@@ -74,6 +78,9 @@ type Options struct {
 	Redaction *redact.Scanner
 	// Metrics counts the scans; nil counts nothing.
 	Metrics *metrics.Registry
+	// Logger receives the WARN for each field stored unscanned (SPEC-0017
+	// RD-7). Nil means slog.Default().
+	Logger *slog.Logger
 }
 
 // NewService constructs a Service over a Postgres pool and an object store.
@@ -89,6 +96,10 @@ func NewService(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *
 		hub:             newHub(),
 		scanner:         opts.Redaction,
 		metrics:         opts.Metrics,
+		log:             opts.Logger,
+	}
+	if s.log == nil {
+		s.log = slog.Default()
 	}
 	if s.reg == nil {
 		s.reg = sharetype.Default()
@@ -179,10 +190,11 @@ func (s *Service) CreateBatchRun(ctx context.Context, in RunInput) (*Run, error)
 	if err := in.validate(); err != nil {
 		return nil, err
 	}
-	in, outcome, err := s.scanRun(ctx, in)
+	in, scan, err := s.scanRun(ctx, in)
 	if err != nil {
 		return nil, err
 	}
+	outcome := scan.summary
 	dispositions, err := s.spillOutputs(ctx, in.Spans)
 	if err != nil {
 		return nil, err
@@ -220,6 +232,7 @@ func (s *Service) CreateBatchRun(ctx context.Context, in RunInput) (*Run, error)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("trajectory: commit: %w", err)
 	}
+	s.warnUnscanned(ctx, publicID, scan.unscanned)
 	return s.GetRun(ctx, publicID)
 }
 
@@ -231,10 +244,11 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 	if err := in.validate(); err != nil {
 		return nil, err
 	}
-	in, outcome, err := s.scanRun(ctx, in)
+	in, scan, err := s.scanRun(ctx, in)
 	if err != nil {
 		return nil, err
 	}
+	outcome := scan.summary
 	dispositions, err := s.spillOutputs(ctx, in.Spans)
 	if err != nil {
 		return nil, err
@@ -271,6 +285,7 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("trajectory: commit: %w", err)
 	}
+	s.warnUnscanned(ctx, publicID, scan.unscanned)
 	return s.GetRun(ctx, publicID)
 }
 
@@ -293,20 +308,21 @@ func (s *Service) AppendSpansWithOutcome(ctx context.Context, publicID, actorID 
 	if len(spans) == 0 {
 		return nil, redact.Summary{}, errs.Validationf("trajectory: no spans to append")
 	}
-	spans, outcome, err := s.scanSpans(ctx, spans)
+	spans, scan, err := s.scanSpans(ctx, spans)
 	if err != nil {
 		return nil, redact.Summary{}, err
 	}
-	appended, err := s.appendSpans(ctx, publicID, actorID, spans, outcome)
+	appended, err := s.appendSpans(ctx, publicID, actorID, spans, scan)
 	if err != nil {
 		return nil, redact.Summary{}, err
 	}
-	return appended, outcome, nil
+	return appended, scan.summary, nil
 }
 
 // appendSpans persists already-scanned spans and folds their scan outcome into
 // the run and its artifact, in the append's transaction.
-func (s *Service) appendSpans(ctx context.Context, publicID, actorID string, spans []SpanInput, outcome redact.Summary) ([]*Span, error) {
+func (s *Service) appendSpans(ctx context.Context, publicID, actorID string, spans []SpanInput, scan runScan) ([]*Span, error) {
+	outcome := scan.summary
 	dispositions, err := s.spillOutputs(ctx, spans)
 	if err != nil {
 		return nil, err
@@ -384,6 +400,7 @@ func (s *Service) appendSpans(ctx context.Context, publicID, actorID string, spa
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("trajectory: commit: %w", err)
 	}
+	s.warnUnscanned(ctx, publicID, scan.unscanned)
 
 	// Fan the durably-committed spans out to live viewers in ingest order,
 	// each carrying its stream_seq cursor — the same id: a reconnecting client

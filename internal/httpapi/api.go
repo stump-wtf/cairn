@@ -278,6 +278,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 			Registry:  reg,
 			Redaction: cfg.Redaction,
 			Metrics:   cfg.Metrics,
+			Logger:    logger,
 		})
 		hookSvc = webhook.NewService(st.Pool(), st.ObjectStore(), webhook.Options{})
 		// The web session store lives in the same Postgres as the core, so the
