@@ -88,16 +88,6 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	if err != nil {
 		return nil, err
 	}
-	// The title is scanned before the body streams, with the body's mode.
-	//
-	// Governing: ADR-0023, SPEC-0017 RD-4, RD-5
-	var scans scanReport
-	mode := s.redactionMode(in.ShareType, in.RedactionDowngrade)
-	title, titleScan, err := s.scanTitle(ctx, metrics.SurfaceArtifact, in.Title, mode, &scans)
-	if err != nil {
-		return nil, fmt.Errorf("create: %w", err)
-	}
-
 	// 1. Stream the body to a staging object: compute SHA-256 incrementally
 	//    and enforce the size limit as bytes arrive. The object is NOT promoted
 	//    to its content-addressed key yet — that happens in CommitBlob under the
@@ -120,12 +110,19 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 			in.ExpectedSHA256, staged.SHA256, errs.ErrChecksumMismatch)
 	}
 
-	// 2b. Scan the verified bytes before anything is promoted or committed. A
-	//     mask repoints staged at the masked copy, so the SHA-256, size and
+	// 2b. Scan the title, then the verified bytes, before anything is promoted
+	//     or committed. Both use the body's mode, which needs its media type.
+	//     A mask repoints staged at the masked copy, so the SHA-256, size and
 	//     dedup key below are the stored bytes'; a rejection returns here, and
 	//     the deferred Discard removes the staging object.
 	//
-	// Governing: ADR-0023, SPEC-0017 RD-1, RD-6, RD-7, RD-10
+	// Governing: ADR-0023, SPEC-0017 RD-1, RD-4, RD-5, RD-6, RD-7, RD-10
+	var scans scanReport
+	mode := s.artifactRedactionMode(in.ShareType, staged.MediaType, in.RedactionDowngrade)
+	title, titleScan, err := s.scanTitle(ctx, metrics.SurfaceArtifact, in.Title, mode, &scans)
+	if err != nil {
+		return nil, fmt.Errorf("create: %w", err)
+	}
 	bodyScan, err := s.scanBody(ctx, metrics.SurfaceArtifact, bodyField, staged, mode, &scans)
 	if err != nil {
 		return nil, fmt.Errorf("create: %w", err)

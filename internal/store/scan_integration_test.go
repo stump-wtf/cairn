@@ -427,6 +427,33 @@ func TestScanRejectTypesConfigurable(t *testing.T) {
 	}
 }
 
+// TestScanClassifiedCodeRejects: SPEC-0017 RD-4. An upload declared as the
+// generic file type whose media type names a language is stored as code, so
+// it rejects as code does, title included, and leaves nothing. This is how
+// `cairn add main.go` arrives. A plain-text file still masks.
+func TestScanClassifiedCodeRejects(t *testing.T) {
+	f := newScanFixture(t, Options{})
+	tok := plantedToken(16)
+
+	_, err := f.s.CreateArtifact(context.Background(), typed("package main\n\nconst key = \""+tok+"\"\n", artifact.TypeFile, "text/x-go"))
+	if vs := errs.ViolationsOf(err); !errors.Is(err, redact.ErrSecretDetected) || len(vs) != 1 || vs[0].Field != "body" {
+		t.Fatalf("a Go file shared as file: err = %v, want a secret_detected violation on body", err)
+	}
+	in := typed("package main\n", artifact.TypeFile, "text/x-go")
+	in.Title = "key " + tok
+	_, err = f.s.CreateArtifact(context.Background(), in)
+	if vs := errs.ViolationsOf(err); len(vs) != 1 || vs[0].Field != "title" {
+		t.Fatalf("a Go file's title: err = %v, want a secret_detected violation on title", err)
+	}
+	f.assertNothingStored(t)
+
+	art, err := f.s.CreateArtifact(context.Background(), typed("note "+tok+"\n", artifact.TypeFile, "text/plain"))
+	if err != nil || !art.Redaction.Redacted() {
+		t.Fatalf("a text file: %v, %+v, want masked", err, art)
+	}
+	f.assertNoTokenAnywhere(t, tok)
+}
+
 // TestScanTitle: a title is scanned with its surface's mode. A code
 // artifact's title with a token is refused, naming the title; a markdown
 // artifact's is stored masked and counted in the outcome.
