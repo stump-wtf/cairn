@@ -76,3 +76,26 @@ func TestStoreOptionsCarriesLimits(t *testing.T) {
 			opts.MaxUploadBytes, opts.PreviewMaxBytes)
 	}
 }
+
+// The run-event seam (ADR-0022, SPEC-0016 EV-2): the emitter the trajectory
+// service receives through httpapi.Config.Events is an interface too, so an
+// unconfigured deployment must hand over a nil interface, not a wrapped nil
+// pointer, or the service's "no emitter" guard never fires (cairn#201's shape).
+func TestEventEmitterIsNilInterfaceWhenUnconfigured(t *testing.T) {
+	emitter := newOutboundEmitter(&config.Config{}, quietLogger())
+	if ev := newEventEmitter(emitter); ev != nil {
+		t.Fatal("newEventEmitter wrapped a nil *outboundhook.Emitter in a non-nil event.Emitter")
+	}
+}
+
+// The configured path still reaches the trajectory service, so the assertion
+// above cannot be satisfied by never wiring run events at all.
+func TestEventEmitterCarriesEmitterWhenConfigured(t *testing.T) {
+	emitter := newOutboundEmitter(&config.Config{
+		OutboundWebhookURLs: []string{"https://example.invalid/sink"},
+		BaseURL:             "https://cairn.example",
+	}, quietLogger())
+	if ev := newEventEmitter(emitter); ev == nil {
+		t.Fatal("configured emitter did not reach the run-event seam")
+	}
+}

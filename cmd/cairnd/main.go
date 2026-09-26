@@ -22,6 +22,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/config"
 	"github.com/stump-wtf/cairn/internal/db"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/httpapi"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/outboundhook"
@@ -86,6 +87,19 @@ func newStoreOptions(cfg *config.Config, emitter *outboundhook.Emitter) store.Op
 	return opts
 }
 
+// newEventEmitter returns the lifecycle-event emitter the core services beyond
+// the store receive (ADR-0022, SPEC-0016 EV-2), as a nil INTERFACE when no
+// outbound emitter exists. The same typed-nil hazard as newStoreOptions
+// (cairn#201) applies: httpapi.Config.Events and trajectory.Options.Emitter are
+// event.Emitter interfaces, so assigning a nil *outboundhook.Emitter would make
+// every "is an emitter installed?" guard read true.
+func newEventEmitter(emitter *outboundhook.Emitter) event.Emitter {
+	if emitter == nil {
+		return nil
+	}
+	return emitter
+}
+
 func run(logger *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -121,6 +135,8 @@ func run(logger *slog.Logger) error {
 	// are configured. One hook at the store choke point covers every creation
 	// surface (REST/web/CLI/MCP); delivery runs on its own worker goroutine,
 	// reaper-style, and stops cleanly on shutdown.
+	// Runs are minted by the trajectory service, not the store, so it receives
+	// the same emitter through httpapi.Config.Events (SPEC-0016 EV-2).
 	// Kept as the concrete *outboundhook.Emitter, not store.CreationEmitter:
 	// the delivery worker below calls Run, which the interface does not declare.
 	emitter := newOutboundEmitter(cfg, logger)
@@ -181,6 +197,7 @@ func run(logger *slog.Logger) error {
 	// The /v1 REST/JSON adapter over the core service (ADR-0012).
 	api := httpapi.New(svc, nil, nil, httpapi.Config{
 		BaseURL:               cfg.BaseURL,
+		Events:                newEventEmitter(emitter),
 		MaxUploadBytes:        cfg.MaxUploadBytes,
 		DefaultTTL:            cfg.DefaultTTL,
 		RatePerSecond:         cfg.RatePerSecond,
