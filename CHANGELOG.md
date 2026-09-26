@@ -15,6 +15,16 @@ reaches 1.0.
   changes. The encoder now handles every SPEC-0016 event kind; kinds other than
   `artifact.created` are counted and never sent to `CAIRN_OUTBOUND_WEBHOOK_URLS`.
   (ADR-0022, SPEC-0016, #305)
+- **Traces announce themselves.** Opening a run, or uploading one whole, now
+  emits `artifact.created` with `share_type: "trajectory"`, like every other
+  artifact, so `CAIRN_OUTBOUND_WEBHOOK_URLS` targets start receiving trace
+  creations. A consumer that routes on `share_type` or tags needs no change;
+  one that assumed every event was a single-body artifact or a bundle should
+  ignore `trajectory`. Closing a run (`POST /v1/runs/{id}/close`), and a batch
+  run born closed, also emit `run.closed` with its status, span count, start,
+  end and duration; like the other new kinds it is counted and not sent to env
+  targets until owned subscriptions land. (ADR-0022, SPEC-0016 EV-2, EV-3,
+  SPEC-0023, #313)
 - **Reactions and comments are owned per actor kind.** Each row stores the
   server-derived `actor_kind` (`human` for a browser session, `agent` for every
   bearer credential), and reaction idempotency is keyed per

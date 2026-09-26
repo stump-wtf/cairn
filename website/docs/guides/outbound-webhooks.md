@@ -19,9 +19,10 @@ from Settings. If you want Cairn events in your own Switchboard, talk to the ope
 
 ## When it fires
 
-Cairn sends an event after a new **single-body artifact** (markdown, code, image, file)
-or a new **bundle** is saved, whether it came from the REST API, the CLI, or an agent
-over MCP. Creating a trace or a webhook endpoint doesn't send one.
+Cairn sends an event after a new **single-body artifact** (markdown, code, image, file),
+a new **bundle** or a new **trace** is saved, whether it came from the REST API, the
+CLI, or an agent over MCP. A trace sends it once, when it is opened or uploaded whole,
+with `share_type` set to `trajectory`. Creating a webhook endpoint doesn't send one.
 
 Comments, reactions and closed runs are never sent to these targets. The targets are
 chosen by whoever runs the instance, not by the owner of the artifact, so those events
@@ -63,7 +64,7 @@ its content:
 | `event_id` | Unique per event; use it to drop duplicates |
 | `created_at` | When Cairn emitted the event |
 | `data.id` | The artifact's id; pass it to `artifact_read` |
-| `data.share_type` | `markdown`, `code`, `image`, `file`, `gz`, or `bundle` |
+| `data.share_type` | `markdown`, `code`, `image`, `file`, `gz`, `bundle`, or `trajectory` |
 | `data.title` | The title, if it has one |
 | `data.url` | The artifact's web link, which opens it for anyone who has it |
 | `data.channel` | How it was created: `via MCP`, `via API`, or `via web` |
