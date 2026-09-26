@@ -118,7 +118,8 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 	// of them (SPEC-0019 VE-4).
 	var tags tagSet
 	ttl, ttlErr := requestedTTL(r, s.cfg)
-	if err := errs.JoinErrors(ttlErr, tags.addFromRequest(r)); err != nil {
+	downgrade, redErr := redactionDowngrade(redactionHeader, errs.LocHeader, r.Header.Get(redactionHeader))
+	if err := errs.JoinErrors(ttlErr, redErr, tags.addFromRequest(r)); err != nil {
 		s.writeError(w, r, err, nil)
 		return
 	}
@@ -126,15 +127,16 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 	// Guard the raw body; the store additionally enforces the limit incrementally.
 	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes+1)
 	art, err := s.store.CreateArtifact(r.Context(), store.CreateArtifactInput{
-		ShareType:         shareType,
-		Title:             firstNonEmpty(r.URL.Query().Get("title"), r.Header.Get("X-Cairn-Title")),
-		Body:              body,
-		DeclaredMediaType: r.Header.Get("Content-Type"),
-		ExpectedSHA256:    r.Header.Get("X-Cairn-Sha256"),
-		Provenance:        artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now},
-		Access:            artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
-		ExpiresAt:         now.Add(ttl),
-		Tags:              tags.tags,
+		ShareType:          shareType,
+		Title:              firstNonEmpty(r.URL.Query().Get("title"), r.Header.Get("X-Cairn-Title")),
+		Body:               body,
+		DeclaredMediaType:  r.Header.Get("Content-Type"),
+		ExpectedSHA256:     r.Header.Get("X-Cairn-Sha256"),
+		Provenance:         artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now},
+		Access:             artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
+		ExpiresAt:          now.Add(ttl),
+		Tags:               tags.tags,
+		RedactionDowngrade: downgrade,
 	})
 	if err != nil {
 		s.writeError(w, r, s.mapUploadErr(err), nil)
@@ -163,6 +165,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 	// spooled.
 	var tags tagSet
 	ttl, ttlErr := requestedTTL(r, s.cfg)
+	downgrade, redErr := redactionDowngrade(redactionHeader, errs.LocHeader, r.Header.Get(redactionHeader))
 	_ = tags.addFromRequest(r)
 	mr := multipart.NewReader(r.Body, boundary)
 
@@ -198,7 +201,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			_ = part.Close()
 			continue
 		}
-		if err := errs.JoinErrors(ttlErr, tags.err()); err != nil {
+		if err := errs.JoinErrors(ttlErr, redErr, tags.err()); err != nil {
 			_ = part.Close()
 			s.writeError(w, r, err, nil)
 			return
@@ -232,7 +235,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		files = append(files, spooledFile{name: part.FileName(), media: part.Header.Get("Content-Type"), file: tmp, size: n})
 	}
 
-	if err := errs.JoinErrors(ttlErr, tags.err()); err != nil {
+	if err := errs.JoinErrors(ttlErr, redErr, tags.err()); err != nil {
 		s.writeError(w, r, err, nil)
 		return
 	}
@@ -249,14 +252,15 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 	if len(files) == 1 {
 		f := files[0]
 		art, err := s.store.CreateArtifact(r.Context(), store.CreateArtifactInput{
-			ShareType:         artifact.ShareType(firstNonEmpty(r.URL.Query().Get("type"), string(artifact.TypeFile))),
-			Title:             firstNonEmpty(title, f.name),
-			Body:              f.file,
-			DeclaredMediaType: f.media,
-			Provenance:        prov,
-			Access:            access,
-			ExpiresAt:         expires,
-			Tags:              tags.tags,
+			ShareType:          artifact.ShareType(firstNonEmpty(r.URL.Query().Get("type"), string(artifact.TypeFile))),
+			Title:              firstNonEmpty(title, f.name),
+			Body:               f.file,
+			DeclaredMediaType:  f.media,
+			Provenance:         prov,
+			Access:             access,
+			ExpiresAt:          expires,
+			Tags:               tags.tags,
+			RedactionDowngrade: downgrade,
 		})
 		if err != nil {
 			s.writeError(w, r, s.mapUploadErr(err), nil)
@@ -271,12 +275,13 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		members = append(members, store.MemberInput{Name: f.name, Body: f.file, DeclaredMediaType: f.media})
 	}
 	art, err := s.store.CreateBundle(r.Context(), store.CreateBundleInput{
-		Title:      title,
-		Members:    members,
-		Provenance: prov,
-		Access:     access,
-		ExpiresAt:  expires,
-		Tags:       tags.tags,
+		Title:              title,
+		Members:            members,
+		Provenance:         prov,
+		Access:             access,
+		ExpiresAt:          expires,
+		Tags:               tags.tags,
+		RedactionDowngrade: downgrade,
 	})
 	if err != nil {
 		s.writeError(w, r, s.mapUploadErr(err), nil)
