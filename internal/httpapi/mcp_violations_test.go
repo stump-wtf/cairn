@@ -241,3 +241,29 @@ func TestIntegrationMCPRESTViolationParity(t *testing.T) {
 		})
 	}
 }
+
+// a2ui_action's own argument checks carry violations too (VE-7), so an agent
+// that sends a bad action learns which key to fix.
+func TestIntegrationMCPA2UIActionViolations(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read"})
+	sess := mcpClient(t, srv, token, nil, "a2ui-agent")
+
+	res := callTool(t, sess, "a2ui_action", map[string]any{"name": "delete_member", "context": map[string]any{"bundle": "b", "member": "m"}})
+	code, vs := toolViolations(t, res)
+	if !res.IsError || code != errs.CodeValidation || len(vs) != 1 || vs[0].Field != "name" ||
+		vs[0].Reason != errs.ReasonUnknownValue || valueOf(vs[0]) != "delete_member" || vs[0].Limit != `"open_member"` {
+		t.Fatalf("unknown action: IsError %v, %s %+v", res.IsError, code, vs)
+	}
+
+	res = callTool(t, sess, "a2ui_action", map[string]any{"name": "open_member"})
+	code, vs = toolViolations(t, res)
+	if !res.IsError || code != errs.CodeValidation || len(vs) != 2 ||
+		vs[0].Field != "context.bundle" || vs[1].Field != "context.member" ||
+		vs[0].Reason != errs.ReasonRequired || vs[1].Reason != errs.ReasonRequired {
+		t.Fatalf("missing context: IsError %v, %s %+v", res.IsError, code, vs)
+	}
+	if text := toolText(t, res); text != errs.Summary(vs) {
+		t.Fatalf("missing context text = %q, want %q", text, errs.Summary(vs))
+	}
+}
