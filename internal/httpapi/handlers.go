@@ -91,8 +91,14 @@ func checkTTLSeconds(field string, loc errs.Location, raw string, max time.Durat
 	secs, err := strconv.ParseInt(raw, 10, 64)
 	switch {
 	case err != nil:
+		// An integer too large for int64 is still an integer: its sign says
+		// which bound it broke, so it is exceeds_max or not_positive, never
+		// invalid_format.
 		var numErr *strconv.NumError
-		if errors.As(err, &numErr) && errors.Is(numErr.Err, strconv.ErrRange) && !strings.HasPrefix(raw, "-") {
+		if errors.As(err, &numErr) && errors.Is(numErr.Err, strconv.ErrRange) {
+			if strings.HasPrefix(raw, "-") {
+				return 0, errs.Violate(field, loc, errs.ReasonNotPositive, errs.WithValue(raw), errs.WithExpect(ttlExpect))
+			}
 			return 0, ttlTooLong(field, loc, raw, max)
 		}
 		return 0, errs.Violate(field, loc, errs.ReasonInvalidFormat, errs.WithValue(raw), errs.WithExpect(ttlExpect))
