@@ -3,6 +3,13 @@
 GO ?= go
 PKGS ?= ./...
 
+# go test's default 10m per-package timeout kills the uncached httpapi suite
+# under runner load (the same suite runs 185s one day, >600s the next). A
+# bigger budget stops load from reading as a hang; it does not make a hung
+# test pass. Override with TEST_TIMEOUT=10m make test to keep a strict
+# budget locally.
+TEST_TIMEOUT ?= 30m
+
 # Optional path to a built cairn binary for `make verify-cli`. Without it only
 # the import-graph gate runs, which needs no build.
 CLI_BIN ?=
@@ -11,11 +18,11 @@ build:
 	$(GO) build $(PKGS)
 
 test:
-	$(GO) test $(PKGS)
+	$(GO) test -timeout $(TEST_TIMEOUT) $(PKGS)
 
 # Concurrency-sensitive code (streaming ingest) MUST pass under the race detector.
 test-race:
-	$(GO) test -race $(PKGS)
+	$(GO) test -race -timeout $(TEST_TIMEOUT) $(PKGS)
 
 # The trajectory viewer's pure scrubber math has a plain-node unit test (no
 # DOM). Skipped silently when node is absent, so a Go-only box still passes.
