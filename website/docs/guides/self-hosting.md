@@ -46,6 +46,8 @@ is read from the `CAIRN_` namespace and nothing is ever loaded from a file.
 | `CAIRN_OIDC_ISSUER` | *(empty)* | Issuer URL of your OIDC provider. **Its presence is the switch that turns OIDC on** and, just as importantly, turns the dev-password login off (below). |
 | `CAIRN_OIDC_CLIENT_ID` | `cairn` | Client id registered at your provider. |
 | `CAIRN_OIDC_CLIENT_SECRET` | *(empty)* | Client secret. The redirect URI is not configurable — it is always `<base>/auth/callback`. |
+| `CAIRN_OPERATORS` | *(empty)* | Who runs this instance: comma-separated `<issuer>\|<subject>` sign-in identities, for example `https://id.example.com\|abc-123`. Listed users get the [operator console](#the-operator). **Empty (with `CAIRN_OPERATOR_GROUP` empty too) means there is no operator** and every operator route answers `404`. A malformed entry fails boot. |
+| `CAIRN_OPERATOR_GROUP` | *(empty)* | An OIDC group whose members are operators, read from the `groups` claim at sign-in. Setting it makes cairn request the `groups` scope. |
 | `CAIRN_DEV_LOGIN_PASSWORD` | *(empty)* | Shared-secret web login accepted for any actor id. Honored **only while `CAIRN_OIDC_ISSUER` is unset** — a deployment that configures OIDC can never fall back to it. Empty disables interactive login entirely. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_DEV_INSECURE_BEARER_AUTH` | `false` | Makes the API trust any bearer token as its own actor id with no verification. A local-development shortcut that must never be enabled in production. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_OUTBOUND_WEBHOOK_URLS` | *(empty)* | Comma-separated URLs that receive a signed `artifact.created` event. Empty = the feature is inert. These URLs are bearer capabilities; never log or share them. |
@@ -149,6 +151,8 @@ services:
       CAIRN_OIDC_CLIENT_ID: ${CAIRN_OIDC_CLIENT_ID:-cairn}
       CAIRN_OIDC_CLIENT_SECRET: ${CAIRN_OIDC_CLIENT_SECRET:-}
       CAIRN_API_TOKENS: ${CAIRN_API_TOKENS:-}
+      CAIRN_OPERATORS: ${CAIRN_OPERATORS:-}
+      CAIRN_OPERATOR_GROUP: ${CAIRN_OPERATOR_GROUP:-}
       CAIRN_OUTBOUND_WEBHOOK_URLS: ${CAIRN_OUTBOUND_WEBHOOK_URLS:-}
       CAIRN_OUTBOUND_WEBHOOK_SECRET: ${CAIRN_OUTBOUND_WEBHOOK_SECRET:-}
     restart: unless-stopped
@@ -300,6 +304,48 @@ provider can sign in here — restrict access at the provider.
 To confirm it took: open `/login`. With OIDC configured you get the provider
 button; with nothing configured there is no login at all — the deployment
 relies on bearer tokens only.
+
+## The operator
+
+The **operator** is whoever runs the instance. Name yourself in
+`CAIRN_OPERATORS` as `<issuer>|<subject>`: the issuer is your
+`CAIRN_OIDC_ISSUER` exactly as configured (or `https://github.com` for a GitHub
+sign-in, whose subject is the numeric account id), and the subject is your
+account's ID-token `sub`. You do not have to work it out: sign in once and
+Settings → **Account** shows your **Sign-in identity** in that exact form. Or
+set `CAIRN_OPERATOR_GROUP` to a group your IdP puts in the `groups` claim.
+Operator status is decided on every request from the current configuration, so
+removing an entry takes effect on that user's next request; a group operator
+must sign in again after being added to the group.
+
+An operator is also an ordinary user. Their Bin holds their own artifacts, and
+being an operator never lets them open anyone else's. The console at
+`/operator`, linked from Settings, is deliberately small:
+
+- a **directory** of users with how many artifacts each owns and how many bytes
+  they take up. It never shows an artifact's title, body, link, tags or
+  comments;
+- **suspension**. Suspending a user signs them out everywhere at once: their
+  browser sessions, personal access tokens and OAuth grants (with every access
+  and refresh token) stop working on their next request, and they cannot sign
+  in until reinstated. Reinstating restores nothing; they sign in again and
+  mint new tokens. A user listed in `CAIRN_OPERATORS` cannot be suspended from
+  the console: remove them from the list first;
+- an **audit log**. Every action needs a reason, and is recorded in the same
+  database transaction as the action itself. The affected user sees the rows
+  about them on their Settings page.
+
+Every operator route needs the operator's browser session; an API token, even
+the operator's own, gets `404`, and so does everyone else. With neither
+variable set there is no operator at all and those routes answer `404` to
+everyone.
+
+:::warning The operator can still read everything underneath
+The console removes the easy path, not the possibility. Whoever controls the
+Postgres database and the object store can read every artifact, comment and
+captured request in them, whatever the product shows. Treat access to those
+the way you treat the data itself, and tell your users.
+:::
 
 ## Tokens for agents
 

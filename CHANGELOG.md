@@ -29,6 +29,21 @@ reaches 1.0.
   owner string claims that owner's artifacts; an unverified one never does.
   `CAIRN_API_TOKENS` entries and the dev logins resolve their actor to a user
   the same way, so they keep the Bin they had.
+- **Operator profile** (SPEC-0023 REQ "Operator and User Profiles" and
+  "Operator Surfaces Bound Tenant Data and Never Read It", #330). The operator
+  is named by `CAIRN_OPERATORS` (comma-separated `<issuer>|<subject>`) or
+  `CAIRN_OPERATOR_GROUP` (an OIDC group); with neither set there is no
+  operator and every operator route answers `404`. The operator gets a console
+  at `/operator` and `GET /v1/operator/directory` (users with artifact counts
+  and bytes, never content) and can suspend a user with
+  `POST /v1/operator/suspensions`. Suspension offboards in one transaction:
+  sessions, personal access tokens, OAuth grants with their access and refresh
+  tokens, and unredeemed authorization codes stop authenticating on the next
+  request, and a suspended user cannot sign in. Each action writes an
+  `operator_audit` row, with a required reason, in the same transaction; the
+  affected user reads it in Settings. Operator routes need a browser session,
+  and operator status never widens what the operator may read (audit A12,
+  A13).
 
 ### Upgrade notes
 
@@ -47,6 +62,10 @@ reaches 1.0.
   and `cairnd` refuses to start with `ownership backfill would change the Bin
   of owner <owner>` naming the first mismatch. Report that error rather than
   editing rows by hand.
+- Migration `0019_operator_profile` adds the `operator_audit` table, a
+  constant-default `sessions.operator_group` column and an index on
+  `sessions.user_id`. No data is rewritten. The operator profile is off until
+  you set `CAIRN_OPERATORS` or `CAIRN_OPERATOR_GROUP`.
 
 ## [0.1.1] - Unreleased
 
