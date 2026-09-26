@@ -145,16 +145,17 @@ that claims the todo reads the artifact at `data.url` and follows it, semi-trust
 
 ### What `actor_id` holds
 
-`actor_id` is the principal Cairn authenticated, never a value the creator sends. Its
-shape depends on the credential:
+`actor_id` is the principal Cairn authenticated, never a field of the request that
+creates the artifact. Its shape depends on the credential:
 
 | Credential | `actor_id` |
 |---|---|
 | Web sign-in through your identity provider (OIDC) | The email your identity provider asserts, or its subject id when it sends no email, e.g. `you@example.com` |
 | Web sign-in with GitHub, on a server that enables it | Your primary verified GitHub email, lowercased, e.g. `you@example.com`. Never your GitHub username |
-| An MCP client you authorized through OAuth | The sign-in you approved it from, as in the rows above |
+| An MCP client you authorized through OAuth | The sign-in you approved it from, as in the sign-in rows of this table |
 | Personal access token | The token's owner: the sign-in that created it, e.g. `you@example.com` |
 | Static token from `CAIRN_API_TOKENS` | The `actor` field of its `secret:actor[:role]` entry, with surrounding spaces trimmed |
+| A development-only login: `CAIRN_DEV_LOGIN_PASSWORD` or `CAIRN_DEV_INSECURE_BEARER_AUTH` | Whatever name was typed at the login form, or the raw bearer token itself, unverified. Never enable either in production |
 
 This matters for routing. A Switchboard rule that trusts handoffs by `actor_id` has to
 list the value Cairn records, so a rule written for a forge login such as `octocat`
