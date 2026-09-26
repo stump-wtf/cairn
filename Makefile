@@ -10,8 +10,15 @@ CLI_BIN ?=
 build:
 	$(GO) build $(PKGS)
 
+# go test kills a package binary after 10m by default. With a database, every
+# internal/httpapi integration test migrates its own fresh schema (18
+# migrations), so that one package runs ~5 minutes on an idle runner and blew
+# through 10m on a loaded one (runs 14210 and 14241) without any test hanging.
+# The limit stays as a hang guard, with headroom for a shared runner.
+TEST_TIMEOUT ?= 30m
+
 test:
-	$(GO) test $(PKGS)
+	$(GO) test -timeout $(TEST_TIMEOUT) $(PKGS)
 
 # Concurrency-sensitive code (streaming ingest) MUST pass under the race detector.
 test-race:
