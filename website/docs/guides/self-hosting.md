@@ -334,7 +334,8 @@ and `curl -u`. See [ADR-0023](../decisions/ADR-0023.md) and
 argument turns scanning off, and cairnd refuses to start if the scanner cannot
 be built. A writer can only downgrade a rejecting type to masking for one
 request (`X-Cairn-Redaction: mask`, `--redact=mask`, or `redaction: "mask"` over
-MCP); any other value is `validation_failed`.
+MCP). Any other value is refused: the API answers `validation_failed`, and the
+CLI stops with a usage error before it sends anything.
 
 ### What is masked and what is rejected
 
@@ -360,7 +361,7 @@ before scanning existed), a count, and the rule IDs. Never the value.
 | Variable | Default | Accepted values |
 |---|---|---|
 | `CAIRN_REDACTION_REJECT_TYPES` | `code,bundle` | Comma-separated share types, case-insensitive, whitespace trimmed. Only artifact and bundle creates consult it: traces, comments, and webhook captures always mask. Names are not checked against the known share types, so a misspelt type silently masks. Empty or unset means the default. |
-| `CAIRN_REDACTION_MAX_SCAN_BYTES` | `16777216` (16 MiB) | A positive integer number of bytes, applied to each scanned field. Fields over 1 MiB are scanned in overlapping windows read back from staging, never buffered whole. Zero, a negative number, or a non-integer stops startup. |
+| `CAIRN_REDACTION_MAX_SCAN_BYTES` | `16777216` (16 MiB) | A positive integer number of bytes, applied to each scanned field. An artifact or bundle body over 1 MiB is scanned in overlapping windows read back from staging, never buffered whole. Zero, a negative number, or a non-integer stops startup. |
 | `CAIRN_REDACTION_OVERSIZE` | `reject` | `reject` refuses a text field over the cap with `too_large_to_scan`. `store_unscanned` stores it unscanned with status `not_scanned_oversize`. Anything else, including a different case, stops startup. |
 | `CAIRN_REDACTION_ALLOWLIST_FILE` | *(empty)* | A path to an operator allowlist TOML, described below. Empty means no allowlist. A file that is missing or does not parse stops startup. |
 
@@ -387,7 +388,7 @@ scan time, while `store_unscanned` costs the scan.
 
 `CAIRN_REDACTION_ALLOWLIST_FILE` exempts values, never places. The file is
 operator configuration read once at startup; no user, token, or request can set
-or change it. It takes exactly three top-level keys:
+or change it. It accepts only these three top-level keys, each optional:
 
 ```toml
 # Values matching one of these regexes are not masked or rejected. Each regex is

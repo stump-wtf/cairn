@@ -94,7 +94,7 @@ Cairn scans what you store for credentials. Code artifacts and bundles are refus
 one turns up; everything else is masked (see
 [Secret redaction](./self-hosting.md#secret-redaction)). A refusal is a
 `400 validation_failed` with one violation per finding. Each names the field, the rule,
-and the line and column, and never the value:
+and, where known, the line and column. None names the value:
 
 ```json
 {"error": {"code": "validation_failed", "message": "…", "violations": [
@@ -137,7 +137,7 @@ archives aren't scanned, so the cap doesn't apply to them. A webhook capture is 
 refused for being over the scan cap: the field is replaced with a notice and listed in
 the capture's `redaction_withheld`.
 
-### Other size limits
+### Size and rate limits
 
 `413 payload too large` means an upload is over the size limit (64 MiB per body by
 default), a webhook capture is over 5 MiB, or an MCP call is too big. For a large trace,
