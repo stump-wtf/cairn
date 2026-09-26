@@ -134,9 +134,9 @@ func TestScrubScanFailureWithholdsEveryField(t *testing.T) {
 	logs := &bytes.Buffer{}
 	s := &Service{scanner: failingScanner{}, log: bufLogger(logs)}
 	in := CaptureInput{Query: "k=" + tok, ContentType: "text/plain", Body: []byte("x " + tok)}
-	got := s.scrub(context.Background(), "ep1", in, map[string][]string{"x-key": {tok}, "authorization": {"Basic " + tok}})
+	got := s.scrub(context.Background(), "ep1", in, map[string][]string{"x-key": {tok}, "authorization": {"Basic " + tok}, tok: {"1"}})
 
-	all := got.query + fmt.Sprint(got.headers) + string(got.body) + logs.String()
+	all := got.query + fmt.Sprint(got.headers) + got.contentType + string(got.body) + logs.String()
 	if strings.Contains(all, tok) {
 		t.Fatalf("a raw value survived a failed scan: %q", all)
 	}
@@ -146,8 +146,10 @@ func TestScrubScanFailureWithholdsEveryField(t *testing.T) {
 	if !strings.HasPrefix(string(got.body), redact.Mask) || !strings.Contains(string(got.body), "scan failed") {
 		t.Fatalf("body = %q, want the withheld notice", got.body)
 	}
-	if got.headers["x-key"][0] != redact.Mask || got.headers["authorization"][0] != redact.Mask {
-		t.Fatalf("headers = %v, want names kept and values masked", got.headers)
+	// A header name is sender input too, and nothing scanned these: none is
+	// kept.
+	if got.headers != nil || got.contentType != redact.Mask {
+		t.Fatalf("headers = %v content type %q, want no headers and a masked content type", got.headers, got.contentType)
 	}
 	if got.summary.Status != redact.StatusUnscanned {
 		t.Fatalf("status = %q, want unscanned: the withheld fields were never scanned", got.summary.Status)
@@ -302,6 +304,26 @@ func TestMaskCredentialHeaders(t *testing.T) {
 		if h["authorization"][0] != want || h["x-other"][0] != in {
 			t.Errorf("mask(%q) = %q (x-other %q), want %q and x-other untouched", in, h["authorization"][0], h["x-other"][0], want)
 		}
+	}
+}
+
+// TestScrubHeaderNameTokenNotKept: a token is a valid header name. The mask
+// eats that line's label, so the headers cannot be parsed back and are
+// withheld; the withheld form keeps the names the scan left intact and drops
+// the one it masked.
+func TestScrubHeaderNameTokenNotKept(t *testing.T) {
+	tok := strings.ToLower(plantedToken(10))
+	s := &Service{scanner: testScanner(t), log: discardLogger()}
+	got := s.scrub(context.Background(), "ep1", CaptureInput{},
+		sanitizeHeaders(map[string][]string{tok: {"1"}, "X-Event": {"push"}}))
+	if strings.Contains(fmt.Sprint(got.headers), tok) {
+		t.Fatalf("a token in a header name survived scrub: %v", got.headers)
+	}
+	if want := map[string][]string{"x-event": {redact.Mask}}; !reflect.DeepEqual(got.headers, want) {
+		t.Fatalf("headers = %v, want %v", got.headers, want)
+	}
+	if !reflect.DeepEqual(got.withheld, []string{FieldHeaders}) || got.summary.Status != redact.StatusMasked {
+		t.Fatalf("withheld %v status %q, want headers withheld and masked", got.withheld, got.summary.Status)
 	}
 }
 

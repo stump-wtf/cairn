@@ -115,16 +115,16 @@ func (s *Service) scrub(ctx context.Context, publicID string, in CaptureInput, h
 
 	if len(headers) > 0 {
 		text, names := serializeHeaders(headers)
-		masked, sum, ok := s.scanField(ctx, publicID, FieldHeaders, text)
+		masked, sum, scanned := s.scanField(ctx, publicID, FieldHeaders, text)
 		out.summary = out.summary.Merge(sum)
-		var parsed map[string][]string
-		if ok {
+		parsed, ok := map[string][]string(nil), false
+		if scanned {
 			parsed, ok = parseHeaders(masked, names)
 		}
 		if ok {
 			out.headers = parsed
 		} else {
-			out.headers = maskAllHeaderValues(headers)
+			out.headers = withholdHeaders(headers, masked, scanned)
 			out.withheld = append(out.withheld, FieldHeaders)
 		}
 	}
@@ -134,10 +134,14 @@ func (s *Service) scrub(ctx context.Context, publicID string, in CaptureInput, h
 	// column, the spilled blob's media type and the object's metadata, so it
 	// is scanned like the header it came from. The ingress copies it from
 	// the Content-Type header, so the scanned header is reused (one secret,
-	// one count); a direct caller's own value is scanned by itself.
+	// one count), or masked when the headers were withheld; a direct caller's
+	// own value is scanned by itself.
 	if in.ContentType != "" {
-		if raw, got := headers["content-type"], out.headers["content-type"]; len(raw) > 0 && raw[0] == in.ContentType && len(got) > 0 {
-			out.contentType = got[0]
+		if raw := headers["content-type"]; len(raw) > 0 && raw[0] == in.ContentType {
+			out.contentType = redact.Mask
+			if got := out.headers["content-type"]; len(got) > 0 {
+				out.contentType = got[0]
+			}
 		} else {
 			masked, sum, ok := s.scanField(ctx, publicID, FieldHeaders, in.ContentType)
 			out.summary = out.summary.Merge(sum)
@@ -268,16 +272,35 @@ func parseHeaders(masked string, names []string) (map[string][]string, bool) {
 	return out, true
 }
 
-// maskAllHeaderValues keeps every header's name and replaces each value with
-// the mask: the fail-closed form of headers that could not be scanned.
-func maskAllHeaderValues(h map[string][]string) map[string][]string {
+// withholdHeaders is the fail-closed form of headers that could not be stored
+// as scanned: every value is replaced with the mask, and a name is kept only
+// when the scan saw it and left it intact as a line's label. A header name is
+// sender input like any value (a token is a valid header name), so a name the
+// mask touched is dropped, and so is every name when there is no scanned text
+// at all (the scan failed, or the headers were over the scan cap).
+func withholdHeaders(h map[string][]string, masked string, scanned bool) map[string][]string {
+	if !scanned {
+		return nil
+	}
+	intact := map[string]bool{}
+	for _, line := range strings.Split(masked, "\n") {
+		if name, _, found := strings.Cut(line, ": "); found {
+			intact[name] = true
+		}
+	}
 	out := make(map[string][]string, len(h))
 	for name, vals := range h {
+		if !intact[name] {
+			continue
+		}
 		masked := make([]string, len(vals))
 		for i := range vals {
 			masked[i] = redact.Mask
 		}
 		out[name] = masked
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
