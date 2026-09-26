@@ -272,7 +272,7 @@ func (s *Server) newMCPServer() *mcp.Server {
 			"defaults to file, sniffed/declared media type selects the viewer) owned by the authorizing " +
 			"human, with the default link-visibility policy and default TTL. Bundles (N named members) " +
 			"are not creatable here — use bundle_create. Traces (a run header + span tree) are not " +
-			"creatable here — use run_create. Requires artifacts:write." + handoffTagsDoc,
+			"creatable here — use run_create. Requires artifacts:write." + redactionToolDoc + handoffTagsDoc,
 	}, s.mcpCreateArtifact)
 
 	addTool(srv, &mcp.Tool{
@@ -290,7 +290,7 @@ func (s *Server) newMCPServer() *mcp.Server {
 		Description: "Create a bundle of N named members (each a body plus an optional media type) " +
 			"owned by the authorizing human, with the default link-visibility policy and default TTL " +
 			"— the same multi-file create store.CreateBundle performs for the web/CLI. Returns the " +
-			"bundle's id, URLs, and member list. Requires artifacts:write." + handoffTagsDoc,
+			"bundle's id, URLs, and member list. Requires artifacts:write." + redactionToolDoc + handoffTagsDoc,
 	}, s.mcpCreateBundle)
 
 	if s.traj != nil {
@@ -970,7 +970,7 @@ type mcpCreateInput struct {
 	// convention lives in handoffTagsDoc, published in the tool description.
 	Tags []string `json:"tags,omitempty" jsonschema:"Optional routing tags, e.g. [\"handoff\", \"lane:auto\", \"size:m\"]. Lowercase strings you assert, not provenance. See the tool description for the handoff convention and the bounds."`
 	// Redaction is the writer's downgrade (SPEC-0017 RD-5).
-	Redaction string `json:"redaction,omitempty" jsonschema:"Optional. The only value is mask: store a detected credential as [REDACTED] instead of refusing the create, which code artifacts do by default. Scanning cannot be turned off."`
+	Redaction string `json:"redaction,omitempty" jsonschema:"Optional; the only value is \"mask\". The body and title are scanned for credentials. A markdown or file artifact stores a detected value as [REDACTED]; a code artifact, or a file whose media type names a language, refuses the create by default. \"mask\" stores it as [REDACTED] instead. Any other value is refused with validation_failed: scanning cannot be turned off. The output's redacted and redactions {count, rules} report what was masked."`
 }
 
 type mcpCreateOutput struct {
@@ -1065,7 +1065,7 @@ type mcpBundleCreateInput struct {
 	// (ADR-0018); see mcpCreateInput.Tags.
 	Tags []string `json:"tags,omitempty" jsonschema:"Optional routing tags, e.g. [\"handoff\", \"lane:auto\", \"size:m\"]. Lowercase strings you assert, not provenance. See the tool description for the handoff convention and the bounds."`
 	// Redaction is the writer's downgrade (SPEC-0017 RD-5).
-	Redaction string `json:"redaction,omitempty" jsonschema:"Optional. The only value is mask: store each detected credential as [REDACTED] instead of refusing the whole bundle, which bundles do by default. Scanning cannot be turned off."`
+	Redaction string `json:"redaction,omitempty" jsonschema:"Optional; the only value is \"mask\". Every member and the title are scanned for credentials, and by default a detected value refuses the whole bundle, naming the member (members[n].content) and line. \"mask\" stores each detected value as [REDACTED] instead. Any other value is refused with validation_failed: scanning cannot be turned off. The output's redacted and redactions {count, rules} report what was masked."`
 }
 
 type mcpBundleCreateOutput struct {
