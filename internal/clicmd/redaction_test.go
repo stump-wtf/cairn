@@ -206,3 +206,103 @@ func TestWarnRedacted(t *testing.T) {
 		}
 	}
 }
+
+// secretAt is the violation the server sends for a credential in field on
+// line 42: the rule, line and column, and never the value (SPEC-0017 RD-11).
+func secretAt(field string) map[string]any {
+	return map[string]any{
+		"field": field, "location": "body", "reason": "secret_detected",
+		"rule": "github-pat", "line": 42, "column": 7,
+		"message": "a credential was detected (rule github-pat, line 42); remove it or resend with --redact=mask",
+	}
+}
+
+// TestSecretRejectionShowsHowToProceed is SPEC-0017 RD-11 "CLI shows how to
+// proceed": a create refused for a token on line 42 prints the file, the
+// line, the rule ID and the --redact=mask hint, one line per violation, and
+// exits with the usage code. A single-file create's field is body; a
+// bundle's is members[n].content, the n-th file argument.
+func TestSecretRejectionShowsHowToProceed(t *testing.T) {
+	patch := writeTemp(t, "patch.diff", "+ a line\n")
+	notes := writeTemp(t, "notes.md", "# notes\n")
+	const hint = ": credential detected (rule github-pat); remove it or resend with --redact=mask\n"
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		stdin string
+		field string
+		want  string
+	}{
+		{"add, one file", []string{"add", patch}, "", "body", "cairn: " + shellWord(patch) + " line 42" + hint},
+		{"ingest a file", []string{patch}, "", "body", "cairn: " + shellWord(patch) + " line 42" + hint},
+		{"ingest stdin", nil, "+ a line\n", "body", "cairn: stdin line 42" + hint},
+		{"add, a bundle member", []string{"add", notes, patch}, "", "members[1].content", "cairn: " + shellWord(patch) + " line 42" + hint},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := rejectWith(t, []map[string]any{secretAt(tc.field)}, nil, nil)
+			args := append(append([]string{}, tc.args...), "--url", srv.URL, "--token", "tok")
+			stdout, stderr, code := runCLI(t, emptyConfigPath(t), tc.stdin, args...)
+
+			if stderr != tc.want {
+				t.Errorf("stderr = %q, want %q", stderr, tc.want)
+			}
+			if code != int(cliexit.Usage) {
+				t.Errorf("exit code = %d, want usage (%d)", code, cliexit.Usage)
+			}
+			if stdout != "" {
+				t.Errorf("stdout = %q, want empty", stdout)
+			}
+		})
+	}
+}
+
+// TestScanRejectionLines covers the rest of the scan rejections' wording:
+// several findings, one line each; a value the server could not mask under
+// --redact=mask, where resending with it would not help; a detection with no
+// line; and a body too large to scan.
+func TestScanRejectionLines(t *testing.T) {
+	num := func(s string) *cliclient.Scalar { return &cliclient.Scalar{Text: s, Number: true} }
+	files := sentRequest{files: []string{"a.log", "my patch.diff"}}
+	for _, tc := range []struct {
+		name string
+		vs   []cliclient.Violation
+		sent sentRequest
+		want []string
+	}{
+		{"two findings in two members", []cliclient.Violation{
+			{Field: "members[0].content", Reason: "secret_detected", Rule: "aws-access-token", Line: num("3")},
+			{Field: "members[1].content", Reason: "secret_detected", Rule: "github-pat", Line: num("42")},
+		}, files, []string{
+			"a.log line 3: credential detected (rule aws-access-token); remove it or resend with --redact=mask",
+			`"my patch.diff" line 42: credential detected (rule github-pat); remove it or resend with --redact=mask`,
+		}},
+		{"already masking", []cliclient.Violation{
+			{Field: "body", Reason: "secret_detected", Rule: "github-pat", Line: num("42")},
+		}, sentRequest{files: []string{"patch.diff"}, redact: "mask"}, []string{
+			"patch.diff line 42: credential detected (rule github-pat); remove it",
+		}},
+		{"no line", []cliclient.Violation{
+			{Field: "title", Reason: "secret_detected", Rule: "github-pat"},
+		}, sentRequest{}, []string{
+			"--title: credential detected (rule github-pat); remove it or resend with --redact=mask",
+		}},
+		{"member too large to scan", []cliclient.Violation{
+			{Field: "members[1].content", Reason: "too_large_to_scan", Limit: num("1048576"), Unit: "bytes",
+				Message: "is too large to scan for credentials: the maximum is 1048576 bytes"},
+		}, files, []string{
+			`"my patch.diff" is too large to scan for credentials: the server's maximum is 1 MiB`,
+		}},
+		{"stdin too large to scan, no limit", []cliclient.Violation{
+			{Field: "body", Reason: "too_large_to_scan"},
+		}, sentRequest{}, []string{
+			"stdin is too large to scan for credentials",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := violationLines(tc.vs, tc.sent)
+			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+				t.Errorf("violationLines = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

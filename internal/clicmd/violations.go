@@ -89,6 +89,12 @@ func violationLine(v cliclient.Violation, sent sentRequest) string {
 	subject, showsValue := violationSubject(v, sent)
 	limit := limitText(v)
 	switch {
+	case v.Reason == cliclient.ReasonSecretDetected:
+		return secretLine(v, sent)
+	case v.Reason == cliclient.ReasonTooLargeToScan && limit != "":
+		return contentSubject(v, sent) + " is too large to scan for credentials: the server's maximum is " + limit
+	case v.Reason == cliclient.ReasonTooLargeToScan:
+		return contentSubject(v, sent) + " is too large to scan for credentials"
 	case v.Reason == cliclient.ReasonExceedsMax && limit != "":
 		return subject + " exceeds the server's maximum of " + limit
 	case v.Reason == cliclient.ReasonTooLong && limit != "":
@@ -110,11 +116,53 @@ func violationLine(v cliclient.Violation, sent sentRequest) string {
 		msg = "is not valid (" + v.Reason + ")"
 	}
 	// The server's sentences are predicates ("must be lowercase", "contains a
-	// character …"), except a detected secret's, which is a clause of its own.
-	if v.Reason == "secret_detected" || isGeneric(v) {
+	// character …"), except the generic entry's, which is a clause of its own.
+	if isGeneric(v) {
 		return subject + ": " + msg
 	}
 	return subject + " " + msg
+}
+
+// secretLine renders a secret_detected rejection as the file (or stdin, or
+// flag) that carried the credential, its line, the rule that fired and how
+// to proceed (SPEC-0017 RD-11 "CLI shows how to proceed"):
+//
+//	patch.diff line 42: credential detected (rule github-pat); remove it or resend with --redact=mask
+//
+// The server never sends the value or the line's text, so neither can this.
+// A writer who already sent --redact=mask got a value the server could not
+// mask, so for them the only way forward is to remove it.
+//
+// Governing: ADR-0023, SPEC-0017 RD-5, RD-11; ADR-0025, SPEC-0019 VE-8
+func secretLine(v cliclient.Violation, sent sentRequest) string {
+	where := contentSubject(v, sent)
+	if n, ok := v.Line.Int(); ok && n > 0 {
+		where += " line " + strconv.FormatInt(n, 10)
+	}
+	what := "credential detected"
+	if v.Rule != "" {
+		what += " (rule " + v.Rule + ")"
+	}
+	if sent.redact == cliclient.RedactionMask {
+		return where + ": " + what + "; remove it"
+	}
+	return where + ": " + what + "; remove it or resend with --redact=" + cliclient.RedactionMask
+}
+
+// contentSubject names the content a scan rejection is about: the file
+// argument behind members[n].content or a single create's body, stdin for a
+// piped body, and otherwise what violationSubject would say (--title).
+func contentSubject(v cliclient.Violation, sent sentRequest) string {
+	if v.Field == "body" {
+		switch len(sent.files) {
+		case 0:
+			return "stdin"
+		case 1:
+			return shellWord(sent.files[0])
+		}
+	}
+	subject, _ := violationSubject(v, sent)
+	return subject
 }
 
 // indexedField matches tags[n] and members[n].<rest>.
