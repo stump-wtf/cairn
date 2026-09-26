@@ -12,6 +12,9 @@ issue tracker, Cairn, and the repository. Put everything in one of them and it e
 becomes a junk drawer or loses what it needs. This page sets out which job each one does,
 and how to join them with a link.
 
+It's one of the cross-stack [Patterns](https://stump-wtf.github.io/harness/patterns/) for
+running Harness, Switchboard, and Cairn together.
+
 ## The rule
 
 - **The tracker is the status of record.** Who owns the work, whether it's done, and what
@@ -129,14 +132,21 @@ links it, then append the span that produced the receipt.
 
 ## Integrity
 
-Every body Cairn stores is addressed by its SHA-256. The create response carries it as
+Every body Cairn stores is addressed by its SHA-256
+([SPEC-0002](../specs/artifact-core-and-share-types/index.md#requirement-content-addressing-and-blobs)).
+For a single-body artifact such as a markdown receipt, the create response carries it as
 `checksum`, over REST and from `artifact_create` alike, and reading the body back with
-`GET /v1/artifacts/<id>/body` returns it in the `X-Cairn-Checksum` header. A bundle has no
-checksum of its own; reading one of its files returns that file's checksum.
+`GET /v1/artifacts/<id>/body` returns it in the `X-Cairn-Checksum` header. A bundle, a
+trace, and a webhook endpoint have no checksum of their own. Reading one of a bundle's
+files returns that file's checksum, and a trace's spans and a webhook's requests are
+stored as rows, not as one body. That's one more reason the receipt is a markdown
+artifact and not the trace itself.
 
 A producer can assert the checksum up front. Send the hex SHA-256 of the body in
 `X-Cairn-Sha256` on `POST /v1/artifacts`, and Cairn refuses the upload with
-`400 validation_failed` if what arrived hashes to anything else. The MCP create tools and
+`400 validation_failed` if what arrived hashes to anything else
+([checksum verification](../specs/artifact-core-and-share-types/index.md#requirement-streaming-upload-with-checksum-verification)).
+The MCP create tools and
 the `cairn` CLI don't send it, so this is a REST-only check today.
 
 ```bash
@@ -150,8 +160,8 @@ curl -sS https://cairn.stump.wtf/v1/artifacts \
 ```
 
 **What the checksum proves.** The bytes Cairn stored are the bytes the producer hashed,
-and nothing truncated or mangled them on the way in. Cairn has no way to edit a body after
-it's created, so anyone who downloads it later and gets the same hash is reading exactly
+and nothing truncated or mangled them on the way in. Cairn has no way to edit an
+artifact's body after it's created, so anyone who downloads it later and gets the same hash is reading exactly
 what was written. Record the checksum in the tracker comment and it outlives the artifact:
 if the receipt is later copied into the repository, the hash shows it's the same one people
 reviewed.
