@@ -56,6 +56,15 @@ func (ts *tagSet) err() error {
 	return nil
 }
 
+// record keeps a violation, up to errs.MaxViolations of them. A multipart body
+// can carry any number of tag fields, and a rejection no longer stops at the
+// first, so every source is bounded here rather than only in errs.Join.
+func (ts *tagSet) record(inv *errs.Invalid) {
+	if len(ts.bad) < errs.MaxViolations {
+		ts.bad = append(ts.bad, inv)
+	}
+}
+
 // addList adds a comma-separated list. Whitespace around a tag is trimmed and
 // empty items are skipped, so "a, b," and "a,b" mean the same thing.
 func (ts *tagSet) addList(list string, loc errs.Location) {
@@ -65,9 +74,7 @@ func (ts *tagSet) addList(list string, loc errs.Location) {
 			continue
 		}
 		if inv := artifact.CheckTag(t, tagField, loc); inv != nil {
-			if len(ts.bad) < errs.MaxViolations {
-				ts.bad = append(ts.bad, inv)
-			}
+			ts.record(inv)
 			continue
 		}
 		if _, dup := ts.seen[t]; dup {
@@ -112,9 +119,9 @@ func (ts *tagSet) addFormField(part io.Reader) {
 	b, err := io.ReadAll(io.LimitReader(part, int64(maxTagFieldBytes)+1))
 	switch {
 	case err != nil:
-		ts.bad = append(ts.bad, errs.Violate(tagField, errs.LocForm, errs.ReasonInvalidFormat))
+		ts.record(errs.Violate(tagField, errs.LocForm, errs.ReasonInvalidFormat))
 	case len(b) > maxTagFieldBytes:
-		ts.bad = append(ts.bad, errs.Violate(tagField, errs.LocForm, errs.ReasonTooLong,
+		ts.record(errs.Violate(tagField, errs.LocForm, errs.ReasonTooLong,
 			errs.WithLimit(maxTagFieldBytes, errs.UnitBytes)))
 	default:
 		ts.addList(string(b), errs.LocForm)
