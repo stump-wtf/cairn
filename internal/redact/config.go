@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"regexp/syntax"
 	"slices"
 	"sort"
 	"strings"
@@ -127,16 +128,48 @@ func loadAllowlist(path string) (*operatorAllowlist, error) {
 	return &al, nil
 }
 
-// anchored reports whether a regex is pinned at both ends: `^…$`, optionally
-// behind a leading flag group such as `(?i)`.
+// anchored reports whether every match of re must span the whole value: each
+// alternative starts with ^ and ends with $ (text anchors, not (?m) line
+// anchors). It reads the parsed syntax tree rather than the source text, so
+// `^fixture|.+$`, whose second branch is unanchored at the start, is refused.
+//
+// @joestump 09/26/2026 - Review of cairn#382: the textual prefix/suffix check
+// accepted `^fixture|.+$`, which exempts every value.
 func anchored(re string) bool {
-	s := re
-	if strings.HasPrefix(s, "(?") {
-		if i := strings.IndexByte(s, ')'); i > 0 && !strings.Contains(s[:i], ":") {
-			s = s[i+1:]
-		}
+	t, err := syntax.Parse(re, syntax.Perl)
+	if err != nil {
+		return false
 	}
-	return strings.HasPrefix(s, "^") && strings.HasSuffix(s, "$") && !strings.HasSuffix(s, `\$`)
+	return anchoredAt(t, 0) && anchoredAt(t, -1)
+}
+
+// anchoredAt reports whether t is pinned at its start (end 0) or end (end -1)
+// on every path through it.
+func anchoredAt(t *syntax.Regexp, end int) bool {
+	switch t.Op {
+	case syntax.OpBeginText:
+		return end == 0
+	case syntax.OpEndText:
+		return end == -1
+	case syntax.OpCapture:
+		return anchoredAt(t.Sub[0], end)
+	case syntax.OpConcat:
+		if len(t.Sub) == 0 {
+			return false
+		}
+		if end == 0 {
+			return anchoredAt(t.Sub[0], end)
+		}
+		return anchoredAt(t.Sub[len(t.Sub)-1], end)
+	case syntax.OpAlternate:
+		for _, sub := range t.Sub {
+			if !anchoredAt(sub, end) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // buildConfig assembles the detector config. It never lets gitleaks extend,
