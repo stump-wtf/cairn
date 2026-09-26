@@ -15,6 +15,27 @@ reaches 1.0.
   changes. The encoder now handles every SPEC-0016 event kind; kinds other than
   `artifact.created` are counted and never sent to `CAIRN_OUTBOUND_WEBHOOK_URLS`.
   (ADR-0022, SPEC-0016, #305)
+- **Traces announce themselves.** Opening a run, or uploading one whole, now
+  emits `artifact.created` with `share_type: "trajectory"`, like every other
+  artifact, so `CAIRN_OUTBOUND_WEBHOOK_URLS` targets start receiving trace
+  creations. A consumer that routes on `share_type` or tags needs no change;
+  one that assumed every event was a single-body artifact or a bundle should
+  ignore `trajectory`. Closing a run (`POST /v1/runs/{id}/close`), and a batch
+  run born closed, also emit `run.closed` with its status, span count, start,
+  end and duration; like the other new kinds it is counted and not sent to env
+  targets until owned subscriptions land. (ADR-0022, SPEC-0016 EV-2, EV-3,
+  SPEC-0023, #313)
+- **Annotations announce themselves.** A new comment emits `comment.created`,
+  a new reaction `reaction.added` (a duplicate click emits nothing), and each
+  removed reaction `reaction.removed`, whichever surface made the change.
+  Reaction events carry `approval_class` (the emoji is in the approval class)
+  and `approval` (in the class **and** stored by a browser session). An
+  agent's 👍 is stored and announced, but never as an approval, and no
+  request field can change that. The class is set by the new
+  `CAIRN_APPROVAL_REACTIONS` (comma-separated, default 👍 ✅ ✔️; skin tones
+  and VS-16 are ignored when matching), and a malformed entry fails startup.
+  Like `run.closed`, these kinds are counted and not sent to env targets
+  until owned subscriptions land. (ADR-0022, SPEC-0016 EV-2, EV-5, #311)
 - **Reactions and comments are owned per actor kind.** Each row stores the
   server-derived `actor_kind` (`human` for a browser session, `agent` for every
   bearer credential), and reaction idempotency is keyed per
