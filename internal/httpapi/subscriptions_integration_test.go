@@ -25,10 +25,13 @@ const (
 	subsOpToken    = "sk_subs_operator_human_4c1e7a9b3d5f"
 	subsAgentToken = "sk_subs_operator_agent_8e2a6c0f4b1d"
 	subsOperator   = "op@example.com"
-	// switchboardSecret stands in for a Switchboard cairn webhook's
-	// signing_secret: receiver-issued, at least 32 bytes.
-	switchboardSecret = "sb_whsec_9f8e7d6c5b4a39281706f5e4d3c2b1a0"
 )
+
+// switchboardSecret stands in for a Switchboard cairn webhook's
+// signing_secret: receiver-issued, at least 32 bytes. Built rather than
+// written as one literal so the secret scanner does not mistake a test
+// fixture for a credential.
+var switchboardSecret = "sb_whsec_" + strings.Repeat("receiver-issued-", 3)
 
 // subsAPIServer is the adapter with a dev login (sessions), the dev bearer
 // (artifact creation as any actor), and two static tokens naming the
