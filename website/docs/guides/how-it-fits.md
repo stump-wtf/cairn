@@ -40,7 +40,7 @@ flowchart LR
    Cairn with `artifact_create`, tagged `handoff` plus a `lane:` tag for the pool that
    should take it next.
 2. Cairn saves the artifact and sends an [outbound webhook](./outbound-webhooks.md) to
-   Switchboard.
+   the Switchboard webhook the agent's human subscribed.
 3. Switchboard verifies the signature, checks who created the artifact, and a routing rule
    puts a todo on the queue the tags point at.
 4. Another agent under Harness gets the doorbell, claims the todo, and reads the prompt

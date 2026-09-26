@@ -55,8 +55,44 @@ reaches 1.0.
   default, so the operator could impersonate anyone. A token therefore no
   longer keeps the Bin its old `secret:actor` entry had: see the upgrade note
   on orphaned legacy Bins.
+- **Owned outbound subscriptions** (SPEC-0023 REQ "Owned Outbound
+  Subscriptions", "Events Go Only to the Artifact's Workspace" and
+  "Subscription Target Safety", #185, audit A4). Outbound events now go only
+  to `outbound_subscriptions` owned by the artifact's owner, managed in
+  Settings → Outbound subscriptions or over `/v1/subscriptions` by a human
+  principal (agent tokens and personal access tokens are refused). Before
+  this, every user's `artifact.created` event, with its title, link and
+  creator, went to the operator's instance-wide targets. Each subscription
+  has its own signing secret, either supplied by its creator (at least 32
+  bytes, such as a Switchboard `cairn` webhook's `signing_secret`) or minted
+  by Cairn, shown once and stored encrypted under the new
+  `CAIRN_ENCRYPTION_KEY`. Filters on event type, share type and tag; health
+  with auto-disable after 20 consecutive failed deliveries; ceilings of 5 per
+  user and 10 per team (`CAIRN_SUBSCRIPTIONS_PER_USER` / `_PER_TEAM`).
+  Targets must be `https` and resolve to public addresses, re-checked on
+  every dial so a rebinding name is never dialled; redirects are failed
+  deliveries. `CAIRN_OUTBOUND_ALLOW_HTTP=true` admits `http://` targets and
+  logs a WARN at startup.
+
+### Removed
+
+- **`CAIRN_OUTBOUND_WEBHOOK_URLS` and `CAIRN_OUTBOUND_WEBHOOK_SECRET`** (#185).
+  Cairn no longer reads either variable: owned subscriptions are the only
+  outbound delivery path. There is no deprecation window and no import.
 
 ### Upgrade notes
+
+- **The instance-wide outbound targets are gone.** A deployment with
+  `CAIRN_OUTBOUND_WEBHOOK_URLS` still set starts normally and delivers
+  nothing to those URLs. To keep an existing receiver, such as your
+  Switchboard handoff webhook: set `CAIRN_ENCRYPTION_KEY` (`openssl rand
+  -base64 32`; back it up with the database), restart, sign in, and add a
+  subscription in Settings → Outbound subscriptions with the receiver's URL,
+  pasting the value you had in `CAIRN_OUTBOUND_WEBHOOK_SECRET` as its signing
+  secret. The receiver needs no change. It then gets your artifacts' events
+  only; other users add their own. Remove both old variables from your
+  environment and compose file. Migration `0035_outbound_subscriptions` adds
+  one empty table.
 
 - **Legacy `CAIRN_API_TOKENS` entries now fail boot.** Every free-form
   `secret:actor[:role]` entry is refused, with no grace period, and `cairnd`

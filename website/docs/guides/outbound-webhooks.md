@@ -6,16 +6,52 @@ sidebar_position: 5
 
 # Outbound webhooks to Switchboard
 
-When an artifact is created, Cairn can send an `artifact.created` event to a list of
-URLs. The main consumer is [Switchboard](https://switchboard.stump.wtf/docs/), which
-turns each event into a todo on an agent's queue. That's what makes
+When one of your artifacts is created, Cairn can send an `artifact.created` event to
+URLs you choose. The main consumer is [Switchboard](https://switchboard.stump.wtf/docs/),
+which turns each event into a todo on an agent's queue. That's what makes
 [agent handoffs](./agent-handoffs.md) run on their own.
 
-:::note[Set per instance, not per person]
-Outbound webhooks are configured by whoever runs the Cairn instance, and they fire for
-every artifact created on it. The hosted service doesn't yet let you add your own target
-from Settings. If you want Cairn events in your own Switchboard, talk to the operator.
+:::note[Yours, not the instance's]
+Each target is an **outbound subscription** that you own, added in Settings →
+**Outbound subscriptions**. An event about your artifact goes only to your
+subscriptions: never to another user's, and never to an instance-wide list, because
+there isn't one. Someone else acting on your artifact doesn't send it to their
+subscriptions either. Team subscriptions arrive with teams.
 :::
+
+## Add a subscription
+
+In Settings → **Outbound subscriptions**, give:
+
+- **Target URL.** It must be `https`, unless the operator has allowed plain `http`, and
+  its host must resolve to a public address. Loopback, private (RFC 1918), link-local and
+  unique-local addresses are refused.
+- **Signing secret, optional.** Paste the secret your receiver issued, such as a
+  Switchboard `cairn` webhook's `signing_secret`, and deliveries verify there with no
+  change on the receiver's side. It must be at least 32 characters. Leave it empty and
+  Cairn mints one starting `whsec_`.
+- **Filters, optional.** Event types, share types and tags. An empty filter admits
+  everything; a tag filter admits an event carrying any one of its tags.
+
+The secret is shown **once**, when you create the subscription or rotate its secret.
+Cairn stores it encrypted and never shows it again, so copy it into the receiver
+straight away. Each user can have up to 5 subscriptions (the operator can change the
+limit).
+
+The same actions are on the API, for a browser session or the operator's human-role
+[static token](./self-hosting.md#static-tokens-for-the-operator). Agent tokens and
+personal access tokens are refused, so an agent can't point your events somewhere new:
+
+| Request | Does |
+|---|---|
+| `POST /v1/subscriptions` | Create one: `{"url": "…", "secret": "…", "event_types": […], "share_types": […], "tags": […]}`. Answers `201` with the secret, once. |
+| `GET /v1/subscriptions` | List yours, with their health, never their secrets |
+| `GET /v1/subscriptions/{id}` | Read one |
+| `PATCH /v1/subscriptions/{id}` | `{"paused": true}` pauses it; `{"paused": false}` resumes it |
+| `POST /v1/subscriptions/{id}/rotate` | Replace the secret with `{"secret": "…"}`, or a minted one; answers with it, once |
+| `DELETE /v1/subscriptions/{id}` | Delete it |
+
+A subscription that isn't yours answers `404`, the same as one that doesn't exist.
 
 ## When it fires
 
@@ -24,12 +60,12 @@ or a new **bundle** is saved, whether it came from the REST API, the CLI, or an 
 over MCP. Creating a trace or a webhook endpoint doesn't send one.
 
 The event goes out in the background. It never slows down or fails the create request,
-even if every target is down.
+even if every subscription's target is down.
 
 ## What it sends
 
-Each target gets a `POST` with a JSON body. It carries metadata about the artifact, never
-its content:
+Each matching subscription gets a `POST` with a JSON body. It carries metadata about the
+artifact, never its content:
 
 ```json
 {
@@ -80,7 +116,7 @@ Every delivery also carries these headers:
 | `User-Agent` | `cairn-outboundhook/1` |
 | `X-Cairn-Event` | `artifact.created` |
 | `X-Cairn-Event-Id` | The same value as `event_id` in the body |
-| `X-Cairn-Signature` | `sha256=` and the lowercase hex HMAC-SHA256 of the raw body, keyed with the instance's secret. It's left out when the instance has no secret. |
+| `X-Cairn-Signature` | `sha256=` and the lowercase hex HMAC-SHA256 of the raw body, keyed with that subscription's own secret |
 
 ## Verify the signature
 
@@ -114,17 +150,24 @@ rejects events whose `created_at` is more than five minutes old, and events whos
 
 The event is a doorbell, not a ledger. The artifact at its link is the record.
 
-- Cairn tries each target up to three times: once straight away, then after about a
-  second, then after about four more. Each attempt times out after five seconds.
+- Cairn tries each subscription up to three times: once straight away, then after about
+  a second, then after about four more. Each attempt times out after five seconds.
 - Any `2xx` response counts as delivered. A `4xx` other than `429` isn't retried.
-- Redirects aren't followed, and targets must use `https` (plain `http` is allowed only
-  for a loopback address).
+- Redirects aren't followed: a `3xx` is a failed delivery.
+- The target's host is resolved again before every attempt, and Cairn doesn't dial it if
+  any address it resolves to is loopback, private or otherwise non-public. A name that
+  pointed somewhere public when you added it and somewhere private later fails.
 - Events wait in a bounded in-memory queue. If Cairn restarts, or the queue fills up,
   pending events are dropped, and nothing can redeliver them.
 
 So a receiver should answer `2xx` quickly, deduplicate on `event_id`, and re-read the
 artifact before acting on it, since the artifact may have been rotated or have expired
 since the event was sent.
+
+Settings shows each subscription's health: when it was last tried, what happened, and
+how many deliveries in a row have failed. After **20 consecutive failures** Cairn
+disables the subscription and says so. Fix the receiver, then **Resume** it, which also
+resets the count.
 
 ## What a Switchboard routing rule sees
 
@@ -153,18 +196,16 @@ ready-made version of the example below, its
 
 The goal: an artifact **you** created, tagged `handoff` and `lane:m`, becomes a todo on
 the medium pool's `handoff` queue. Everything else Cairn announces is recorded and
-dropped. You'll need Switchboard endpoints for your agents, and the Cairn operator's help
-for step 2.
+dropped. You'll need Switchboard endpoints for your agents.
 
 1. **Create the webhook in Switchboard.** From the endpoint that should own it, call
    `create_webhook` with `source_type: "cairn"` and `target_queue: "inbox"`. Switchboard
    reveals a `signing_secret` and an `ingest_url`. Keep both somewhere safe.
 
-2. **Point Cairn at it.** The Cairn operator adds the `ingest_url` to the instance's
-   outbound webhook targets (`CAIRN_OUTBOUND_WEBHOOK_URLS`) and sets its signing secret
-   (`CAIRN_OUTBOUND_WEBHOOK_SECRET`) to the `signing_secret`. Cairn signs every target with
-   one secret, so an instance feeds one signed Switchboard webhook, and that webhook routes
-   to as many pools as you like.
+2. **Point Cairn at it.** In Settings → **Outbound subscriptions**, add the `ingest_url`
+   as the target and paste the `signing_secret` as its signing secret. To send only
+   handoffs, set the tag filter to `handoff`. Every subscription has its own secret, and
+   one Switchboard webhook routes to as many pools as you like.
 
 3. **Route to the pool.** Call `add_webhook_route` from that webhook to the medium pool's
    endpoint.
@@ -211,5 +252,6 @@ for step 2.
    the work, comments on the artifact with a link to its result (that's what
    `reply:cairn-comment` asks for), and completes the todo.
 
-Tags pick the pool; they never vouch for the sender. That's why the rule matches on
-`actor_id` and the worker checks provenance again before it acts.
+Tags pick the pool; they never vouch for the sender. Your subscription only ever carries
+events about your own artifacts, but the rule still matches on `actor_id`, and the
+worker checks provenance again before it acts.
