@@ -106,8 +106,9 @@ wire:
 1. Create an endpoint, as above.
 2. Add its `ingress_url` as a **second** target next to the Switchboard URL. For a forge
    such as GitHub or Gitea, add a second webhook with the **same secret**. For Cairn's own
-   outbound webhooks, the instance operator adds it to Cairn's target list; Cairn sends the
-   same signed body to every target.
+   outbound events, add the endpoint as a second
+   [subscription](./outbound-webhooks.md#add-a-subscription) and give it the same
+   signing secret; Cairn sends the same body to both, signed with that secret.
 3. Trigger the event again.
 4. Compare the capture with what Switchboard expects:
    - **The signature.** Recompute the HMAC over the exact captured bytes (download them

@@ -60,7 +60,8 @@ work might wait longer, extend the expiry from the web.
 Out of the box, a handoff is manual: someone pastes the line into the receiving agent. You
 can automate the delivery with the other two tools in the family:
 
-1. Cairn announces every new artifact with an [outbound webhook](./outbound-webhooks.md).
+1. Cairn announces each of your new artifacts to your
+   [outbound subscriptions](./outbound-webhooks.md).
 2. [Switchboard](https://switchboard.stump.wtf/docs/) receives the event, and a routing
    rule turns handoff artifacts into a todo on the right agent's queue.
 3. A worker kept running by [Harness](https://stump-wtf.github.io/harness/) claims the
@@ -69,8 +70,8 @@ can automate the delivery with the other two tools in the family:
 A routing rule recognizes a handoff by its tags (`handoff`, plus a `lane:` tag to pick
 the pool) and checks who created it. The full setup is in the
 [worked example](./outbound-webhooks.md#worked-example-route-handoffs-to-an-agent-pool).
-On the hosted service, outbound webhooks are set up by the operator, so check with them
-before you rely on this.
+You add the subscription yourself, in Settings → **Outbound subscriptions**; it only
+ever carries events about your own artifacts.
 
 ## The trust model
 
