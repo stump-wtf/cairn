@@ -1,12 +1,18 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/stump-wtf/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // The Settings page (issue #75): API tokens (create → shown once → listed →
@@ -298,5 +304,38 @@ func TestIntegrationSettingsGrantsListedAndRevoked(t *testing.T) {
 	}
 	if len(foreign.Grants) != 0 {
 		t.Errorf("other actor's grants = %+v, want none — grants are owner-scoped", foreign.Grants)
+	}
+}
+
+// TestIntegrationSettingsGrantRevokeFailureIsNotA404 pins the one error the
+// revoke endpoint must NOT flatten into its uniform 404: a store failure. A
+// 404 there tells the human the connection is already gone while it is still
+// live and still acting as them, so the Revoke button quietly lies. Breaking
+// the grants table out from under the handler (the cookie session lives in a
+// different table, so authentication still succeeds) must surface as a 500.
+func TestIntegrationSettingsGrantRevokeFailureIsNotA404(t *testing.T) {
+	pool := newTestPool(t)
+	st := store.New(pool, objectstore.NewMemory(), storeOpts())
+	srv := httptest.NewServer(New(st, nil, nil, patConfig(), slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	t.Cleanup(srv.Close)
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	clientID, code := obtainCode(t, srv, client, "sam@stump.rocks", "artifacts:read", []string{"artifacts:read"})
+	decodeToken(t, exchangeCode(t, srv, clientID, code, pkceVerifier))
+	listResp := sessionJSON(t, srv.URL, client, http.MethodGet, "/v1/oauth/grants", nil)
+	var list grantsResponse
+	if err := json.NewDecoder(listResp.Body).Decode(&list); err != nil || len(list.Grants) != 1 {
+		t.Fatalf("grants list = %+v (err %v), want one row", list.Grants, err)
+	}
+	listResp.Body.Close()
+
+	if _, err := pool.Exec(context.Background(), `ALTER TABLE oauth_grants RENAME TO oauth_grants_broken`); err != nil {
+		t.Fatalf("break oauth_grants: %v", err)
+	}
+	resp := sessionJSON(t, srv.URL, client, http.MethodDelete, "/v1/oauth/grants/"+list.Grants[0].ID, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("revoke with a failing store = %d, want 500 (a 404 claims the live grant is gone)", resp.StatusCode)
 	}
 }

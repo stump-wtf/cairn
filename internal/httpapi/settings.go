@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -302,7 +303,14 @@ func (s *Server) handleRevokeGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "id")
 	if err := s.oauth.RevokeActorGrant(r.Context(), p.ActorID, id); err != nil {
-		s.writeError(w, r, errs.ErrNotFound, map[string]string{"id": id})
+		// Only "no such grant of yours" is the uniform 404. A database
+		// failure is a 500 like everywhere else: reporting it as not_found
+		// would tell the human their connection is already gone when it is
+		// still live and still acting as them.
+		if errors.Is(err, oauth.ErrInvalidGrant) || errors.Is(err, oauth.ErrInvalidRequest) {
+			err = errs.ErrNotFound
+		}
+		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
 	s.log.InfoContext(r.Context(), "oauth: grant revoked from settings", "grant", id, "owner", p.ActorID)
