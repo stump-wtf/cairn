@@ -24,6 +24,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/config"
 	"github.com/stump-wtf/cairn/internal/db"
 	"github.com/stump-wtf/cairn/internal/httpapi"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/outboundhook"
 	"github.com/stump-wtf/cairn/internal/redact"
@@ -96,6 +97,7 @@ func newStoreOptions(cfg *config.Config, emitter *outboundhook.Emitter) store.Op
 //
 // @joestump 09/25/2026 - Added for cairn#289. Nothing consumes the scanner
 // yet; the wiring stories pass it to store, annotation, trajectory and webhook.
+// @joestump 09/26/2026 - The store consumes it (cairn#292; withRedaction).
 func newRedactionScanner(cfg *config.Config, logger *slog.Logger) (*redact.Scanner, error) {
 	s, err := redact.New(redact.Config{
 		MaxScanBytes:  cfg.RedactionMaxScanBytes,
@@ -112,6 +114,20 @@ func newRedactionScanner(cfg *config.Config, logger *slog.Logger) (*redact.Scann
 	return s, nil
 }
 
+// withRedaction wires the ingest secret scan into the artifact store
+// (ADR-0023, SPEC-0017): the scanner every create runs, the share types that
+// reject rather than mask (CAIRN_REDACTION_REJECT_TYPES), the metric each scan
+// is counted in, and the logger the per-field store_unscanned WARN goes to.
+//
+// @joestump 09/26/2026 - Added for cairn#292.
+func withRedaction(opts store.Options, cfg *config.Config, scanner *redact.Scanner, reg *metrics.Registry, logger *slog.Logger) store.Options {
+	opts.Scanner = scanner
+	opts.RedactionRejectTypes = cfg.RedactionRejectTypes
+	opts.Metrics = reg
+	opts.Logger = logger
+	return opts
+}
+
 func run(logger *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -124,7 +140,9 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	_ = scanner // wired into the write paths by the SPEC-0017 follow-up stories
+	// One metrics registry, handed to the services that count things. It is
+	// not served yet (#256).
+	reg := metrics.New()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -162,7 +180,9 @@ func run(logger *slog.Logger) error {
 	// The core service the transport adapters (REST/MCP/CLI) project. The
 	// share-type registry (previewability, anchor affordances) defaults to the
 	// process-wide sharetype.Default().
-	svc := store.New(pool, obj, newStoreOptions(cfg, emitter))
+	// Artifact and bundle creates are scanned for credentials before anything
+	// is stored (SPEC-0017 RD-1).
+	svc := store.New(pool, obj, withRedaction(newStoreOptions(cfg, emitter), cfg, scanner, reg, logger))
 
 	// Install the staging/ debris lifecycle rule (best-effort defense-in-depth;
 	// scoped to staging/ ONLY — never the committed blobs/ prefix, issue #93 §1).

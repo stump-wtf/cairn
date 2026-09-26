@@ -9,16 +9,19 @@ package main
 // Governing: ADR-0023, SPEC-0017 RD-2, RD-7
 //
 // @joestump 09/25/2026 - Added for cairn#289.
+// @joestump 09/26/2026 - cairn#292: the scanner reaches the store.
 
 import (
 	"bytes"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/stump-wtf/cairn/internal/config"
+	"github.com/stump-wtf/cairn/internal/metrics"
 )
 
 func captureLogger() (*slog.Logger, *bytes.Buffer) {
@@ -55,5 +58,29 @@ func TestRedactionScannerBadAllowlistStopsStartup(t *testing.T) {
 	_, err := newRedactionScanner(&config.Config{RedactionAllowlistFile: p}, quietLogger())
 	if err == nil || !strings.Contains(err.Error(), p) || !strings.Contains(err.Error(), "paths") {
 		t.Errorf("err = %v, want a startup error naming %s and paths", err, p)
+	}
+}
+
+// TestWithRedactionReachesStore: the scanner run() builds, the configured
+// reject types, the metrics registry and the logger all reach store.Options,
+// on top of what newStoreOptions set. A store without the scanner would fail
+// every create closed, so this is the wiring run() depends on (SPEC-0017
+// RD-1).
+func TestWithRedactionReachesStore(t *testing.T) {
+	cfg := &config.Config{MaxUploadBytes: 1234, RedactionOversize: "reject", RedactionRejectTypes: []string{"code", "markdown"}}
+	scanner, err := newRedactionScanner(cfg, quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, logger := metrics.New(), quietLogger()
+	opts := withRedaction(newStoreOptions(cfg, nil), cfg, scanner, reg, logger)
+	if opts.Scanner != scanner || opts.Metrics != reg || opts.Logger != logger {
+		t.Error("the scanner, metrics or logger did not reach store.Options")
+	}
+	if !slices.Equal(opts.RedactionRejectTypes, []string{"code", "markdown"}) {
+		t.Errorf("reject types = %v", opts.RedactionRejectTypes)
+	}
+	if opts.MaxUploadBytes != 1234 || opts.Emitter != nil {
+		t.Error("withRedaction dropped or changed the base options")
 	}
 }
