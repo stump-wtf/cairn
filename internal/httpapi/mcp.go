@@ -45,6 +45,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -749,6 +750,10 @@ func (s *Server) mcpScopeErr(ctx context.Context, tool, scope string) error {
 func (s *Server) mcpToolErr(ctx context.Context, tool string, err error) error {
 	code := errs.CodeOf(err)
 	attrs := []any{"tool", tool, "code", code, "error", err}
+	if reqID := middleware.GetReqID(ctx); reqID != "" {
+		attrs = append(attrs, "request_id", reqID)
+	}
+	attrs = append(attrs, redactionLogAttrs(err, mcpRedactionSurface[tool])...)
 	if code == errs.CodeInternal {
 		s.log.ErrorContext(ctx, "mcp: tool call failed", attrs...)
 	} else {

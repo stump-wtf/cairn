@@ -83,6 +83,7 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error, d
 	reqID := middleware.GetReqID(r.Context())
 
 	logAttrs := []any{"code", code, "status", status, "method", r.Method, "path", r.URL.Path, "request_id", reqID, "error", err}
+	logAttrs = append(logAttrs, redactionLogAttrs(err, restRedactionSurface(r, err))...)
 	if status >= 500 {
 		s.log.ErrorContext(r.Context(), "httpapi: request failed", logAttrs...)
 	} else {

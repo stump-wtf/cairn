@@ -1,11 +1,17 @@
 package httpapi
 
 import (
+	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"slices"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/redact"
 )
 
@@ -126,4 +132,65 @@ func redactionBadgeOf(s redact.Summary) *redactionBadgeView {
 		v.Rules = append(v.Rules, redactionRuleLine{Rule: rule, Count: s.Rules[rule]})
 	}
 	return v
+}
+
+// Rejection log attributes (SPEC-0017 RD-9 "Logs carry no value"): a logged
+// redaction rejection names the rule IDs that fired and the surface that was
+// scanned, next to the request id writeError and mcpToolErr already log. Both
+// come from closed sets, the scanner's rule IDs and metrics.RedactionSurfaces,
+// so neither can carry a scanned value; the rejection's own message holds only
+// the field, rule, line and column.
+
+// redactionLogAttrs returns the extra log attributes for a redaction
+// rejection, and nil for any other error. surface may be empty when the write
+// that failed is not one of the scanned surfaces.
+func redactionLogAttrs(err error, surface metrics.RedactionSurface) []any {
+	var rej *redact.Rejection
+	if !errors.As(err, &rej) {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, f := range rej.Findings {
+		seen[f.Rule] = true
+	}
+	attrs := []any{"redaction_reason", rej.Reason, "redaction_rules", strings.Join(slices.Sorted(maps.Keys(seen)), ",")}
+	if surface != "" {
+		attrs = append(attrs, "surface", string(surface))
+	}
+	return attrs
+}
+
+// restRedactionSurface names the scanned surface of a REST or webhook write
+// from its matched route, never from anything the client sent: a comment
+// route, a run route, the webhook ingress, or the artifact create, which is a
+// bundle when the rejected field is a member. Any other route has no surface.
+func restRedactionSurface(r *http.Request, err error) metrics.RedactionSurface {
+	pattern := r.URL.Path
+	if rc := chi.RouteContext(r.Context()); rc != nil && rc.RoutePattern() != "" {
+		pattern = rc.RoutePattern()
+	}
+	switch {
+	case strings.HasPrefix(pattern, hookIngressPathPrefix):
+		return metrics.SurfaceWebhook
+	case strings.HasSuffix(pattern, "/comments"):
+		return metrics.SurfaceComment
+	case strings.HasPrefix(pattern, "/v1/runs"):
+		return metrics.SurfaceRun
+	case pattern == "/v1/artifacts":
+		var rej *redact.Rejection
+		if errors.As(err, &rej) && strings.HasPrefix(rej.Field, "members[") {
+			return metrics.SurfaceBundle
+		}
+		return metrics.SurfaceArtifact
+	}
+	return ""
+}
+
+// mcpRedactionSurface maps the MCP write tools to their scanned surface.
+var mcpRedactionSurface = map[string]metrics.RedactionSurface{
+	"artifact_create":  metrics.SurfaceArtifact,
+	"bundle_create":    metrics.SurfaceBundle,
+	"artifact_comment": metrics.SurfaceComment,
+	"run_create":       metrics.SurfaceRun,
+	"run_append_spans": metrics.SurfaceRun,
 }

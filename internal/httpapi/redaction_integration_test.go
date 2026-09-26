@@ -322,8 +322,9 @@ func TestRedactionWebUnscannedHasNoBadge(t *testing.T) {
 
 // TestRedactionRejectionLogCarriesNoValue: SPEC-0017 RD-9 "Logs carry no
 // value", as far as this layer goes. A real reject-mode rejection rendered
-// through writeError logs the rule ID, the request id and the path, and
-// neither the log line nor the response holds any part of the token. The
+// through writeError logs the rule ID, the request id, the path and the
+// surface, and neither the log line nor the response holds any part of the
+// token. The
 // write paths that produce rejections arrive with #291-#293 and inherit this.
 func TestRedactionRejectionLogCarriesNoValue(t *testing.T) {
 	sc, err := redact.New(redact.Config{})
@@ -350,7 +351,7 @@ func TestRedactionRejectionLogCarriesNoValue(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
-	for _, want := range []string{"github-pat", "request_id=" + reqID, "path=/v1/artifacts"} {
+	for _, want := range []string{"github-pat", "request_id=" + reqID, "path=/v1/artifacts", "surface=artifact", "redaction_rules=github-pat"} {
 		if reqID == "" || !strings.Contains(out, want) {
 			t.Errorf("log line lacks %q: %s", want, out)
 		}
