@@ -462,3 +462,32 @@ func readAllClose(rc io.ReadCloser) ([]byte, error) {
 	defer rc.Close()
 	return io.ReadAll(rc)
 }
+
+// TestIntegrationCreateEndpointRefusesMalformedOwnerIDs proves an endpoint
+// whose owner or creator is not a user id is refused as validation
+// (SPEC-0023 REQ "Owner Model"), never a CHECK-constraint 500 or a creator
+// silently stored as NULL.
+func TestIntegrationCreateEndpointRefusesMalformedOwnerIDs(t *testing.T) {
+	svc, pool := newHarness(t)
+	ctx := context.Background()
+	for name, in := range map[string]EndpointInput{
+		"owner": {Provenance: validProvenance(), ExpiresAt: future(),
+			Access: artifact.AccessPolicy{OwnerUserID: "joe", Visibility: artifact.VisibilityLink}},
+		"creator": {Access: validAccess(), ExpiresAt: future(),
+			Provenance: func() artifact.Provenance { p := validProvenance(); p.CreatedByUserID = "joe"; return p }()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.CreateEndpoint(ctx, in)
+			if errs.CodeOf(err) != errs.CodeValidation {
+				t.Fatalf("create with malformed %s: err = %v, want validation", name, err)
+			}
+		})
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM artifacts`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("%d artifacts persisted by refused creates, want 0", n)
+	}
+}

@@ -614,3 +614,34 @@ func TestConcurrentAppendsKeepSeqMonotonic(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenRunRefusesMalformedOwnerIDs proves a run whose owner or creator is
+// not a user id is refused as validation (SPEC-0023 REQ "Owner Model"), the
+// same as an ordinary artifact create: a malformed owner must not surface as
+// a CHECK-constraint 500, and a malformed creator must not be stored as a
+// silent NULL.
+func TestOpenRunRefusesMalformedOwnerIDs(t *testing.T) {
+	svc, _, pool, _ := newHarness(t)
+	ctx := context.Background()
+	for name, mutate := range map[string]func(*RunInput){
+		"owner":   func(in *RunInput) { in.Access.OwnerUserID = "joe" },
+		"creator": func(in *RunInput) { in.Provenance.CreatedByUserID = "joe" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			fix := checkoutWebAudit("")
+			fix.Spans = nil
+			mutate(&fix)
+			_, err := svc.OpenRun(ctx, fix)
+			if errs.CodeOf(err) != errs.CodeValidation {
+				t.Fatalf("open with malformed %s: err = %v, want validation", name, err)
+			}
+		})
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM artifacts`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("%d artifacts persisted by refused opens, want 0", n)
+	}
+}
