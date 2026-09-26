@@ -72,6 +72,13 @@ func TestParseAPITokensRefuses(t *testing.T) {
 		{"blank issuer", "sk_iss_0123456789: |abc", "issuer and a subject"},
 		{"blank subject", "sk_sub_0123456789:https://id.example.com|", "issuer and a subject"},
 		{"blank subject before role", "sk_sub_0123456789:https://id.example.com|:agent", "issuer and a subject"},
+		// On an identity, a role word in the wrong case or an empty role is
+		// a typo, not part of the subject.
+		{"capitalized role on identity", "sk_role_0123456789:https://id.example.com|abc-123:Agent", "role must be agent or human"},
+		{"upper-case role on identity", "sk_role_0123456789:https://id.example.com|abc-123:HUMAN", "role must be agent or human"},
+		{"empty role on identity", "sk_role_0123456789:https://id.example.com|abc-123:", "role must be agent or human"},
+		{"capitalized role on email", "sk_role_0123456789:ops@example.com:Human", "role must be agent or human"},
+		{"empty role on email", "sk_role_0123456789:ops@example.com:", "role must be agent or human"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ParseAPITokens(good + tc.entry)

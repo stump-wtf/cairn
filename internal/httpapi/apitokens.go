@@ -120,7 +120,13 @@ func parseAPIToken(entry string) (APIToken, error) {
 			ref = strings.TrimSpace(ref[:len(ref)-len(tail)+i])
 			issuer, subject, isIdentity = strings.Cut(ref, "|")
 		default:
-			if !isIdentity && validTokenEmail(strings.TrimSpace(ref[:i])) {
+			// An identity keeps an unknown last field in its subject, since
+			// a subject may hold a colon, except one that can only be a
+			// mistyped role: a role word in the wrong case, or nothing after
+			// a trailing colon. Kept, it would fail at boot as a user who
+			// never signed in, which misdiagnoses the typo.
+			mistyped := role == "" || strings.EqualFold(role, "agent") || strings.EqualFold(role, "human")
+			if (isIdentity && mistyped) || (!isIdentity && validTokenEmail(strings.TrimSpace(ref[:i]))) {
 				return APIToken{}, fmt.Errorf("the role must be agent or human; want %s", apiTokenForm)
 			}
 		}
@@ -176,12 +182,18 @@ func resolveAPITokens(ctx context.Context, users *user.Store, ops *operator.Serv
 			u   *user.User
 			err error
 		)
-		if issuer, subject, ok := strings.Cut(t.User, "|"); ok {
+		issuer, subject, isIdentity := strings.Cut(t.User, "|")
+		if isIdentity {
 			u, err = users.FindByIdentity(ctx, issuer, subject)
 		} else {
 			u, err = users.FindByVerifiedEmail(ctx, t.User)
 		}
 		switch {
+		case errors.Is(err, user.ErrNotFound) && isIdentity && strings.Contains(subject, ":"):
+			// The parser keeps an unknown ":<word>" in the subject, so a
+			// mistyped role such as ":admin" surfaces here. Say so, without
+			// quoting the entry.
+			return nil, fmt.Errorf("CAIRN_API_TOKENS entry %d: %w (its subject holds a colon; if the last field is meant as a role, it must be agent or human)", t.Position, errTokenNoUser)
 		case errors.Is(err, user.ErrNotFound):
 			return nil, fmt.Errorf("CAIRN_API_TOKENS entry %d: %w", t.Position, errTokenNoUser)
 		case err != nil:

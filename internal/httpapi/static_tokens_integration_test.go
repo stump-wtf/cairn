@@ -332,6 +332,26 @@ func TestIntegrationResolveAPITokensRefusesNonOperators(t *testing.T) {
 		})
 	}
 
+	// An unknown ":<word>" stays in an identity's subject (a subject may hold
+	// a colon), so a mistyped role such as ":admin" fails as a user who never
+	// signed in. The error says the colon may be the cause, still without
+	// quoting the entry.
+	t.Run("unknown identity with a colon hints at the role", func(t *testing.T) {
+		tokens, err := ParseAPITokens(opEntry + ",sk_boot_admin_5a6b7c8d9e0f:" + testTokenIssuer + "|op-sub:admin")
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		_, err = resolveAPITokens(ctx, users, ops, tokens)
+		if !errors.Is(err, errTokenNoUser) {
+			t.Fatalf("resolve = %v, want %v", err, errTokenNoUser)
+		}
+		msg := err.Error()
+		if !strings.HasPrefix(msg, "CAIRN_API_TOKENS entry 2: ") || !strings.Contains(msg, "must be agent or human") {
+			t.Fatalf("error %q does not name entry 2 and the role hint", msg)
+		}
+		assertNoEntryText(t, msg, tokens[1].Secret+":"+tokens[1].User)
+	})
+
 	t.Run("operator resolves", func(t *testing.T) {
 		tokens, err := ParseAPITokens(opEntry + ",sk_boot_again_77aa88bb99cc:" + testTokenIssuer + "|op-sub:human")
 		if err != nil {
