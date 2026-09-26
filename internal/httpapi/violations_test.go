@@ -89,9 +89,10 @@ func TestViolationTTLOverCap(t *testing.T) {
 func TestViolationMalformedTTL(t *testing.T) {
 	srv := storelessServer(t, noRateLimit())
 	for raw, reason := range map[string]errs.Reason{
-		"7d": errs.ReasonInvalidFormat,
-		"0":  errs.ReasonNotPositive,
-		"-5": errs.ReasonNotPositive,
+		"7d":                    errs.ReasonInvalidFormat,
+		"0":                     errs.ReasonNotPositive,
+		"-5":                    errs.ReasonNotPositive,
+		"-99999999999999999999": errs.ReasonNotPositive, // out of int64 range, still negative
 	} {
 		env := postCreate(t, srv.URL+"/v1/artifacts", map[string]string{"X-Cairn-Ttl-Seconds": raw}, "hello")
 		v := env.Error.Violations[0]
