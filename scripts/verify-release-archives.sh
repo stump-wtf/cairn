@@ -26,6 +26,8 @@
 #   scripts/verify-release-archives.sh [dist-dir]     (default: dist)
 #
 # @joestump 09/23/2026 - Created for cairn#361, alongside the cairnd build.
+# @joestump 09/26/2026 - Check the cairnd tar headers too: owner, group and
+#   mode came from the builder, so the pinned digest varied by machine.
 
 set -euo pipefail
 
@@ -107,6 +109,24 @@ for p in "${SERVER_PLATFORMS[@]}"; do
   cli="$(grep -a -c -F "${MODULE}/internal/clicmd" "$tmp/x/cairnd" || true)"
   [ "$cli" -eq 0 ] || fail "CLI CODE IN THE SERVER: '${MODULE}/internal/clicmd' appears in $(basename "$a")'s cairnd"
   echo "     server bytes ok (httpapi present, clicmd absent)"
+
+  # Reproducible headers: Harness pins this archive by SHA-256, so its bytes
+  # must not depend on who built it. A tar header records each member's owner,
+  # group and mode, and goreleaser copies any it is not given from the file on
+  # disk, which made the same commit hash differently on a laptop (uid 501) and
+  # in CI. .goreleaser.yaml pins all three; this is what notices if it stops.
+  command -v python3 >/dev/null 2>&1 || fail "cannot read tar headers: python3 is not available, so the reproducibility check would prove nothing"
+  bad="$(python3 - "$a" <<'PY'
+import sys, tarfile
+want = {"cairnd": 0o755, "LICENSE": 0o644}
+for m in tarfile.open(sys.argv[1]).getmembers():
+    got = (m.uid, m.gid, m.uname, m.gname, m.mode)
+    if got != (0, 0, "root", "root", want.get(m.name.lstrip("./"), -1)):
+        print("%s=%d:%d/%s:%s/%o" % ((m.name,) + got), end=" ")
+PY
+)"
+  [ -z "$bad" ] || fail "NOT REPRODUCIBLE: $(basename "$a") records builder-dependent headers (${bad% }); want root:root, cairnd 0755, LICENSE 0644"
+  echo "     headers ok (root:root, fixed modes)"
 done
 
 # No archive the two lists above did not account for, e.g. a third build that

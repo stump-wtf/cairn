@@ -136,6 +136,13 @@ archives:
   # Same files rule as the CLI (binary plus LICENSE, never the README), and the
   # same fixed mtime as the build, so the tarball's bytes are a function of the
   # commit alone.
+  #
+  # The mtime is not enough on its own: a tar header also records each member's
+  # owner, group and mode, and goreleaser fills any of them left unset from the
+  # file on disk. Unset, the archive carried the builder's uid and user name
+  # (501/joestump on a laptop, whatever the runner runs as in CI) and LICENSE's
+  # mode from the checkout's umask, so the same commit hashed differently per
+  # machine. All three are pinned for both members.
   - id: cairnd
     ids:
       - cairnd
@@ -144,8 +151,14 @@ archives:
     files:
       - src: LICENSE
         info:
+          owner: root
+          group: root
+          mode: 0644
           mtime: "{{ .CommitDate }}"
     builds_info:
+      owner: root
+      group: root
+      mode: 0755
       mtime: "{{ .CommitDate }}"
     name_template: >-
       cairnd_
