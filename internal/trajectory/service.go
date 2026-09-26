@@ -128,14 +128,12 @@ func discardStaged(ctx context.Context, obj objectstore.ObjectStore, ds []spille
 // one disposition per input span, index-aligned. Object writes that outlive a
 // later transaction rollback orphan only GC-collectable blobs (ADR-0008 reaper).
 func (s *Service) spillOutputs(ctx context.Context, spans []SpanInput) ([]spilled, error) {
+	if err := checkOutputSizes(spans, s.maxOutputBytes); err != nil {
+		return nil, err
+	}
 	out := make([]spilled, len(spans))
 	for i, sp := range spans {
 		size := int64(len(sp.Output))
-		if size > s.maxOutputBytes {
-			return nil, fmt.Errorf("trajectory: span %q output: %w", sp.SpanID,
-				errs.Violate(spanField(i, "output"), errs.LocBody, errs.ReasonTooLarge,
-					errs.WithLimit(s.maxOutputBytes, errs.UnitBytes)))
-		}
 		if size == 0 {
 			out[i] = spilled{truncated: sp.OutputTruncated}
 			continue
@@ -156,6 +154,26 @@ func (s *Service) spillOutputs(ctx context.Context, spans []SpanInput) ([]spille
 		}
 	}
 	return out, nil
+}
+
+// checkOutputSizes names every span whose output exceeds the cap, as
+// spans[n].output too_large, before any output is staged: a rejected batch
+// writes nothing to the object store, and a caller with several oversize
+// outputs hears about all of them at once. The output is never echoed.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-3, VE-4
+func checkOutputSizes(spans []SpanInput, maxBytes int64) error {
+	var over []*errs.Invalid
+	for i, sp := range spans {
+		if int64(len(sp.Output)) > maxBytes {
+			over = append(over, errs.Violate(spanField(i, "output"), errs.LocBody, errs.ReasonTooLarge,
+				errs.WithLimit(maxBytes, errs.UnitBytes)))
+		}
+	}
+	if inv := errs.Join(over...); inv != nil {
+		return fmt.Errorf("trajectory: %d span outputs over the cap: %w", len(over), inv)
+	}
+	return nil
 }
 
 // CreateBatchRun ingests a complete run in one call: it mints the artifact, the

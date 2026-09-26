@@ -1,6 +1,7 @@
 package trajectory
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -129,5 +130,29 @@ func TestPrepareSpansViolationsBounded(t *testing.T) {
 	}
 	if vs := errs.ViolationsOf(prepareFresh(spans...)); len(vs) != errs.MaxViolations {
 		t.Fatalf("violations = %d, want the cap of %d", len(vs), errs.MaxViolations)
+	}
+}
+
+// VE-4: every oversize output in a batch is named, and the cap is checked
+// before any output is staged. The service has no object store, so staging
+// the first span's (spillable, in-cap) output would panic.
+func TestSpanOutputCapNamesEveryOversizeSpan(t *testing.T) {
+	svc := NewService(nil, nil, Options{InlineThresholdBytes: 2, MaxOutputBytes: 4})
+	_, err := svc.AppendSpans(context.Background(), "x", "alice", []SpanInput{
+		{SpanID: "s0", Category: CategoryExec, Output: []byte("abc")},
+		{SpanID: "s1", Category: CategoryExec, Output: []byte("12345")},
+		{SpanID: "s2", Category: CategoryExec, Output: []byte("123456")},
+	})
+	if errs.CodeOf(err) != errs.CodePayloadTooLarge || !errors.Is(err, errs.ErrTooLarge) {
+		t.Fatalf("err = %v, want payload_too_large", err)
+	}
+	vs := errs.ViolationsOf(err)
+	if len(vs) != 2 {
+		t.Fatalf("violations = %+v, want spans 1 and 2", vs)
+	}
+	for i, v := range vs {
+		if v.Field != spanField(i+1, "output") || v.Reason != errs.ReasonTooLarge || v.Limit != int64(4) || v.Unit != errs.UnitBytes || v.Value != nil {
+			t.Fatalf("violation %d = %+v, want spans[%d].output too_large at 4 bytes, no echo", i, v, i+1)
+		}
 	}
 }
