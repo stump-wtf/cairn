@@ -61,7 +61,8 @@ func (s *Service) loadRunHeader(ctx context.Context, publicID string) (*Run, int
 		SELECT r.id, a.public_id, a.title, r.prompt, r.model, r.status,
 		       r.started_at, r.ended_at, r.token_count,
 		       a.actor_id, a.on_behalf_of, a.channel, a.captured_at,
-		       a.owner_id, a.visibility, a.expires_at
+		       a.owner_id, a.visibility, a.expires_at,
+		       r.redaction_status, r.redaction_count, r.redaction_rules
 		FROM runs r
 		JOIN artifacts a ON a.id = r.artifact_id
 		WHERE a.public_id = $1 AND a.expires_at > now()`, publicID).Scan(
@@ -70,6 +71,7 @@ func (s *Service) loadRunHeader(ctx context.Context, publicID string) (*Run, int
 		&run.Provenance.ActorID, &run.Provenance.OnBehalfOf, &run.Provenance.Channel,
 		&run.Provenance.CapturedAt, &run.Access.OwnerID, &run.Access.Visibility,
 		&run.ExpiresAt,
+		&run.Redaction.Status, &run.Redaction.Count, &run.Redaction.Rules,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

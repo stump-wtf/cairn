@@ -14,6 +14,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/id"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/sharetype"
@@ -46,6 +47,11 @@ type Service struct {
 	// capture, so its in-memory fan-out and the persisted span rows are the same
 	// ordered log two transports read (SPEC-0004 "Live Span Stream Delivery").
 	hub *hub
+	// scanner masks credentials in every scanned run field before it is
+	// stored, and metrics counts each scan (SPEC-0017, see redaction.go). Nil
+	// stores fields as written and records "unscanned"; cairnd always wires it.
+	scanner *redact.Scanner
+	metrics *metrics.Registry
 }
 
 // Options configures a Service. Zero values fall back to safe defaults.
@@ -63,6 +69,11 @@ type Options struct {
 	NewID func() (string, error)
 	// Now overrides the clock, for deterministic tests of live wall time.
 	Now func() time.Time
+	// Redaction is the ingest secret scanner every write runs its fields
+	// through (ADR-0023, SPEC-0017 RD-4). Nil stores them unscanned.
+	Redaction *redact.Scanner
+	// Metrics counts the scans; nil counts nothing.
+	Metrics *metrics.Registry
 }
 
 // NewService constructs a Service over a Postgres pool and an object store.
@@ -76,6 +87,8 @@ func NewService(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *
 		newID:           opts.NewID,
 		now:             opts.Now,
 		hub:             newHub(),
+		scanner:         opts.Redaction,
+		metrics:         opts.Metrics,
 	}
 	if s.reg == nil {
 		s.reg = sharetype.Default()
@@ -166,6 +179,10 @@ func (s *Service) CreateBatchRun(ctx context.Context, in RunInput) (*Run, error)
 	if err := in.validate(); err != nil {
 		return nil, err
 	}
+	in, outcome, err := s.scanRun(ctx, in)
+	if err != nil {
+		return nil, err
+	}
 	dispositions, err := s.spillOutputs(ctx, in.Spans)
 	if err != nil {
 		return nil, err
@@ -178,14 +195,14 @@ func (s *Service) CreateBatchRun(ctx context.Context, in RunInput) (*Run, error)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	artID, publicID, err := s.insertRunArtifact(ctx, tx, in)
+	artID, publicID, err := s.insertRunArtifact(ctx, tx, in, outcome)
 	if err != nil {
 		return nil, err
 	}
 
 	// ended_at is stamped from the tree so batch and incremental converge.
 	endedAt := in.StartedAt.Add(time.Duration(maxSpanEndMS(spanInputEnds(in.Spans))) * time.Millisecond)
-	runID, err := s.insertRun(ctx, tx, artID, in, StatusClosed, &endedAt)
+	runID, err := s.insertRun(ctx, tx, artID, in, outcome, StatusClosed, &endedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -214,6 +231,10 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 	if err := in.validate(); err != nil {
 		return nil, err
 	}
+	in, outcome, err := s.scanRun(ctx, in)
+	if err != nil {
+		return nil, err
+	}
 	dispositions, err := s.spillOutputs(ctx, in.Spans)
 	if err != nil {
 		return nil, err
@@ -226,11 +247,11 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	artID, publicID, err := s.insertRunArtifact(ctx, tx, in)
+	artID, publicID, err := s.insertRunArtifact(ctx, tx, in, outcome)
 	if err != nil {
 		return nil, err
 	}
-	runID, err := s.insertRun(ctx, tx, artID, in, StatusOpen, nil)
+	runID, err := s.insertRun(ctx, tx, artID, in, outcome, StatusOpen, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -260,9 +281,32 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 // seq (SPEC-0004 "Append to a closed run refused", "Concurrent appends keep seq
 // monotonic").
 func (s *Service) AppendSpans(ctx context.Context, publicID, actorID string, spans []SpanInput) ([]*Span, error) {
+	appended, _, err := s.AppendSpansWithOutcome(ctx, publicID, actorID, spans)
+	return appended, err
+}
+
+// AppendSpansWithOutcome is AppendSpans that also returns what the ingest scan
+// did to this append's spans (SPEC-0017 RD-4 "Live trace append is masked, not
+// refused"): the append's response reports its own redactions, while the run
+// row accumulates every append's.
+func (s *Service) AppendSpansWithOutcome(ctx context.Context, publicID, actorID string, spans []SpanInput) ([]*Span, redact.Summary, error) {
 	if len(spans) == 0 {
-		return nil, errs.Validationf("trajectory: no spans to append")
+		return nil, redact.Summary{}, errs.Validationf("trajectory: no spans to append")
 	}
+	spans, outcome, err := s.scanSpans(ctx, spans)
+	if err != nil {
+		return nil, redact.Summary{}, err
+	}
+	appended, err := s.appendSpans(ctx, publicID, actorID, spans, outcome)
+	if err != nil {
+		return nil, redact.Summary{}, err
+	}
+	return appended, outcome, nil
+}
+
+// appendSpans persists already-scanned spans and folds their scan outcome into
+// the run and its artifact, in the append's transaction.
+func (s *Service) appendSpans(ctx context.Context, publicID, actorID string, spans []SpanInput, outcome redact.Summary) ([]*Span, error) {
 	dispositions, err := s.spillOutputs(ctx, spans)
 	if err != nil {
 		return nil, err
@@ -328,6 +372,15 @@ func (s *Service) AppendSpans(ctx context.Context, publicID, actorID string, spa
 	if err := s.persistSpans(ctx, tx, rr.runID, base, prepared, dispositions); err != nil {
 		return nil, err
 	}
+	// The appended spans' scan outcome folds into the run and into its
+	// artifact envelope, which the owner's artifact read shows, under the row
+	// locks and in the same transaction as the spans (SPEC-0017 RD-9).
+	if err := store.AccumulateRedaction(ctx, tx, store.RedactionRun, rr.runID, outcome); err != nil {
+		return nil, fmt.Errorf("trajectory: %w", err)
+	}
+	if err := store.AccumulateRedaction(ctx, tx, store.RedactionArtifact, rr.artifactID, outcome); err != nil {
+		return nil, fmt.Errorf("trajectory: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("trajectory: commit: %w", err)
 	}
@@ -390,10 +443,11 @@ func (s *Service) CloseRun(ctx context.Context, publicID, actorID string) (*Run,
 
 // runRow is the locked run header used by append/close.
 type runRow struct {
-	runID     int64
-	ownerID   string
-	status    Status
-	startedAt time.Time
+	runID      int64
+	artifactID int64
+	ownerID    string
+	status     Status
+	startedAt  time.Time
 }
 
 // lockRun loads and row-locks a run header by public id, returning ErrRunNotFound
@@ -402,11 +456,11 @@ type runRow struct {
 func (s *Service) lockRun(ctx context.Context, tx pgx.Tx, publicID string) (runRow, error) {
 	var rr runRow
 	err := tx.QueryRow(ctx, `
-		SELECT r.id, a.owner_id, r.status, r.started_at
+		SELECT r.id, a.id, a.owner_id, r.status, r.started_at
 		FROM runs r
 		JOIN artifacts a ON a.id = r.artifact_id
 		WHERE a.public_id = $1 AND a.expires_at > now()
-		FOR UPDATE OF r`, publicID).Scan(&rr.runID, &rr.ownerID, &rr.status, &rr.startedAt)
+		FOR UPDATE OF r`, publicID).Scan(&rr.runID, &rr.artifactID, &rr.ownerID, &rr.status, &rr.startedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return runRow{}, fmt.Errorf("trajectory: run %s: %w", publicID, ErrRunNotFound)
@@ -538,7 +592,13 @@ func (s *Service) insertProducedEdge(ctx context.Context, tx pgx.Tx, runID int64
 // bundle), retrying id generation on the rare public_id collision via a
 // savepoint. It reuses the artifact aggregate's Validate for the envelope
 // invariants.
-func (s *Service) insertRunArtifact(ctx context.Context, tx pgx.Tx, in RunInput) (int64, string, error) {
+func (s *Service) insertRunArtifact(ctx context.Context, tx pgx.Tx, in RunInput, outcome redact.Summary) (int64, string, error) {
+	// The envelope records the run's scan outcome too, so the owner's artifact
+	// read reports it like any other artifact's (SPEC-0017 RD-9).
+	stored, err := outcome.Normalized()
+	if err != nil {
+		return 0, "", fmt.Errorf("trajectory: run redaction outcome: %w", err)
+	}
 	art := &artifact.Artifact{
 		ShareType:   artifact.TypeTrajectory,
 		Title:       in.Title,
@@ -552,8 +612,9 @@ func (s *Service) insertRunArtifact(ctx context.Context, tx pgx.Tx, in RunInput)
 		INSERT INTO artifacts
 			(public_id, share_type, title, body_sha256, size_bytes, media_type,
 			 previewable, actor_id, on_behalf_of, channel, captured_at,
-			 owner_id, visibility, expires_at)
-		VALUES ($1,$2,$3,NULL,0,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			 owner_id, visibility, expires_at,
+			 redaction_status, redaction_count, redaction_rules)
+		VALUES ($1,$2,$3,NULL,0,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		RETURNING id`
 
 	for attempt := 0; attempt < idMaxAttempts; attempt++ {
@@ -575,6 +636,7 @@ func (s *Service) insertRunArtifact(ctx context.Context, tx pgx.Tx, in RunInput)
 			art.Previewable, art.Provenance.ActorID, art.Provenance.OnBehalfOf,
 			string(art.Provenance.Channel), art.Provenance.CapturedAt,
 			art.Access.OwnerID, string(art.Access.Visibility), art.ExpiresAt,
+			string(stored.Status), stored.Count, stored.Rules,
 		).Scan(&artID)
 		if err != nil {
 			_ = sp.Rollback(ctx)
@@ -591,13 +653,12 @@ func (s *Service) insertRunArtifact(ctx context.Context, tx pgx.Tx, in RunInput)
 	return 0, "", fmt.Errorf("trajectory: exhausted %d id attempts: %w", idMaxAttempts, errs.ErrConflict)
 }
 
-func (s *Service) insertRun(ctx context.Context, tx pgx.Tx, artID int64, in RunInput, status Status, endedAt *time.Time) (int64, error) {
-	// The scan outcome commits with the run it describes. Nothing scans runs
-	// yet, so the zero Summary records "unscanned" until #291 sets it from the
-	// scanner (and folds appends in with store.AccumulateRedaction).
+func (s *Service) insertRun(ctx context.Context, tx pgx.Tx, artID int64, in RunInput, scanned redact.Summary, status Status, endedAt *time.Time) (int64, error) {
+	// The scan outcome commits with the run it describes; appends fold theirs
+	// in with store.AccumulateRedaction.
 	//
 	// Governing: ADR-0023, SPEC-0017 RD-9
-	outcome, err := redact.Summary{}.Normalized()
+	outcome, err := scanned.Normalized()
 	if err != nil {
 		return 0, fmt.Errorf("trajectory: run redaction outcome: %w", err)
 	}
