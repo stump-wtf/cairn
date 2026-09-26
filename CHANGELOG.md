@@ -27,8 +27,8 @@ reaches 1.0.
   name and are rendered from the user row: its verified email, else the name it
   was known by. A first sign-in whose **verified** email equals a pre-upgrade
   owner string claims that owner's artifacts; an unverified one never does.
-  `CAIRN_API_TOKENS` entries and the dev logins resolve their actor to a user
-  the same way, so they keep the Bin they had.
+  The dev logins resolve their actor to a user the same way, so they keep the
+  Bin they had.
 - **Operator profile** (SPEC-0023 REQ "Operator and User Profiles" and
   "Operator Surfaces Bound Tenant Data and Never Read It", #330). The operator
   is named by `CAIRN_OPERATORS` (comma-separated `<issuer>|<subject>`) or
@@ -44,8 +44,29 @@ reaches 1.0.
   affected user reads it in Settings. Operator routes need a browser session,
   and operator status never widens what the operator may read (audit A12,
   A13).
+- **Static API tokens act only as an operator's user** (SPEC-0023 REQ "Static
+  API Tokens Act as an Operator's User", #333, audit A2). `CAIRN_API_TOKENS`
+  entries are now `secret:<user>[:agent|:human]`, where `<user>` is an
+  `<issuer>|<subject>` or a verified email that must resolve at boot to an
+  existing user who is listed in `CAIRN_OPERATORS`. A token acts as that user
+  and no other, defaults to agent scopes (no `sharing:manage`, no delete), and
+  is listed on its user's Settings page as operator-provisioned. Before this a
+  token acted as whatever string the operator typed, with human scopes by
+  default, so the operator could impersonate anyone.
 
 ### Upgrade notes
+
+- **Legacy `CAIRN_API_TOKENS` entries now fail boot.** Every free-form
+  `secret:actor[:role]` entry is refused, with no grace period, and `cairnd`
+  exits with `CAIRN_API_TOKENS entry N: legacy secret:actor entries are no
+  longer accepted; …`, naming the entry's position and the new form, never the
+  secret. Before upgrading, rewrite each entry as
+  `secret:<user>[:agent|:human]` naming an operator (Settings → Account shows
+  your `<issuer>|<subject>`), make sure that operator has signed in once and
+  is in `CAIRN_OPERATORS`, and move every other consumer to a personal access
+  token. Remove the variable entirely if nothing needs it. Tokens now default
+  to the **agent** role: add `:human` where a script changes sharing, expiry
+  or deletes.
 
 - **Take a database backup first.** Migration `0017_users` adds the `users`
   and `user_identities` tables and `sessions.user_id`.
