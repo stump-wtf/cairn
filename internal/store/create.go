@@ -104,10 +104,15 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	// Governing: SPEC-0002 REQ "Content Addressing and Blobs".
 	defer staged.Discard(ctx, s.obj)
 
-	// 2. Verify a client-declared checksum, if one was provided.
+	// 2. Verify a client-declared checksum, if one was provided. Neither digest
+	//    goes into the error: it is logged, and both are digests of the raw,
+	//    unscanned body, which for a body that is only a credential is a
+	//    fingerprint of that credential.
+	//
+	// Governing: ADR-0023, SPEC-0017 RD-9, RD-10
 	if in.ExpectedSHA256 != "" && !strings.EqualFold(in.ExpectedSHA256, staged.SHA256) {
-		return nil, fmt.Errorf("create: expected %s got %s: %w",
-			in.ExpectedSHA256, staged.SHA256, errs.ErrChecksumMismatch)
+		return nil, fmt.Errorf("create: declared checksum does not match the received body: %w",
+			errs.ErrChecksumMismatch)
 	}
 
 	// 2b. Scan the title, then the verified bytes, before anything is promoted

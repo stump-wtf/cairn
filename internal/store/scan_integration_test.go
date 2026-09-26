@@ -591,8 +591,14 @@ func TestScanDeclaredChecksumOfMaskedUpload(t *testing.T) {
 
 	in = typed(raw, "markdown", "text/markdown")
 	in.ExpectedSHA256 = sha256Hex([]byte("something else"))
-	if _, err := f.s.CreateArtifact(context.Background(), in); !errors.Is(err, errs.ErrChecksumMismatch) {
+	_, err = f.s.CreateArtifact(context.Background(), in)
+	if !errors.Is(err, errs.ErrChecksumMismatch) {
 		t.Errorf("a wrong declared checksum: err = %v, want checksum_mismatch", err)
+	}
+	// The error is logged, so it must not carry the raw body's digest: for a
+	// body holding a credential that is a fingerprint of it (RD-9).
+	if err != nil && strings.Contains(err.Error(), sha256Hex([]byte(raw))) {
+		t.Errorf("checksum error carries the raw body's SHA-256: %v", err)
 	}
 
 	b, err := f.s.CreateArtifact(context.Background(), typed(strings.Replace(raw, tokA, tokB, 1), "markdown", "text/markdown"))
