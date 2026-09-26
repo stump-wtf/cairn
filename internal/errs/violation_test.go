@@ -78,6 +78,21 @@ func TestWithValueCapsOnRuneBoundary(t *testing.T) {
 	}
 }
 
+// VE-3: an invalid byte ahead of the cut does not empty the echo. Trimming
+// until the whole prefix validated would strip it back to "", so an
+// over-long tag carrying one stray byte would be reported as `"" is too long`.
+func TestWithValueKeepsPrefixBeforeAnInvalidByte(t *testing.T) {
+	raw := "\xff" + strings.Repeat("a", 100)
+	got := *NewViolation("tag", LocHeader, ReasonTooLong, WithValue(raw)).Value
+	if got != raw[:MaxValueBytes] {
+		t.Fatalf("value = %q, want the first %d bytes", got, MaxValueBytes)
+	}
+	cont := strings.Repeat("\x80", 100) // continuation bytes only: back off at most UTFMax-1
+	if got := *NewViolation("tag", LocHeader, ReasonTooLong, WithValue(cont)).Value; len(got) < MaxValueBytes-utf8.UTFMax {
+		t.Fatalf("value is %d bytes, want the back-off bounded", len(got))
+	}
+}
+
 func TestSecretDetectedNeverEchoes(t *testing.T) {
 	v := NewViolation("body", LocBody, ReasonSecretDetected,
 		WithValue("would-be-secret"), WithExtra("rule", "github-pat"), WithExtra("line", 42), WithExtra("column", 17),
