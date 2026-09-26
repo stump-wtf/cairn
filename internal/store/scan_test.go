@@ -22,6 +22,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/redact"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
 // TestIsTextBody: SPEC-0017 RD-6. A textual media type or a UTF-8 head is
@@ -171,5 +172,30 @@ func TestRejectionViolation(t *testing.T) {
 	internal := scanErr("body", redact.ErrScanFailed)
 	if errs.ViolationsOf(internal) != nil || errs.CodeOf(internal) != errs.CodeInternal {
 		t.Errorf("a failed scan became %v (%s), want internal", internal, errs.CodeOf(internal))
+	}
+}
+
+// TestArtifactRedactionMode: SPEC-0017 RD-4. A single-body create rejects when
+// its declared type rejects, or when the registry classifies its body as a
+// rejecting type: a generic file upload of Go source is code. A downgrade
+// still masks, and a plain-text or markdown body still masks.
+func TestArtifactRedactionMode(t *testing.T) {
+	s := &Store{rejectTypes: rejectTypesOf(nil), registry: sharetype.Default()}
+	for _, tc := range []struct {
+		typ       artifact.ShareType
+		media     string
+		downgrade bool
+		want      redact.Mode
+	}{
+		{artifact.TypeFile, "text/x-go", false, redact.ModeReject},
+		{artifact.TypeFile, "text/x-go", true, redact.ModeMask},
+		{artifact.TypeFile, "text/plain", false, redact.ModeMask},
+		{artifact.TypeFile, "image/png", false, redact.ModeMask},
+		{"markdown", "text/markdown", false, redact.ModeMask},
+		{"code", "application/octet-stream", false, redact.ModeReject},
+	} {
+		if got := s.artifactRedactionMode(tc.typ, tc.media, tc.downgrade); got != tc.want {
+			t.Errorf("mode(%s, %s, downgrade=%v) = %s, want %s", tc.typ, tc.media, tc.downgrade, got, tc.want)
+		}
 	}
 }

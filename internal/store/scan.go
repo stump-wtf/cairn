@@ -90,6 +90,23 @@ func (s *Store) redactionMode(t artifact.ShareType, downgrade bool) redact.Mode 
 	return redact.ModeMask
 }
 
+// artifactRedactionMode resolves a single-body create's mode from both the
+// declared share type and the type the registry classifies the body as. An
+// upload declared as the generic file type is stored as code when its media
+// type names a language (sharetype.DecidePreview), which is how the CLI and
+// most multipart clients share source files, so it must reject as code does.
+// The classification ignores the preview size bound: a source file too large
+// to preview is still code.
+//
+// Governing: ADR-0023, SPEC-0017 RD-4, RD-5
+func (s *Store) artifactRedactionMode(declared artifact.ShareType, mediaType string, downgrade bool) redact.Mode {
+	if mode := s.redactionMode(declared, downgrade); mode == redact.ModeReject {
+		return mode
+	}
+	classified, _ := s.registry.DecidePreview(declared, mediaType, 0, 0)
+	return s.redactionMode(classified, downgrade)
+}
+
 // scanReport collects what a create's scans leave to do after it commits.
 type scanReport struct {
 	unscanned []unscannedField
