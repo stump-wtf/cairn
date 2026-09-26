@@ -52,7 +52,9 @@ reaches 1.0.
   and no other, defaults to agent scopes (no `sharing:manage`, no delete), and
   is listed on its user's Settings page as operator-provisioned. Before this a
   token acted as whatever string the operator typed, with human scopes by
-  default, so the operator could impersonate anyone.
+  default, so the operator could impersonate anyone. A token therefore no
+  longer keeps the Bin its old `secret:actor` entry had: see the upgrade note
+  on orphaned legacy Bins.
 
 ### Upgrade notes
 
@@ -67,6 +69,44 @@ reaches 1.0.
   token. Remove the variable entirely if nothing needs it. Tokens now default
   to the **agent** role: add `:human` where a script changes sharing, expiry
   or deletes.
+- **A legacy token actor's Bin is orphaned unless you move it.** Migration
+  `0018` turned each old token actor into a user known by that string, and
+  until now the token reached that user. After upgrading no credential acts
+  as it: a token names an operator's own user, and a sign-in claims a legacy
+  user only by a verified email equal to its name, so a non-email actor such
+  as `ci-bot` is never claimed. Its Bin (pins, permanent artifacts, anything
+  not yet expired) stays in the database with nobody able to manage or delete
+  it. Nothing is deleted, so you can fix this any time after `0018` has run
+  (the queries need its columns), but expiring artifacts are still reaped on
+  schedule meanwhile. List what such users own:
+
+  ```sql
+  SELECT u.actor_key, a.public_id, a.title, a.expires_at
+    FROM artifacts a
+    JOIN users u ON u.id = a.owner_user_id
+   WHERE u.primary_email IS NULL
+     AND u.actor_key IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id)
+   ORDER BY u.actor_key, a.created_at;
+  ```
+
+  To keep one, move its artifacts to the operator's user, with the old actor
+  and the operator's verified email filled in. If the email matches no user
+  the update fails on `artifacts_one_owner` and changes nothing:
+
+  ```sql
+  BEGIN;
+  UPDATE artifacts
+     SET owner_user_id = (SELECT id FROM users
+                           WHERE primary_email = 'you@example.com' AND email_verified)
+   WHERE owner_user_id = (SELECT id FROM users
+                           WHERE actor_key = 'ci-bot' AND primary_email IS NULL);
+  COMMIT;
+  ```
+
+  This changes ownership only: `created_by_user_id`, comments and reactions
+  keep crediting the old actor. Never delete the legacy user, since deleting
+  a user deletes the artifacts it owns.
 
 - **Take a database backup first.** Migration `0017_users` adds the `users`
   and `user_identities` tables and `sessions.user_id`.
