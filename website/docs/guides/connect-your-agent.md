@@ -76,8 +76,12 @@ claude plugin install cairn@claude-plugin-cairn
 
 Crush reads two config formats. `crushrc` is Bash with a few Crush builtins, and it's the
 current one. `crush.json` is the original format: Crush still reads it, but its own config
-docs now call it deprecated, and new options only land in `crushrc`. Both hold the same
-settings, so use `crushrc` for anything new.
+docs now call it deprecated, and new options only land in `crushrc`. Either one can hold
+everything on this page, so use `crushrc` for anything new.
+
+`crushrc` needs Crush v0.88.0 or later; check with `crush --version`. Older versions don't
+look for a `crushrc` at all and skip it without an error, so on those use the `crush.json`
+forms below.
 
 Add Cairn to `~/.config/crush/crushrc`, or to a `crushrc` in your project, and export
 `CAIRN_TOKEN` wherever Crush runs:
