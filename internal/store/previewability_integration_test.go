@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
 // Previewability is decided at ingest via the registry and stored on the

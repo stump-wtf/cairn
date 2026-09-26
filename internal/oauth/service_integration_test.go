@@ -12,7 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/joestump/cairn/internal/db"
+	"github.com/stump-wtf/cairn/internal/db"
 )
 
 var schemaSeq atomic.Int64

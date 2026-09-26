@@ -18,7 +18,7 @@ import (
 	"encoding/hex"
 	"strings"
 
-	"github.com/joestump/cairn/internal/markdown"
+	"github.com/stump-wtf/cairn/internal/markdown"
 )
 
 // blockIDHexLen is the number of hex digits a markdown block id carries after

@@ -188,6 +188,6 @@ sequenceDiagram
 - Which specific headers are on the drop/normalize list, and is that list configurable?
 - What is the fixed ingress response body/status by default, and may an owner customize it
   without ever letting the *payload* steer it?
-- Should the ingress live on a dedicated host (`hook.cairn.sh`) separate from the app origin to
+- Should the ingress live on a dedicated host (`hook.cairn.stump.wtf`) separate from the app origin to
   further isolate untrusted traffic from session cookies, and does that change the CSP story?
 - What are the per-endpoint and per-IP rate-limit defaults, and are they owner-tunable?

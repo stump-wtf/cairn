@@ -231,7 +231,7 @@ sequenceDiagram
 
     Agent->>Core: POST /v1/runs (open)
     Core->>DB: INSERT run (status=open)
-    Core-->>Agent: run id + cairn.sh/run/<id>
+    Core-->>Agent: run id + cairn.stump.wtf/run/<id>
     Web->>Core: GET /v1/runs/{id}/stream (SSE)
     Core-->>Web: replay existing spans, then subscribe
     loop each span as it happens

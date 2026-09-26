@@ -9,9 +9,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/joestump/cairn/internal/objectstore"
-	"github.com/joestump/cairn/internal/store"
-	"github.com/joestump/cairn/internal/webhook"
+	"github.com/stump-wtf/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/webhook"
 )
 
 // hookTestServer stands up the /v1 adapter exactly like testServer, but also

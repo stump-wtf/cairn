@@ -9,7 +9,7 @@ requires: [SPEC-0002]
 
 ## Overview
 
-The **trajectory** share type (badge `TRJ`, URL `cairn.sh/run/<id>`) captures a whole
+The **trajectory** share type (badge `TRJ`, URL `cairn.stump.wtf/run/<id>`) captures a whole
 agent run and lets humans view it. A run is a human prompt followed by an ordered,
 nested tree of reasoning turns, tool calls, and sub-agent excursions. Cairn stores the
 run as an OTel-*inspired* span tree, derives its stats from that tree, renders it as a
@@ -30,7 +30,7 @@ propagation, and the OTLP wire protocol.
 All routes are backed by the one core service package (ADR-0012). `Auth` values:
 `Required` = authenticated owner/actor (session for web, OAuth 2.1 bearer for API/MCP/CLI
 per ADR-0004); `Link-cap` = the ADR-0007 read capability (possession of the unguessable
-`cairn.sh/run/<id>` link grants read, no reader account). No endpoint is `Public`.
+`cairn.stump.wtf/run/<id>` link grants read, no reader account). No endpoint is `Public`.
 
 | Method & Path | Purpose | Auth |
 |---|---|---|
@@ -201,14 +201,14 @@ The server MUST accept a run over both REST (ADR-0012) and MCP (ADR-0004) in two
 **batch** (`POST /v1/runs` with the prompt and full span tree; the server assigns the
 public id, validates tree structure, spills oversized outputs, and closes
 the run) and **incremental** (`POST /v1/runs` to open a run and immediately return its id
-and `cairn.sh/run/<id>` URL; `POST /v1/runs/{id}/spans` to append; `POST
+and `cairn.stump.wtf/run/<id>` URL; `POST /v1/runs/{id}/spans` to append; `POST
 /v1/runs/{id}/close` to close). Appends MUST be additive only. A batch ingest and the
 equivalent open→append→close sequence MUST converge to the identical final run.
 
 #### Scenario: Open returns a shareable link immediately
 
 - **WHEN** a client opens a run
-- **THEN** the server MUST return the run id and `cairn.sh/run/<id>` URL before any span is appended, so the human can be handed a link to a live run
+- **THEN** the server MUST return the run id and `cairn.stump.wtf/run/<id>` URL before any span is appended, so the human can be handed a link to a live run
 
 #### Scenario: Batch and incremental converge
 

@@ -6,7 +6,7 @@ Humans post from the CLI and web; agents read, create, comment, and react over M
 Every artifact is a short URL with provenance, reactions, comments, and a TTL.
 
 ```
-cat checkout-web-audit.md | cairn      →  cairn.sh/9qz1a
+cat checkout-web-audit.md | cairn      →  cairn.stump.wtf/9qz1a
 ```
 
 ## Share types
@@ -30,14 +30,14 @@ Cross-platform release binaries aren't published yet (tracked for a future
 `goreleaser` job); until then, install straight from the module:
 
 ```bash
-go install github.com/joestump/cairn/cmd/cairn@latest
+go install github.com/stump-wtf/cairn/cmd/cairn@latest
 ```
 
 This puts a `cairn` binary in `$(go env GOPATH)/bin` (make sure that's on your
 `PATH`). Building from a checkout instead:
 
 ```bash
-git clone https://github.com/joestump/cairn && cd cairn
+git clone https://github.com/stump-wtf/cairn && cd cairn
 go build -o cairn ./cmd/cairn
 ```
 
@@ -63,7 +63,7 @@ cairn --ttl 24h --title "incident notes" incident.md   # optional flags
 By default `cairn` copies the resulting link to your clipboard (best-effort,
 `--no-copy` to disable) and shows the server-assigned expiry and access policy —
 the CLI displays these, it never decides them. Piped/non-interactive output prints
-only the bare `cairn.sh/<id>` link, so it composes cleanly in scripts:
+only the bare `cairn.stump.wtf/<id>` link, so it composes cleanly in scripts:
 
 ```bash
 url=$(cat report.md | cairn)
@@ -71,6 +71,13 @@ url=$(cat report.md | cairn)
 
 See [SPEC-0008](docs/openspec/specs/cli/spec.md) for the full command surface,
 exit-code taxonomy, and `--json` mode.
+
+## Self-hosting
+
+Want your own cairn? The [self-hosting guide](https://cairn.stump.wtf/docs/guides/self-hosting/)
+takes you from nothing to a running instance: Postgres + any S3-compatible
+store, a pasteable compose file, OIDC sign-in, and a verified end-to-end loop.
+The image is `ghcr.io/stump-wtf/cairn`.
 
 ## Project docs
 

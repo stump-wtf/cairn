@@ -1,7 +1,11 @@
-.PHONY: build test test-race test-js vet fmt fmt-check lint check tidy up down migrate ci
+.PHONY: build test test-race test-js vet fmt fmt-check lint check tidy up down migrate ci verify-cli
 
 GO ?= go
 PKGS ?= ./...
+
+# Optional path to a built cairn binary for `make verify-cli`. Without it only
+# the import-graph gate runs, which needs no build.
+CLI_BIN ?=
 
 build:
 	$(GO) build $(PKGS)
@@ -43,7 +47,14 @@ fmt-check:
 # Uniform entry points: every repo answers to `make lint` / `make check`.
 lint: fmt-check vet
 
-check: lint test
+# The source is private and only the CLI is distributed, so the shipped binary
+# must never contain the server. This is cheap (an import-graph allowlist) and
+# runs with the ordinary checks rather than only at release time, because the
+# way it breaks is an ordinary-looking import added months earlier.
+verify-cli:
+	@scripts/verify-cli-artifact.sh $(CLI_BIN)
+
+check: lint test verify-cli
 
 tidy:
 	$(GO) mod tidy

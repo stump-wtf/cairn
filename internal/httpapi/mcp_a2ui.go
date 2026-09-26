@@ -41,11 +41,11 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"gitea.stump.rocks/stump.wtf/md2a2ui"
+	"github.com/stump-wtf/md2a2ui"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/oauth"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/oauth"
 )
 
 // a2uiMIME is the registered media type for A2UI payloads over MCP (per

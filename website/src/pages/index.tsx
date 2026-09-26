@@ -71,7 +71,7 @@ function Hero(): ReactNode {
         <div
           className={styles.terminal}
           role="img"
-          aria-label="Terminal: cat checkout-web-audit.md piped to cairn returns the short link cairn.sh/9qz1a, copied to the clipboard">
+          aria-label="Terminal: cat checkout-web-audit.md piped to cairn returns the short link cairn.stump.wtf/9qz1a, copied to the clipboard">
           <div className={styles.termBar} aria-hidden="true">
             <span />
             <span />
@@ -83,7 +83,7 @@ function Hero(): ReactNode {
             <code>
               <span className={styles.prompt}>$</span> cat checkout-web-audit.md | cairn{'\n'}
               <span className={styles.ok}>✓</span>{' '}
-              <span className={styles.link}>cairn.sh/9qz1a</span>{'  '}
+              <span className={styles.link}>cairn.stump.wtf/9qz1a</span>{'  '}
               <span className={styles.dim}>· md · ⧗ expires 7d · 🔒 you + anyone with link</span>
             </code>
           </pre>

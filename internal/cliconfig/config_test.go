@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/joestump/cairn/internal/cliexit"
+	"github.com/stump-wtf/cairn/internal/cliexit"
 )
 
 func writeConfigFile(t *testing.T, dir, contents string, perm os.FileMode) string {

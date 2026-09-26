@@ -207,6 +207,12 @@ code { font-family: var(--mono); }
 .facts dd { margin: 0; color: var(--t3); font: 400 12px var(--sans); word-break: break-word; }
 .facts dd.mono { font-family: var(--mono); font-size: 11px; }
 .obo { color: var(--t6); }
+/* Client-asserted tags (ADR-0018): chips in their own panel section. */
+.tag-list { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 5px; }
+.tag {
+  color: var(--t3); background: var(--well); border: 1px solid var(--border-2);
+  border-radius: 4px; padding: 1px 6px; font: 400 11px var(--mono); word-break: break-all;
+}
 
 .comments { display: flex; flex-direction: column; gap: 12px; }
 .comment { background: var(--well-2); border: 1px solid var(--border-3); border-radius: 8px; padding: 10px 12px; }

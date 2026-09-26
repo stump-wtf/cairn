@@ -63,8 +63,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/webhook"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/webhook"
 )
 
 // hookIngressPathPrefix is the ingress route's fixed path segment, shared by

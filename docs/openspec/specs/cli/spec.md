@@ -78,16 +78,32 @@ contract.
 Invoked with content on **stdin** (e.g. `cat file | cairn`) or with one or more file
 **path arguments**, the bare `cairn` command MUST create a single artifact via
 `POST /v1/artifacts`, streaming the body to the server rather than buffering the whole
-payload in memory where feasible. On success it MUST print the `cairn.sh/<id>` link to
+payload in memory where feasible. On success it MUST print the `cairn.stump.wtf/<id>` link to
 **stdout** and, when a clipboard is available and stdout is a TTY, copy that link to the
 clipboard. The CLI MUST let the server assign the share type, provenance channel
 (`via CLI`), access policy, and expiry, and it MUST surface the returned link, expiry,
 and access policy to the user.
 
+A repeatable `--tag` flag MUST attach tags to the created artifact (SPEC-0002 REQ
+"Artifact Tags"). Each flag holds one tag or a comma-separated list. Locally the CLI
+rejects only an empty tag, as a usage error reported before any network call. The tag
+charset, size and count bounds, and deduplication, are the server's to decide.
+
+#### Scenario: Tag a piped artifact
+
+- **WHEN** the user runs `cat prompt.md | cairn --tag handoff --tag lane:auto,size:m`
+- **THEN** the CLI MUST create one artifact carrying `handoff`, `lane:auto`, and
+  `size:m`
+
+#### Scenario: Empty tag flag
+
+- **WHEN** the user passes `--tag ""` or `--tag handoff,,lane:s`
+- **THEN** the CLI MUST exit with a usage error without contacting the server
+
 #### Scenario: Pipe content in
 
 - **WHEN** the user runs `cat notes.md | cairn`
-- **THEN** the CLI MUST create one artifact, print its `cairn.sh/<id>` link to stdout,
+- **THEN** the CLI MUST create one artifact, print its `cairn.stump.wtf/<id>` link to stdout,
   and exit 0
 
 #### Scenario: Pass a path argument
@@ -106,15 +122,17 @@ and access policy to the user.
 files (mixed media permitted) via `POST /v1/artifacts`. During upload it SHOULD display
 **per-file progress** on stderr when stderr is a TTY, and on success it MUST print a
 **summary line** of the form `N files · <total size> · ⧗ expires <ttl> · 🔒 <access>`
-followed by the `cairn.sh/<id>` link. The CLI MUST NOT report success or emit a link
+followed by the `cairn.stump.wtf/<id>` link. The CLI MUST NOT report success or emit a link
 unless the server confirms the **complete** bundle was created; a failure of any
-constituent file MUST abort the bundle so no partial bundle is shared.
+constituent file MUST abort the bundle so no partial bundle is shared. `cairn add`
+accepts the same repeatable `--tag` flag as the bare command, applying the tags to the
+bundle as a whole.
 
 #### Scenario: Push several files as a bundle
 
 - **WHEN** the user runs `cairn add a.png b.log c.sql`
 - **THEN** the CLI MUST create one bundle, show per-file progress, print the summary
-  line and the `cairn.sh/<id>` link, and exit 0
+  line and the `cairn.stump.wtf/<id>` link, and exit 0
 
 #### Scenario: One file in the bundle fails
 

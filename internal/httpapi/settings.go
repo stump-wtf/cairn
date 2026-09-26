@@ -3,10 +3,10 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/mcpsession"
-	"github.com/joestump/cairn/internal/oauth"
-	"github.com/joestump/cairn/internal/pat"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/mcpsession"
+	"github.com/stump-wtf/cairn/internal/oauth"
+	"github.com/stump-wtf/cairn/internal/pat"
 )
 
 // The Settings page (issue #75): a real, sectioned settings surface —

@@ -52,8 +52,19 @@ import {join, relative, sep} from 'node:path';
  *   skipped before the allowlist is consulted); it exists for the Pages
  *   build, where the product is a foreign host that the record may
  *   legitimately send people to.
+ *
+ * - `switchboard.stump.wtf` and `stump-wtf.github.io` — the public documentation
+ *   sites of Switchboard and Harness, the two sibling products the getting-started
+ *   guides explain Cairn alongside (handoffs, outbound webhooks, "how the pieces
+ *   fit"). Both are docs sites, not source repositories; the guides link their
+ *   docs pages only, never a forge.
  */
-export const ALLOWED_HOSTS = new Set(['docusaurus.io', 'cairn.stump.wtf']);
+export const ALLOWED_HOSTS = new Set([
+  'docusaurus.io',
+  'cairn.stump.wtf',
+  'switchboard.stump.wtf',
+  'stump-wtf.github.io',
+]);
 
 /**
  * Hosts known to serve source repositories. This list does NOT decide whether a
