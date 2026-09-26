@@ -192,7 +192,7 @@ func (s *Store) emitCreated(a *artifact.Artifact, kind event.ActorKind, auth eve
 		PublicID:   a.PublicID,
 		ShareType:  a.ShareType,
 		Title:      a.Title,
-		WebPath:    "/" + joinPath(s.registry.URLPrefixFor(a.ShareType).Web, a.PublicID),
+		WebPath:    WebPath(s.registry, a.ShareType, a.PublicID),
 		ActorID:    a.Provenance.ActorID,
 		Model:      a.Provenance.Model,
 		Channel:    string(a.Provenance.Channel),
@@ -206,6 +206,15 @@ func (s *Store) emitCreated(a *artifact.Artifact, kind event.ActorKind, auth eve
 		Auth:      auth,
 		OwnerID:   a.Access.OwnerID,
 	})
+}
+
+// WebPath is an artifact's registry-derived, origin-agnostic web path: the
+// share type's web prefix (if any) joined to the public id. Every producer of
+// a lifecycle event builds its Subject.WebPath through this one function, so a
+// run's event links to the same page as any other artifact's (SPEC-0016 EV-3
+// "Subject fields resolve the artifact for every kind").
+func WebPath(reg *sharetype.Registry, st artifact.ShareType, publicID string) string {
+	return "/" + joinPath(reg.URLPrefixFor(st).Web, publicID)
 }
 
 // joinPath joins an optional single-segment prefix and an id without a slash
