@@ -456,6 +456,16 @@ func (s *Server) mountAPI(r chi.Router) {
 		r.With(s.requireHumanSession).Get("/mcp/sessions", s.handleListMCPSessions)
 		r.With(s.requireHumanSession, s.enforceCSRF).Delete("/mcp/sessions/{id}", s.handleEndMCPSession)
 
+		// OAuth grants (A20, issue #343; SPEC-0023 REQ "Closing the Audited
+		// Surfaces"): the human Settings surface for seeing and revoking
+		// every OAuth connection that acts as them — including grants used
+		// purely over REST, which never open an MCP session and so appear
+		// nowhere else. Session-authenticated only and CSRF-guarded on
+		// writes, for the same reason as the token and MCP session routes
+		// above.
+		r.With(s.requireHumanSession).Get("/oauth/grants", s.handleListGrants)
+		r.With(s.requireHumanSession, s.enforceCSRF).Delete("/oauth/grants/{id}", s.handleRevokeGrant)
+
 		// Link-capability reads: a valid id grants read; unknown/expired ids
 		// return a uniform 404 (ADR-0007).
 		r.Get("/artifacts/{id}", s.handleGet)
