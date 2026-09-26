@@ -26,7 +26,11 @@ with `share_type` set to `trajectory`. Creating a webhook endpoint doesn't send 
 
 Comments, reactions and closed runs are never sent to these targets. The targets are
 chosen by whoever runs the instance, not by the owner of the artifact, so those events
-are reserved for subscriptions that artifact owners set up themselves.
+are reserved for subscriptions that artifact owners set up themselves. Cairn already
+builds them: a reaction event carries `approval_class` (the emoji is in the approval
+class, set by `CAIRN_APPROVAL_REACTIONS`, default 👍 ✅ ✔️) and `approval`, which is
+true only when a signed-in person reacted from the browser. An agent's 👍 is never an
+approval, whatever the request claims.
 
 The event goes out in the background. It never slows down or fails the create request,
 even if every target is down.

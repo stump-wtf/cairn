@@ -50,6 +50,7 @@ is read from the `CAIRN_` namespace and nothing is ever loaded from a file.
 | `CAIRN_DEV_INSECURE_BEARER_AUTH` | `false` | Makes the API trust any bearer token as its own actor id with no verification. A local-development shortcut that must never be enabled in production. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_OUTBOUND_WEBHOOK_URLS` | *(empty)* | Comma-separated URLs that receive a signed `artifact.created` event. Empty = the feature is inert. These URLs are bearer capabilities; never log or share them. |
 | `CAIRN_OUTBOUND_WEBHOOK_SECRET` | *(empty)* | When set, every delivery carries `X-Cairn-Signature: sha256=<hex>` over the raw body. |
+| `CAIRN_APPROVAL_REACTIONS` | 👍,✅,✔️ | Comma-separated emoji whose reaction counts as an approval on reaction events. Skin tones and VS-16 are ignored when matching. Only a browser-session reaction is ever an approval. A malformed entry fails startup. |
 | `CAIRN_DEFAULT_TTL` | `168h` | Default artifact expiry (Go duration; 7 days). |
 | `CAIRN_MAX_UPLOAD_BYTES` | `67108864` | Max upload size, enforced incrementally — an oversize upload is rejected mid-stream with 413, not after buffering. |
 | `CAIRN_PREVIEW_MAX_BYTES` | `5242880` | Bodies above this skip the rich viewer and use the generic file path. |
@@ -144,6 +145,7 @@ services:
       CAIRN_API_TOKENS: ${CAIRN_API_TOKENS:-}
       CAIRN_OUTBOUND_WEBHOOK_URLS: ${CAIRN_OUTBOUND_WEBHOOK_URLS:-}
       CAIRN_OUTBOUND_WEBHOOK_SECRET: ${CAIRN_OUTBOUND_WEBHOOK_SECRET:-}
+      CAIRN_APPROVAL_REACTIONS: ${CAIRN_APPROVAL_REACTIONS:-}
     restart: unless-stopped
 
   caddy:
