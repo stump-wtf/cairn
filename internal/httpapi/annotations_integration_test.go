@@ -378,4 +378,4 @@ func TestIntegrationCommentOversizeRejected(t *testing.T) {
 // storeOpts is the common store configuration for the annotation integration
 // tests: a generous upload cap so seeding artifacts never trips the 413 path
 // under test here.
-func storeOpts() store.Options { return store.Options{MaxUploadBytes: 1 << 20} }
+func storeOpts() store.Options { return withScanner(store.Options{MaxUploadBytes: 1 << 20}) }

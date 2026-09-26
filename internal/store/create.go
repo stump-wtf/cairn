@@ -13,6 +13,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/metrics"
 )
 
 // CreateArtifactInput is the transport-agnostic create request. Provenance,
@@ -34,6 +35,10 @@ type CreateArtifactInput struct {
 	// the adapter passes them through from the request as-is; CreateArtifact
 	// normalizes them.
 	Tags []string
+	// RedactionDowngrade is the writer's per-request downgrade of a
+	// reject-mode share type to mask (X-Cairn-Redaction: mask, or MCP
+	// redaction: "mask"). It never disables the scan. SPEC-0017 RD-5.
+	RedactionDowngrade bool
 }
 
 func (in CreateArtifactInput) validate() error {
@@ -69,7 +74,8 @@ func (in CreateArtifactInput) validate() error {
 // Governing: ADR-0008 (Storage & Content Model),
 // SPEC-0002 REQ "Artifact Lifecycle — Create",
 // SPEC-0002 REQ "Streaming Upload with Checksum Verification",
-// SPEC-0002 REQ "Database Operation Standards"
+// SPEC-0002 REQ "Database Operation Standards",
+// ADR-0023, SPEC-0017 RD-1 (the title and body are scanned first; scan.go)
 func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*artifact.Artifact, error) {
 	if err := in.validate(); err != nil {
 		return nil, err
@@ -82,13 +88,22 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	if err != nil {
 		return nil, err
 	}
+	// The title is scanned before the body streams, with the body's mode.
+	//
+	// Governing: ADR-0023, SPEC-0017 RD-4, RD-5
+	var scans scanReport
+	mode := s.redactionMode(in.ShareType, in.RedactionDowngrade)
+	title, titleScan, err := s.scanTitle(ctx, metrics.SurfaceArtifact, in.Title, mode, &scans)
+	if err != nil {
+		return nil, fmt.Errorf("create: %w", err)
+	}
 
 	// 1. Stream the body to a staging object: compute SHA-256 incrementally
 	//    and enforce the size limit as bytes arrive. The object is NOT promoted
 	//    to its content-addressed key yet — that happens in CommitBlob under the
 	//    blob-row lock so the promotion is serialized against the reaper (§2 of
 	//    the SPEC-0009 retention design).
-	staged, err := StageBlob(ctx, s.obj, in.Body, s.maxBytes, in.DeclaredMediaType)
+	staged, err := stageBlobKeep(ctx, s.obj, in.Body, s.maxBytes, in.DeclaredMediaType, scanInMemoryBytes)
 	if err != nil {
 		return nil, fmt.Errorf("create: stream body: %w", err)
 	}
@@ -105,6 +120,17 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 			in.ExpectedSHA256, staged.SHA256, errs.ErrChecksumMismatch)
 	}
 
+	// 2b. Scan the verified bytes before anything is promoted or committed. A
+	//     mask repoints staged at the masked copy, so the SHA-256, size and
+	//     dedup key below are the stored bytes'; a rejection returns here, and
+	//     the deferred Discard removes the staging object.
+	//
+	// Governing: ADR-0023, SPEC-0017 RD-1, RD-6, RD-7, RD-10
+	bodyScan, err := s.scanBody(ctx, metrics.SurfaceArtifact, bodyField, staged, mode, &scans)
+	if err != nil {
+		return nil, fmt.Errorf("create: %w", err)
+	}
+
 	// Decide previewability at ingest from the share type + sniffed/declared
 	// media type and the preview size bound, via the registry (no switch on
 	// type). A non-previewable body becomes the generic file type (FILE/GZ).
@@ -117,7 +143,7 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 
 	art := &artifact.Artifact{
 		ShareType:   effectiveType,
-		Title:       in.Title,
+		Title:       title,
 		BodySHA256:  staged.SHA256,
 		Size:        staged.Size,
 		MediaType:   staged.MediaType,
@@ -126,6 +152,8 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 		Access:      in.Access,
 		Tags:        tags,
 		ExpiresAt:   in.ExpiresAt,
+		// Written with the row, in the same transaction (SPEC-0017 RD-9).
+		Redaction: bodyScan.Merge(titleScan),
 	}
 
 	// 3. Persist metadata atomically: lock/register the blob row and promote its
@@ -151,6 +179,7 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 		return nil, fmt.Errorf("create: commit: %w", err)
 	}
 	s.emitCreated(art)
+	s.warnUnscanned(art.PublicID, &scans)
 	return art, nil
 }
 
