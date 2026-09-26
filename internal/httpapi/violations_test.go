@@ -160,6 +160,24 @@ func TestViolationMultipartTagsFromEverySource(t *testing.T) {
 	}
 }
 
+// A multipart body can carry any number of tag fields, and the loop no longer
+// stops at the first bad one, so the recorded violations must stay bounded
+// however many bad fields arrive — oversize or malformed ones included.
+func TestTagSetBoundsRecordedViolations(t *testing.T) {
+	var ts tagSet
+	oversize := strings.Repeat("x", maxTagFieldBytes+1)
+	for i := 0; i < 10*errs.MaxViolations; i++ {
+		ts.addFormField(strings.NewReader(oversize))
+		ts.addFormField(strings.NewReader("Bad"))
+	}
+	if len(ts.bad) > errs.MaxViolations {
+		t.Fatalf("recorded %d violations, want at most %d", len(ts.bad), errs.MaxViolations)
+	}
+	if got := len(errs.ViolationsOf(ts.err())); got != errs.MaxViolations {
+		t.Fatalf("err carries %d violations, want %d", got, errs.MaxViolations)
+	}
+}
+
 // VE-1 scenario "Oversize body": the 413 names the body and the cap.
 func TestIntegrationViolationOversizeBody(t *testing.T) {
 	cfg := noRateLimit()
