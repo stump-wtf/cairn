@@ -28,7 +28,17 @@ reaches 1.0.
   before the upgrade read back `actor_kind: ""`, are never counted as human,
   and only their own actor removes them. Migration 0022 builds the new unique
   index concurrently and runs outside a transaction; it is safe to rerun.
+  `GET /v1/artifacts/{id}/reactions?include=reactors` also returns the rows
+  behind each tally, each with `actor_id`, `actor_kind` and `on_behalf_of`.
   (ADR-0022, SPEC-0016 EV-6, #159)
+
+  **Upgrade note: a binary rollback breaks reactions.** Migration 0022 drops
+  the old five-column reaction key, and a binary from before this change
+  upserts on exactly that key. Once 0022 has applied, an older cairnd returns
+  500 on every reaction write (Postgres 42P10, no matching unique constraint)
+  until you roll forward again; the same holds for an old process still
+  serving while the new one migrates. The old key cannot be recreated once a
+  human and an agent row share an actor. Roll forward, not back.
 
 ## [0.1.1] - Unreleased
 
