@@ -20,6 +20,8 @@
 #
 # @joestump 09/25/2026 - Created for cairn#183, replacing the tap-bump job's
 # in-place sed over a formula that had to pre-exist in the tap.
+# @joestump 09/26/2026 - Refuse the sha256 of zero bytes: it is well-formed
+# hex, so the format check passed a checksum of an empty download.
 
 set -euo pipefail
 
@@ -38,9 +40,15 @@ printf '%s' "$ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' \
 
 names=(DARWIN_ARM64 DARWIN_AMD64 LINUX_ARM64 LINUX_AMD64)
 shas=("$2" "$3" "$4" "$5")
+# The sha256 of zero bytes. It is perfectly well-formed hex, so the format
+# check alone would pass it, yet it is only ever what an empty or truncated
+# download hashes to: no release archive is zero bytes.
+empty_sha=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 for i in 0 1 2 3; do
   printf '%s' "${shas[$i]}" | grep -Eq '^[0-9a-f]{64}$' \
     || fail "sha256 for ${names[$i]} is not 64 lowercase hex characters: '${shas[$i]}'"
+  [ "${shas[$i]}" != "$empty_sha" ] \
+    || fail "sha256 for ${names[$i]} is the checksum of an empty file; the download came back empty"
 done
 
 out="$(sed \
