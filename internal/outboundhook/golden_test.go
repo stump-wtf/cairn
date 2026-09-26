@@ -18,9 +18,9 @@ import (
 
 var updateGolden = flag.Bool("update", false, "rewrite the testdata/*.golden.json payload files")
 
-// goldenEmitter builds an emitter for encode-only use: no targets, no worker.
+// goldenEmitter builds an emitter for encode-only use: no subscriptions, no worker.
 func goldenEmitter() *Emitter {
-	return New(nil, "", "https://cairn.example", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return New(nil, nil, "https://cairn.example", slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 // restEvent is a creation over REST/CLI: no on-behalf-of, no tags. Its golden

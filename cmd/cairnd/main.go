@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/stump-wtf/cairn/internal/config"
 	"github.com/stump-wtf/cairn/internal/db"
@@ -27,6 +28,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/operator"
 	"github.com/stump-wtf/cairn/internal/outboundhook"
 	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/subscription"
 )
 
 func main() {
@@ -37,26 +39,49 @@ func main() {
 	}
 }
 
-// newOutboundEmitter builds the outbound-webhook emitter, or returns nil when
-// no target URLs are configured (ADR-0017, SPEC-0012: inert unless configured).
+// newSubscriptions builds the owned outbound subscription core (ADR-0029
+// section 6, SPEC-0023 REQ "Owned Outbound Subscriptions"). A malformed
+// CAIRN_ENCRYPTION_KEY fails boot; an unset one leaves subscriptions
+// uncreatable and says so, and the server runs normally. The risky
+// CAIRN_OUTBOUND_ALLOW_HTTP is loud when on (REQ "Subscription Target
+// Safety"). Neither the key nor any target is logged.
+func newSubscriptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (*subscription.Service, error) {
+	sealer, err := subscription.ParseKey(cfg.EncryptionKeyRaw)
+	if err != nil {
+		return nil, err
+	}
+	if sealer == nil {
+		logger.Info("outbound subscriptions unavailable: " + subscription.KeyEnv + " is unset, so no subscription can be created or rotated")
+	}
+	if cfg.OutboundAllowHTTP {
+		logger.Warn(subscription.AllowHTTPEnv + " is enabled: subscriptions may deliver signed events and capability URLs over plaintext http — never enable this in production")
+	}
+	return subscription.NewService(pool, subscription.Options{
+		Sealer:  sealer,
+		Policy:  newSubscriptionPolicy(cfg),
+		PerUser: cfg.SubscriptionsPerUser,
+		PerTeam: cfg.SubscriptionsPerTeam,
+	}), nil
+}
+
+// newSubscriptionPolicy is the production target policy: https only unless
+// CAIRN_OUTBOUND_ALLOW_HTTP, public addresses only, the system resolver. It
+// never sets Policy.PermitAddr, which exists for tests; a test pins that.
+func newSubscriptionPolicy(cfg *config.Config) *subscription.Policy {
+	return &subscription.Policy{AllowHTTP: cfg.OutboundAllowHTTP}
+}
+
+// newOutboundEmitter builds the outbound emitter over the subscription core.
+// There is no instance-wide target list, so it always exists: with no
+// subscriptions it looks up nothing to deliver to.
 //
 // It returns the CONCRETE *outboundhook.Emitter rather than the
 // store.CreationEmitter interface, deliberately: the delivery worker in run()
 // calls Run(ctx), which the interface does not declare. The typed-nil hazard
 // that caused cairn#201 is handled where it actually arises — at the
 // store.Options boundary, where the concrete pointer enters an interface field.
-//
-// Extracted so main()'s wiring decision is reachable from a test. Every other
-// test in this repo constructs its own emitter, which is why none of them could
-// see that main() was building a broken one.
-func newOutboundEmitter(cfg *config.Config, logger *slog.Logger) *outboundhook.Emitter {
-	if len(cfg.OutboundWebhookURLs) == 0 {
-		return nil
-	}
-	logger.Info("outbound webhooks enabled",
-		"targets", len(cfg.OutboundWebhookURLs),
-		"signed", cfg.OutboundWebhookSecret != "")
-	return outboundhook.New(cfg.OutboundWebhookURLs, cfg.OutboundWebhookSecret, cfg.BaseURL, logger)
+func newOutboundEmitter(cfg *config.Config, subs *subscription.Service, logger *slog.Logger) *outboundhook.Emitter {
+	return outboundhook.New(subs, subs.Policy(), cfg.BaseURL, logger)
 }
 
 // newStoreOptions assembles the store options, assigning the Emitter interface
@@ -118,13 +143,18 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	// Outbound webhook emitter (ADR-0017, SPEC-0012): inert unless target URLs
-	// are configured. One hook at the store choke point covers every creation
-	// surface (REST/web/CLI/MCP); delivery runs on its own worker goroutine,
-	// reaper-style, and stops cleanly on shutdown.
+	// Outbound delivery (ADR-0017, SPEC-0012, ADR-0029 section 6): events go
+	// to the owned subscriptions of the workspace that owns the artifact. One
+	// hook at the store choke point covers every creation surface
+	// (REST/web/CLI/MCP); delivery runs on its own workers, reaper-style, and
+	// stops cleanly on shutdown.
 	// Kept as the concrete *outboundhook.Emitter, not store.CreationEmitter:
 	// the delivery worker below calls Run, which the interface does not declare.
-	emitter := newOutboundEmitter(cfg, logger)
+	subs, err := newSubscriptions(cfg, pool, logger)
+	if err != nil {
+		return err
+	}
+	emitter := newOutboundEmitter(cfg, subs, logger)
 
 	// The core service the transport adapters (REST/MCP/CLI) project. The
 	// share-type registry (previewability, anchor affordances) defaults to the
@@ -210,6 +240,7 @@ func run(logger *slog.Logger) error {
 		APITokens:             apiTokens,
 		DevInsecureBearerAuth: cfg.DevInsecureBearerAuth,
 		Operators:             operators,
+		Subscriptions:         subs,
 		AccessTokenTTL:        cfg.OAuthAccessTokenTTL,
 		RefreshTokenTTL:       cfg.OAuthRefreshTokenTTL,
 		OAuthRatePerSecond:    cfg.OAuthRatePerSecond,

@@ -24,6 +24,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/db"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/subscription"
 )
 
 // schemaSeq disambiguates test schemas created within the same nanosecond.
@@ -41,12 +42,24 @@ func testServer(t *testing.T, cfg Config, opts store.Options) *httptest.Server {
 	// opts into the insecure dev bearer shortcut. Production leaves this off and
 	// verifies every token (see the security tests).
 	cfg.DevInsecureBearerAuth = true
+	srv, _ := subsTestServer(t, cfg, opts, nil)
+	return srv
+}
+
+// subsTestServer is testServer that also returns the subscription core its
+// server and emitter share, built over policy (nil: testSubsPolicy).
+func subsTestServer(t *testing.T, cfg Config, opts store.Options, policy *subscription.Policy) (*httptest.Server, *testSubs) {
+	t.Helper()
 	pool := newTestPool(t)
 	withTokenOperators(t, pool, &cfg)
+	if policy != nil {
+		cfg.Subscriptions = newTestSubscriptions(pool, policy, true)
+	}
+	wireSubscriptions(t, pool, &cfg, &opts)
 	st := store.New(pool, objectstore.NewMemory(), opts)
 	srv := httptest.NewServer(newResolvedServer(t, st, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, &testSubs{Service: cfg.Subscriptions, pool: pool}
 }
 
 // newTestPool connects to CAIRN_TEST_DATABASE_URL (skipping otherwise) and

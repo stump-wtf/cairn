@@ -135,6 +135,10 @@ func (s *Server) mountWeb(r chi.Router) {
 	// page's MCP connection section, so any bookmarked/shared link still
 	// resolves.
 	r.With(s.requireWebSession).Get("/settings", s.handleSettingsPage)
+	// The Settings page's Outbound subscriptions forms (SPEC-0023 REQ "Owned
+	// Outbound Subscriptions"): browser sessions only, under the double-submit
+	// form check, so the section works without script.
+	r.With(s.requireWebSession).Post("/settings/subscriptions", s.handleSubscriptionForm)
 	r.Get("/connect", s.handleConnectRedirect)
 	// The operator console (SPEC-0023): operator browser sessions only, the
 	// uniform 404 for everyone else. "operator" is a reserved id word, so no

@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strings"
@@ -17,8 +17,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/stump-wtf/cairn/internal/outboundhook"
 	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/subscription"
 )
 
 // Governing: ADR-0018 (Client-Asserted Artifact Tags), SPEC-0002 REQ "Artifact
@@ -46,16 +46,13 @@ func (r *hookReceiver) waitN(t *testing.T, n int) []hookedEvent {
 	}
 }
 
-// runTagEmitter starts an unsigned emitter delivering to recv for the test.
-func runTagEmitter(t *testing.T, recv *hookReceiver) *outboundhook.Emitter {
+// tagServer is a test server where actor subscribes recv to everything.
+func tagServer(t *testing.T, cfg Config, opts store.Options, actor string, recv *hookReceiver) *httptest.Server {
 	t.Helper()
-	em := outboundhook.New([]string{recv.srv.URL}, "", "https://cairn.test",
-		slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); em.Run(ctx) }()
-	t.Cleanup(func() { cancel(); <-done })
-	return em
+	cfg.DevInsecureBearerAuth = true
+	srv, subs := subsTestServer(t, cfg, opts, nil)
+	subscribe(t, subs, actor, recv.srv.URL, subscription.CreateInput{})
+	return srv
 }
 
 type taggedEvent struct {
@@ -144,7 +141,7 @@ func assertTagError(t *testing.T, resp *http.Response) {
 // the Bin, reach the outbound event, and render in their own web panel section.
 func TestIntegrationTagsRESTRoundTrip(t *testing.T) {
 	recv := newHookReceiver(t)
-	srv := testServer(t, noRateLimit(), store.Options{Emitter: runTagEmitter(t, recv)})
+	srv := tagServer(t, noRateLimit(), store.Options{}, "alice", recv)
 
 	want := []string{"handoff", "lane:m", "size:m", "issue:stump.wtf/cairn#42"}
 	resp := postTagged(t,
@@ -260,7 +257,7 @@ func TestIntegrationTagsRESTRejectsInvalid(t *testing.T) {
 // create takes them too; an oversized field is rejected whole.
 func TestIntegrationTagsMultipart(t *testing.T) {
 	recv := newHookReceiver(t)
-	srv := testServer(t, noRateLimit(), store.Options{MaxUploadBytes: 1 << 20, Emitter: runTagEmitter(t, recv)})
+	srv := tagServer(t, noRateLimit(), store.Options{MaxUploadBytes: 1 << 20}, "dave", recv)
 
 	form := func(tagFields []string, files ...string) (*bytes.Buffer, string) {
 		var buf bytes.Buffer
@@ -314,7 +311,8 @@ func TestIntegrationTagsMultipart(t *testing.T) {
 // tag is a tool error.
 func TestIntegrationMCPTagsHandoff(t *testing.T) {
 	recv := newHookReceiver(t)
-	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{Emitter: runTagEmitter(t, recv)})
+	srv, _, subs := mcpSubsTestServer(t, mcpConfig(), store.Options{})
+	subscribe(t, subs, "sam@stump.rocks", recv.srv.URL, subscription.CreateInput{})
 	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:read", "artifacts:write"})
 	sess := mcpClient(t, srv, token, nil, "claude-code")
 
