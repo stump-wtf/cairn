@@ -6,8 +6,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/mcpsession"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/mcpsession"
 )
 
 // MCP agent sessions (issue #76, SPEC-0007, ADR-0004): Joe runs multiple

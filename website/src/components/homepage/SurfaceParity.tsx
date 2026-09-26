@@ -114,7 +114,7 @@ const SURFACES: Surface[] = [
     spec: 'SPEC-0007',
     shot: {
       src: '/img/shots/mcp-consent.png',
-      alt: 'The Cairn MCP authorization screen at cairn.sh/mcp/authorize: "Claude Desktop wants to connect to your Cairn workspace over MCP", the signed-in account, and a list of the three scopes being granted — read artifacts you can access, create and push new artifacts, comment and react on your behalf — above Cancel and Authorize buttons and a note that access is revocable in settings.',
+      alt: 'The Cairn MCP authorization screen: "Claude Desktop wants to connect to your Cairn workspace over MCP", the signed-in account, and a list of the three scopes being granted — read artifacts you can access, create and push new artifacts, comment and react on your behalf — above Cancel and Authorize buttons and a note that access is revocable in settings.',
       width: 566,
       height: 504,
     },

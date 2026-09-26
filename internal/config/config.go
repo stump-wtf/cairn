@@ -9,8 +9,10 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -60,7 +62,7 @@ type Config struct {
 	StagingLifecycleTTL time.Duration
 
 	// BaseURL is the public origin used to build short URLs (ADR-0005),
-	// e.g. https://cairn.sh.
+	// e.g. https://cairn.stump.wtf.
 	BaseURL string
 
 	// Rate limiting for public/ingress endpoints (SPEC-0002 REQ "Rate
@@ -87,6 +89,24 @@ type Config struct {
 	OIDCIssuer       string // e.g. https://pocket-id.stump.rocks
 	OIDCClientID     string // defaults to "cairn"
 	OIDCClientSecret string
+
+	// GitHub human login (SPEC-0012): a second production provider beside
+	// Pocket ID. OAuth 2.0 authorization-code — GitHub has no OIDC login — so
+	// verification is the code exchange plus REST profile fetch, while routes,
+	// state cookie and session establishment are shared with the OIDC flow.
+	// Enabled iff GitHubClientID and GitHubClientSecret are both non-empty
+	// (GitHubConfigured); the redirect URI is derived as BaseURL +
+	// /auth/callback like OIDC's, never separately configured, so it can never
+	// drift from the public origin the OAuth app was registered against.
+	GitHubClientID     string
+	GitHubClientSecret string
+
+	// Outbound webhooks (ADR-0017, SPEC-0012): comma-separated target URLs
+	// that receive a signed `artifact.created` event after every durable
+	// artifact creation, and an optional HMAC secret for the
+	// X-Cairn-Signature header. Empty URL list = the feature is inert.
+	OutboundWebhookURLs   []string
+	OutboundWebhookSecret string
 
 	// OAuth 2.1 authorization-server tuning (SPEC-0007, ADR-0004):
 	// access-token lifetime (~1h default), rotating refresh-token lifetime
@@ -134,7 +154,7 @@ func Load() (*Config, error) {
 		S3SecretKey: env("CAIRN_S3_SECRET_KEY", "minioadmin"),
 		S3Bucket:    env("CAIRN_S3_BUCKET", "cairn"),
 		S3Region:    env("CAIRN_S3_REGION", "us-east-1"),
-		BaseURL:     env("CAIRN_BASE_URL", "https://cairn.sh"),
+		BaseURL:     env("CAIRN_BASE_URL", "https://cairn.stump.wtf"),
 
 		DevLoginPassword: os.Getenv("CAIRN_DEV_LOGIN_PASSWORD"),
 		APITokensRaw:     os.Getenv("CAIRN_API_TOKENS"),
@@ -142,6 +162,20 @@ func Load() (*Config, error) {
 		OIDCIssuer:       os.Getenv("CAIRN_OIDC_ISSUER"),
 		OIDCClientID:     env("CAIRN_OIDC_CLIENT_ID", "cairn"),
 		OIDCClientSecret: os.Getenv("CAIRN_OIDC_CLIENT_SECRET"),
+
+		GitHubClientID:     os.Getenv("CAIRN_GITHUB_CLIENT_ID"),
+		GitHubClientSecret: os.Getenv("CAIRN_GITHUB_CLIENT_SECRET"),
+
+		OutboundWebhookSecret: os.Getenv("CAIRN_OUTBOUND_WEBHOOK_SECRET"),
+	}
+	// Governing: SPEC-0012 REQ "Delivery Targets from Configuration".
+	for _, raw := range strings.Split(os.Getenv("CAIRN_OUTBOUND_WEBHOOK_URLS"), ",") {
+		if u := strings.TrimSpace(raw); u != "" {
+			c.OutboundWebhookURLs = append(c.OutboundWebhookURLs, u)
+		}
+	}
+	if err := validateWebhookURLs(c.OutboundWebhookURLs); err != nil {
+		return nil, err
 	}
 
 	var err error
@@ -225,6 +259,14 @@ func (c *Config) OIDCConfigured() bool {
 	return c.OIDCIssuer != ""
 }
 
+// GitHubConfigured reports whether the GitHub login provider settings are
+// present (SPEC-0012). The provider joins the registry — and the login page
+// renders its button — only when this is true; an unconfigured provider is
+// indistinguishable from an unknown one (404) at the routes.
+func (c *Config) GitHubConfigured() bool {
+	return c.GitHubClientID != "" && c.GitHubClientSecret != ""
+}
+
 func envFloat(key string, def float64) (float64, error) {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {
@@ -278,4 +320,30 @@ func envDuration(key string, def time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("config %s: %w", key, err)
 	}
 	return d, nil
+}
+
+// validateWebhookURLs enforces the SPEC-0012 Security Requirements rule that
+// outbound webhook targets must be https:// unless they are loopback hosts,
+// where plaintext is tolerated for local development. A malformed URL fails
+// startup rather than silently becoming a delivery that can never succeed.
+//
+// @joestump-agent 09/06/2026 - Added during review of #175: the spec required
+// TLS for non-localhost targets but nothing enforced it.
+func validateWebhookURLs(urls []string) error {
+	for _, raw := range urls {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return fmt.Errorf("config CAIRN_OUTBOUND_WEBHOOK_URLS: %q: %w", raw, err)
+		}
+		switch u.Scheme {
+		case "https":
+		case "http":
+			if u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1" {
+				return fmt.Errorf("config CAIRN_OUTBOUND_WEBHOOK_URLS: %q: non-localhost targets require https (SPEC-0012)", raw)
+			}
+		default:
+			return fmt.Errorf("config CAIRN_OUTBOUND_WEBHOOK_URLS: %q: scheme must be http(s)", raw)
+		}
+	}
+	return nil
 }

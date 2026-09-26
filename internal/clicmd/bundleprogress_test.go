@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/joestump/cairn/internal/cliclient"
+	"github.com/stump-wtf/cairn/internal/cliclient"
 )
 
 // errOversizeForTest is a stand-in error value; the model only needs a

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // securityHeaders sets baseline response headers on every response: nosniff so a

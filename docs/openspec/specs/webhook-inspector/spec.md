@@ -9,7 +9,7 @@ requires: [SPEC-0002]
 
 ## Overview
 
-The **webhook** share type (badge `HK`, URL `cairn.sh/<id>`) is a **live** requestbin: an
+The **webhook** share type (badge `HK`, URL `cairn.stump.wtf/<id>`) is a **live** requestbin: an
 endpoint an agent or a service points at, whose inbound HTTP requests stream into a web
 inspector (highlighted JSON, method/status, a status mix) and are readable by agents over
 MCP as the *same* stream (`mcp://cairn/hook/<id>`). Unlike every other share type its body
@@ -34,7 +34,7 @@ SPEC-0006** (reactions only, no threads); and delivers live over the SSE transpo
 
 `Auth` values: `Required` = authenticated owner/actor (session for web, OAuth 2.1 bearer for
 API/MCP/CLI per ADR-0004); `Link-cap` = the ADR-0007 read capability (possession of the
-unguessable `cairn.sh/<id>` link grants read, no reader account); `Public` = open ingress,
+unguessable `cairn.stump.wtf/<id>` link grants read, no reader account); `Public` = open ingress,
 justified per-row.
 
 | Method & Path | Purpose | Auth |
@@ -45,7 +45,7 @@ justified per-row.
 | `GET /v1/hooks/{id}/requests/{seq}` | Full detail of one captured request (metadata + body ref) | Link-cap |
 | `GET /v1/hooks/{id}/requests/{seq}/body` | Raw captured body bytes (lazy, checksum-verifiable) | Link-cap |
 | `GET /v1/hooks/{id}/stream` | SSE: live captured requests (ADR-0010/ADR-0012) | Link-cap |
-| `ANY /h/{id}` (also `hook.cairn.sh/{id}`) | **Ingress**: capture an inbound request of any method | **Public** |
+| `ANY /h/{id}` (also `hook.cairn.stump.wtf/{id}`) | **Ingress**: capture an inbound request of any method | **Public** |
 
 The ingress row is the single `Public` endpoint in Cairn. Justification: a requestbin's
 entire purpose is to receive requests from anonymous third parties; it is defended not by
@@ -61,14 +61,14 @@ are served by the generic annotation endpoint of SPEC-0002/SPEC-0006
 A webhook endpoint MUST be created by its owner over the web, CLI, or MCP and MUST be an
 ordinary Cairn artifact (share type `webhook`) with provenance, a link-based access policy,
 and a default TTL (ADR-0007). It MUST expose two addresses for the *same* endpoint: a public
-**HTTP ingress** URL (`hook.cairn.sh/<id>` or `cairn.sh/h/<id>`) that accepts inbound
+**HTTP ingress** URL (`hook.cairn.stump.wtf/<id>` or `cairn.stump.wtf/h/<id>`) that accepts inbound
 requests of any method, and an **`mcp://cairn/hook/<id>`** handle agents use to read the
 captured stream. The `<id>` MUST be the short, opaque, unguessable base62 id of ADR-0005.
 
 #### Scenario: Endpoint exposes both addresses
 
 - **WHEN** an owner creates a webhook endpoint
-- **THEN** the response MUST include the human `cairn.sh/<id>` URL, the HTTP ingress URL, and the `mcp://cairn/hook/<id>` handle for the same endpoint
+- **THEN** the response MUST include the human `cairn.stump.wtf/<id>` URL, the HTTP ingress URL, and the `mcp://cairn/hook/<id>` handle for the same endpoint
 
 #### Scenario: Expired endpoint stops capturing
 

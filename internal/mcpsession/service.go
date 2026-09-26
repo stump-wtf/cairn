@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // Service is the MCP session core over Postgres, sharing the same pool the

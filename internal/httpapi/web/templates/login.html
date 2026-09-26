@@ -22,6 +22,9 @@
        alongside it (loginEnabled is false server-side whenever OIDC is on),
        so there is exactly one way in. */}}
   <a class="login-btn login-oidc-btn" href="/auth/login?next={{.Next}}">Sign in with Pocket ID</a>
+  {{if .GitHubLogin}}
+  <a class="login-btn login-oidc-btn" href="/auth/login?provider=github&next={{.Next}}">Log in with GitHub</a>
+  {{end}}
   <p class="login-note">Single sign-on via your Pocket ID identity.</p>
   {{else if .LoginEnabled}}
   {{if .Failed}}<p class="login-error" role="alert">Sign-in failed. Check your details and try again.</p>{{end}}

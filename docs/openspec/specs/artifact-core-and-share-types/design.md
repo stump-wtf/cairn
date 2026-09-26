@@ -202,7 +202,7 @@ sequenceDiagram
     end
     Co->>PG: mint public_id (retry on unique conflict); INSERT artifacts (+ bundle_members)
     PG-->>Co: committed
-    Co-->>Cl: 201 { public_id, cairn.sh/<id> }
+    Co-->>Cl: 201 { public_id, cairn.stump.wtf/<id> }
   end
 ```
 

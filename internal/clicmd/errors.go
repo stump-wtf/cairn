@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/joestump/cairn/internal/cliclient"
-	"github.com/joestump/cairn/internal/cliexit"
+	"github.com/stump-wtf/cairn/internal/cliclient"
+	"github.com/stump-wtf/cairn/internal/cliexit"
 )
 
 // usageErrorf builds a client-side usage error (bad flags/args, empty

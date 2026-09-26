@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/joestump/cairn/internal/cliclient"
+	"github.com/stump-wtf/cairn/internal/cliclient"
 )
 
 // runIngest implements the bare `cairn` command (SPEC-0008 "Pipe and Path
@@ -28,6 +28,10 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 	}
 
 	ttlSeconds, err := parseTTLFlag(flags.ttl)
+	if err != nil {
+		return err
+	}
+	tags, err := parseTagFlags(flags.tags)
 	if err != nil {
 		return err
 	}
@@ -65,7 +69,7 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 		// interactive terminal (no pipe, no path) is "empty input" per
 		// SPEC-0008 ("Empty input" scenario) — show help instead of hanging
 		// waiting for a human to type and Ctrl-D.
-		if isTerminal(streams.Out) && isTerminal(streams.In) {
+		if IsTerminal(streams.Out) && IsTerminal(streams.In) {
 			_ = cmd.Help()
 			return usageErrorf("no input: pipe content on stdin or pass a file path")
 		}
@@ -94,7 +98,7 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 		return fmt.Errorf("not authenticated: run `cairn login` (or set --token/CAIRN_TOKEN): %w", cliclient.ErrNotAuthenticated)
 	}
 
-	interactive := isTerminal(streams.Out) && !flags.jsonOut
+	interactive := IsTerminal(streams.Out) && !flags.jsonOut
 
 	// Wrap body in a byte counter for the spinner regardless of whether the
 	// spinner actually renders, so the two code paths (with/without a
@@ -102,7 +106,7 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 	// only the presence of the animation differs.
 	counting := &countingReader{r: body}
 	var sp *spinner
-	if interactive && isTerminal(streams.ErrOut) {
+	if interactive && IsTerminal(streams.ErrOut) {
 		sp = newSpinner(streams.ErrOut, "uploading", counting)
 	}
 
@@ -111,6 +115,7 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 		Title:      title,
 		MediaType:  mediaType,
 		TTLSeconds: ttlSeconds,
+		Tags:       tags,
 	})
 	if sp != nil {
 		sp.Stop()

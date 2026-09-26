@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joestump/cairn/internal/objectstore"
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // The PAT integration suite (issue #74, ADR-0004 token seam, SPEC-0007):

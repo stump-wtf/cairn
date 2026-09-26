@@ -14,9 +14,9 @@ import (
 
 	"github.com/zalando/go-keyring"
 
-	"github.com/joestump/cairn/internal/cliclient"
-	"github.com/joestump/cairn/internal/cliconfig"
-	"github.com/joestump/cairn/internal/cliexit"
+	"github.com/stump-wtf/cairn/internal/cliclient"
+	"github.com/stump-wtf/cairn/internal/cliconfig"
+	"github.com/stump-wtf/cairn/internal/cliexit"
 )
 
 // TestMain forces every test in this package onto zalando/go-keyring's

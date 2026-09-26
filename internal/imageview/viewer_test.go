@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joestump/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/artifact"
 )
 
 // TestFragmentStructure asserts the rendered fragment carries the wiring

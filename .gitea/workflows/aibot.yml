@@ -1,7 +1,7 @@
-# The on-demand author-self-reference modes (review / address / merge) — the
+# The on-demand author-self-reference modes (review / address) — the
 # CONVERSATION half of the bot. Secrets/vars come from the stump.wtf org
-# (AIBOT_ZAI_*, AIBOT_BOT_LOGIN). To enable auto-merge on a clean review, set
-# org/repo var AIBOT_AUTOMERGE=1 and secret AIBOT_MERGE_TOKEN.
+# (AIBOT_ZAI_*, AIBOT_BOT_LOGIN). The bot reviews and comments; it never
+# merges.
 #
 # `pull_request` is deliberately NOT a trigger here. Opening or pushing to a PR
 # is reviewed by the `review` job in pipeline.yaml, which sits behind
@@ -41,7 +41,11 @@ jobs:
       - name: Checkout PR head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref || github.head_ref }}
+          # Check out the head SHA, not the branch ref. A merge can delete the
+          # head branch while this job is queued; the SHA survives the deletion,
+          # the ref does not, so a ref checkout dies with "could not be found"
+          # and, where aibot is a required check, leaves the merged PR red.
+          ref: ${{ github.event.pull_request.head.sha }}
           # The head branch lives in the head REPO, which is not this repo when the
           # PR comes from a fork. Without `repository:` the checkout resolves the
           # branch name against the base repo, does not find it, and the job dies in
@@ -60,8 +64,4 @@ jobs:
           AIBOT_GITEA_HOST:  ${{ github.server_url }}
           AIBOT_GITEA_TOKEN: ${{ github.token }}
           AIBOT_BOT_LOGIN:   ${{ vars.AIBOT_BOT_LOGIN }}
-          # Auto-merge on a clean (APPROVED) review — inert until both are set:
-          AIBOT_AUTOMERGE:     ${{ vars.AIBOT_AUTOMERGE }}
-          AIBOT_MERGE_TOKEN:   ${{ secrets.AIBOT_MERGE_TOKEN }}
-          AIBOT_MERGE_STRATEGY: ${{ vars.AIBOT_MERGE_STRATEGY }}
 

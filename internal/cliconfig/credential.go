@@ -17,7 +17,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/zalando/go-keyring"
 
-	"github.com/joestump/cairn/internal/cliexit"
+	"github.com/stump-wtf/cairn/internal/cliexit"
 )
 
 // keyringService namespaces cairn's entries in the OS secret store from

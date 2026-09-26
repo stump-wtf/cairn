@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joestump/cairn/internal/webhook"
+	"github.com/stump-wtf/cairn/internal/webhook"
 )
 
 // hookIngressDo issues a raw request against the ingress, letting the caller

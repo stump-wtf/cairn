@@ -92,7 +92,7 @@ body. So Cairn is **OTel-*inspired*, not OTel-*compliant*.**
 ### The span schema
 
 A **trajectory** artifact (share type `trajectory`, badge `TRJ`, URL scheme
-`cairn.sh/run/<id>` per ADR-0005) owns a **run** and an ordered tree of **spans**.
+`cairn.stump.wtf/run/<id>` per ADR-0005) owns a **run** and an ordered tree of **spans**.
 A run records: the human prompt, an absolute `started_at`, an optional `ended_at`
 (absent while live), a `status` of `open` or `closed`, and a token count reported by
 the agent. Each **span** carries:

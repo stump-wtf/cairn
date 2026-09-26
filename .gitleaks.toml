@@ -1,28 +1,43 @@
-# Gitleaks config for Cairn. Extends the default ruleset and allowlists known
-# false positives so the secret scan stays green:
-#   - hermetic in-test OIDC issuer signing keys and other fixtures in *_test.go
-#   - illustrative example values in design docs (ADRs / OpenSpec markdown)
-# Real secrets are injected from OpenBao at deploy time as CAIRN_* env, never
-# committed — so allowlisting test/doc paths does not hide any live credential.
+# Gitleaks config for Cairn. Extends the default ruleset and allowlists the
+# known false positives by VALUE — never by path.
+#
+# Why that distinction matters: a path allowlist cannot tell "there is no
+# credential here" from "I was told not to look here". This config previously
+# allowlisted three whole trees — `.*_test\.go$`, `docs/.*\.md$` and
+# `website/.*\.(md|mdx)$` — so a real credential pasted into any file under them
+# would not have been caught, by this scan or by the CI job that runs it. The
+# config's own author had already reasoned their way to the value-matched form
+# for the dummy PAT below, noting that path-allowlisting the website tests
+# "would blind the scan to a real credential pasted into any website test". That
+# reasoning applies to the other three entries identically; it just hadn't been
+# applied to them.
+#
+# Every entry below is one exact, inert string. One dummy value cannot hide
+# anything else, so the scan stays green without going blind.
+#
+# Real secrets are injected from OpenBao at deploy time as CAIRN_* env and are
+# never committed.
+#
+# @joestump 09/12/2026 - Replaced the three path allowlists with value matches,
+# after a full-history scan run with suppression disabled showed every finding
+# they were hiding was one of the two strings below.
 [extend]
 useDefault = true
 
 [allowlist]
-description = "Test fixtures and design-doc examples (no live secrets)."
-paths = [
-  '''.*_test\.go$''',
-  '''docs/.*\.md$''',
-  '''website/.*\.(md|mdx)$''',
-]
-# The website's own credential scanners have to be tested against something
-# credential-shaped, so their fixtures trip the scanner that scans them:
-# `assertNoSecretsInData` and the bundle scan both assert they CATCH a GitHub
-# token, using this obviously-sequential placeholder.
-#
-# Allowlisted by VALUE, not by path. The paths above are whole trees, and
-# adding `website/.*\.test\.(ts|mjs)$` to them would blind the scan to a real
-# credential pasted into any website test. One dummy string cannot hide
-# anything else.
+description = "Inert fixture values the default heuristics false-positive on (matched by value, never by path)."
+
 regexes = [
+  # The English phrase in prose describing the hermetic in-test OIDC issuer:
+  # "...token endpoint, RS256-signed ID tokens...". `generic-api-key`
+  # false-positives on the token. It appears in ADR-0013's Confirmation section
+  # and in internal/httpapi/oidc_integration_test.go's package doc comment —
+  # and in switchboard, whose fake-IdP harness cairn's comment says it mirrors,
+  # which is why the identical phrase trips the identical rule in both repos.
+  '''RS256-signed''',
+
+  # The website's own credential scanners must be tested against something
+  # credential-shaped: `assertNoSecretsInData` and the bundle scan both assert
+  # they CATCH a GitHub token, using this obviously-sequential placeholder.
   '''ghp_0123456789abcdef0123456789abcdef0123''',
 ]

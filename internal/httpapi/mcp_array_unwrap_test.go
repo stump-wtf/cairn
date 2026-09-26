@@ -7,7 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 func TestUnwrapStringEncodedArrays(t *testing.T) {

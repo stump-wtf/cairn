@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/joestump/cairn/internal/cliexit"
+	"github.com/stump-wtf/cairn/internal/cliexit"
 )
 
 func TestParseTTLFlagEmptyMeansUnset(t *testing.T) {

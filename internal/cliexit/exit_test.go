@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/joestump/cairn/internal/cliclient"
+	"github.com/stump-wtf/cairn/internal/cliclient"
 )
 
 func TestForErrorNil(t *testing.T) {

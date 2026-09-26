@@ -11,8 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // inputTTL is input() with an explicit expiry so a test can place an artifact on

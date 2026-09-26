@@ -8,10 +8,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/joestump/cairn/internal/annotation"
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/annotation"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
 // The authenticated Bin (SPEC-0001 REQ "The Bin Listing") and the shell's web
@@ -34,10 +34,16 @@ type binPageView struct {
 // reaction / comment / pin counts (never summed — SPEC-0006 REQ "Count
 // Aggregation"), and the lifetime cue (a TTL chip; live types show a live-dot
 // keyed on TypeLabel in CSS, the same data-driven pattern the type badge uses,
-// so the shell never switches on type in Go — ADR-0002). IsAgent / IsShared are
-// the client-side tab lenses (Agents = agent-authored; Shared = has a live
-// shareable link), applied over the already-rendered rows so keyset pagination
-// stays intact and the no-JS view is the full Bin (progressive enhancement).
+// so the shell never switches on type in Go — ADR-0002).
+//
+// IsShared drives the client-side visibility lens (All / Shared / Private) and
+// TypeName labels the type-filter menu, both applied over the already-rendered
+// rows so keyset pagination stays intact and the no-JS view is the full Bin
+// (progressive enhancement). Those two axes replaced the old
+// Bin/Shared/From-agents tabs (#136), which overlapped: an ordinary bin is
+// agent-pushed AND link-shared throughout, so all three scopes selected the
+// same rows. IsAgent survives as the provenance flag the row markup exposes and
+// the text filter searches, not as a lens of its own.
 type binRow struct {
 	ID            string
 	Badge         string
@@ -55,7 +61,7 @@ type binRow struct {
 	CommentCount  int
 	PinCount      int
 	IsAgent       bool // authored by an agent on the owner's behalf
-	IsShared      bool // has a live shareable link (visibility != private)
+	IsShared      bool // has a live shareable link (visibility != private): the visibility lens
 }
 
 // handleBinPage renders the workspace Bin as HTML at its legacy path (#57): `/`

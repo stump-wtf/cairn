@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // Bin pagination bounds.
@@ -23,7 +23,7 @@ const binColumns = `
 	id, public_id, share_type, title, body_sha256, size_bytes,
 	media_type, previewable, actor_id, on_behalf_of, model, channel,
 	captured_at, owner_id, visibility, reaction_count, comment_count, pin_count,
-	expires_at, created_at`
+	tags, expires_at, created_at`
 
 // BinPage is one page of the Bin plus the cursor to fetch the next page (empty
 // when the last page has been reached).
@@ -38,9 +38,12 @@ type BinPage struct {
 // created_at, never by public id (ids are random, ADR-0005). This one query
 // backs both the web Bin (SPEC-0001) and the CLI TUI (ADR-0003).
 //
+// Any tags narrow the page to artifacts carrying every one of them (a
+// containment match), validated like tags at create; none means no filter.
+//
 // Governing: ADR-0012 (keyset pagination), SPEC-0002 REQ "Artifact Lifecycle —
-// List (the Bin)".
-func (s *Store) ListBin(ctx context.Context, ownerID, cursor string, limit int) (BinPage, error) {
+// List (the Bin)", ADR-0018, SPEC-0002 REQ "Artifact Tags".
+func (s *Store) ListBin(ctx context.Context, ownerID, cursor string, limit int, tags ...string) (BinPage, error) {
 	if ownerID == "" {
 		return BinPage{}, errs.Validationf("bin: owner is required")
 	}
@@ -62,6 +65,14 @@ func (s *Store) ListBin(ctx context.Context, ownerID, cursor string, limit int) 
 		// Row-value comparison gives a correct, index-friendly keyset step.
 		where += " AND (created_at, id) < ($2, $3)"
 		args = append(args, curCreated, curID)
+	}
+	if len(tags) > 0 {
+		filter, err := artifact.NormalizeTags(tags)
+		if err != nil {
+			return BinPage{}, err
+		}
+		args = append(args, filter)
+		where += fmt.Sprintf(" AND tags @> $%d", len(args))
 	}
 	args = append(args, limit+1)
 
@@ -112,7 +123,7 @@ func scanArtifact(row rowScanner) (*artifact.Artifact, error) {
 		&a.MediaType, &a.Previewable, &a.Provenance.ActorID,
 		&a.Provenance.OnBehalfOf, &a.Provenance.Model, &a.Provenance.Channel, &a.Provenance.CapturedAt,
 		&a.Access.OwnerID, &a.Access.Visibility,
-		&a.ReactionCount, &a.CommentCount, &a.PinCount,
+		&a.ReactionCount, &a.CommentCount, &a.PinCount, &a.Tags,
 		&a.ExpiresAt, &a.CreatedAt,
 	); err != nil {
 		return nil, err

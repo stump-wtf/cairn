@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 func validArtifact() Artifact {
