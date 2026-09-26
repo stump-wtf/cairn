@@ -2,12 +2,12 @@ package clicmd
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stump-wtf/cairn/internal/cliclient"
@@ -15,7 +15,7 @@ import (
 )
 
 // Governing: ADR-0018 (Client-Asserted Artifact Tags), SPEC-0008 REQ "Pipe and
-// Path Ingest", REQ "Bundle Creation"
+// Path Ingest", REQ "Bundle Creation", ADR-0025, SPEC-0019 VE-9
 
 func TestParseTagFlags(t *testing.T) {
 	tests := []struct {
@@ -23,19 +23,26 @@ func TestParseTagFlags(t *testing.T) {
 		raw     []string
 		want    []string
 		wantErr bool
+		// wantWarn is the exact stderr: one VE-9 warning per tag the CLI
+		// changed, and none for a tag it sends as given.
+		wantWarn string
 	}{
-		{"none", nil, nil, false},
-		{"repeated", []string{"handoff", "lane:auto"}, []string{"handoff", "lane:auto"}, false},
-		{"comma list", []string{"handoff, lane:s", "issue:stump.wtf/cairn#42"}, []string{"handoff", "lane:s", "issue:stump.wtf/cairn#42"}, false},
-		{"ascii case folded", []string{"Handoff,size:M"}, []string{"handoff", "size:m"}, false},
-		{"only ascii folded", []string{"Ärger:X", "lane m"}, []string{"Ärger:x", "lane m"}, false},
-		{"empty flag", []string{""}, nil, true},
-		{"empty item", []string{"a,,b"}, nil, true},
-		{"trailing comma", []string{"handoff,"}, nil, true},
+		{"none", nil, nil, false, ""},
+		{"repeated", []string{"handoff", "lane:auto"}, []string{"handoff", "lane:auto"}, false, ""},
+		{"comma list", []string{"handoff, lane:s", "issue:stump.wtf/cairn#42"}, []string{"handoff", "lane:s", "issue:stump.wtf/cairn#42"}, false, ""},
+		{"ascii case folded", []string{"Handoff,size:M"}, []string{"handoff", "size:m"}, false,
+			"cairn: warning: tag \"Handoff\" sent as \"handoff\"\ncairn: warning: tag \"size:M\" sent as \"size:m\"\n"},
+		{"only ascii folded", []string{"Ärger:X", "lane m"}, []string{"Ärger:x", "lane m"}, false,
+			"cairn: warning: tag \"Ärger:X\" sent as \"Ärger:x\"\n"},
+		{"non-ascii uppercase unchanged", []string{"Ärger"}, []string{"Ärger"}, false, ""},
+		{"empty flag", []string{""}, nil, true, ""},
+		{"empty item", []string{"a,,b"}, nil, true, ""},
+		{"trailing comma", []string{"handoff,"}, nil, true, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseTagFlags(tc.raw, io.Discard)
+			var warn strings.Builder
+			got, err := parseTagFlags(tc.raw, &warn)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("parseTagFlags(%q) = %q, want an error", tc.raw, got)
@@ -47,6 +54,9 @@ func TestParseTagFlags(t *testing.T) {
 			}
 			if !slices.Equal(got, tc.want) {
 				t.Fatalf("parseTagFlags(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+			if warn.String() != tc.wantWarn {
+				t.Errorf("parseTagFlags(%q) warned %q, want %q", tc.raw, warn.String(), tc.wantWarn)
 			}
 		})
 	}
