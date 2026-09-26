@@ -1610,8 +1610,11 @@ func (s *Server) mcpComment(ctx context.Context, req *mcp.CallToolRequest, in mc
 	if !mcpScopes(req.Extra)[oauth.ScopeAnnotationsWrite] {
 		return nil, mcpCommentOutput{}, s.mcpScopeErr(ctx, "artifact_comment", oauth.ScopeAnnotationsWrite)
 	}
-	actorID := mcpActor(req.Extra)
-	if actorID == "" {
+	// No subject, or a credential the verifier never stamped: refuse as
+	// unauthorized, like the create tools, rather than let the annotation
+	// service report a caller's valid request as invalid (EV-4).
+	author := mcpEventActor(req)
+	if author.Check() != nil {
 		return nil, mcpCommentOutput{}, s.mcpToolErr(ctx, "artifact_comment", errs.ErrUnauthorized)
 	}
 	id := normalizeMCPHandle(in.ID)
@@ -1623,7 +1626,7 @@ func (s *Server) mcpComment(ctx context.Context, req *mcp.CallToolRequest, in mc
 		AnchorType: sharetype.Anchor(in.AnchorType),
 		AnchorRef:  ref,
 		ParentID:   in.ParentID,
-		Actor:      mcpEventActor(req),
+		Actor:      author,
 		Body:       in.Body,
 	})
 	if err != nil {
@@ -1668,8 +1671,8 @@ func (s *Server) mcpReact(ctx context.Context, req *mcp.CallToolRequest, in mcpR
 	if !mcpScopes(req.Extra)[oauth.ScopeAnnotationsWrite] {
 		return nil, mcpReactOutput{}, s.mcpScopeErr(ctx, "artifact_react", oauth.ScopeAnnotationsWrite)
 	}
-	actorID := mcpActor(req.Extra)
-	if actorID == "" {
+	reactor := mcpEventActor(req)
+	if reactor.Check() != nil {
 		return nil, mcpReactOutput{}, s.mcpToolErr(ctx, "artifact_react", errs.ErrUnauthorized)
 	}
 	id := normalizeMCPHandle(in.ID)
@@ -1677,7 +1680,7 @@ func (s *Server) mcpReact(ctx context.Context, req *mcp.CallToolRequest, in mcpR
 	if err != nil {
 		return nil, mcpReactOutput{}, err
 	}
-	reaction, _, err := s.annot.React(ctx, id, sharetype.Anchor(in.AnchorType), ref, in.Emoji, mcpEventActor(req))
+	reaction, _, err := s.annot.React(ctx, id, sharetype.Anchor(in.AnchorType), ref, in.Emoji, reactor)
 	if err != nil {
 		return nil, mcpReactOutput{}, s.mcpToolErr(ctx, "artifact_react", err)
 	}
