@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +23,9 @@ import (
 // CAIRN_TEST_DATABASE_URL (skipping otherwise) and either a real S3-compatible
 // object store (CAIRN_TEST_S3_ENDPOINT) or an in-memory one. It migrates and
 // truncates so each test starts clean.
+// schemaSeq disambiguates test schemas created within the same nanosecond.
+var schemaSeq atomic.Int64
+
 func newTestStore(t *testing.T, o Options) (*Store, *pgxpool.Pool) {
 	t.Helper()
 	dsn := os.Getenv("CAIRN_TEST_DATABASE_URL")
@@ -29,15 +33,47 @@ func newTestStore(t *testing.T, o Options) (*Store, *pgxpool.Pool) {
 		t.Skip("set CAIRN_TEST_DATABASE_URL to run store integration tests")
 	}
 	ctx := context.Background()
-	pool, err := db.Connect(ctx, dsn)
+
+	// A private, per-test schema dropped on cleanup, matching every other
+	// DB-using package here. This package was the last one still truncating
+	// shared tables in `public`: `go test ./...` runs packages concurrently
+	// (the Makefile passes no -p 1) against one database, so a TRUNCATE ...
+	// CASCADE reached outside this package's own rows by construction. A fresh
+	// schema starts empty, so no TRUNCATE is needed and none of that is
+	// possible.
+	//
+	// search_path is set as a CONNECTION runtime parameter rather than executed
+	// once after connecting: pgxpool opens connections lazily, so a SET run on
+	// the first connection would leave later ones pointing at `public` under
+	// concurrency — passing locally and failing unpredictably in CI.
+	schema := fmt.Sprintf("store_test_%d_%d", time.Now().UnixNano(), schemaSeq.Add(1))
+
+	admin, err := db.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
+	if _, err := admin.Exec(ctx, fmt.Sprintf(`CREATE SCHEMA %q`, schema)); err != nil {
+		admin.Close()
+		t.Fatalf("create schema: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(context.Background(), fmt.Sprintf(`DROP SCHEMA %q CASCADE`, schema)); err != nil {
+			t.Errorf("drop schema: %v", err)
+		}
+		admin.Close()
+	})
+
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open pool: %v", err)
+	}
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `TRUNCATE artifacts, blobs, bundle_members, retired_ids RESTART IDENTITY CASCADE`); err != nil {
-		t.Fatalf("truncate: %v", err)
 	}
 
 	var obj objectstore.ObjectStore

@@ -190,6 +190,8 @@ func run(logger *slog.Logger) error {
 		OIDCIssuer:            cfg.OIDCIssuer,
 		OIDCClientID:          cfg.OIDCClientID,
 		OIDCClientSecret:      cfg.OIDCClientSecret,
+		GitHubClientID:        cfg.GitHubClientID,
+		GitHubClientSecret:    cfg.GitHubClientSecret,
 		APITokens:             apiTokens,
 		DevInsecureBearerAuth: cfg.DevInsecureBearerAuth,
 		AccessTokenTTL:        cfg.OAuthAccessTokenTTL,
@@ -209,8 +211,16 @@ func run(logger *slog.Logger) error {
 	if err := api.EnableOIDC(ctx); err != nil {
 		return err
 	}
+	// Wire the GitHub provider (SPEC-0012): a no-op unless
+	// CAIRN_GITHUB_CLIENT_ID/SECRET are both set. Nothing here can fail —
+	// GitHub needs no issuer discovery — so misconfiguration surfaces as a
+	// 404 at the routes, not a startup error.
+	api.EnableGitHub()
 	if cfg.OIDCConfigured() {
 		logger.Info("OIDC login enabled", "issuer", cfg.OIDCIssuer, "client_id", cfg.OIDCClientID)
+	}
+	if cfg.GitHubConfigured() {
+		logger.Info("GitHub login enabled", "client_id", cfg.GitHubClientID)
 	}
 
 	r := chi.NewRouter()
