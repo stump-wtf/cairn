@@ -153,6 +153,30 @@ func TestIntegrationReactionPerKindOwnership(t *testing.T) {
 		t.Fatal("the MCP agent reaction landed on the human's row")
 	}
 
+	// 5b. The read path carries per-row provenance on request: an anonymous
+	// link read of ?include=reactors shows alice's human row and her agent's
+	// MCP row apart, with the agent's on_behalf_of and none for the browser.
+	// Without the parameter the tally has no reactors; any other value is 400.
+	if got := tally(do(t, http.MethodGet, reactions, "", nil, "")); got.Reactors != nil {
+		t.Fatalf("default tally = %+v, want no reactors without ?include=reactors", got)
+	}
+	resp = do(t, http.MethodGet, reactions+"?include=everything", "", nil, "")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("?include=everything = %d, want 400", resp.StatusCode)
+	}
+	resp.Body.Close()
+	detail := tally(do(t, http.MethodGet, reactions+"?include=reactors", "", nil, ""))
+	if detail.Count != 2 || len(detail.Reactors) != 2 {
+		t.Fatalf("detailed tally = %+v, want count 2 with two reactors", detail)
+	}
+	h, a := detail.Reactors[0], detail.Reactors[1]
+	if h.ID != humanRow.ID || h.ActorID != "alice" || h.ActorKind != "human" || h.OnBehalfOf != "" {
+		t.Fatalf("first reactor = %+v, want alice's human row %d with no on_behalf_of", h, humanRow.ID)
+	}
+	if a.ID != mcpRow.ID || a.ActorID != "alice" || a.ActorKind != "agent" || !strings.HasPrefix(a.OnBehalfOf, "obo-probe") {
+		t.Fatalf("second reactor = %+v, want the MCP agent row %d on behalf of obo-probe", a, mcpRow.ID)
+	}
+
 	// 6. The human removes her own row by id; the agent's MCP row stands.
 	resp = sessionDo(http.MethodDelete, humanPath, nil)
 	if resp.StatusCode != http.StatusNoContent {
