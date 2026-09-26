@@ -380,10 +380,13 @@ func checkPayload(ev event.Event) error {
 }
 
 // truncateBody caps a comment body at commentBodyMax bytes, cut on a UTF-8
-// boundary, and reports whether it cut. Invalid UTF-8 is replaced first,
-// exactly as encoding/json would, so the decoded value cannot outgrow the cap
-// after encoding (SPEC-0016 EV-3 "Long comment is truncated in the event
-// only").
+// boundary, and reports whether it cut. Invalid UTF-8 is replaced first, so
+// the string handed to encoding/json is already valid and json.Marshal has
+// nothing left to rewrite: the decoded value is exactly these bytes and cannot
+// outgrow the cap. (encoding/json would replace each invalid byte with its own
+// U+FFFD, three bytes apiece; ToValidUTF8 collapses a run into one, so it must
+// run before the length check, not be left to the encoder.) SPEC-0016 EV-3
+// "Long comment is truncated in the event only".
 func truncateBody(s string) (string, bool) {
 	s = strings.ToValidUTF8(s, "�")
 	if len(s) <= commentBodyMax {
