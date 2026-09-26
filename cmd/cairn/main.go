@@ -22,8 +22,8 @@ import (
 
 	fang "charm.land/fang/v2"
 
-	"github.com/joestump/cairn/internal/clicmd"
-	"github.com/joestump/cairn/internal/cliexit"
+	"github.com/stump-wtf/cairn/internal/clicmd"
+	"github.com/stump-wtf/cairn/internal/cliexit"
 )
 
 func main() {

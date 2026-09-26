@@ -16,7 +16,7 @@ package artifact
 import (
 	"time"
 
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // ShareType classifies an artifact and (via the registry in SPEC-0002 story #9)
@@ -89,6 +89,11 @@ type Artifact struct {
 	Previewable bool
 	Provenance  Provenance
 	Access      AccessPolicy
+	// Tags are client-asserted routing strings, normalized (validated and
+	// deduplicated) at create. Deliberately a sibling of Provenance rather than
+	// part of it: nothing here is server-derived, so nothing here is
+	// trustworthy (ADR-0018).
+	Tags []string
 	// Denormalized annotation rollups, maintained by the annotation core
 	// service in the same transaction as every annotation write so the Bin
 	// (`💬 2 · 👀 3`) and artifact headers render with no per-row subquery.
@@ -137,5 +142,5 @@ func (a *Artifact) Validate() error {
 	case a.ExpiresAt.IsZero():
 		return errs.Validationf("artifact: expiry is required")
 	}
-	return nil
+	return validateNormalizedTags(a.Tags)
 }

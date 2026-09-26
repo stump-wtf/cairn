@@ -16,7 +16,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // decodeA2UI is a small assertion helper: it reads the named resource,

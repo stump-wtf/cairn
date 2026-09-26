@@ -1,9 +1,29 @@
-# Publishes a GitHub Release when a v* tag is pushed, using the matching
-# CHANGELOG.md section as the release notes. The container image is built and
-# pushed to the private homelab registry out-of-band (the runner cannot reach
-# it); once the `cairn` CLI lands (v0.0.3) a goreleaser job builds and attaches
-# its cross-platform binaries here.
-name: Release
+# Publishes the cairn container image to ghcr.io when a v* tag is pushed.
+#
+# THIS WORKFLOW PUBLISHES THE IMAGE AND NOTHING ELSE. Binaries, the GitHub
+# Release, and the Homebrew tap bump are all owned by the Gitea pipeline
+# (.gitea/workflows/pipeline.yaml: tag-only -> release -> tap-bump), which
+# publishes archives to stump-wtf/cairn-cli via .goreleaser.yaml.
+#
+# That split is deliberate, and it replaces a real collision. This file used to
+# run goreleaser itself, with the same .goreleaser.yaml the Gitea job uses. Tags
+# propagate to the mirror, so a single v* tag fired BOTH runners against the
+# same config and the same asset names, and goreleaser's
+# `replace_existing_artifacts: true` meant they overwrote each other silently
+# rather than erroring. Whichever finished last won and nothing reported a
+# problem. (The old job was also pointed at a repo its GITHUB_TOKEN does not
+# cover: the token is scoped to stump-wtf/cairn while the config targets
+# stump-wtf/cairn-cli.)
+#
+# One tag, two writers, two destinations, no shared names:
+#   * Gitea  -> binaries to stump-wtf/cairn-cli, then the tap bump
+#   * GitHub -> the ghcr.io image, here
+#
+# ghcr.io lives here because GITHUB_TOKEN is the credential that works on this
+# host. Pushing it from Gitea would mean putting another GitHub PAT into Gitea
+# Actions, and the currently-broken push mirrors are exactly that pattern
+# failing.
+name: Release image
 
 on:
   push:
@@ -11,72 +31,71 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    name: Publish release
+  image:
+    name: build + scan + push (ghcr.io)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract CHANGELOG section for this tag
-        id: notes
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          awk -v v="$version" '
-            $0 ~ "^## \\[" v "\\]" {grab=1; next}
-            grab && /^## \[/ {exit}
-            grab {print}
-          ' CHANGELOG.md > release-notes.md
-          echo "Extracted $(wc -l < release-notes.md) lines for $version"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          body_path: release-notes.md
-          name: ${{ github.ref_name }}
-          prerelease: ${{ contains(github.ref_name, '-') }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-  # Builds and attaches the cross-platform `cairn` CLI binaries (SPEC-0008).
-  # The CLI is a pure REST client with no CGO deps, so goreleaser ships static
-  # darwin/linux/windows amd64+arm64 binaries (.goreleaser.yaml). The `cairnd`
-  # server is deployed separately as a container image and is not built here.
-  #
-  # Runs AFTER `release`, not beside it: both jobs address the same GitHub
-  # Release for the tag, and in parallel whichever lands first creates it. When
-  # that is goreleaser, the release is born with goreleaser's own generated
-  # notes and `release` then overwrites the body — so the notes a reader sees
-  # depend on a race. Ordering it behind `release` means the release always
-  # already exists with the CHANGELOG.md section as its body, and goreleaser
-  # only uploads archives onto it (release.mode: keep-existing).
-  binaries:
-    name: Build CLI binaries
-    needs: [release]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      # Mirrors the Gitea image job's tagging so the two registries do not drift
+      # in how they name the same build.
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
         with:
-          # REQUIRED by goreleaser: the default depth-1 checkout has no history
-          # and no earlier tags, so it logs "running against a shallow clone"
-          # and computes an empty changelog (verified against a depth-1 clone of
-          # a tag — it degrades rather than failing, which is why the shallow
-          # version looks like it works).
-          fetch-depth: 0
+          images: ghcr.io/stump-wtf/cairn
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
         with:
-          go-version-file: go.mod
-          cache: true
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+      # Scan before publishing, not after. A single-arch amd64 build is loaded
+      # locally so Trivy has something to inspect; the multi-arch push below
+      # only happens if this gate passes.
+      - name: Build amd64 image for the Trivy scan
+        uses: docker/build-push-action@v5
         with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: ghcr.io/stump-wtf/cairn:scan-${{ github.run_id }}
+
+      - name: Trivy image scan (fails closed on CRITICAL/HIGH)
+        uses: docker://aquasec/trivy:latest
+        with:
+          args: >-
+            image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1
+            --format table ghcr.io/stump-wtf/cairn:scan-${{ github.run_id }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

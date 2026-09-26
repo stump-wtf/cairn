@@ -34,7 +34,7 @@ clients?
   advertising "export your OTel trace to see your trajectory" is self-inflicted
   confusion.
 * **Links are sacred** — ADR-0005/ADR-0007 short URLs in the wild must keep resolving;
-  a rename must never invalidate `cairn.sh/run/<id>`.
+  a rename must never invalidate `cairn.stump.wtf/run/<id>`.
 * **Wire compatibility** — existing clients (the MCP integrations, the CLI, the
   chezmoi-managed configs) send and expect `trajectory` today; a hard cutover breaks
   them for zero user value.
@@ -68,7 +68,7 @@ the field sends `trajectory` today) to save an alias table that costs a few line
   `TRC`. This is the word in every heading, hint, legend, chip, doc, and tool
   description.
 * **run** — the *execution* the trace records, and the resource name it already is:
-  `cairn.sh/run/<id>`, `/v1/runs`, `run_create`/`run_append_spans`/`run_capture` all
+  `cairn.stump.wtf/run/<id>`, `/v1/runs`, `run_create`/`run_append_spans`/`run_capture` all
   keep their names. "A trace of a run" reads naturally; renaming the resource would
   break every URL and tool integration for cosmetics.
 * **span** — unchanged.

@@ -11,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // CreateArtifactInput is the transport-agnostic create request. Provenance,
@@ -30,6 +30,10 @@ type CreateArtifactInput struct {
 	Provenance     artifact.Provenance
 	Access         artifact.AccessPolicy
 	ExpiresAt      time.Time
+	// Tags are client-asserted routing strings (ADR-0018). Unlike Provenance
+	// the adapter passes them through from the request as-is; CreateArtifact
+	// normalizes them.
+	Tags []string
 }
 
 func (in CreateArtifactInput) validate() error {
@@ -68,6 +72,14 @@ func (in CreateArtifactInput) validate() error {
 // SPEC-0002 REQ "Database Operation Standards"
 func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*artifact.Artifact, error) {
 	if err := in.validate(); err != nil {
+		return nil, err
+	}
+	// Normalized before the body streams, so a bad tag costs nothing;
+	// Artifact.Validate re-checks the result as an aggregate invariant.
+	//
+	// Governing: ADR-0018, SPEC-0002 REQ "Artifact Tags"
+	tags, err := artifact.NormalizeTags(in.Tags)
+	if err != nil {
 		return nil, err
 	}
 
@@ -112,6 +124,7 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 		Previewable: previewable,
 		Provenance:  in.Provenance,
 		Access:      in.Access,
+		Tags:        tags,
 		ExpiresAt:   in.ExpiresAt,
 	}
 
@@ -137,6 +150,7 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("create: commit: %w", err)
 	}
+	s.emitCreated(art)
 	return art, nil
 }
 
@@ -177,9 +191,11 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 		INSERT INTO artifacts
 			(public_id, share_type, title, body_sha256, size_bytes, media_type,
 			 previewable, actor_id, on_behalf_of, model, channel, captured_at,
-			 owner_id, visibility, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+			 owner_id, visibility, expires_at, tags)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		RETURNING id, created_at`
+
+	tags := tagsParam(art.Tags)
 
 	for attempt := 0; attempt < idMaxAttempts; attempt++ {
 		// Savepoint so a unique conflict aborts only this attempt, not the tx.
@@ -203,7 +219,7 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 			art.MediaType, art.Previewable, art.Provenance.ActorID,
 			art.Provenance.OnBehalfOf, art.Provenance.Model, art.Provenance.Channel,
 			art.Provenance.CapturedAt, art.Access.OwnerID, art.Access.Visibility,
-			art.ExpiresAt,
+			art.ExpiresAt, tags,
 		).Scan(&art.ID, &art.CreatedAt)
 		if err != nil {
 			_ = sp.Rollback(ctx)
@@ -218,6 +234,15 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 		return nil
 	}
 	return fmt.Errorf("create: exhausted %d id attempts: %w", idMaxAttempts, errs.ErrConflict)
+}
+
+// tagsParam passes tags for the TEXT[] column. pgx encodes a nil slice as SQL
+// NULL, which the NOT NULL column rejects, so untagged is always an empty array.
+func tagsParam(tags []string) []string {
+	if tags == nil {
+		return []string{}
+	}
+	return tags
 }
 
 // isPublicIDConflict reports whether err is a unique-violation on public_id.

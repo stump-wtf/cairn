@@ -3,7 +3,7 @@ package webhook
 import (
 	"time"
 
-	"github.com/joestump/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/artifact"
 )
 
 // zeroTime is the explicit zero value, named for readability at test call

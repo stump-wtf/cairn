@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joestump/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
 // TestRegistryEntry pins the trajectory's registry affordances (SPEC-0004

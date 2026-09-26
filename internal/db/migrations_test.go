@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/joestump/cairn/internal/trajectory"
+	"github.com/stump-wtf/cairn/internal/trajectory"
 )
 
 // TestSpanCategoryConstraintMatchesDomain pins the span-category length ceiling

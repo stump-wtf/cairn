@@ -12,9 +12,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/joestump/cairn/internal/db"
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/oauth"
+	"github.com/stump-wtf/cairn/internal/db"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/oauth"
 )
 
 var schemaSeq atomic.Int64

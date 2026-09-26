@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joestump/cairn/internal/webhook"
+	"github.com/stump-wtf/cairn/internal/webhook"
 )
 
 // TestIntegrationHookViewerEmptyState is the story's "awaiting its first

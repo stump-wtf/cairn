@@ -1,7 +1,7 @@
 ---
 status: draft
 date: 2026-07-08
-implements: [ADR-0001, ADR-0002, ADR-0008, ADR-0005]
+implements: [ADR-0001, ADR-0002, ADR-0008, ADR-0005, ADR-0018]
 ---
 
 # SPEC-0002: Artifact Core and Share Types
@@ -33,7 +33,8 @@ operations) but no accessibility section.
 
 An Artifact MUST be the single shared unit and the aggregate root. Every artifact MUST
 carry: a short opaque public id; a share type; a body reference (or a bundle manifest);
-metadata (title, size, media/language hints, type-specific fields); provenance (actor,
+metadata (title, size, media/language hints, type-specific fields, optional client-asserted
+tags); provenance (actor,
 channel, capture time); an access policy; an expiry; and an annotation stream. At creation
 every artifact MUST have provenance, an access policy, and an expiry set — none is optional.
 No competing top-level shareable entity MUST be introduced; Bundle and the Bin are shapes
@@ -62,13 +63,64 @@ server-side from the authenticated surface and MUST NOT be taken from a client c
 #### Scenario: Create returns an addressable artifact
 
 - **WHEN** a client creates an artifact
-- **THEN** the response MUST include the minted public id and the `cairn.sh/<id>` short URL,
+- **THEN** the response MUST include the minted public id and the `cairn.stump.wtf/<id>` short URL,
   and the artifact MUST be immediately resolvable
 
 #### Scenario: Channel is server-derived
 
 - **WHEN** a client authenticated over MCP asserts `via CLI` in the request
 - **THEN** the recorded channel MUST be `via MCP`, overriding the client claim
+
+### Requirement: Artifact Tags
+
+An artifact MAY carry **tags**: a list of short strings. Tags are set once at creation
+through any create surface (REST, CLI, or MCP; single-body and bundle alike),
+persisted with the artifact, and returned wherever the artifact is read or listed.
+
+Tags are **client-asserted metadata, not provenance**. The system MUST NOT derive,
+rewrite, or interpret them. Every consumer, including outbound-event consumers
+(SPEC-0012), MUST NOT base a trust or authorization decision on a tag; trust comes
+only from the server-derived actor and channel (ADR-0018).
+
+At creation the system MUST normalize tags:
+
+- each tag MUST be 1–64 bytes drawn from lowercase `[a-z0-9._:/#-]`, and a create
+  with any other tag MUST be rejected; nothing is truncated or case-folded;
+- exact repeats MUST be dropped, keeping first-occurrence order;
+- more than 32 distinct tags MUST be rejected.
+
+Over REST, a create carries tags as repeated `tag` query parameters, repeated
+`X-Cairn-Tags` headers, or both. Each value is a comma-separated list, and a multipart
+create additionally accepts repeated `tag` form fields. All sources on one request
+are merged. `GET /v1/bin` accepts the same `tag` parameters and MUST return only
+artifacts that carry every given tag.
+
+The system MUST NOT enforce a tag vocabulary. Conventions such as the handoff
+convention (ADR-0018) are documentation that consumers match on.
+
+#### Scenario: Tags round-trip
+
+- **WHEN** a client creates an artifact with tags `handoff`, `lane:auto`, and
+  `handoff` again
+- **THEN** the create response, a later read, and the Bin listing MUST each return
+  exactly `handoff`, `lane:auto`, and an artifact created without tags MUST return none
+
+#### Scenario: Out-of-bounds tag rejected
+
+- **WHEN** a create carries the tag `Handoff`, a 65-byte tag, or 33 distinct tags
+- **THEN** the system MUST reject the request as `validation_failed`, persist nothing,
+  and emit no creation event
+
+#### Scenario: Bin filtered by tag
+
+- **WHEN** the owner lists the Bin with `tag=handoff&tag=size:s`
+- **THEN** only artifacts carrying both tags MUST be returned
+
+#### Scenario: Tags confer no trust
+
+- **WHEN** a create carries a tag such as `actor:someone-else` or `channel:cli`
+- **THEN** the recorded provenance MUST still be the server-derived actor and channel,
+  and the tag MUST remain an ordinary tag
 
 ### Requirement: Artifact Lifecycle — Read
 
@@ -241,7 +293,7 @@ length of 8 characters (~47.6 bits), minted independently of the body's SHA-256 
 internal primary key. Generation MUST be generate → atomic unique insert → regenerate on the
 rare conflict; a retired id MUST NOT be reused within its TTL-plus-grace window. Reserved
 route words (`run`, `hook`, `api`, `settings`, `.well-known`, …) MUST be excluded from the
-generator. The path scheme MUST be: `cairn.sh/<id>` for default artifacts, `cairn.sh/run/<id>`
+generator. The path scheme MUST be: `cairn.stump.wtf/<id>` for default artifacts, `cairn.stump.wtf/run/<id>`
 for trajectories, `mcp://cairn/<id>` (and `mcp://cairn/hook/<id>`, `mcp://cairn/run/<id>`)
 for agent handles; the same id token MUST be reused verbatim across all surfaces.
 
@@ -414,4 +466,4 @@ SPEC-0004 respectively and are not owned here.
 | GET | `/v1/artifacts/{id}/members/{name}` | Read a bundle member `<bundle_id>/<name>` (web tabs / MCP) | Public — same link-capability justification |
 | DELETE | `/v1/artifacts/{id}` | Delete an artifact (owner only; also honors expiry) | Required — owner only |
 | POST | `/v1/artifacts/{id}/share` | Set/adjust link access policy or rotate the id (ADR-0007) | Required — owner only; no `sharing:manage` for agents |
-| GET | `/v1/bin` | List the Bin, keyset-paginated over `(created_at, id)` | Required — workspace-scoped |
+| GET | `/v1/bin` | List the Bin, keyset-paginated over `(created_at, id)`, optionally narrowed to artifacts carrying every `?tag=` | Required — workspace-scoped |

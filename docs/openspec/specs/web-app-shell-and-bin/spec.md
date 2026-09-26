@@ -69,7 +69,7 @@ across types.
 ### Requirement: One URL Control with Copy and MCP Affordance
 
 The header MUST present exactly one URL control showing the artifact's short public link
-(`cairn.sh/<id>`, or `cairn.sh/run/<id>` for a trajectory per SPEC-0002). It MUST provide
+(`cairn.stump.wtf/<id>`, or `cairn.stump.wtf/run/<id>` for a trajectory per SPEC-0002). It MUST provide
 a copy action that copies the link, and an `◆ mcp` affordance that yields the
 corresponding `mcp://cairn/...` handle for the same id. The copy action SHOULD complete
 locally without a server round-trip.

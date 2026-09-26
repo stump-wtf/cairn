@@ -26,7 +26,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"github.com/joestump/cairn/internal/session"
+	"github.com/stump-wtf/cairn/internal/session"
 )
 
 const (
@@ -86,6 +86,10 @@ type oidcState struct {
 	Nonce    string `json:"n"`
 	Verifier string `json:"v"`
 	Next     string `json:"x"`
+	// Provider names the flow that wrote this cookie ("github", or empty for
+	// the Pocket ID flow — empty keeps pre-SPEC-0012 cookies valid, which is
+	// the "byte-for-byte unchanged when provider is absent" requirement).
+	Provider string `json:"p,omitempty"`
 }
 
 // handleOIDCLogin begins the OIDC authorization-code flow (GET /auth/login):
@@ -202,7 +206,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, err := s.sessions.Create(r.Context(), actor, s.cfg.SessionTTL)
+	sess, err := s.sessions.Create(r.Context(), s.cfg.OIDCIssuer, idToken.Subject, actor, s.cfg.SessionTTL)
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "oidc: create session failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

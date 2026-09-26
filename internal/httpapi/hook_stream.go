@@ -19,7 +19,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/joestump/cairn/internal/webhook"
+	"github.com/stump-wtf/cairn/internal/webhook"
 )
 
 // handleHookStream is the live captured-request SSE endpoint. It is a

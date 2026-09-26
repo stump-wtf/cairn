@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joestump/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // jsonReader marshals v to a JSON body reader for a request.

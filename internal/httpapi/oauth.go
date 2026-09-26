@@ -10,10 +10,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/oauth"
-	"github.com/joestump/cairn/internal/session"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/oauth"
+	"github.com/stump-wtf/cairn/internal/session"
 )
 
 // The OAuth 2.1 authorization-server surface (SPEC-0007, ADR-0004): RFC 8414

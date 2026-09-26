@@ -537,9 +537,24 @@ a > code { color: var(--cairn-ink-accent); }
    7. Chrome, and the stock surfaces the theme leaves to the token layer.
    ========================================================================== */
 
-/* Translucent, blurred navbar to match the app-shell chrome */
+/* Translucent, blurred navbar to match the app-shell chrome.
+   SPEC-0010 REQ "Site Chrome and Layout", scenario "Mobile drawer above chrome".
+   The blur lives on a ::before pseudo-element rather than on .navbar itself:
+   a backdrop-filter (like any filter) turns its element into the containing
+   block for position: fixed descendants, and theme-classic renders the mobile
+   drawer (.navbar-sidebar) and its backdrop INSIDE .navbar. On the element the
+   filter pinned the drawer to the navbar's own box — a duplicate brand bar
+   stacked over the header, no menu reachable. On the pseudo-element the
+   pseudo does not contain the fixed children, and the glass effect is kept. */
 .navbar {
   border-bottom: 1px solid var(--cairn-border);
+  position: sticky;
+}
+.navbar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
   backdrop-filter: saturate(140%) blur(12px);
   -webkit-backdrop-filter: saturate(140%) blur(12px);
 }

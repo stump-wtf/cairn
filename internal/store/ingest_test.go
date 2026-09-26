@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/objectstore"
 )
 
 func sha256Hex(b []byte) string {

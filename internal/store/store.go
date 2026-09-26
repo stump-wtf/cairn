@@ -13,13 +13,15 @@
 package store
 
 import (
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/joestump/cairn/internal/id"
-	"github.com/joestump/cairn/internal/objectstore"
-	"github.com/joestump/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/id"
+	"github.com/stump-wtf/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
 // idMaxAttempts bounds public-id collision retries; at the targeted keyspace
@@ -50,6 +52,40 @@ type Store struct {
 	previewMax int64
 	registry   *sharetype.Registry
 	newID      func() (string, error)
+	emitter    CreationEmitter
+}
+
+// CreationEvent is the transport-agnostic fact that an artifact came into
+// existence, handed to a CreationEmitter after the creating transaction
+// commits. WebPath is the registry-derived public web path (origin-agnostic:
+// the emitter joins its configured base URL onto it).
+//
+// Governing: ADR-0017 (Outbound Webhooks), SPEC-0012 REQ "Event Payload"
+type CreationEvent struct {
+	PublicID  string
+	ShareType artifact.ShareType
+	Title     string
+	WebPath   string
+	ActorID   string
+	Model     string
+	Channel   string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+	// OnBehalfOf is the MCP client's self-reported name/version, recorded from
+	// the session handshake (empty for REST/CLI). It names the harness, not a
+	// principal: ActorID is the authenticated identity.
+	OnBehalfOf string
+	// Tags are client-asserted (ADR-0018): carried so a consumer can route on
+	// them, never so it can trust them.
+	Tags []string
+}
+
+// CreationEmitter receives post-commit creation events. Implementations MUST
+// be safe for concurrent use and MUST NOT block or panic the caller: an emit
+// failure is the emitter's problem, never the create request's
+// (SPEC-0012 REQ "Event Emission on Artifact Creation").
+type CreationEmitter interface {
+	EmitArtifactCreated(CreationEvent)
 }
 
 // Options configures a Store. Zero values fall back to safe defaults.
@@ -66,6 +102,11 @@ type Options struct {
 	// NewID overrides public-id generation; tests inject forced collisions.
 	// Defaults to id.New.
 	NewID func() (string, error)
+	// Emitter, when non-nil, receives a CreationEvent after every durable
+	// artifact creation (single-body and bundle), covering every surface
+	// (REST/web/CLI/MCP) at this single choke point. Nil = inert
+	// (SPEC-0012 REQ "Delivery Targets from Configuration").
+	Emitter CreationEmitter
 }
 
 // New constructs a Store over a Postgres pool and an object store.
@@ -93,7 +134,44 @@ func New(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *Store {
 		previewMax: previewMax,
 		registry:   registry,
 		newID:      newID,
+		emitter:    opts.Emitter,
 	}
+}
+
+// emitCreated hands a committed artifact to the emitter, if one is installed.
+// Best-effort by contract: a nil emitter or a failing one never influences the
+// create result (SPEC-0012 REQ "Emitter failure is isolated").
+//
+// Governing: ADR-0017 (Outbound Webhooks), SPEC-0012 REQ "Event Emission on
+// Artifact Creation"
+func (s *Store) emitCreated(a *artifact.Artifact) {
+	if s.emitter == nil {
+		return
+	}
+	s.emitter.EmitArtifactCreated(CreationEvent{
+		PublicID:   a.PublicID,
+		ShareType:  a.ShareType,
+		Title:      a.Title,
+		WebPath:    "/" + joinPath(s.registry.URLPrefixFor(a.ShareType).Web, a.PublicID),
+		ActorID:    a.Provenance.ActorID,
+		Model:      a.Provenance.Model,
+		Channel:    string(a.Provenance.Channel),
+		ExpiresAt:  a.ExpiresAt,
+		CreatedAt:  a.CreatedAt,
+		OnBehalfOf: a.Provenance.OnBehalfOf,
+		// Cloned so the emitter never shares a backing array with the
+		// artifact the create call hands back to its caller.
+		Tags: slices.Clone(a.Tags),
+	})
+}
+
+// joinPath joins an optional single-segment prefix and an id without a slash
+// between empty prefix and id (mirrors httpapi.prefixedPath).
+func joinPath(prefix, id string) string {
+	if prefix != "" {
+		return prefix + "/" + id
+	}
+	return id
 }
 
 // Pool exposes the underlying Postgres pool so a peer core service that shares

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
-	"github.com/joestump/cairn/internal/session"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/session"
 )
 
 // The minimal web session surface (SPEC-0001, ADR-0004). A browser logs in once
@@ -119,7 +119,9 @@ type loginView struct {
 	Next         string
 	LoginEnabled bool
 	OIDCEnabled  bool
-	Failed       bool
+	// GitHubLogin gates the "Log in with GitHub" button (SPEC-0012).
+	GitHubLogin bool
+	Failed      bool
 }
 
 // handleLoginForm renders the login page. A per-request CSRF token is minted into
@@ -145,6 +147,7 @@ func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 		Next:         next,
 		LoginEnabled: s.loginEnabled(),
 		OIDCEnabled:  s.oidc != nil,
+		GitHubLogin:  s.gh != nil,
 		Failed:       r.URL.Query().Get("error") == "1",
 	})
 }
@@ -177,7 +180,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=1&next="+url.QueryEscape(next), http.StatusSeeOther)
 		return
 	}
-	sess, err := s.sessions.Create(r.Context(), actor, s.cfg.SessionTTL)
+	// Dev-password sessions carry no provider provenance: empty issuer and
+	// subject (SPEC-0012 records provenance only for real IdP logins).
+	sess, err := s.sessions.Create(r.Context(), "", "", actor, s.cfg.SessionTTL)
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "web: create session failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

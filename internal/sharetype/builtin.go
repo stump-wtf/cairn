@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/code"
-	"github.com/joestump/cairn/internal/imageview"
-	"github.com/joestump/cairn/internal/markdown"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/code"
+	"github.com/stump-wtf/cairn/internal/imageview"
+	"github.com/stump-wtf/cairn/internal/markdown"
 )
 
 // Registry keys for the built-in types beyond the generic file/gz/bundle keys

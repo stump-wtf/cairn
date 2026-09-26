@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/joestump/cairn/internal/artifact"
-	"github.com/joestump/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // Scopes gate capabilities across every authenticated surface. They are the MVP

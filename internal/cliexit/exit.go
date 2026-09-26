@@ -11,7 +11,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/joestump/cairn/internal/cliclient"
+	"github.com/stump-wtf/cairn/internal/cliclient"
 )
 
 // Code is one of the fixed exit codes from SPEC-0008's table.

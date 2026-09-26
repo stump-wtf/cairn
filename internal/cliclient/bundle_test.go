@@ -271,3 +271,37 @@ func TestCreateBundleSendsAllFilesInOneRequest(t *testing.T) {
 		t.Errorf("X-Cairn-Ttl-Seconds = %q, want 86400", gotTTL)
 	}
 }
+
+// TestCreateBundleSendsTagsHeader: bundle tags travel as the same
+// comma-separated X-Cairn-Tags header on the one multipart request.
+//
+// Governing: ADR-0018, SPEC-0008 REQ "Bundle Creation"
+func TestCreateBundleSendsTagsHeader(t *testing.T) {
+	dir := t.TempDir()
+	a := writeTempFile(t, dir, "a.log", "log contents")
+
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Cairn-Tags")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(Artifact{ID: "bundle1", URL: "https://cairn.sh/bundle1"})
+	}))
+	defer srv.Close()
+
+	files, closeAll, err := OpenBundleFiles([]string{a})
+	if err != nil {
+		t.Fatalf("OpenBundleFiles: %v", err)
+	}
+	defer closeAll()
+
+	c := New(srv.URL, "tok")
+	if _, err := c.CreateBundle(context.Background(), files, CreateBundleOptions{
+		Tags: []string{"handoff", "size:s"},
+	}); err != nil {
+		t.Fatalf("CreateBundle: %v", err)
+	}
+	if want := "handoff,size:s"; got != want {
+		t.Errorf("X-Cairn-Tags = %q, want %q", got, want)
+	}
+}
