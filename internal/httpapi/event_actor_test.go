@@ -179,19 +179,20 @@ func TestCommentActorIgnoresAssertedKind(t *testing.T) {
 	}
 }
 
-// TestMCPCreateRefusesUnstampedCredential proves the MCP create tools fail
-// closed on a credential mcpTokenVerifier did not stamp: rather than create an
-// artifact whose creation event carries no auth (or a guessed one), the call
-// is refused as unauthorized before the store is touched. The server has no
-// store, so the stamped positive controls get past the check and fail (or
-// panic) further in, never as unauthorized.
+// TestMCPWritesRefuseUnstampedCredential proves every MCP write tool that
+// records an actor fails closed on a credential mcpTokenVerifier did not
+// stamp: rather than write an artifact or annotation whose event carries no
+// auth (or a guessed one), the call is refused as unauthorized before the
+// store or annotation service is touched. The server has neither, so the
+// stamped positive controls get past the check and fail (or panic) further
+// in, never as unauthorized.
 //
 // Governing: ADR-0022, SPEC-0016 EV-3, EV-4.
-func TestMCPCreateRefusesUnstampedCredential(t *testing.T) {
+func TestMCPWritesRefuseUnstampedCredential(t *testing.T) {
 	s := New(nil, nil, nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ctx := context.Background()
 	req := func(stamp any) *mcp.CallToolRequest {
-		ti := &sdkauth.TokenInfo{UserID: "alice", Scopes: []string{oauth.ScopeArtifactsWrite}, Extra: map[string]any{}}
+		ti := &sdkauth.TokenInfo{UserID: "alice", Scopes: []string{oauth.ScopeArtifactsWrite, oauth.ScopeAnnotationsWrite}, Extra: map[string]any{}}
 		if stamp != nil {
 			ti.Extra[mcpExtraAuth] = stamp
 		}
@@ -208,6 +209,18 @@ func TestMCPCreateRefusesUnstampedCredential(t *testing.T) {
 		},
 		"run_create": func(r *mcp.CallToolRequest) error {
 			_, _, err := s.mcpCreateRun(ctx, r, mcpRunCreateInput{})
+			return err
+		},
+		"artifact_comment": func(r *mcp.CallToolRequest) error {
+			_, _, err := s.mcpComment(ctx, r, mcpCommentInput{
+				mcpAnchorInput: mcpAnchorInput{ID: "SVCAAAA1", AnchorType: "artifact"}, Body: "hi",
+			})
+			return err
+		},
+		"artifact_react": func(r *mcp.CallToolRequest) error {
+			_, _, err := s.mcpReact(ctx, r, mcpReactInput{
+				mcpAnchorInput: mcpAnchorInput{ID: "SVCAAAA1", AnchorType: "artifact"}, Emoji: "🔥",
+			})
 			return err
 		},
 	}
