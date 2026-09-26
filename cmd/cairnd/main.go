@@ -24,6 +24,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/config"
 	"github.com/stump-wtf/cairn/internal/db"
 	"github.com/stump-wtf/cairn/internal/httpapi"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/outboundhook"
 	"github.com/stump-wtf/cairn/internal/redact"
@@ -94,8 +95,10 @@ func newStoreOptions(cfg *config.Config, emitter *outboundhook.Emitter) store.Op
 // (RD-2): Cairn never runs with scanning silently disabled. store_unscanned is
 // a risky opt-in, so it is announced at startup by name (RD-7).
 //
-// @joestump 09/25/2026 - Added for cairn#289. Nothing consumes the scanner
-// yet; the wiring stories pass it to store, annotation, trajectory and webhook.
+// @joestump 09/25/2026 - Added for cairn#289. The wiring stories pass it to
+// store, annotation, trajectory and webhook.
+// @joestump 09/26/2026 - cairn#291 passes it to the comment and trace write
+// paths through httpapi.Config.
 func newRedactionScanner(cfg *config.Config, logger *slog.Logger) (*redact.Scanner, error) {
 	s, err := redact.New(redact.Config{
 		MaxScanBytes:  cfg.RedactionMaxScanBytes,
@@ -124,7 +127,9 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	_ = scanner // wired into the write paths by the SPEC-0017 follow-up stories
+	// One metrics registry for the process, handed to the services that count
+	// (ADR-0021). It is served at /metrics once #256 lands.
+	metricsReg := metrics.New()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -237,6 +242,10 @@ func run(logger *slog.Logger) error {
 		HookIngressRateBurst:      cfg.HookIngressRateBurst,
 		HookEndpointRatePerSecond: cfg.HookEndpointRatePerSecond,
 		HookEndpointRateBurst:     cfg.HookEndpointRateBurst,
+
+		// Comments and traces are masked before they are stored (SPEC-0017).
+		Redaction: scanner,
+		Metrics:   metricsReg,
 	}, logger)
 
 	// Discover the OIDC issuer and wire the "Sign in with Pocket ID" relying

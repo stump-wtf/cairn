@@ -70,6 +70,7 @@ func redactionServer(t *testing.T) (*httptest.Server, *store.Store, *syncBuffer)
 	t.Helper()
 	cfg := noRateLimit()
 	cfg.DevInsecureBearerAuth = true
+	cfg.Redaction = testRedactionScanner(t)
 	logs := &syncBuffer{}
 	st := store.New(newTestPool(t), objectstore.NewMemory(), storeOpts())
 	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))).Handler())

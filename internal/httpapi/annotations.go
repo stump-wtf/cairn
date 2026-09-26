@@ -81,6 +81,10 @@ type commentResponse struct {
 	CreatedAt  time.Time       `json:"created_at"`
 	EditedAt   *time.Time      `json:"edited_at,omitempty"`
 	Deleted    bool            `json:"deleted"`
+	// OwnerRedaction is what the ingest scan did to the body, set only on the
+	// create response to the comment's author (SPEC-0017 RD-9) and omitted
+	// from every listing.
+	OwnerRedaction
 }
 
 type commentsResponse struct {
@@ -215,7 +219,9 @@ func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id, "anchor_type": req.AnchorType})
 		return
 	}
-	s.writeJSON(w, http.StatusCreated, toCommentResponse(comment))
+	resp := toCommentResponse(comment)
+	resp.OwnerRedaction = ownerRedactionOf(comment.Redaction)
+	s.writeJSON(w, http.StatusCreated, resp)
 }
 
 // handleListComments returns one artifact's comments in thread order with
