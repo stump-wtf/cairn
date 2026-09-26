@@ -229,8 +229,18 @@ func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := commentsResponse{Comments: make([]commentResponse, 0, len(comments))}
+	actors := make([]string, 0, len(comments))
 	for _, c := range comments {
 		out.Comments = append(out.Comments, toCommentResponse(c))
+		actors = append(actors, c.ActorID)
+	}
+	// This read is link-capability, so anonymous readers reach it too: every
+	// commenter but the viewer is shown by display handle, exactly as the web
+	// shell's thread is (SPEC-0023 REQ "Users and Identities", audit A18).
+	viewer, _ := s.optionalPrincipal(r)
+	shown := s.displayActors(r.Context(), viewer, actors...)
+	for i := range out.Comments {
+		out.Comments[i].ActorID = shown[out.Comments[i].ActorID]
 	}
 	s.writeJSON(w, http.StatusOK, out)
 }
