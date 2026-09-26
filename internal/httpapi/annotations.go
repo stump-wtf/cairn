@@ -58,15 +58,34 @@ type tallyResponse struct {
 
 // tallyView is one per-anchor emoji tally. human_count and agent_count split
 // count by the stored actor kind; rows older than kinds are in neither.
+// reactors is present only on an ?include=reactors read: the rows behind the
+// tally, oldest first, with the provenance a comment carries.
 type tallyView struct {
-	AnchorType string `json:"anchor_type"`
-	AnchorKey  string `json:"anchor_key"`
-	Emoji      string `json:"emoji"`
-	Count      int    `json:"count"`
-	HumanCount int    `json:"human_count"`
-	AgentCount int    `json:"agent_count"`
-	Reacted    bool   `json:"reacted"`
+	AnchorType string        `json:"anchor_type"`
+	AnchorKey  string        `json:"anchor_key"`
+	Emoji      string        `json:"emoji"`
+	Count      int           `json:"count"`
+	HumanCount int           `json:"human_count"`
+	AgentCount int           `json:"agent_count"`
+	Reacted    bool          `json:"reacted"`
+	Reactors   []reactorView `json:"reactors,omitempty"`
 }
+
+// reactorView is one reaction row behind a tally: who reacted, the
+// server-derived kind they reacted as ("" for a row older than kinds), and the
+// self-reported harness they acted through — the same provenance fields a
+// commentResponse carries (SPEC-0016 EV-6, SPEC-0009). id is the handle
+// DELETE /reactions/{rid} takes.
+type reactorView struct {
+	ID         int64     `json:"id"`
+	ActorID    string    `json:"actor_id"`
+	ActorKind  string    `json:"actor_kind"`
+	OnBehalfOf string    `json:"on_behalf_of,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// includeReactors is the only value GET /reactions accepts for ?include.
+const includeReactors = "reactors"
 
 // commentRequest is the POST comments body. A nil parent_id is a thread root; a
 // reply may omit the anchor to inherit its root's (SPEC-0006 "Threaded
@@ -180,12 +199,49 @@ func (s *Server) handleUnreactByID(w http.ResponseWriter, r *http.Request) {
 // artifact's link capability: a valid id reads, an unknown/expired id is a
 // uniform 404. When the reader is authenticated, each tally carries their "did
 // I react" flag; an anonymous link read gets all-false.
+//
+// ?include=reactors also returns the rows behind each tally with their actor,
+// kind and on_behalf_of, so a viewer can show an agent's reaction the way it
+// shows an agent's comment. It is opt-in so the default read stays the one
+// GROUP BY the per-anchor tier specifies. The rows are a second read: under a
+// concurrent react a tally's count and its reactors can differ by that row.
+//
+// Governing: SPEC-0006 REQ "Count Aggregation", SPEC-0016 EV-6, SPEC-0009 REQ
+// "Actor Captures Human and On-Behalf-Of Model".
 func (s *Server) handleListReactions(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	withReactors := false
+	switch r.URL.Query().Get("include") {
+	case "":
+	case includeReactors:
+		withReactors = true
+	default:
+		s.writeError(w, r, errs.Validationf("include must be %q", includeReactors), map[string]string{"id": id})
+		return
+	}
 	tallies, err := s.annot.ReactionTallies(r.Context(), id, s.optionalActor(r))
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
+	}
+	var byTally map[tallyKey][]reactorView
+	if withReactors {
+		rows, err := s.annot.ListReactions(r.Context(), id)
+		if err != nil {
+			s.writeError(w, r, err, map[string]string{"id": id})
+			return
+		}
+		byTally = make(map[tallyKey][]reactorView, len(tallies))
+		for _, row := range rows {
+			k := tallyKey{string(row.Anchor.Type), row.Anchor.Key, row.Emoji}
+			byTally[k] = append(byTally[k], reactorView{
+				ID:         row.ID,
+				ActorID:    row.ActorID,
+				ActorKind:  string(row.ActorKind),
+				OnBehalfOf: row.OnBehalfOf,
+				CreatedAt:  row.CreatedAt,
+			})
+		}
 	}
 	out := tallyResponse{Reactions: make([]tallyView, 0, len(tallies))}
 	for _, t := range tallies {
@@ -197,10 +253,15 @@ func (s *Server) handleListReactions(w http.ResponseWriter, r *http.Request) {
 			HumanCount: t.HumanCount,
 			AgentCount: t.AgentCount,
 			Reacted:    t.Reacted,
+			Reactors:   byTally[tallyKey{string(t.AnchorType), t.AnchorKey, t.Emoji}],
 		})
 	}
 	s.writeJSON(w, http.StatusOK, out)
 }
+
+// tallyKey is the (anchor_type, anchor_key, emoji) grouping a tally and its
+// reactor rows share.
+type tallyKey struct{ anchorType, anchorKey, emoji string }
 
 // handleComment posts a comment or a one-level reply (SPEC-0006 REQ "Threaded
 // Comments"). Registry validation gates the anchor — a comment on a

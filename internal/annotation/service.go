@@ -388,6 +388,56 @@ func (s *Service) ReactionTallies(ctx context.Context, publicID string, viewer V
 	return out, nil
 }
 
+// ListReactions returns one artifact's reaction rows with their provenance
+// (actor id, stored kind, on_behalf_of), grouped in the same (anchor_type,
+// anchor_key) order ReactionTallies uses and oldest first within each emoji.
+// It is the per-row counterpart of the tallies, and reads exactly what
+// ListComments exposes for a comment, so a viewer can show an agent's
+// reaction the way it shows an agent's comment. Same link-capability read:
+// an unknown or expired id is the uniform not-found.
+//
+// Governing: SPEC-0016 EV-6 ("reactions MUST also store on_behalf_of,
+// populated exactly as for comments"), SPEC-0009 REQ "Actor Captures Human and
+// On-Behalf-Of Model".
+func (s *Service) ListReactions(ctx context.Context, publicID string) ([]Reaction, error) {
+	art, err := resolveArtifact(ctx, s.pool, publicID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, anchor_type, anchor_ref, anchor_key, emoji, actor_id,
+		       actor_kind, on_behalf_of, created_at
+		FROM reactions
+		WHERE artifact_id = $1
+		ORDER BY anchor_type, anchor_key, emoji, created_at, id`,
+		art.id)
+	if err != nil {
+		return nil, fmt.Errorf("annotation: list reactions for %s: %w", publicID, err)
+	}
+	defer rows.Close()
+
+	var out []Reaction
+	for rows.Next() {
+		var (
+			r          Reaction
+			anchorType string
+			actorKind  string
+		)
+		r.Anchor.ArtifactID = art.id
+		if err := rows.Scan(&r.ID, &anchorType, &r.Anchor.Ref, &r.Anchor.Key,
+			&r.Emoji, &r.ActorID, &actorKind, &r.OnBehalfOf, &r.CreatedAt); err != nil {
+			return nil, fmt.Errorf("annotation: scan reaction: %w", err)
+		}
+		r.Anchor.Type = sharetype.Anchor(anchorType)
+		r.ActorKind = event.ActorKind(actorKind)
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("annotation: iterate reactions: %w", err)
+	}
+	return out, nil
+}
+
 // AddComment persists a comment or a one-level reply. A reply must reference a
 // root comment on the same artifact (ErrParentNotFound / ErrThreadTooDeep) and
 // share its anchor: pass a zero AnchorType to inherit it, or the same anchor
