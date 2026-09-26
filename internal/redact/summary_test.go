@@ -131,7 +131,8 @@ func TestSummaryMerge(t *testing.T) {
 		{"oversize then masked", Summary{Status: StatusNotScannedOversize}, Summary{Status: StatusMasked}, StatusNotScannedOversize},
 		{"legacy row stays unscanned", Summary{Status: StatusUnscanned}, Summary{Status: StatusClean}, StatusUnscanned},
 		{"zero row reads unscanned", Summary{}, Summary{Status: StatusClean}, StatusUnscanned},
-		{"unwired append keeps status", Summary{Status: StatusMasked}, Summary{}, StatusMasked},
+		{"unwired append records unscanned", Summary{Status: StatusClean}, Summary{}, StatusUnscanned},
+		{"unwired append after a mask", Summary{Status: StatusMasked}, Summary{}, StatusUnscanned},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -139,6 +140,10 @@ func TestSummaryMerge(t *testing.T) {
 				t.Errorf("Merge status = %s, want %s", got, c.want)
 			}
 		})
+	}
+	// An unknown status is not dropped by the merge, so the write refuses it.
+	if _, err := (Summary{Status: StatusClean}).Merge(Summary{Status: "bogus"}).Normalized(); err == nil {
+		t.Error("Merge dropped an unknown status, so Normalized accepted it")
 	}
 	got := Summary{Status: StatusMasked, Count: 2, Rules: map[string]int{"github-pat": 2}}.
 		Merge(Summary{Status: StatusMasked, Count: 1, Rules: map[string]int{"github-pat": 1, "cairn-authorization": 0}})

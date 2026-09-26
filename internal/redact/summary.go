@@ -91,12 +91,21 @@ func (s Summary) Normalized() (Summary, error) {
 // clean, then masked, then not_scanned_binary, then not_scanned_oversize, then
 // unscanned. A row that ever held unscanned content therefore stays unscanned,
 // because the new scan says nothing about what was stored before it.
+//
+// A zero next is "unscanned" on this side too, as it is everywhere else: an
+// append path the scanner is not wired into must not leave a clean run
+// reading clean. An unknown next status is carried through, so Normalized
+// refuses the write instead of the merge silently dropping it.
 func (s Summary) Merge(next Summary) Summary {
 	out := Summary{Status: s.Status, Count: s.Count + next.Count, Rules: make(map[string]int, len(s.Rules)+len(next.Rules))}
 	if out.Status == "" {
 		out.Status = StatusUnscanned
 	}
-	if n := next.Status; n != "" && severity(n) > severity(out.Status) {
+	n := next.Status
+	if n == "" {
+		n = StatusUnscanned
+	}
+	if severity(n) < 0 || severity(n) > severity(out.Status) {
 		out.Status = n
 	}
 	for rule, n := range s.Rules {
