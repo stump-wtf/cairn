@@ -91,6 +91,28 @@ charset, size and count bounds, and deduplication, are the server's to decide. T
 exception is case: the CLI lower-cases ASCII uppercase in each tag before sending, and
 warns on stderr for each tag it changes (SPEC-0019 VE-9, ADR-0025).
 
+A `--redact=mask` flag MUST send `X-Cairn-Redaction: mask`, so a share type that
+refuses a detected credential stores it as `[REDACTED]` instead (SPEC-0017 RD-5).
+`mask` is its only value: any other value, an empty one included, is a usage error
+reported before any network call. When the create response reports `redacted: true`,
+the CLI MUST print one warning on stderr naming the count and rule IDs and saying the
+stored content differs from the input; stdout, and `--json` output, are unchanged. A
+`secret_detected` rejection prints the file (or `stdin`), the line, the rule ID and,
+unless it was already sent, the `--redact=mask` hint, and exits with the usage code
+(SPEC-0017 RD-11).
+
+#### Scenario: Redaction cannot be turned off
+
+- **WHEN** the user passes `--redact=off`
+- **THEN** the CLI MUST exit with a usage error without contacting the server
+
+#### Scenario: Masked content is flagged
+
+- **WHEN** the server masks two GitHub tokens in a created artifact
+- **THEN** the CLI MUST print
+  `cairn: warning: 2 values masked (github-pat ×2); stored content differs from input`
+  to stderr and the link to stdout
+
 #### Scenario: Tag a piped artifact
 
 - **WHEN** the user runs `cat prompt.md | cairn --tag handoff --tag lane:auto,size:m`
@@ -128,7 +150,8 @@ followed by the `cairn.stump.wtf/<id>` link. The CLI MUST NOT report success or 
 unless the server confirms the **complete** bundle was created; a failure of any
 constituent file MUST abort the bundle so no partial bundle is shared. `cairn add`
 accepts the same repeatable `--tag` flag as the bare command, applying the tags to the
-bundle as a whole.
+bundle as a whole, and the same `--redact=mask` flag, naming a rejected member by its
+file argument.
 
 #### Scenario: Push several files as a bundle
 
