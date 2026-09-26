@@ -3,10 +3,12 @@ package store
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -227,6 +229,10 @@ func TestHashMismatchRejected(t *testing.T) {
 	}
 	if !errors.Is(err, errs.ErrChecksumMismatch) {
 		t.Fatalf("err = %v, want it to still match errs.ErrChecksumMismatch", err)
+	}
+	// The error is logged, so it must not carry the received body's digest.
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte("body with a wrong declared checksum"))); strings.Contains(err.Error(), got) {
+		t.Fatalf("checksum error carries the received body's SHA-256: %v", err)
 	}
 	vs := errs.ViolationsOf(err)
 	if len(vs) != 1 || vs[0].Field != ChecksumHeader || vs[0].Location != errs.LocHeader ||
