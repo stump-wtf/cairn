@@ -80,9 +80,14 @@ func Validate(reg *sharetype.Registry, artifactID int64, shareType artifact.Shar
 	if !reg.AllowsAnchor(shareType, anchorType, kind) {
 		allowed := allowedAnchors(reg, shareType, kind)
 		if kind == sharetype.KindComment && len(allowed) == 0 {
+			// An omitted anchor_type is not echoed: `"" is not allowed` names no
+			// input the caller sent.
+			opts := []errs.Opt{errs.WithExpect(fmt.Sprintf("a %s artifact accepts no comments", shareType))}
+			if anchorType != "" {
+				opts = append(opts, errs.WithValue(string(anchorType)))
+			}
 			return Anchor{}, fmt.Errorf("annotation: comment on non-commentable share type %q: %w", shareType,
-				errs.Violate("anchor_type", errs.LocBody, errs.ReasonNotAllowed, errs.WithValue(string(anchorType)),
-					errs.WithExpect(fmt.Sprintf("a %s artifact accepts no comments", shareType))).Because(ErrNotCommentable))
+				errs.Violate("anchor_type", errs.LocBody, errs.ReasonNotAllowed, opts...).Because(ErrNotCommentable))
 		}
 		if anchorType == "" {
 			return Anchor{}, fmt.Errorf("annotation: %s with no anchor_type: %w", kind,

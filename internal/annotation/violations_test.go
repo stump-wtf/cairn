@@ -69,8 +69,14 @@ func TestValidateAnchorViolations(t *testing.T) {
 
 	_, err = Validate(reg, 1, sharetype.KeyWebhook, sharetype.KindComment, sharetype.AnchorArtifact, nil)
 	v = oneViolation(t, err, ErrNotCommentable, "anchor_type", errs.ReasonNotAllowed)
-	if !strings.Contains(v.Message, "accepts no comments") {
-		t.Fatalf("message = %q, want it to say the type takes no comments", v.Message)
+	if !strings.Contains(v.Message, "accepts no comments") || v.Value == nil || *v.Value != "artifact" {
+		t.Fatalf("violation = %+v, want the anchor echoed and the type said to take no comments", v)
+	}
+	// An omitted anchor_type is not echoed as "".
+	_, err = Validate(reg, 1, sharetype.KeyWebhook, sharetype.KindComment, "", nil)
+	v = oneViolation(t, err, ErrNotCommentable, "anchor_type", errs.ReasonNotAllowed)
+	if v.Value != nil || strings.Contains(v.Message, `""`) {
+		t.Fatalf("violation = %+v, want no echo of an omitted anchor_type", v)
 	}
 
 	_, err = Validate(reg, 1, sharetype.KeyCode, sharetype.KindComment, sharetype.AnchorCodeLine, json.RawMessage(`{"line":0}`))
