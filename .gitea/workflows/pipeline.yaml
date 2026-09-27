@@ -119,7 +119,7 @@ jobs:
   # @joestump-agent 09/27/2026 - Stop cancelled runs leaking their network and
   #   sidecars (stumpcloud/stumpcloud#501). Everything the job creates now
   #   carries ci.owner/ci.run labels, a first step reaps cairn-ci-* leftovers
-  #   older than timeout-minutes with no live task container attached (a
+  #   older than STALE_MINUTES (20m) with no live task container attached (a
   #   cancelled run never reaches the teardown), and the teardown reports a
   #   network it cannot remove instead of hiding it.
   integration:
@@ -143,9 +143,12 @@ jobs:
       PG: cairn-pg-${{ gitea.run_id }}
       GARAGE: cairn-garage-${{ gitea.run_id }}
       # The reaper step only touches cairn-ci-* leftovers older than this many
-      # minutes, the same window the job itself is bounded by: a younger
-      # network may belong to a live job that is still pulling sidecar images
-      # and has not attached its own container yet.
+      # minutes. The floor covers only the setup window between network
+      # creation and this job's own container attaching to it — the sidecar
+      # image pulls, worst observed ~9m under load — not timeout-minutes;
+      # once the task container is attached and running, the live check
+      # protects the job whatever its age. 20 is double that worst case and
+      # under the job cap, so stale leftovers still reap within one window.
       STALE_MINUTES: "20"
       # Garage refuses to serve until a layout is applied, so the bucket and key
       # are created after the node is up rather than baked into the image.
@@ -160,11 +163,11 @@ jobs:
       # container outright, taking the `if: always()` step with it, so every
       # superseding push used to leak a network (a whole /16) plus two running
       # sidecars onto this shared daemon. Reclaim them: anything cairn-ci-*
-      # older than this job's own timeout window whose GITEA-ACTIONS-TASK-*
-      # container is no longer running belongs to a run that is definitely
-      # gone. The age floor is what makes that safe to run at job start: a
-      # young network may still belong to a live job that is pulling sidecar
-      # images and has not attached its own container yet.
+      # older than STALE_MINUTES whose GITEA-ACTIONS-TASK-* container is no
+      # longer running belongs to a run that is definitely gone. The age
+      # floor is what makes that safe to run at job start: a young network
+      # may still belong to a live job that is pulling sidecar images and
+      # has not attached its own container yet.
       - name: Reap leftovers from cancelled runs
         run: |
           set -euo pipefail
