@@ -236,6 +236,15 @@ code { font-family: var(--mono); }
 .comment-body code { font-size: .95em; background: var(--well); border: 1px solid var(--border-3); border-radius: var(--radius-chip); padding: 0 4px; }
 .comment-body pre { margin: 8px 0; padding: 10px 12px; background: var(--well-2); border: 1px solid var(--border-2); border-radius: var(--radius-card); overflow-x: auto; }
 .comment-body pre code { background: none; border: none; padding: 0; }
+.comment-body h1, .comment-body h2, .comment-body h3,
+.comment-body h4, .comment-body h5, .comment-body h6 { margin: 8px 0 4px; color: var(--t1); font: 600 13px/1.4 var(--sans); }
+.comment-body h1 { font-size: 15px; }
+.comment-body h2 { font-size: 14px; }
+.comment-body strong { color: var(--t0); font-weight: 600; }
+.comment-body hr { border: none; border-top: 1px solid var(--border-2); margin: 8px 0; }
+.comment-body img { max-width: 100%; height: auto; }
+.comment-body table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 6px 0; }
+.comment-body th, .comment-body td { border: 1px solid var(--border-2); padding: 2px 6px; }
 .comments-empty { margin: 0; color: var(--t7); font: 400 12px var(--sans); }
 
 /* ---- Footer ---- */
