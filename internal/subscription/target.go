@@ -83,7 +83,10 @@ var nonPublic = []netip.Prefix{
 	netip.MustParsePrefix("198.51.100.0/24"), // TEST-NET-2
 	netip.MustParsePrefix("203.0.113.0/24"),  // TEST-NET-3
 	netip.MustParsePrefix("240.0.0.0/4"),     // reserved, and broadcast
+	netip.MustParsePrefix("::/96"),           // IPv4-compatible (deprecated): can embed private IPv4
+	netip.MustParsePrefix("::ffff:0:0:0/96"), // IPv4-translated (SIIT): can embed private IPv4
 	netip.MustParsePrefix("64:ff9b::/96"),    // NAT64: can reach private IPv4
+	netip.MustParsePrefix("100::/64"),        // discard-only
 	netip.MustParsePrefix("64:ff9b:1::/48"),  // local-use NAT64
 	netip.MustParsePrefix("2001:db8::/32"),   // documentation
 	netip.MustParsePrefix("2002::/16"),       // 6to4: can embed private IPv4

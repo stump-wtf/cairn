@@ -64,6 +64,10 @@ func TestPublicAddr(t *testing.T) {
 		{"::ffff:10.0.0.1", false}, // IPv4-mapped private
 		{"::ffff:93.184.216.34", true},
 		{"64:ff9b::a00:1", false}, // NAT64 of 10.0.0.1
+		{"::127.0.0.1", false},    // IPv4-compatible loopback (deprecated ::/96)
+		{"::10.0.0.1", false},     // IPv4-compatible private
+		{"::ffff:0:a00:1", false}, // IPv4-translated (SIIT) 10.0.0.1
+		{"100::1", false},         // discard-only
 		{"224.0.0.1", false},
 		{"255.255.255.255", false},
 	} {
