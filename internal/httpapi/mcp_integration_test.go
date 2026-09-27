@@ -61,6 +61,9 @@ func mcpTestServer(t *testing.T, cfg Config, opts store.Options) (*httptest.Serv
 // the server and its emitter share.
 func mcpSubsTestServer(t *testing.T, cfg Config, opts store.Options) (*httptest.Server, *store.Store, *testSubs) {
 	t.Helper()
+	if cfg.Redaction == nil {
+		cfg.Redaction = sharedTestScanner(t)
+	}
 	pool := newTestPool(t)
 	withTokenOperators(t, pool, &cfg)
 	wireSubscriptions(t, pool, &cfg, &opts)

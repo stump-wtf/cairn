@@ -27,6 +27,28 @@ and how to tell it worked.
 There is no external secret manager, no message broker, and no sidecar. One
 process, one database, one bucket.
 
+## Which variable is which
+
+Several names look alike but belong to different programs. The server,
+`cairnd`, reads its settings from its own environment. The `cairn` CLI reads
+different names, from the shell of whoever is running it. Setting a server
+variable in your shell does nothing for the CLI, and the reverse is also true.
+
+| Name | Read by | What it is |
+|---|---|---|
+| `CAIRN_API_TOKENS` | the server | Static bearer credentials for the operator's own automation, `secret:<user>[:agent\|:human]`. See [Static tokens for the operator](#static-tokens-for-the-operator). |
+| `CAIRN_TOKEN` | the `cairn` CLI | The one bearer token the CLI sends, the same as `--token`. The MCP client configs in [Connect your agent](./connect-your-agent.md) expand it from your shell too, but `/mcp` accepts only a personal access token or an OAuth token there, never a `CAIRN_API_TOKENS` secret. |
+| `CAIRN_BASE_URL` | the server | The public origin the server builds short links and its OIDC redirect URI from. |
+| `CAIRN_URL` | the `cairn` CLI | The server the CLI talks to, the same as `--url`. It defaults to the hosted service, so a self-hoster sets it. |
+| `CAIRN_OUTBOUND_WEBHOOK_URLS` | the server | Where the server sends `artifact.created` events. |
+| `CAIRN_OUTBOUND_WEBHOOK_SECRET` | the server | The secret the server signs those events with. A receiver checks signatures against the same value. |
+| `CAIRN_API_TOKEN` (singular) | nothing | A common slip. You want `CAIRN_API_TOKENS` on the server, or `CAIRN_TOKEN` for the CLI. |
+
+The pairs connect like this: one secret in the server's `CAIRN_API_TOKENS` is
+the value a REST or CLI client puts in `CAIRN_TOKEN`, and the server's
+`CAIRN_BASE_URL` is the address a client puts in `CAIRN_URL`. The MCP endpoint
+is the exception: it rejects `CAIRN_API_TOKENS` secrets with `401`.
+
 ## Configuration
 
 Everything comes from the environment; `cairnd` takes no flags. Every variable
@@ -48,6 +70,7 @@ is read from the `CAIRN_` namespace and nothing is ever loaded from a file.
 | `CAIRN_OIDC_CLIENT_SECRET` | *(empty)* | Client secret. The redirect URI is not configurable — it is always `<base>/auth/callback`. |
 | `CAIRN_OPERATORS` | *(empty)* | Who runs this instance: comma-separated `<issuer>\|<subject>` sign-in identities, for example `https://id.example.com\|abc-123`. Listed users get the [operator console](#the-operator). **Empty (with `CAIRN_OPERATOR_GROUP` empty too) means there is no operator** and every operator route answers `404`. A malformed entry fails boot. |
 | `CAIRN_OPERATOR_GROUP` | *(empty)* | An OIDC group whose members are operators, read from the `groups` claim at sign-in. Setting it makes cairn request the `groups` scope. Removal from the group at the IdP takes effect only when that user's session ends ([details](#the-operator)). |
+| `CAIRN_OIDC_TRUST_EMAIL` | `false` | Declares your OIDC provider **authoritative for emails**: its `email` claim counts as verified even when the ID token's `email_verified` is absent or `false`. A verified email links a sign-in to the user who owns it, including the Bin an existing user had before users existed. Set it only for a provider you run whose users **cannot set their own email** (Pocket ID with LDAP-synced users, say). Never set it for a provider that lets people type any email: that would let them sign in as someone else. GitHub sign-ins always use GitHub's primary verified email and ignore this setting. |
 | `CAIRN_DEV_LOGIN_PASSWORD` | *(empty)* | Shared-secret web login accepted for any actor id. Honored **only while `CAIRN_OIDC_ISSUER` is unset** — a deployment that configures OIDC can never fall back to it. Empty disables interactive login entirely. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_DEV_INSECURE_BEARER_AUTH` | `false` | Makes the API trust any bearer token as its own actor id with no verification. A local-development shortcut that must never be enabled in production. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_ENCRYPTION_KEY` | *(empty)* | 32 random bytes, base64 (`openssl rand -base64 32`), that encrypt [outbound subscription](#outbound-subscriptions) secrets at rest. **Unset, nobody can create a subscription**; everything else runs. A malformed value fails boot. Never logged. Wired through the compose file above. |
@@ -83,11 +106,14 @@ Three settings are easy to get wrong:
   (`CAIRN_GITHUB_CLIENT_ID`), and its route then answers `404`. The insecure
   bearer shortcut defaults off, and `cairnd` refuses to start with it on
   while `CAIRN_BASE_URL` is `https`. Leave both alone on a real deployment.
-- **Your IdP must mark emails verified.** A sign-in is keyed on the provider's
-  `(issuer, subject)`. Its email only identifies a person when the ID token
-  says `email_verified: true`; otherwise the user is keyed on their subject
-  and does not see artifacts owned by that email. Check that your OIDC
-  provider sends the claim before upgrading.
+- **Your IdP must mark emails verified, or you must trust it.** A sign-in is
+  keyed on the provider's `(issuer, subject)`. Its email only identifies a
+  person when it is verified: the ID token says `email_verified: true`, or
+  you set `CAIRN_OIDC_TRUST_EMAIL=true` for a provider you run whose users
+  cannot change their own email. Otherwise the user is keyed on their subject
+  and does not see artifacts owned by that email until a later sign-in
+  carries a verified one. Pocket ID sends `email_verified: false` unless
+  `EMAILS_VERIFIED` is set, so set one of the two before upgrading.
 
 ## Get the image
 
@@ -153,6 +179,7 @@ services:
       CAIRN_OIDC_ISSUER: ${CAIRN_OIDC_ISSUER:-}
       CAIRN_OIDC_CLIENT_ID: ${CAIRN_OIDC_CLIENT_ID:-cairn}
       CAIRN_OIDC_CLIENT_SECRET: ${CAIRN_OIDC_CLIENT_SECRET:-}
+      CAIRN_OIDC_TRUST_EMAIL: ${CAIRN_OIDC_TRUST_EMAIL:-false}
       CAIRN_API_TOKENS: ${CAIRN_API_TOKENS:-}
       CAIRN_OPERATORS: ${CAIRN_OPERATORS:-}
       CAIRN_OPERATOR_GROUP: ${CAIRN_OPERATOR_GROUP:-}
@@ -235,7 +262,9 @@ background workers came up.
 The one thing `docker compose up` cannot do is authenticate anybody. Without
 OIDC configured there is no interactive login, and without tokens nothing can
 call the API — see [Sign-in (OIDC)](#sign-in-oidc) and
-[Tokens for agents](#tokens-for-agents) before exposing the instance.
+[Tokens for agents](#tokens-for-agents) before exposing the instance. Every
+credential belongs to a user who has signed in, so the first one starts with a
+sign-in: see [First run: bootstrap a credential](#first-run-bootstrap-a-credential).
 
 ### As a binary
 
@@ -307,7 +336,9 @@ startup it discovers the provider from the issuer URL (failing closed if the
 discovery document is missing), and the login page gains a sign-in button
 where without OIDC it offers nothing at all. Users are created on first
 sign-in, keyed on the OIDC subject, so whoever can authenticate at your
-provider can sign in here — restrict access at the provider.
+provider can sign in here — restrict access at the provider. A sign-in with
+a verified email (see `CAIRN_OIDC_TRUST_EMAIL`) joins the user who already
+owns that email instead of creating one.
 
 To confirm it took: open `/login`. With OIDC configured you get the provider
 button; with nothing configured there is no login at all — the deployment
@@ -409,7 +440,45 @@ Two ways to authorize an agent, both documented in
 
 Minting a PAT is deliberately a browser-only action (Settings is
 session-authenticated and CSRF-guarded); there is no API to mint tokens with a
-token, by design.
+token, by design. Both paths need someone who can sign in, so a new instance
+starts with the first sign-in below.
+
+## First run: bootstrap a credential
+
+A fresh instance has no users, and every credential belongs to one: a personal
+access token is minted in a browser session, and a `CAIRN_API_TOKENS` entry
+must name an operator who has already signed in. So the first credential
+always starts with a sign-in. The server logs this WARN at startup while it
+has no way to authenticate anybody:
+
+```text
+no API tokens (CAIRN_API_TOKENS), no OIDC (CAIRN_OIDC_ISSUER), and no dev web login (CAIRN_DEV_LOGIN_PASSWORD) configured: all authenticated endpoints will reject every caller
+```
+
+**1. Configure a sign-in provider**, [OIDC](#sign-in-oidc) or GitHub, and
+recreate the server so it reads the new values. `docker compose up -d` does
+that when `.env` changes; `docker compose restart` does not, because it keeps
+the old environment. On the binary path, export the variables in the
+environment `cairnd` starts from and restart it instead.
+
+**2. Sign in** at `/login` in a browser. Settings → **Account** shows the
+`<issuer>|<subject>` you signed in as.
+
+**3. Mint a personal access token** in Settings → **API tokens** and use it
+as `CAIRN_TOKEN`:
+
+```bash
+export CAIRN_TOKEN='cairn_pat_…'
+curl -sS https://cairn.example.com/v1/whoami -H "Authorization: Bearer $CAIRN_TOKEN"
+```
+
+If you use the `cairn` CLI, also set `CAIRN_URL=https://cairn.example.com`,
+since the CLI talks to the hosted service unless told otherwise. A personal
+access token works on the REST API, with the CLI and on `/mcp`.
+
+For automation that belongs in the server's own configuration, add yourself to
+`CAIRN_OPERATORS` and give yourself a static token as described next. A static
+secret never works on `/mcp`.
 
 ### Static tokens for the operator
 
@@ -467,15 +536,14 @@ curl -sS http://127.0.0.1:8080/healthz
 ok
 ```
 
-**2. Sign in and mint a token.** With OIDC configured, sign in at `/login`
-in a browser, then Settings → **API tokens**. (The verification run used the
-dev-password login: the form posts `actor`, `password`, and the CSRF field
-the login page embeds — a browser does all of that for you.)
+**2. Get a token.** Sign in at `/login` in a browser and mint one in
+Settings → **API tokens**
+([First run](#first-run-bootstrap-a-credential)). It goes in `CAIRN_TOKEN`.
 
 **3. Create an artifact over REST.**
 
 ```bash
-export CAIRN_TOKEN='cairn_pat_…'
+export CAIRN_TOKEN='…'   # a cairn_pat_… token
 
 curl -sS http://127.0.0.1:8080/v1/artifacts \
   -H "Authorization: Bearer $CAIRN_TOKEN" \
@@ -514,7 +582,9 @@ Nothing is stored for a rejected request.
 
 **6. Connect an agent over MCP.** Any MCP client speaking Streamable HTTP can
 reach `<base>/mcp`. The verification used a bare JSON-RPC exchange — what a
-real client does for you — with the PAT from step 2:
+real client does for you — with a personal access token. A static
+`CAIRN_API_TOKENS` secret gets `401` here, because `/mcp` accepts only a
+personal access token or an OAuth token:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8080/mcp \

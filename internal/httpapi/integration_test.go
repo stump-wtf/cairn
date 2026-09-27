@@ -50,6 +50,9 @@ func testServer(t *testing.T, cfg Config, opts store.Options) *httptest.Server {
 // server and emitter share, built over policy (nil: testSubsPolicy).
 func subsTestServer(t *testing.T, cfg Config, opts store.Options, policy *subscription.Policy) (*httptest.Server, *testSubs) {
 	t.Helper()
+	if cfg.Redaction == nil {
+		cfg.Redaction = sharedTestScanner(t)
+	}
 	pool := newTestPool(t)
 	withTokenOperators(t, pool, &cfg)
 	if policy != nil {

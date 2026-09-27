@@ -192,13 +192,22 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 		INSERT INTO artifacts
 			(public_id, share_type, title, body_sha256, size_bytes, media_type,
 			 previewable, created_by_user_id, on_behalf_of, model, channel, captured_at,
-			 owner_user_id, owner_team_id, visibility, expires_at, tags)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+			 owner_user_id, owner_team_id, visibility, expires_at, tags,
+			 redaction_status, redaction_count, redaction_rules)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 		RETURNING id, created_at`
 
 	tags := tagsParam(art.Tags)
 	if err := validOwnerIDs(art); err != nil {
 		return err
+	}
+	// The outcome commits with the row it describes (SPEC-0017 "Database
+	// Operation Standards"). An unset Redaction is written as "unscanned".
+	//
+	// Governing: ADR-0023, SPEC-0017 RD-9
+	rStatus, rCount, rRules, err := redactionColumns(art.Redaction)
+	if err != nil {
+		return fmt.Errorf("create: %w", err)
 	}
 
 	for attempt := 0; attempt < idMaxAttempts; attempt++ {
@@ -224,7 +233,7 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 			art.Provenance.OnBehalfOf, art.Provenance.Model, art.Provenance.Channel,
 			art.Provenance.CapturedAt, user.IDParam(art.Access.OwnerUserID),
 			user.IDParam(art.Access.OwnerTeamID), art.Access.Visibility,
-			art.ExpiresAt, tags,
+			art.ExpiresAt, tags, rStatus, rCount, rRules,
 		).Scan(&art.ID, &art.CreatedAt)
 		if err != nil {
 			_ = sp.Rollback(ctx)

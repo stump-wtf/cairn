@@ -25,8 +25,14 @@ reaches 1.0.
   `user_id`. The free-form `owner_id` / `actor_id` strings are gone, and every
   ownership check compares user ids. Wire fields named `actor_id` keep their
   name and are rendered from the user row: its verified email, else the name it
-  was known by. A first sign-in whose **verified** email equals a pre-upgrade
-  owner string claims that owner's artifacts; an unverified one never does.
+  was known by. A sign-in whose **verified** email (see `CAIRN_OIDC_TRUST_EMAIL`)
+  equals a pre-upgrade owner string claims that owner's artifacts, whether or
+  not it is the identity's first; an unverified one never does. An OIDC
+  identity that a pre-upgrade session shows acting as an owner string is
+  linked to that owner by the migration, so it lands on its own Bin at its
+  next sign-in even without a verified email. That evidence is not used when
+  two or more OIDC identities acted as the same email, or for GitHub sessions
+  (keyed then on the renameable login).
   The dev logins resolve their actor to a user the same way, so they keep the
   Bin they had.
 - **Operator profile** (SPEC-0023 REQ "Operator and User Profiles" and
@@ -73,6 +79,20 @@ reaches 1.0.
   every dial so a rebinding name is never dialled; redirects are failed
   deliveries. `CAIRN_OUTBOUND_ALLOW_HTTP=true` admits `http://` targets and
   logs a WARN at startup.
+- **Existing users land on their account when they sign in** (SPEC-0023).
+  Matching by verified email is no longer one-shot: an identity whose user has
+  no verified email yet is matched again on every sign-in that carries one, so
+  a first sign-in that arrived unverified no longer strands the owner's Bin.
+
+### Added
+
+- **`CAIRN_OIDC_TRUST_EMAIL`** (default `false`). Declares the OIDC provider
+  authoritative for emails, so its `email` claim counts as verified even when
+  `email_verified` is absent or `false` (Pocket ID sends `false` unless
+  `EMAILS_VERIFIED` is set). Set it only for a provider you run whose users
+  cannot set their own email; on one where they can, it lets anyone sign in as
+  the owner of any email they type. GitHub is unaffected: it always uses the
+  primary verified email.
 
 ### Removed
 
@@ -146,9 +166,13 @@ reaches 1.0.
 
 - **Take a database backup first.** Migration `0017_users` adds the `users`
   and `user_identities` tables and `sessions.user_id`.
-- **OIDC must send `email_verified: true`.** A sign-in whose email is not
-  verified is keyed on its subject and no longer reaches artifacts owned by
-  that email. Confirm your provider marks the operator's email verified.
+- **OIDC must send `email_verified: true`, or set `CAIRN_OIDC_TRUST_EMAIL`.**
+  A sign-in whose email is not verified is keyed on its subject and does not
+  reach artifacts owned by that email until a later sign-in carries a verified
+  one. Confirm your provider marks the operator's email verified, or, for a
+  provider you run whose users cannot change their email (Pocket ID with LDAP
+  sync), set `CAIRN_OIDC_TRUST_EMAIL=true` before the first sign-in after the
+  upgrade.
 - **`CAIRN_DEV_INSECURE_BEARER_AUTH` with an `https` `CAIRN_BASE_URL` now fails
   boot** (A21). It was never safe there.
 - **Back up the database before upgrading past `0018_owner_columns`.** It

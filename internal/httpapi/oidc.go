@@ -217,15 +217,18 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "id_token has no usable subject", http.StatusBadGateway)
 		return
 	}
-	// The identity is (issuer, subject). The email only counts when the IdP
-	// says it is verified: an IdP that lets a user type their own email must
-	// not let them claim someone else's user (SPEC-0023 "Unverified email
-	// cannot claim a user", audit A5).
+	// The identity is (issuer, subject). The email only counts when it is
+	// verified: an IdP that lets a user type their own email must not let
+	// them claim someone else's user (SPEC-0023 "Unverified email cannot claim
+	// a user", audit A5). Verified means the ID token says so, or the operator
+	// has declared this issuer authoritative for emails (CAIRN_OIDC_TRUST_EMAIL),
+	// which overrides an absent or false claim: Pocket ID sends false for
+	// LDAP-synced users unless EMAILS_VERIFIED is set.
 	u, actor, err := s.resolveSignIn(r.Context(), user.Identity{
 		Issuer:        s.cfg.OIDCIssuer,
 		Subject:       idToken.Subject,
 		Email:         claims.Email,
-		EmailVerified: claimTrue(claims.EmailVerified),
+		EmailVerified: claimTrue(claims.EmailVerified) || (s.cfg.OIDCTrustEmail && strings.TrimSpace(claims.Email) != ""),
 		Handle:        claims.PreferredUsername,
 	})
 	if err != nil {

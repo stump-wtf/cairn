@@ -17,16 +17,19 @@
 --      login name).
 --   4. Otherwise a new, unverified legacy user whose actor_key is the string.
 --      A later sign-in whose VERIFIED email equals it claims that user
---      (internal/user.linkOrCreate); an unverified one never does.
+--      (internal/user.matchVerified), first sign-in or not; an unverified one
+--      never does.
 --
 -- users.actor_key is the string a user without a primary email is known by
 -- on the wire (actor_id and provenance keep their names and are rendered
 -- from the user row: primary_email, else actor_key, else "user:<id>").
 --
--- A pre-#326 session whose actor WAS its OIDC subject gets that
--- (issuer, subject) identity linked to the user its string resolved to, so a
--- raw-subject owner is still recognised when they next sign in (design,
--- Risks: "Legacy strings that were raw OIDC subjects").
+-- A pre-#326 session is evidence of which string its (issuer, subject)
+-- acted as, so that identity is linked to the user the string resolved to
+-- and an existing owner lands on their own user when they next sign in,
+-- verified email or not (design, Risks: "Legacy strings that were raw OIDC
+-- subjects"; Joe's decision on #384, 2026-09-27). See the INSERT below for
+-- which sessions count.
 --
 -- The whole file runs in one transaction (internal/db.Migrate). Before any
 -- string is dropped, every owner's Bin is compared before and after: the
@@ -113,21 +116,47 @@ SELECT user_id, owner, false, COALESCE(NULLIF(split_part(owner, '@', 1), ''), 'u
   FROM legacy_owner_map
  WHERE rule = 'legacy';
 
--- Raw-subject owners keep their identity: a pre-#326 session that acted as
--- exactly its OIDC subject links that (issuer, subject) to the owner's user.
--- Email-shaped strings are never linked this way; only a verified email
--- claims them.
+-- Existing owners keep their identity. Each (issuer, subject) that a
+-- pre-#326 session recorded is linked to the user of the string its most
+-- recent such session acted as: its own subject (a raw-subject owner), or the
+-- email main's OIDC callback took from the ID token. That link is exactly
+-- the access main already granted that identity; it is not a new match on an
+-- email claim. Three limits keep it from granting more:
+--
+--   * GitHub sessions are skipped. main keyed them on the login, which can
+--     be renamed and re-registered by someone else; identities now key on
+--     the numeric account id, so a login-keyed row could only ever match the
+--     wrong account. GitHub users are matched by their verified email.
+--   * An email two or more OIDC identities acted as is ambiguous evidence,
+--     since an IdP that let users type their email let one of them borrow it
+--     (audit A5): none of them is linked, and they fall back to verified-email
+--     matching. GitHub and dev-login sessions do not make it ambiguous: the
+--     first carried a verified email, the second names no identity.
+--   * An identity #326 already created keeps its user when that user has a
+--     verified primary email. One whose user has none (its first sign-in
+--     after #326 was unverified and was keyed on its subject) moves to the
+--     owner's user, which it would otherwise never reach.
 INSERT INTO user_identities (user_id, issuer, subject, email, email_verified, created_at, last_seen_at)
-SELECT DISTINCT ON (s.issuer, s.subject)
-       m.user_id, s.issuer, s.subject, NULL, false, s.created_at, s.created_at
-  FROM sessions s
-  JOIN legacy_owner_map m ON m.owner = s.actor_id
- WHERE s.user_id IS NULL
-   AND s.issuer <> ''
-   AND s.actor_id = s.subject
-   AND position('@' IN s.subject) = 0
- ORDER BY s.issuer, s.subject, s.created_at DESC
-ON CONFLICT (issuer, subject) DO NOTHING;
+SELECT m.user_id, e.issuer, e.subject, NULL, false, e.created_at, e.created_at
+  FROM (SELECT DISTINCT ON (issuer, subject) issuer, subject, actor_id, created_at
+          FROM sessions
+         WHERE user_id IS NULL
+           AND issuer <> '' AND subject <> ''
+           AND issuer <> 'https://github.com'
+         ORDER BY issuer, subject, created_at DESC) e
+  JOIN legacy_owner_map m ON m.owner = e.actor_id
+ WHERE e.actor_id = e.subject
+    OR NOT EXISTS (SELECT 1 FROM sessions o
+                    WHERE o.user_id IS NULL
+                      AND o.actor_id = e.actor_id
+                      AND o.issuer NOT IN ('', 'https://github.com')
+                      AND (o.issuer, o.subject) <> (e.issuer, e.subject))
+ON CONFLICT (issuer, subject) DO UPDATE
+   SET user_id = EXCLUDED.user_id
+ WHERE NOT EXISTS (SELECT 1 FROM users u
+                    WHERE u.id = user_identities.user_id
+                      AND u.primary_email IS NOT NULL
+                      AND u.email_verified);
 
 -- Artifacts: exactly one owner, a user or a team. Teams do not exist yet
 -- (#328); owner_team_id lands now so the constraint has its final shape, and

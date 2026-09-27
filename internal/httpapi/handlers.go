@@ -111,7 +111,7 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 		s.writeError(w, r, mapUploadErr(err), nil)
 		return
 	}
-	s.writeJSON(w, http.StatusCreated, s.toArtifactResponse(art))
+	s.writeJSON(w, http.StatusCreated, s.toOwnerArtifactResponse(art))
 }
 
 // spooledFile is a multipart file part spooled to a temp file so the store can
@@ -231,7 +231,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			s.writeError(w, r, mapUploadErr(err), nil)
 			return
 		}
-		s.writeJSON(w, http.StatusCreated, s.toArtifactResponse(art))
+		s.writeJSON(w, http.StatusCreated, s.toOwnerArtifactResponse(art))
 		return
 	}
 
@@ -251,7 +251,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		s.writeError(w, r, mapUploadErr(err), nil)
 		return
 	}
-	s.writeJSON(w, http.StatusCreated, s.toArtifactResponse(art))
+	s.writeJSON(w, http.StatusCreated, s.toOwnerArtifactResponse(art))
 }
 
 // handleGet resolves an artifact's metadata + preview info. Unknown/expired ids
@@ -267,8 +267,14 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	resp := s.toArtifactResponse(art)
+	// A link read needs no credential, but an owner who sends one also sees
+	// the scan outcome (SPEC-0017 RD-9).
 	viewer, _ := s.optionalPrincipal(r)
+	var viewerID string
+	if viewer != nil {
+		viewerID = viewer.UserID
+	}
+	resp := s.toViewerArtifactResponse(art, viewerID)
 	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
 	s.writeJSON(w, http.StatusOK, resp)
 }

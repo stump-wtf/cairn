@@ -55,6 +55,10 @@ ids exist:
 
 ## Authentication and scopes
 
+On your own instance, check first that each setting is on the right side: the server reads
+`CAIRN_API_TOKENS` and `CAIRN_BASE_URL`, while the CLI reads `CAIRN_TOKEN` and `CAIRN_URL`.
+[Which variable is which](./self-hosting.md#which-variable-is-which) lists them all.
+
 | You see | Likely cause | Fix |
 |---|---|---|
 | `401` with `unauthorized: authentication required` | No token, a typo, a revoked token, or a header without `Bearer` | Send `Authorization: Bearer cairn_pat_…`, and mint a new token if the old one was revoked |
@@ -117,11 +121,14 @@ list:
    five minutes, and `X-Cairn-Event-Id` to match the body's `event_id`. A receiver with a
    badly skewed clock fails the first check.
 
-To compute the signature yourself, with the captured body in `body` and the shared secret
-in `CAIRN_WEBHOOK_SECRET`:
+To compute the signature yourself, put the captured body in a file named `body` and the
+secret in a local shell variable. `SECRET` below is only a name for this command; Cairn
+never reads it. Its value must equal the signing secret of the delivery you are checking,
+which today is the sending instance's `CAIRN_OUTBOUND_WEBHOOK_SECRET`.
 
 ```bash
-printf 'sha256=%s\n' "$(openssl dgst -sha256 -hmac "$CAIRN_WEBHOOK_SECRET" -r body | cut -d' ' -f1)"
+SECRET='…'   # the instance's CAIRN_OUTBOUND_WEBHOOK_SECRET value
+printf 'sha256=%s\n' "$(openssl dgst -sha256 -hmac "$SECRET" -r body | cut -d' ' -f1)"
 ```
 
 ## Outbound events never arrive

@@ -64,7 +64,8 @@ func (s *Service) loadRunHeader(ctx context.Context, publicID string) (*Run, int
 		       COALESCE(a.created_by_user_id::text, ''), COALESCE(`+user.ActorSQL("cu")+`, ''),
 		       a.on_behalf_of, a.channel, a.captured_at,
 		       COALESCE(a.owner_user_id::text, ''), COALESCE(a.owner_team_id::text, ''),
-		       a.visibility, a.expires_at
+		       a.visibility, a.expires_at,
+		       r.redaction_status, r.redaction_count, r.redaction_rules
 		FROM runs r
 		JOIN artifacts a ON a.id = r.artifact_id
 		LEFT JOIN users cu ON cu.id = a.created_by_user_id
@@ -74,6 +75,7 @@ func (s *Service) loadRunHeader(ctx context.Context, publicID string) (*Run, int
 		&run.Provenance.CreatedByUserID, &run.Provenance.ActorID, &run.Provenance.OnBehalfOf, &run.Provenance.Channel,
 		&run.Provenance.CapturedAt, &run.Access.OwnerUserID, &run.Access.OwnerTeamID, &run.Access.Visibility,
 		&run.ExpiresAt,
+		&run.Redaction.Status, &run.Redaction.Count, &run.Redaction.Rules,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

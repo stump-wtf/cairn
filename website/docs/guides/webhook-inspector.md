@@ -91,11 +91,20 @@ document.
 ## What gets recorded
 
 Cairn stores each request as inert data. It never runs, follows, or fetches anything in a
-payload. Before it stores the headers, it lower-cases their names and drops credentials
-and connection-level headers: `Authorization`, `Cookie`, `Set-Cookie`,
-`Proxy-Authorization`, and hop-by-hop headers such as `Connection`. Signature headers such
-as `X-Hub-Signature-256` and `X-Cairn-Signature` are kept, which is what makes the
-inspector useful for signature problems.
+payload. Before it stores the headers, it lower-cases their names and drops cookies and
+connection-level headers: `Cookie`, `Set-Cookie`, `Proxy-Authorization`, and hop-by-hop
+headers such as `Connection`. `Authorization` is kept by name, but its value is always
+stored as `[REDACTED]`, after the scheme word when there is one (`Bearer [REDACTED]`).
+Signature headers such as `X-Hub-Signature-256` and `X-Cairn-Signature` are kept, which is
+what makes the inspector useful for signature problems.
+
+Cairn also scans the query string, the headers and the body for credentials before it
+stores anything, and replaces each one it finds with `[REDACTED]`. The sender still gets
+the usual reply: a capture is never refused over what the scan finds. Each captured
+request reports what the scan did in `redaction_status`, with the rules that matched. A
+field Cairn couldn't store safely is replaced with a notice and listed in
+`redaction_withheld`. A binary body, such as an image, is stored as sent and reads
+`not_scanned_binary`.
 
 ## Debug a delivery to Switchboard
 
