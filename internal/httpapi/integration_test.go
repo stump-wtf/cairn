@@ -41,6 +41,9 @@ func testServer(t *testing.T, cfg Config, opts store.Options) *httptest.Server {
 	// opts into the insecure dev bearer shortcut. Production leaves this off and
 	// verifies every token (see the security tests).
 	cfg.DevInsecureBearerAuth = true
+	if cfg.Redaction == nil {
+		cfg.Redaction = sharedTestScanner(t)
+	}
 	pool := newTestPool(t)
 	withTokenOperators(t, pool, &cfg)
 	st := store.New(pool, objectstore.NewMemory(), opts)

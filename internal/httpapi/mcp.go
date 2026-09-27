@@ -45,6 +45,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -764,6 +765,10 @@ func (s *Server) mcpScopeErr(ctx context.Context, tool, scope string) error {
 func (s *Server) mcpToolErr(ctx context.Context, tool string, err error) error {
 	code := errs.CodeOf(err)
 	attrs := []any{"tool", tool, "code", code, "error", err}
+	if reqID := middleware.GetReqID(ctx); reqID != "" {
+		attrs = append(attrs, "request_id", reqID)
+	}
+	attrs = append(attrs, redactionLogAttrs(err, mcpRedactionSurface[tool])...)
 	if code == errs.CodeInternal {
 		s.log.ErrorContext(ctx, "mcp: tool call failed", attrs...)
 	} else {
@@ -830,7 +835,8 @@ func (s *Server) mcpReadArtifact(ctx context.Context, req *mcp.CallToolRequest, 
 	if err != nil {
 		return nil, mcpReadOutput{}, s.mcpToolErr(ctx, "artifact_read", err)
 	}
-	out := mcpReadOutput{artifactResponse: s.toArtifactResponse(art)}
+	// The owner also sees the scan outcome (SPEC-0017 RD-9).
+	out := mcpReadOutput{artifactResponse: s.toViewerArtifactResponse(art, mcpUserID(req.Extra))}
 	out.Provenance.Actor = s.displayActor(ctx, &Principal{ActorID: mcpActor(req.Extra), UserID: mcpUserID(req.Extra)}, out.Provenance.Actor)
 
 	if art.ShareType == artifact.TypeBundle && in.Path == "" {
@@ -1035,7 +1041,7 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 	if err != nil {
 		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", err)
 	}
-	return nil, mcpCreateOutput{artifactResponse: s.toArtifactResponse(art)}, nil
+	return nil, mcpCreateOutput{artifactResponse: s.toOwnerArtifactResponse(art)}, nil
 }
 
 // --- bundle_create ---------------------------------------------------------------
@@ -1123,7 +1129,7 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 	if err != nil {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", err)
 	}
-	out := mcpBundleCreateOutput{artifactResponse: s.toArtifactResponse(art)}
+	out := mcpBundleCreateOutput{artifactResponse: s.toOwnerArtifactResponse(art)}
 	created, err := s.store.ListMembers(ctx, art.PublicID)
 	if err != nil {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", err)
@@ -1340,6 +1346,10 @@ type mcpRunOutput struct {
 	// []spanView and unmarshaling back, so json.RawMessage decodes to a plain
 	// object.
 	Spans []map[string]any `json:"spans"`
+	// OwnerRedaction is the ingest scan outcome, as on [runResponse]: the
+	// run's on run_create, the append's own on run_append_spans (SPEC-0017
+	// RD-9).
+	OwnerRedaction
 }
 
 // toMCPRunOutput projects a REST [runResponse] (already built by
@@ -1350,6 +1360,7 @@ func toMCPRunOutput(r runResponse) (mcpRunOutput, error) {
 		ID: r.ID, URL: r.URL, MCP: r.MCP, Status: r.Status, Title: r.Title, Prompt: r.Prompt,
 		Model: r.Model, TokenCount: r.TokenCount, Provenance: r.Provenance, StartedAt: r.StartedAt,
 		EndedAt: r.EndedAt, ExpiresAt: r.ExpiresAt, Stats: r.Stats,
+		OwnerRedaction: r.OwnerRedaction,
 	}
 	if len(r.Spans) == 0 {
 		return out, nil
@@ -1439,7 +1450,9 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 	if err != nil {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", err)
 	}
-	out, err := toMCPRunOutput(s.toRunResponse(run))
+	resp := s.toRunResponse(run)
+	resp.OwnerRedaction = ownerRedactionOf(run.Redaction)
+	out, err := toMCPRunOutput(resp)
 	if err != nil {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", err)
 	}
@@ -1474,14 +1487,17 @@ func (s *Server) mcpAppendRunSpans(ctx context.Context, req *mcp.CallToolRequest
 	if err != nil {
 		return nil, mcpRunOutput{}, err
 	}
-	if _, err := s.traj.AppendSpans(ctx, id, userID, spans); err != nil {
+	_, outcome, err := s.traj.AppendSpansWithOutcome(ctx, id, userID, spans)
+	if err != nil {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_append_spans", err)
 	}
 	run, err := s.traj.GetRun(ctx, id)
 	if err != nil {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_append_spans", err)
 	}
-	out, err := toMCPRunOutput(s.toRunResponse(run))
+	resp := s.toRunResponse(run)
+	resp.OwnerRedaction = ownerRedactionOf(outcome)
+	out, err := toMCPRunOutput(resp)
 	if err != nil {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_append_spans", err)
 	}
@@ -1569,6 +1585,9 @@ type mcpCommentOutput struct {
 	CreatedAt  time.Time      `json:"created_at"`
 	EditedAt   *time.Time     `json:"edited_at,omitempty"`
 	Deleted    bool           `json:"deleted"`
+	// OwnerRedaction is what the ingest scan did to the body, as on
+	// [commentResponse] (SPEC-0017 RD-9).
+	OwnerRedaction
 }
 
 func toMCPCommentOutput(c annotation.Comment) mcpCommentOutput {
@@ -1608,7 +1627,9 @@ func (s *Server) mcpComment(ctx context.Context, req *mcp.CallToolRequest, in mc
 	if err != nil {
 		return nil, mcpCommentOutput{}, s.mcpToolErr(ctx, "artifact_comment", err)
 	}
-	return nil, toMCPCommentOutput(comment), nil
+	out := toMCPCommentOutput(comment)
+	out.OwnerRedaction = ownerRedactionOf(comment.Redaction)
+	return nil, out, nil
 }
 
 type mcpReactInput struct {

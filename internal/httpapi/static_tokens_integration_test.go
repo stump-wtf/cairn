@@ -7,7 +7,6 @@ package httpapi
 // as operator-provisioned.
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,7 +15,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -70,25 +68,6 @@ func newResolvedServer(t *testing.T, st *store.Store, cfg Config, logger *slog.L
 		t.Fatalf("ResolveAPITokens: %v", err)
 	}
 	return api
-}
-
-// syncBuffer is a goroutine-safe log sink: the server logs from its request
-// goroutines while the test reads.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
 }
 
 const (

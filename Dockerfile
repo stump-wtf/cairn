@@ -13,8 +13,12 @@ COPY . .
 # Static, stripped, reproducible build.
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/cairnd ./cmd/cairnd
 
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates wget \
+FROM alpine:3.24
+# `apk upgrade` first: a base image tag is only as fresh as its last rebuild,
+# and the main-only Trivy gate (--ignore-unfixed, HIGH/CRITICAL, exit 1)
+# fails on any CVE the repository has already fixed. alpine 3.24.1 as pulled
+# shipped libssl3/libcrypto3 3.5.7-r0 (CVE-2026-14456, fixed in 3.5.8-r0).
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates wget \
     && addgroup -S cairn && adduser -S -G cairn cairn
 COPY --from=build /out/cairnd /usr/local/bin/cairnd
 USER cairn

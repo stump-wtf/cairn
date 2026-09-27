@@ -123,3 +123,80 @@ func TestResolveClaimsLegacyOwner(t *testing.T) {
 		t.Fatalf("second verified identity got %s, want %s", again.ID, legacy.ID)
 	}
 }
+
+// The #384 review's probe, inverted: a legacy owner is claimed by a LATER
+// verified sign-in of an identity whose first sign-in was unverified. Against
+// the one-shot resolver the second sign-in kept the subject-keyed user from
+// the first, so the legacy Bin was stranded for good.
+func TestResolveLaterVerifiedSignInClaimsLegacyOwner(t *testing.T) {
+	s, _ := newTestStore(t)
+	legacy := mustResolveActor(t, s, "joe@stump.example")
+
+	first := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "sub-joe", Email: "joe@stump.example"})
+	if first.ID == legacy.ID {
+		t.Fatal("an unverified first sign-in claimed the legacy owner")
+	}
+	later := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "sub-joe", Email: "joe@stump.example", EmailVerified: true})
+	if later.ID != legacy.ID {
+		t.Fatalf("verified second sign-in got %s, want the legacy user %s", later.ID, legacy.ID)
+	}
+	if !later.EmailVerified || later.PrimaryEmail != "joe@stump.example" {
+		t.Fatalf("claimed user = %+v, want verified joe@stump.example", later)
+	}
+	// And it stays there.
+	if again := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "sub-joe", Email: "joe@stump.example"}); again.ID != legacy.ID {
+		t.Fatalf("settled identity moved to %s", again.ID)
+	}
+}
+
+// An identity already linked to a legacy owner (the ownership migration links
+// one from its pre-users session, which main keyed on the raw email claim,
+// case and all) claims that same user when its email is verified, even when
+// another legacy user holds the exact lower-case string: its own user wins.
+func TestResolveRematchPrefersOwnLegacyUser(t *testing.T) {
+	s, pool := newTestStore(t)
+	ctx := context.Background()
+	variant := mustResolveActor(t, s, "kim@example.com")
+	own := mustResolveActor(t, s, "Kim@Example.com")
+	if _, err := pool.Exec(ctx, `INSERT INTO user_identities (user_id, issuer, subject, email_verified)
+		VALUES ($1, $2, 'sub-kim', false)`, own.ID, pocketIssuer); err != nil {
+		t.Fatalf("link identity: %v", err)
+	}
+	// Unverified: it is already on its own user, and nothing is claimed.
+	if u := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "sub-kim", Email: "kim@example.com"}); u.ID != own.ID || u.PrimaryEmail != "" {
+		t.Fatalf("unverified sign-in = %+v, want its own unclaimed user %s", u, own.ID)
+	}
+	u := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "sub-kim", Email: "kim@example.com", EmailVerified: true})
+	if u.ID != own.ID || u.ID == variant.ID || u.PrimaryEmail != "kim@example.com" {
+		t.Fatalf("verified sign-in = %+v, want its own user %s claimed", u, own.ID)
+	}
+}
+
+// With nothing to match, a verified email is taken by the identity's own
+// user rather than a new one, so whatever it owns stays in its Bin.
+func TestResolveRematchVerifiesOwnUser(t *testing.T) {
+	s, _ := newTestStore(t)
+	first := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "sub-ann", Email: "ann@example.com"})
+	later := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "sub-ann", Email: "ann@example.com", EmailVerified: true})
+	if later.ID != first.ID || later.PrimaryEmail != "ann@example.com" || !later.EmailVerified {
+		t.Fatalf("verified sign-in = %+v, want user %s holding ann@example.com", later, first.ID)
+	}
+}
+
+// Suspension is not escaped by rematching: an identity whose unverified user
+// is suspended stays on that user when it later presents a verified email
+// that a legacy owner holds, so the sign-in is refused rather than landing on
+// the legacy user (SPEC-0023 "Suspending a user offboards them").
+func TestResolveRematchKeepsSuspendedUser(t *testing.T) {
+	s, pool := newTestStore(t)
+	ctx := context.Background()
+	legacy := mustResolveActor(t, s, "lee@example.com")
+	first := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "sub-lee", Email: "lee@example.com"})
+	if _, err := pool.Exec(ctx, `UPDATE users SET suspended_at = now() WHERE id = $1`, first.ID); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+	later := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "sub-lee", Email: "lee@example.com", EmailVerified: true})
+	if later.ID != first.ID || later.SuspendedAt == nil {
+		t.Fatalf("suspended identity resolved to %+v, want its suspended user %s (not legacy %s)", later, first.ID, legacy.ID)
+	}
+}
