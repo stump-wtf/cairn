@@ -218,7 +218,22 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			s.writeError(w, r, parts.err(), nil)
 			return
 		}
-		tmp, err := os.CreateTemp("", "cairn-upload-*")
+		// Once a member is bad the upload is refused whatever follows, so the
+		// rest are only measured for the rejection (VE-4), never spooled: a
+		// doomed request must not write up to MaxBundleMembers full-size parts
+		// to disk first.
+		if parts.failed() {
+			src := &partReader{r: io.LimitReader(part, s.cfg.MaxUploadBytes+1)}
+			n, copyErr := io.Copy(io.Discard, src)
+			_ = part.Close()
+			if copyErr != nil {
+				s.writeError(w, r, src.classify(copyErr), nil)
+				return
+			}
+			parts.add(part.FileName(), n > s.cfg.MaxUploadBytes, s.cfg.MaxUploadBytes)
+			continue
+		}
+		tmp, err := createSpool()
 		if err != nil {
 			s.writeError(w, r, err, nil)
 			return
@@ -233,9 +248,8 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			s.writeError(w, r, src.classify(copyErr), nil)
 			return
 		}
-		// An oversize part is dropped, not spooled, and the rest still are, so
-		// every bad member is named together (SPEC-0019 VE-4). Close already
-		// read the part through, so continuing costs no extra body.
+		// An oversize part is dropped, not spooled, and the rest are still
+		// measured, so every bad member is named together (SPEC-0019 VE-4).
 		tooLarge := n > s.cfg.MaxUploadBytes
 		parts.add(part.FileName(), tooLarge, s.cfg.MaxUploadBytes)
 		if tooLarge {

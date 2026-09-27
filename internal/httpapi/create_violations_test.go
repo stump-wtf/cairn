@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -327,6 +328,40 @@ func TestViolationBundleMembersCumulative(t *testing.T) {
 	assertViolations(t, env, errs.CodeValidation,
 		wantViolation{"members[1].name", errs.LocForm, errs.ReasonDuplicate, nil, "", "a.md"},
 		wantViolation{"members[2].content", errs.LocForm, errs.ReasonTooLarge, float64(8), errs.UnitBytes, "<none>"})
+}
+
+// Once a member is bad the rest are measured for the rejection but never
+// spooled: a doomed upload writes no more parts to disk, while a later bad
+// member is still reported with the first (VE-4).
+func TestViolationBundleStopsSpoolingOnceRefused(t *testing.T) {
+	var spooled int
+	orig := createSpool
+	createSpool = func() (*os.File, error) { spooled++; return orig() }
+	t.Cleanup(func() { createSpool = orig })
+
+	cfg := noRateLimit()
+	cfg.MaxUploadBytes = 8
+	srv := storelessServer(t, cfg)
+	big := strings.Repeat("a", 64)
+
+	body, ct := multipartBody(t, nil, file{"a.md", big}, file{"b.md", "ok"}, file{"c.md", "ok"}, file{"d.md", big})
+	env := postExpect(t, srv.URL+"/v1/artifacts", map[string]string{"Content-Type": ct}, body, http.StatusRequestEntityTooLarge)
+	assertViolations(t, env, errs.CodePayloadTooLarge,
+		wantViolation{"members[0].content", errs.LocForm, errs.ReasonTooLarge, float64(8), errs.UnitBytes, "<none>"},
+		wantViolation{"members[3].content", errs.LocForm, errs.ReasonTooLarge, float64(8), errs.UnitBytes, "<none>"})
+	if spooled != 1 {
+		t.Fatalf("spooled %d parts, want 1: nothing after the first bad member reaches disk", spooled)
+	}
+
+	spooled = 0
+	body, ct = multipartBody(t, nil, file{"a.md", "ok"}, file{"a.md", "ok"}, file{"c.md", "ok"}, file{"a.md", "ok"})
+	env = postExpect(t, srv.URL+"/v1/artifacts", map[string]string{"Content-Type": ct}, body, http.StatusBadRequest)
+	assertViolations(t, env, errs.CodeValidation,
+		wantViolation{"members[1].name", errs.LocForm, errs.ReasonDuplicate, nil, "", "a.md"},
+		wantViolation{"members[3].name", errs.LocForm, errs.ReasonDuplicate, nil, "", "a.md"})
+	if spooled != 2 {
+		t.Fatalf("spooled %d parts, want 2: nothing after the duplicate reaches disk", spooled)
+	}
 }
 
 func TestViolationBundleTooManyMembers(t *testing.T) {

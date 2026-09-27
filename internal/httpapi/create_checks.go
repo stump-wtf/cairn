@@ -3,6 +3,7 @@ package httpapi
 import (
 	"io"
 	"net/http"
+	"os"
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
@@ -152,6 +153,15 @@ func (m *memberChecks) record(inv *errs.Invalid) {
 		m.bad = append(m.bad, inv)
 	}
 }
+
+// failed reports whether a part already seen makes the upload a rejection:
+// a bad name or an oversize part. Either one fails a bundle, and an oversize
+// lone file fails as the body.
+func (m *memberChecks) failed() bool { return len(m.bad) > 0 }
+
+// createSpool opens the temp file a file part is spooled to. It is a variable
+// so a test can count the parts that reach disk.
+var createSpool = func() (*os.File, error) { return os.CreateTemp("", "cairn-upload-*") }
 
 // tooMany reports whether the parts seen already exceed a bundle's bound.
 func (m *memberChecks) tooMany() bool { return m.n > store.MaxBundleMembers }
