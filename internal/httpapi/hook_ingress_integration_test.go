@@ -124,8 +124,10 @@ func TestIntegrationHookIngressCapturesAnonymousRequest(t *testing.T) {
 	if string(captured.Body) != payload {
 		t.Fatalf("captured body = %q, want %q (verbatim, SPEC-0005 REQ \"Request Capture and Storage\")", captured.Body, payload)
 	}
-	if _, ok := captured.Headers["authorization"]; ok {
-		t.Fatal("Authorization header survived into the captured record — must be dropped on capture")
+	// Authorization keeps its name and scheme; the credential is masked
+	// (SPEC-0017 RD-4 "Webhook capture is masked").
+	if got := captured.Headers["authorization"]; len(got) != 1 || got[0] != "Bearer [REDACTED]" {
+		t.Fatalf("authorization = %v, want [Bearer [REDACTED]]: its value must never survive into the captured record", got)
 	}
 	if _, ok := captured.Headers["cookie"]; ok {
 		t.Fatal("Cookie header survived into the captured record — must be dropped on capture")

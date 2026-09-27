@@ -50,6 +50,13 @@ func fakeGitHub(t *testing.T, userJSON, emailsJSON string) *httptest.Server {
 // can seed artifacts as arbitrary owners.
 func identityServer(t *testing.T, idp *fakeIdP, gh *httptest.Server) *httptest.Server {
 	t.Helper()
+	return identityServerWith(t, idp, gh, nil)
+}
+
+// identityServerWith is identityServer with a hook to adjust the config
+// (CAIRN_OIDC_TRUST_EMAIL, say) before the server is built.
+func identityServerWith(t *testing.T, idp *fakeIdP, gh *httptest.Server, adjust func(*Config)) *httptest.Server {
+	t.Helper()
 	pool := newTestPool(t)
 	st := store.New(pool, objectstore.NewMemory(), storeOpts())
 	cfg := oidcConfig()
@@ -57,6 +64,9 @@ func identityServer(t *testing.T, idp *fakeIdP, gh *httptest.Server) *httptest.S
 	cfg.OIDCIssuer = idp.srv.URL
 	cfg.OIDCClientID = testOIDCClientID
 	cfg.OIDCClientSecret = "test-secret"
+	if adjust != nil {
+		adjust(&cfg)
+	}
 	api := New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err := api.EnableOIDC(context.Background()); err != nil {
 		t.Fatalf("EnableOIDC: %v", err)

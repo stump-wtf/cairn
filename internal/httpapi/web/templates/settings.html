@@ -132,6 +132,27 @@
         </table>
       </section>
 
+      <section class="settings-card" id="grants" aria-labelledby="grants-h">
+        <h2 id="grants-h" class="settings-card-h">OAuth connections</h2>
+        <p class="settings-card-note">Every client holding an OAuth grant that acts as you — whether it connects over MCP or plain REST. Revoking one cuts off its access immediately.</p>
+
+        <table class="token-table" data-grant-table>
+          <caption class="sr-only">Your live OAuth grants and the clients holding them</caption>
+          <thead>
+            <tr>
+              <th scope="col">Client</th>
+              <th scope="col">Scopes</th>
+              <th scope="col">Granted</th>
+              <th scope="col">Last used</th>
+              <th scope="col"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody data-grant-rows>
+            {{range .Grants}}{{template "grant-row" .}}{{else}}<tr class="token-empty-row" data-grant-empty><td colspan="5">No OAuth connections yet. Agents you approve — over MCP or REST — appear here.</td></tr>{{end}}
+          </tbody>
+        </table>
+      </section>
+
       <section class="settings-card" id="cli" aria-labelledby="cli-h">
         <h2 id="cli-h" class="settings-card-h"><span class="connect-h2-glyph" aria-hidden="true">&gt;_</span> CLI <span class="connect-badge connect-badge-live">available now</span></h2>
         <p class="connect-note">The <code class="connect-code">cairn</code> CLI is a single Go binary — a REST client of this same API, no domain logic of its own.</p>
@@ -183,6 +204,16 @@
   <td class="token-cell-created">{{.Created}}</td>
   <td class="token-cell-lastused">{{.LastUsed}}</td>
   <td class="token-cell-action">{{if .Revoked}}<span class="token-revoked-label">revoked {{.RevokedAt}}</span>{{else}}<button type="button" class="token-revoke-btn" data-token-revoke data-token-id="{{.ID}}" data-token-name="{{.Name}}">Revoke</button>{{end}}</td>
+</tr>{{end}}
+
+{{/* One OAuth grant row (A20, issue #343): a live connection's client,
+     scopes and ages; settings.js marks it revoked in place. */}}
+{{define "grant-row"}}<tr class="token-row" id="grant-{{.ID}}" data-grant-id="{{.ID}}">
+  <td class="token-cell-name">{{.Client}}</td>
+  <td class="token-cell-scopes"><code>{{.Scope}}</code></td>
+  <td class="token-cell-created">{{.Created}}</td>
+  <td class="token-cell-lastused">{{.LastUsed}}</td>
+  <td class="token-cell-action"><button type="button" class="token-revoke-btn" data-grant-revoke data-grant-id="{{.ID}}" data-grant-name="{{.Client}}">Revoke</button></td>
 </tr>{{end}}
 
 {{/* One MCP agent session row (issue #76), shared by the server-rendered

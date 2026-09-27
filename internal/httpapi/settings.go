@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/mcpsession"
@@ -55,6 +58,15 @@ type settingsView struct {
 	// the affected user may always read (SPEC-0023 REQ "Operator Surfaces
 	// Bound Tenant Data and Never Read It").
 	OperatorActions []auditRowView
+	// Grants lists the human's live OAuth connections (A20, issue #343) —
+	// clients authorized over REST or MCP alike, each revocable here.
+	Grants []grantRowView
+}
+
+// grantsResponse is the GET /v1/oauth/grants body: the same rows the
+// settings page renders, for settings.js's list-refresh path.
+type grantsResponse struct {
+	Grants []grantRowView `json:"grants"`
 }
 
 // scopeOptionView is one checkbox in the token-creation form: the wire scope
@@ -205,6 +217,17 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 			vm.OperatorActions = toAuditRows(entries)
 		}
 	}
+	if s.oauth != nil {
+		grants, err := s.oauth.ListActorGrants(r.Context(), p.UserID)
+		if err != nil {
+			s.log.WarnContext(r.Context(), "settings: list oauth grants failed", "error", err)
+		} else {
+			vm.Grants = make([]grantRowView, 0, len(grants))
+			for _, g := range grants {
+				vm.Grants = append(vm.Grants, toGrantRowView(g))
+			}
+		}
+	}
 	s.renderWeb(w, r, "settings", vm)
 }
 
@@ -228,4 +251,89 @@ func (s *Server) authMethodLabel() string {
 // is what sends an anonymous caller on to login.
 func (s *Server) handleConnectRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/settings", http.StatusMovedPermanently)
+}
+
+// grantRowView is one row in the OAuth connections list (A20, issue #343):
+// the client that holds a grant acting as this human, with its scopes and
+// when it was last used — metadata only, like tokenRowView. These are
+// grants issued over REST (and any other surface), which the Agent sessions
+// table cannot show: only MCP activity opens a session row there.
+type grantRowView struct {
+	ID       string
+	Client   string
+	Scope    string
+	Created  string // humanized
+	LastUsed string // humanized, or "never"
+}
+
+// toGrantRowView projects an oauth.ActorGrant into its display row.
+func toGrantRowView(g *oauth.ActorGrant) grantRowView {
+	row := grantRowView{
+		ID:       g.GrantID,
+		Client:   g.Client,
+		Scope:    g.Scope,
+		Created:  humanizeSince(g.CreatedAt),
+		LastUsed: "never",
+	}
+	if g.LastUsed != nil {
+		row.LastUsed = humanizeSince(*g.LastUsed)
+	}
+	return row
+}
+
+// handleListGrants lists the authenticated human's live OAuth grants
+// (A20, SPEC-0023 REQ "Closing the Audited Surfaces"). Session-authenticated
+// only (requireHumanSession refuses every bearer caller), like the token and
+// MCP session management routes — a bearer caller revoking credentials is
+// the finding itself.
+func (s *Server) handleListGrants(w http.ResponseWriter, r *http.Request) {
+	p, ok := principalFrom(r.Context())
+	if !ok {
+		s.writeError(w, r, errs.ErrUnauthorized, nil)
+		return
+	}
+	if s.oauth == nil {
+		s.writeError(w, r, errs.ErrNotFound, nil)
+		return
+	}
+	grants, err := s.oauth.ListActorGrants(r.Context(), p.UserID)
+	if err != nil {
+		s.writeError(w, r, err, nil)
+		return
+	}
+	rows := make([]grantRowView, 0, len(grants))
+	for _, g := range grants {
+		rows = append(rows, toGrantRowView(g))
+	}
+	s.writeJSON(w, http.StatusOK, grantsResponse{Grants: rows})
+}
+
+// handleRevokeGrant revokes one of the authenticated human's own OAuth
+// grants and its whole token family: the connected agent's next call fails
+// immediately, on every surface the grant worked on. Unknown or foreign ids
+// are a uniform 404 — the endpoint never discloses another actor's grants.
+func (s *Server) handleRevokeGrant(w http.ResponseWriter, r *http.Request) {
+	p, ok := principalFrom(r.Context())
+	if !ok {
+		s.writeError(w, r, errs.ErrUnauthorized, nil)
+		return
+	}
+	if s.oauth == nil {
+		s.writeError(w, r, errs.ErrNotFound, nil)
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if err := s.oauth.RevokeActorGrant(r.Context(), p.UserID, id); err != nil {
+		// Only "no such grant of yours" is the uniform 404. A database
+		// failure is a 500 like everywhere else: reporting it as not_found
+		// would tell the human their connection is already gone when it is
+		// still live and still acting as them.
+		if errors.Is(err, oauth.ErrInvalidGrant) || errors.Is(err, oauth.ErrInvalidRequest) {
+			err = errs.ErrNotFound
+		}
+		s.writeError(w, r, err, map[string]string{"id": id})
+		return
+	}
+	s.log.InfoContext(r.Context(), "oauth: grant revoked from settings", "grant", id, "owner", p.ActorID)
+	w.WriteHeader(http.StatusNoContent)
 }

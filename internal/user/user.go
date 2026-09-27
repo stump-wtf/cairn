@@ -5,11 +5,17 @@
 // that lets a user type their own email therefore let them become someone
 // else (audit A5), and `Joe@` and `joe@` were two owners.
 //
-// A sign-in now resolves its identity by (issuer, subject). A NEW identity
-// links to an existing user only when its provider asserts a verified email
-// equal, after lower-casing, to that user's primary email; otherwise it gets a
-// user of its own. An unverified email never links and never becomes a
-// primary email.
+// A sign-in now resolves its identity by (issuer, subject). An identity links
+// to an existing user only when its provider asserts a verified email equal,
+// after lower-casing, to that user's primary email; otherwise it gets a user
+// of its own. An unverified email never links and never becomes a primary
+// email.
+//
+// Matching is not one-shot. An identity whose user still has no verified
+// primary email is matched again on every sign-in that presents a verified
+// email, so an operator whose first sign-in arrived unverified reaches their
+// account as soon as the email is verified (or the issuer is trusted) instead
+// of being stranded on the user that first sign-in created.
 //
 // Every owner and actor reference in the schema is a user id (SPEC-0023 REQ
 // "Owner Model"). A user renders on the wire (actor_id, provenance) as its
@@ -120,9 +126,10 @@ var errRetry = errors.New("user: concurrent sign-in, retry")
 
 // Resolve returns the user an identity belongs to, creating the identity (and
 // a user, when it links to none) on its first sign-in. The identity's email
-// and verification are refreshed on every sign-in, but a known identity keeps
-// its user whatever email it now presents: linking happens once, at first
-// sign-in, and only by verified email.
+// and verification are refreshed on every sign-in. A known identity whose
+// user has a verified primary email keeps that user whatever email it now
+// presents; one whose user has none is matched again by a verified email
+// (rematch). Linking is only ever by verified email.
 func (s *Store) Resolve(ctx context.Context, id Identity) (*User, error) {
 	if id.Issuer == "" || id.Subject == "" {
 		return nil, errors.New("user: identity needs an issuer and a subject")
@@ -159,7 +166,13 @@ func (s *Store) resolveOnce(ctx context.Context, id Identity) (*User, error) {
 	).Scan(&userID)
 	switch {
 	case err == nil:
-		// A known identity: its user was settled at first sign-in.
+		// A known identity. Its user is settled once that user has a verified
+		// primary email; until then a verified email may still match it.
+		if id.EmailVerified && id.Email != "" {
+			if userID, err = s.rematch(ctx, tx, id, userID); err != nil {
+				return nil, err
+			}
+		}
 	case errors.Is(err, pgx.ErrNoRows):
 		userID, err = s.linkOrCreate(ctx, tx, id)
 		if err != nil {
@@ -207,37 +220,9 @@ func (s *Store) linkOrCreate(ctx context.Context, tx pgx.Tx, id Identity) (strin
 	var primary, actorKey any
 	if id.EmailVerified && id.Email != "" {
 		primary = id.Email
-		var userID string
-		err := tx.QueryRow(ctx,
-			`SELECT id::text FROM users WHERE primary_email = $1 AND email_verified`,
-			id.Email,
-		).Scan(&userID)
-		if err == nil {
-			return userID, nil
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return "", fmt.Errorf("user: link by email: %w", err)
-		}
-		// The claim. An exact-case legacy string wins over a case variant of
-		// it; among variants the oldest does.
-		err = tx.QueryRow(ctx, `
-			UPDATE users SET primary_email = $1, email_verified = true
-			 WHERE id = (SELECT id FROM users
-			              WHERE primary_email IS NULL AND NOT email_verified
-			                AND lower(actor_key) = $1
-			              ORDER BY actor_key = $1 DESC, created_at, id
-			              LIMIT 1
-			              FOR UPDATE)
-			RETURNING id::text`,
-			id.Email,
-		).Scan(&userID)
-		switch {
-		case err == nil:
-			return userID, nil
-		case isUniqueViolation(err):
-			return "", errRetry
-		case !errors.Is(err, pgx.ErrNoRows):
-			return "", fmt.Errorf("user: claim legacy owner: %w", err)
+		userID, err := matchVerified(ctx, tx, id.Email, "")
+		if err != nil || userID != "" {
+			return userID, err
 		}
 	} else if subjectIsActorKey(id.Subject) {
 		actorKey = id.Subject
@@ -261,6 +246,47 @@ func (s *Store) linkOrCreate(ctx context.Context, tx pgx.Tx, id Identity) (strin
 		return "", fmt.Errorf("user: create: %w", err)
 	}
 	return userID, nil
+}
+
+// matchVerified finds the user a verified email belongs to (steps 1 and 2 of
+// linkOrCreate): the user whose verified primary email it is, else the legacy
+// user whose actor key it is, ignoring case, which is claimed here (the email
+// becomes its verified primary email). Among legacy candidates the user
+// prefer names wins, then an exact-case key over a case variant, then the
+// oldest. It returns "" when nothing matches.
+func matchVerified(ctx context.Context, tx pgx.Tx, email, prefer string) (string, error) {
+	var userID string
+	err := tx.QueryRow(ctx,
+		`SELECT id::text FROM users WHERE primary_email = $1 AND email_verified`,
+		email,
+	).Scan(&userID)
+	if err == nil {
+		return userID, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("user: link by email: %w", err)
+	}
+	err = tx.QueryRow(ctx, `
+		UPDATE users SET primary_email = $1, email_verified = true
+		 WHERE id = (SELECT id FROM users
+		              WHERE primary_email IS NULL AND NOT email_verified
+		                AND lower(actor_key) = $1
+		              ORDER BY COALESCE(id = $2::uuid, false) DESC, actor_key = $1 DESC, created_at, id
+		              LIMIT 1
+		              FOR UPDATE)
+		RETURNING id::text`,
+		email, IDParam(prefer),
+	).Scan(&userID)
+	switch {
+	case err == nil:
+		return userID, nil
+	case isUniqueViolation(err):
+		return "", errRetry
+	case errors.Is(err, pgx.ErrNoRows):
+		return "", nil
+	default:
+		return "", fmt.Errorf("user: claim legacy owner: %w", err)
+	}
 }
 
 // subjectIsActorKey reports whether a provider subject may name its user on
@@ -303,6 +329,53 @@ func (s *Store) ResolveActor(ctx context.Context, key string) (*User, error) {
 		}
 		return u, err
 	}
+}
+
+// rematch settles a known identity that now presents a verified email. When
+// its user already has a verified primary email nothing changes: an IdP that
+// later changes a user's email cannot move them onto someone else's user.
+// Otherwise the email is matched as a first sign-in's would be
+// (matchVerified), preferring the identity's own user when it is the legacy
+// owner of that email, and the identity moves to the match; with no match its
+// own user takes the email. So neither a first sign-in that arrived without a
+// verified email nor an identity the ownership migration linked to a legacy
+// user leaves its owner stranded. A user the identity leaves keeps whatever
+// it owns and any other identities.
+func (s *Store) rematch(ctx context.Context, tx pgx.Tx, id Identity, current string) (string, error) {
+	var settled bool
+	if err := tx.QueryRow(ctx,
+		`SELECT primary_email IS NOT NULL AND email_verified FROM users WHERE id = $1`, current,
+	).Scan(&settled); err != nil {
+		return "", fmt.Errorf("user: read identity's user: %w", err)
+	}
+	if settled {
+		return current, nil
+	}
+	target, err := matchVerified(ctx, tx, id.Email, current)
+	if err != nil {
+		return "", err
+	}
+	if target == "" {
+		if _, err := tx.Exec(ctx,
+			`UPDATE users SET primary_email = $2, email_verified = true WHERE id = $1`,
+			current, id.Email,
+		); err != nil {
+			if isUniqueViolation(err) {
+				return "", errRetry // a concurrent sign-in took the email; link to it
+			}
+			return "", fmt.Errorf("user: verify email: %w", err)
+		}
+		return current, nil
+	}
+	if target != current {
+		if _, err := tx.Exec(ctx,
+			`UPDATE user_identities SET user_id = $3 WHERE issuer = $1 AND subject = $2`,
+			id.Issuer, id.Subject, target,
+		); err != nil {
+			return "", fmt.Errorf("user: move identity: %w", err)
+		}
+	}
+	return target, nil
 }
 
 // Get returns a user by id, or ErrNotFound (a malformed id included).

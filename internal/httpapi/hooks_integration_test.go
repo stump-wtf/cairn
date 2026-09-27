@@ -24,12 +24,15 @@ import (
 func hookTestServer(t *testing.T, cfg Config, opts store.Options) (*httptest.Server, *webhook.Service) {
 	t.Helper()
 	cfg.DevInsecureBearerAuth = true
+	if cfg.Redaction == nil {
+		cfg.Redaction = sharedTestScanner(t)
+	}
 	pool := newTestPool(t)
 	obj := objectstore.NewMemory()
 	st := store.New(pool, obj, opts)
 	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
-	hookSvc := webhook.NewService(pool, obj, webhook.Options{})
+	hookSvc := webhook.NewService(pool, obj, webhook.Options{Scanner: cfg.Redaction})
 	return srv, hookSvc
 }
 
@@ -171,8 +174,9 @@ func TestIntegrationHookCaptureVisibleOverManagementAPI(t *testing.T) {
 	if newest.Status != webhook.DefaultResponseStatus {
 		t.Fatalf("status = %d, want the fixed %d", newest.Status, webhook.DefaultResponseStatus)
 	}
-	if _, ok := newest.Headers["authorization"]; ok {
-		t.Fatal("Authorization must not survive sanitization into the response")
+	// Authorization is kept by name only; its value is masked (SPEC-0017 RD-4).
+	if got := newest.Headers["authorization"]; len(got) != 1 || got[0] != "Bearer [REDACTED]" {
+		t.Fatalf("authorization = %v, want [Bearer [REDACTED]]: its value must not survive sanitization", got)
 	}
 	if string(newest.Body) != `{"n":3}` {
 		t.Fatalf("inline body = %q, want %q", newest.Body, `{"n":3}`)

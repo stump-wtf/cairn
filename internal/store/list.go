@@ -126,18 +126,28 @@ type rowScanner interface {
 
 // scanArtifact scans the binColumns projection into an Artifact.
 func scanArtifact(row rowScanner) (*artifact.Artifact, error) {
+	return scanArtifactWith(row, nil)
+}
+
+// scanArtifactWith scans binColumns followed by the columns extra names, as
+// destinations inside the artifact being scanned.
+func scanArtifactWith(row rowScanner, extra func(*artifact.Artifact) []any) (*artifact.Artifact, error) {
 	var (
 		a       artifact.Artifact
 		bodySHA *string
 	)
-	if err := row.Scan(
+	dest := []any{
 		&a.ID, &a.PublicID, &a.ShareType, &a.Title, &bodySHA, &a.Size,
 		&a.MediaType, &a.Previewable, &a.Provenance.CreatedByUserID, &a.Provenance.ActorID,
 		&a.Provenance.OnBehalfOf, &a.Provenance.Model, &a.Provenance.Channel, &a.Provenance.CapturedAt,
 		&a.Access.OwnerUserID, &a.Access.OwnerTeamID, &a.Access.Visibility,
 		&a.ReactionCount, &a.CommentCount, &a.PinCount, &a.Tags,
 		&a.ExpiresAt, &a.CreatedAt,
-	); err != nil {
+	}
+	if extra != nil {
+		dest = append(dest, extra(&a)...)
+	}
+	if err := row.Scan(dest...); err != nil {
 		return nil, err
 	}
 	if bodySHA != nil {
