@@ -124,3 +124,24 @@ func TestDevInsecureBearerRefusesHTTPS(t *testing.T) {
 		}
 	})
 }
+
+// CAIRN_OIDC_TRUST_EMAIL is off unless set, and a malformed value fails boot
+// rather than silently leaving an operator's IdP untrusted (or trusted).
+func TestOIDCTrustEmail(t *testing.T) {
+	t.Setenv("CAIRN_OIDC_TRUST_EMAIL", "")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	if c.OIDCTrustEmail {
+		t.Fatal("OIDCTrustEmail defaulted on")
+	}
+	t.Setenv("CAIRN_OIDC_TRUST_EMAIL", "true")
+	if c, err = Load(); err != nil || !c.OIDCTrustEmail {
+		t.Fatalf("Load() = %v, OIDCTrustEmail = %v with the knob set", err, c != nil && c.OIDCTrustEmail)
+	}
+	t.Setenv("CAIRN_OIDC_TRUST_EMAIL", "yes please")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() accepted a malformed CAIRN_OIDC_TRUST_EMAIL")
+	}
+}

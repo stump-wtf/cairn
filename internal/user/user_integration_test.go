@@ -133,6 +133,62 @@ func TestResolveKnownIdentityKeepsItsUser(t *testing.T) {
 	}
 }
 
+// Matching is not one-shot. An identity whose user has no verified primary
+// email is matched again by the first sign-in that presents a verified one:
+// it moves to the user that email belongs to, or to a new user holding it,
+// and is settled from then on. Against a one-shot resolver it stayed on the
+// email-less user its first sign-in created.
+func TestResolveRematchesUnsettledIdentity(t *testing.T) {
+	s, pool := newTestStore(t)
+	ctx := context.Background()
+	first := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "joe", Email: "joe@example.com"})
+	if first.PrimaryEmail != "" {
+		t.Fatalf("unverified first sign-in got primary email %q", first.PrimaryEmail)
+	}
+	later := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "joe", Email: "Joe@Example.com", EmailVerified: true})
+	if later.ID == first.ID || later.PrimaryEmail != "joe@example.com" || !later.EmailVerified {
+		t.Fatalf("verified sign-in resolved to %+v, want a user holding joe@example.com verified", later)
+	}
+	var linked string
+	if err := pool.QueryRow(ctx,
+		`SELECT user_id::text FROM user_identities WHERE issuer = $1 AND subject = 'joe'`, pocketIssuer).Scan(&linked); err != nil {
+		t.Fatalf("read identity: %v", err)
+	}
+	if linked != later.ID {
+		t.Fatalf("identity points at %s, want %s", linked, later.ID)
+	}
+	// Settled: an unverified sign-in afterwards keeps the verified user.
+	if again := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "joe", Email: "joe@example.com"}); again.ID != later.ID {
+		t.Fatalf("settled identity moved to %s", again.ID)
+	}
+}
+
+// A rematch links to the user a verified email already belongs to, just as a
+// first sign-in with that email would.
+func TestResolveRematchLinksToVerifiedUser(t *testing.T) {
+	s, _ := newTestStore(t)
+	gh := mustResolve(t, s, Identity{Issuer: githubIssuer, Subject: "583231", Email: "joe@example.com", EmailVerified: true})
+	pocket := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "joe", Email: "joe@example.com"})
+	if pocket.ID == gh.ID {
+		t.Fatal("an unverified email linked to the verified user")
+	}
+	if again := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "joe", Email: "joe@example.com", EmailVerified: true}); again.ID != gh.ID {
+		t.Fatalf("verified sign-in resolved to %s, want the GitHub user %s", again.ID, gh.ID)
+	}
+}
+
+// An unverified email never rematches, however often it is presented.
+func TestResolveUnverifiedNeverRematches(t *testing.T) {
+	s, _ := newTestStore(t)
+	victim := mustResolve(t, s, Identity{Issuer: githubIssuer, Subject: "1", Email: "victim@example.com", EmailVerified: true})
+	for i := 0; i < 2; i++ {
+		u := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "attacker", Email: "victim@example.com"})
+		if u.ID == victim.ID || u.PrimaryEmail != "" {
+			t.Fatalf("sign-in %d: unverified email reached %+v", i+1, u)
+		}
+	}
+}
+
 // Identities are keyed on (issuer, subject): the same subject under two
 // issuers is two identities, and two users when no verified email links them.
 func TestResolveKeysOnIssuerAndSubject(t *testing.T) {

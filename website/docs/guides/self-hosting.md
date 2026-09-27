@@ -68,6 +68,7 @@ is read from the `CAIRN_` namespace and nothing is ever loaded from a file.
 | `CAIRN_OIDC_ISSUER` | *(empty)* | Issuer URL of your OIDC provider. **Its presence is the switch that turns OIDC on** and, just as importantly, turns the dev-password login off (below). |
 | `CAIRN_OIDC_CLIENT_ID` | `cairn` | Client id registered at your provider. |
 | `CAIRN_OIDC_CLIENT_SECRET` | *(empty)* | Client secret. The redirect URI is not configurable — it is always `<base>/auth/callback`. |
+| `CAIRN_OIDC_TRUST_EMAIL` | `false` | Declares your OIDC provider **authoritative for emails**: its `email` claim counts as verified even when the ID token's `email_verified` is absent or `false`. A verified email links a sign-in to the user who owns it, including the Bin an existing user had before users existed. Set it only for a provider you run whose users **cannot set their own email** (Pocket ID with LDAP-synced users, say). Never set it for a provider that lets people type any email: that would let them sign in as someone else. GitHub sign-ins always use GitHub's primary verified email and ignore this setting. |
 | `CAIRN_DEV_LOGIN_PASSWORD` | *(empty)* | Shared-secret web login accepted for any actor id. Honored **only while `CAIRN_OIDC_ISSUER` is unset** — a deployment that configures OIDC can never fall back to it. Empty disables interactive login entirely. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_DEV_INSECURE_BEARER_AUTH` | `false` | Makes the API trust any bearer token as its own actor id with no verification. A local-development shortcut that must never be enabled in production. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_OUTBOUND_WEBHOOK_URLS` | *(empty)* | Comma-separated URLs that receive a signed `artifact.created` event. Empty = the feature is inert. These URLs are bearer capabilities; never log or share them. |
@@ -100,11 +101,14 @@ Three settings are easy to get wrong:
   (`CAIRN_GITHUB_CLIENT_ID`), and its route then answers `404`. The insecure
   bearer shortcut defaults off, and `cairnd` refuses to start with it on
   while `CAIRN_BASE_URL` is `https`. Leave both alone on a real deployment.
-- **Your IdP must mark emails verified.** A sign-in is keyed on the provider's
-  `(issuer, subject)`. Its email only identifies a person when the ID token
-  says `email_verified: true`; otherwise the user is keyed on their subject
-  and does not see artifacts owned by that email. Check that your OIDC
-  provider sends the claim before upgrading.
+- **Your IdP must mark emails verified, or you must trust it.** A sign-in is
+  keyed on the provider's `(issuer, subject)`. Its email only identifies a
+  person when it is verified: the ID token says `email_verified: true`, or
+  you set `CAIRN_OIDC_TRUST_EMAIL=true` for a provider you run whose users
+  cannot change their own email. Otherwise the user is keyed on their subject
+  and does not see artifacts owned by that email until a later sign-in
+  carries a verified one. Pocket ID sends `email_verified: false` unless
+  `EMAILS_VERIFIED` is set, so set one of the two before upgrading.
 
 ## Get the image
 
@@ -170,6 +174,7 @@ services:
       CAIRN_OIDC_ISSUER: ${CAIRN_OIDC_ISSUER:-}
       CAIRN_OIDC_CLIENT_ID: ${CAIRN_OIDC_CLIENT_ID:-cairn}
       CAIRN_OIDC_CLIENT_SECRET: ${CAIRN_OIDC_CLIENT_SECRET:-}
+      CAIRN_OIDC_TRUST_EMAIL: ${CAIRN_OIDC_TRUST_EMAIL:-false}
       CAIRN_API_TOKENS: ${CAIRN_API_TOKENS:-}
       CAIRN_OUTBOUND_WEBHOOK_URLS: ${CAIRN_OUTBOUND_WEBHOOK_URLS:-}
       CAIRN_OUTBOUND_WEBHOOK_SECRET: ${CAIRN_OUTBOUND_WEBHOOK_SECRET:-}
@@ -319,7 +324,9 @@ startup it discovers the provider from the issuer URL (failing closed if the
 discovery document is missing), and the login page gains a sign-in button
 where without OIDC it offers nothing at all. Users are created on first
 sign-in, keyed on the OIDC subject, so whoever can authenticate at your
-provider can sign in here — restrict access at the provider.
+provider can sign in here — restrict access at the provider. A sign-in with
+a verified email (see `CAIRN_OIDC_TRUST_EMAIL`) joins the user who already
+owns that email instead of creating one.
 
 To confirm it took: open `/login`. With OIDC configured you get the provider
 button; with nothing configured there is no login at all — the deployment

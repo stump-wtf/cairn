@@ -77,6 +77,10 @@ type Config struct {
 	OIDCIssuer       string
 	OIDCClientID     string // defaults to "cairn" when empty
 	OIDCClientSecret string
+	// OIDCTrustEmail treats the OIDC issuer's email claim as verified even
+	// when its email_verified claim is absent or false: the operator has
+	// declared that issuer authoritative for emails (CAIRN_OIDC_TRUST_EMAIL).
+	OIDCTrustEmail bool
 	// GitHub human login (SPEC-0012): a second provider beside Pocket ID.
 	// GitHubConfigured() gates EnableGitHub — the provider joins the registry
 	// (and the login page renders its button) only when both are set. The

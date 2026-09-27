@@ -124,7 +124,9 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		}
 		if !noEmail {
 			claims["email"] = email
-			claims["email_verified"] = emailVerified
+			if _, omit := emailVerified.(omitClaim); !omit {
+				claims["email_verified"] = emailVerified
+			}
 		}
 		idToken := signJWT(t, signKey, claims)
 		writeJSON(w, map[string]any{
@@ -163,8 +165,13 @@ func (f *fakeIdP) setNoEmail(v bool) {
 	f.noEmail = v
 }
 
+// omitClaim, passed as setIdentity's emailVerified, leaves the email_verified
+// claim out of the ID token altogether.
+type omitClaim struct{}
+
 // setIdentity steers the next minted ID token's sub, email and
-// email_verified claim (a bool, or a string for IdPs that send "true").
+// email_verified claim (a bool, a string for IdPs that send "true", or
+// omitClaim for IdPs that send none).
 func (f *fakeIdP) setIdentity(subject, email string, emailVerified any) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
