@@ -463,14 +463,15 @@ func (c *capReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// scanObject scans a stored object in windows.
-func (s *Scanner) scanObject(ctx context.Context, obj objectstore.ObjectStore, key string) ([]hit, error) {
+// scanObject scans a stored object in windows, failing with errTooLarge once
+// more than limit bytes are read.
+func (s *Scanner) scanObject(ctx context.Context, obj objectstore.ObjectStore, key string, limit int64) ([]hit, error) {
 	rc, err := obj.Get(ctx, key)
 	if err != nil {
 		return nil, err
 	}
 	defer rc.Close()
-	return s.scanStream(ctx, source{r: &capReader{r: rc, left: s.maxBytes}})
+	return s.scanStream(ctx, source{r: &capReader{r: rc, left: limit}})
 }
 
 // Staged scans the staged object at key, of the given size, in windows. With
@@ -488,7 +489,7 @@ func (s *Scanner) Staged(ctx context.Context, obj objectstore.ObjectStore, key s
 		_, o, err := s.oversized("", "", size)
 		return "", o, err
 	}
-	hits, err := s.scanObject(ctx, obj, key)
+	hits, err := s.scanObject(ctx, obj, key, s.maxBytes)
 	if errors.Is(err, errTooLarge) {
 		_, o, err := s.oversized("", "", s.maxBytes+1)
 		return "", o, err
@@ -545,7 +546,13 @@ func (s *Scanner) stageMasked(ctx context.Context, obj objectstore.ObjectStore, 
 		cleanup()
 		return "", nil, err
 	}
-	again, err := s.scanObject(ctx, obj, dst)
+	// The masked copy is Cairn's own output and may be longer than the upload
+	// (a value shorter than Mask grows), so its re-scan is capped at the most
+	// it can have grown, not at the upload cap.
+	//
+	// @joestump 09/26/2026 - Review of cairn#382: capping the re-scan at
+	// maxBytes turned a body within len(Mask) of the cap into ErrScanFailed.
+	again, err := s.scanObject(ctx, obj, dst, s.maxBytes+int64(len(ranges))*int64(len(Mask)))
 	if err != nil {
 		cleanup()
 		return "", nil, err
