@@ -80,7 +80,7 @@ func TestNewApprovalClass(t *testing.T) {
 		t.Fatalf("NewApprovalClass(nil) = contains 👍 %v, err %v; want the default class", empty.Contains("👍"), err)
 	}
 
-	for _, bad := range [][]string{{"👍", "a b"}, {"️"}, {"🏽"}, {"x\x00"}} {
+	for _, bad := range [][]string{{"👍", "a b"}, {"\uFE0F"}, {"🏽"}, {"x\x00"}} {
 		if _, err := NewApprovalClass(bad); !errors.Is(err, ErrEmojiInvalid) {
 			t.Errorf("NewApprovalClass(%q) err = %v, want ErrEmojiInvalid", bad, err)
 		}

@@ -18,7 +18,7 @@ import (
 
 // DefaultApprovalReactions is the EV-5 default class: 👍 (U+1F44D), ✅
 // (U+2705) and ✔️ (U+2714 U+FE0F).
-var DefaultApprovalReactions = []string{"\U0001F44D", "✅", "✔️"}
+var DefaultApprovalReactions = []string{"\U0001F44D", "\u2705", "\u2714\uFE0F"}
 
 // ApprovalClass is a normalized set of base emoji. The zero value is the
 // empty class, in which nothing is an approval; use NewApprovalClass or
@@ -71,10 +71,12 @@ func (c ApprovalClass) Approval(emoji string, stored event.ActorKind) (class, ap
 
 // NormalizeEmoji strips the variation selector-16 (U+FE0F) and the Fitzpatrick
 // skin-tone modifiers (U+1F3FB..U+1F3FF), so 👍🏽 and ✔️ match their base
-// emoji (SPEC-0016 EV-5).
+// emoji (SPEC-0016 EV-5). Both are written as escapes, never literals: VS-16
+// renders as nothing, so a literal reads as an empty rune and is one editor
+// normalization away from silently changing the class.
 func NormalizeEmoji(emoji string) string {
 	return strings.Map(func(r rune) rune {
-		if r == '️' || (r >= 0x1F3FB && r <= 0x1F3FF) {
+		if r == '\uFE0F' || (r >= 0x1F3FB && r <= 0x1F3FF) {
 			return -1
 		}
 		return r
