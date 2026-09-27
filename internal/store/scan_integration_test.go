@@ -696,3 +696,65 @@ func TestScanConcurrentCreates(t *testing.T) {
 	}
 	f.assertNoTokenAnywhere(t, tokens...)
 }
+
+// TestScanMaskGrowthAtUploadCap: [REDACTED] is longer than a short secret, so
+// masking a body sent at exactly MaxUploadBytes stores slightly more than the
+// cap. The cap bounds what the client sent (the stream is refused past it);
+// the create must still be accepted and stored masked, from memory, from
+// staging and as a bundle member, rather than fail on Cairn's own output.
+//
+// Governing: ADR-0023, SPEC-0017 RD-1, RD-10
+//
+// @joestump 09/27/2026 - Added for cairn#292 review: pins the create paths to
+// the cap semantics #293 and #291 settled for captures and span outputs.
+func TestScanMaskGrowthAtUploadCap(t *testing.T) {
+	secret := "hunt" + "er2"
+	atCap := func(size int) string {
+		body := "passw" + "ord=" + secret + "\n"
+		return body + strings.Repeat("y", size-len(body))
+	}
+	for _, tc := range []struct {
+		name   string
+		size   int
+		bundle bool
+	}{
+		{"in memory", 4 << 10, false},
+		{"from staging", scanInMemoryBytes + 4<<10, false},
+		{"bundle member", 4 << 10, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := atCap(tc.size)
+			f := newScanFixture(t, Options{MaxUploadBytes: int64(len(body))})
+			var (
+				art *artifact.Artifact
+				err error
+			)
+			if tc.bundle {
+				in := scanBundle(member("a.env", body))
+				in.RedactionDowngrade = true
+				art, err = f.s.CreateBundle(context.Background(), in)
+			} else {
+				art, err = f.s.CreateArtifact(context.Background(), typed(body, "markdown", "text/markdown"))
+			}
+			if err != nil {
+				t.Fatalf("create at the upload cap: %v; want it accepted", err)
+			}
+			if art.Redaction.Status != redact.StatusMasked {
+				t.Fatalf("outcome = %+v, want masked", art.Redaction)
+			}
+			if art.Size <= int64(len(body)) {
+				t.Fatalf("stored size %d <= %d sent: the mask did not grow the body, so the test no longer covers the cap", art.Size, len(body))
+			}
+			for k, v := range f.objects(t, "") {
+				if strings.Contains(v, secret) {
+					t.Errorf("object %s holds the secret", k)
+				}
+			}
+			// One over the cap is still refused as the client's own oversize.
+			_, err = f.s.CreateArtifact(context.Background(), typed(body+"y", "markdown", "text/markdown"))
+			if !errors.Is(err, errs.ErrTooLarge) {
+				t.Errorf("cap+1 err = %v, want ErrTooLarge", err)
+			}
+		})
+	}
+}
