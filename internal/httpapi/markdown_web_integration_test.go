@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -119,6 +120,50 @@ func TestIntegrationMarkdownSelectionComment(t *testing.T) {
 	}
 	if !strings.Contains(html, "session key") {
 		t.Error("selection comment should carry its quoted-substring anchor context")
+	}
+}
+
+// TestIntegrationCommentMarkdownRenders is the acceptance for issue #411: a
+// comment body renders through the goldmark pipeline into the comment-item
+// partial on BOTH paths — the htmx composer's append (webbin.go) and the full
+// page render (shell.html) — with the same two-layer sanitization as artifact
+// bodies (goldmark without html.WithUnsafe omits raw HTML, bluemonday strips
+// the residue), so a pasted <script> cannot survive.
+func TestIntegrationCommentMarkdownRenders(t *testing.T) {
+	srv, client := sessionServer(t)
+	id := createArtifact(t, srv.URL, "markdown", "joe", markdownDoc)
+
+	doLogin(t, srv, client, "reviewer", "devpass").Body.Close()
+	csrf := cookieValue(t, client, srv.URL, csrfCookieName)
+	resp := postForm(t, client, srv.URL+"/"+id+"/comments", url.Values{
+		"body": {"**bold** and <script>alert('xss')</script> done"},
+	}, csrf)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("post comment = %d, want 200", resp.StatusCode)
+	}
+	// The composer response IS the comment-item partial (webbin.go): it must
+	// carry the rendered markdown, not the literal source.
+	partial, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	for _, frag := range []string{`class="comment-body"`, `<strong>bold</strong>`} {
+		if !strings.Contains(string(partial), frag) {
+			t.Errorf("composer partial missing %q: %s", frag, partial)
+		}
+	}
+	if strings.Contains(string(partial), "<script>") {
+		t.Errorf("composer partial leaked unsanitized script: %s", partial)
+	}
+
+	// The full page render (shell.html's comment-item) must agree. The
+	// artifact body's own <script> is already proven stripped by
+	// TestIntegrationMarkdownViewer, so any fingerprint here is the
+	// comment's.
+	_, html := getHTML(t, srv.URL+"/"+id)
+	if !strings.Contains(html, `<strong>bold</strong>`) {
+		t.Error("page render missing rendered <strong>bold</strong> in the comment")
+	}
+	if strings.Contains(html, `<script>alert`) {
+		t.Error("page render leaked unsanitized script into the comment")
 	}
 }
 
