@@ -29,14 +29,32 @@ reaches 1.0.
   owner string claims that owner's artifacts; an unverified one never does.
   `CAIRN_API_TOKENS` entries and the dev logins resolve their actor to a user
   the same way, so they keep the Bin they had.
+- **Existing users land on their account when they sign in** (SPEC-0023).
+  Matching by verified email is no longer one-shot: an identity whose user has
+  no verified email yet is matched again on every sign-in that carries one, so
+  a first sign-in that arrived unverified no longer strands the owner's Bin.
+
+### Added
+
+- **`CAIRN_OIDC_TRUST_EMAIL`** (default `false`). Declares the OIDC provider
+  authoritative for emails, so its `email` claim counts as verified even when
+  `email_verified` is absent or `false` (Pocket ID sends `false` unless
+  `EMAILS_VERIFIED` is set). Set it only for a provider you run whose users
+  cannot set their own email; on one where they can, it lets anyone sign in as
+  the owner of any email they type. GitHub is unaffected: it always uses the
+  primary verified email.
 
 ### Upgrade notes
 
 - **Take a database backup first.** Migration `0017_users` adds the `users`
   and `user_identities` tables and `sessions.user_id`.
-- **OIDC must send `email_verified: true`.** A sign-in whose email is not
-  verified is keyed on its subject and no longer reaches artifacts owned by
-  that email. Confirm your provider marks the operator's email verified.
+- **OIDC must send `email_verified: true`, or set `CAIRN_OIDC_TRUST_EMAIL`.**
+  A sign-in whose email is not verified is keyed on its subject and does not
+  reach artifacts owned by that email until a later sign-in carries a verified
+  one. Confirm your provider marks the operator's email verified, or, for a
+  provider you run whose users cannot change their email (Pocket ID with LDAP
+  sync), set `CAIRN_OIDC_TRUST_EMAIL=true` before the first sign-in after the
+  upgrade.
 - **`CAIRN_DEV_INSECURE_BEARER_AUTH` with an `https` `CAIRN_BASE_URL` now fails
   boot** (A21). It was never safe there.
 - **Back up the database before upgrading past `0018_owner_columns`.** It

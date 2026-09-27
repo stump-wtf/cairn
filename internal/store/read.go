@@ -19,9 +19,14 @@ import (
 // Governing: ADR-0005 (Short Opaque Identifiers), ADR-0007 (Link Access),
 // SPEC-0002 REQ "Artifact Lifecycle — Read"
 func (s *Store) GetByPublicID(ctx context.Context, publicID string) (*artifact.Artifact, error) {
-	q := "SELECT" + binColumns + artifactFrom + ` WHERE a.public_id = $1 AND a.expires_at > now()`
+	// A single read also carries the scan outcome, which only its owner is
+	// shown (SPEC-0017 RD-9).
+	q := "SELECT" + binColumns + `, a.redaction_status, a.redaction_count, a.redaction_rules` +
+		artifactFrom + ` WHERE a.public_id = $1 AND a.expires_at > now()`
 
-	a, err := scanArtifact(s.pool.QueryRow(ctx, q, publicID))
+	a, err := scanArtifactWith(s.pool.QueryRow(ctx, q, publicID), func(a *artifact.Artifact) []any {
+		return []any{&a.Redaction.Status, &a.Redaction.Count, &a.Redaction.Rules}
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("resolve artifact %s: %w", publicID, errs.ErrNotFound)

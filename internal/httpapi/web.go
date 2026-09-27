@@ -331,6 +331,10 @@ func (s *Server) renderShellFor(w http.ResponseWriter, r *http.Request, wantPref
 		vm.Authenticated = true
 		vm.Actor = viewer.ActorID
 		vm.ShareDialog.IsOwner = a.Access.OwnedByUser(viewer.UserID)
+		// The scan outcome is the owner's alone (SPEC-0017 RD-9).
+		if vm.ShareDialog.IsOwner {
+			vm.Redaction = redactionBadgeOf(a.Redaction)
+		}
 	}
 	s.maskActors(r.Context(), viewer, &vm.Provenance, vm.Comments)
 	vm.ShareDialog.Provenance.Actor = vm.Provenance.Actor
@@ -391,6 +395,10 @@ type shellView struct {
 	Actor         string
 	// ShareDialog is the Share button's view model (#46).
 	ShareDialog shareDialogView
+	// Redaction is the ingest scan outcome, set only when the viewer owns the
+	// artifact; nil for everyone else, so the template renders nothing
+	// (SPEC-0017 RD-9).
+	Redaction *redactionBadgeView
 }
 
 // shareDialogView is the Share dialog's view model (#46, SPEC-0001 REQ "Share

@@ -106,6 +106,11 @@ type runResponse struct {
 	ExpiresAt  time.Time      `json:"expires_at"`
 	Stats      statsView      `json:"stats"`
 	Spans      []spanView     `json:"spans"`
+	// OwnerRedaction is the ingest scan outcome, for the owner only (SPEC-0017
+	// RD-9). On a create it is the run's; on an append it is that append's, so
+	// the response reports the redactions the request itself caused; on a read
+	// it is the run's total.
+	OwnerRedaction
 }
 
 type statsView struct {
@@ -200,7 +205,9 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, nil)
 		return
 	}
-	s.writeJSON(w, http.StatusCreated, s.toRunResponse(run))
+	resp := s.toRunResponse(run)
+	resp.OwnerRedaction = ownerRedactionOf(run.Redaction)
+	s.writeJSON(w, http.StatusCreated, resp)
 }
 
 // handleAppendSpans appends one or more spans to an open run (incremental
@@ -222,7 +229,8 @@ func (s *Server) handleAppendSpans(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	if _, err := s.traj.AppendSpans(r.Context(), id, p.UserID, toSpanInputs(req.Spans)); err != nil {
+	_, outcome, err := s.traj.AppendSpansWithOutcome(r.Context(), id, p.UserID, toSpanInputs(req.Spans))
+	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
@@ -231,7 +239,9 @@ func (s *Server) handleAppendSpans(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
+	// Only the owner may append, so the caller is the owner.
 	resp := s.toRunResponse(run)
+	resp.OwnerRedaction = ownerRedactionOf(outcome)
 	viewer, _ := s.optionalPrincipal(r)
 	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
 	s.writeJSON(w, http.StatusOK, resp)
@@ -267,6 +277,9 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := s.toRunResponse(run)
 	viewer, _ := s.optionalPrincipal(r)
+	if viewer != nil && run.Access.OwnedByUser(viewer.UserID) {
+		resp.OwnerRedaction = ownerRedactionOf(run.Redaction)
+	}
 	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
 	s.writeJSON(w, http.StatusOK, resp)
 }
