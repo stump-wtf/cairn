@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,46 @@ import (
 // "Human thumbs-up with skin tone is an approval", "Withdrawn approval is
 // announced", EV-6 "Agent cannot occupy the human's row", "Agent cannot
 // withdraw the human's approval", EV-7 "No env target receives the new kinds".
+
+// lifecycleSpy records every lifecycle event handed to Config.Events.
+type lifecycleSpy struct {
+	mu  sync.Mutex
+	evs []event.Event
+}
+
+func (s *lifecycleSpy) Emit(ev event.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.evs = append(s.evs, ev)
+}
+
+// forSubject returns, in emission order, the events about one public id.
+func (s *lifecycleSpy) forSubject(id string) []event.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []event.Event
+	for _, ev := range s.evs {
+		if ev.Subject.PublicID == id {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+// only returns the single event of kind k about id, failing otherwise.
+func (s *lifecycleSpy) only(t *testing.T, id string, k event.Kind) event.Event {
+	t.Helper()
+	var found []event.Event
+	for _, ev := range s.forSubject(id) {
+		if ev.Kind == k {
+			found = append(found, ev)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("%d %s events for %s, want exactly 1", len(found), k, id)
+	}
+	return found[0]
+}
 
 // ofKind returns, in emission order, the events of kind k about one public id.
 func (s *lifecycleSpy) ofKind(id string, k event.Kind) []event.Event {
