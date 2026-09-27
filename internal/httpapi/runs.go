@@ -276,7 +276,7 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := s.toRunResponse(run)
-	if viewer := s.optionalActor(r); viewer != "" && viewer == run.Access.OwnerID {
+	if viewer := s.optionalActor(r); viewer.ID != "" && viewer.ID == run.Access.OwnerID {
 		resp.OwnerRedaction = ownerRedactionOf(run.Redaction)
 	}
 	s.writeJSON(w, http.StatusOK, resp)

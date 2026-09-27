@@ -189,7 +189,7 @@ func TestEditedCommentIsMasked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.EditComment(ctx, "REDACTC4", c.ID, "u1", "use "+tok); err != nil {
+	if err := svc.EditComment(ctx, "REDACTC4", c.ID, agent("u1"), "use "+tok); err != nil {
 		t.Fatal(err)
 	}
 	var body string
