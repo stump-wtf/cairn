@@ -72,9 +72,9 @@ func TestLegacyArtifactReadsUnscanned(t *testing.T) {
 	now := time.Now()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO artifacts (public_id, share_type, title, body_sha256, size_bytes, media_type,
-		                       previewable, actor_id, channel, captured_at, owner_id, visibility, expires_at)
+		                       previewable, created_by_user_id, channel, captured_at, owner_user_id, visibility, expires_at)
 		VALUES ('legacy01', 'bundle', 'old', NULL, 0, 'application/vnd.cairn.bundle',
-		        false, 'u1', 'via CLI', $1, 'u1', 'link', $2)`, now, now.Add(time.Hour)); err != nil {
+		        false, $3, 'via CLI', $1, $3, 'link', $2)`, now, now.Add(time.Hour), testOwner); err != nil {
 		t.Fatalf("insert legacy row: %v", err)
 	}
 

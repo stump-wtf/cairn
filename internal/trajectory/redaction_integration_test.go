@@ -290,7 +290,7 @@ func TestLiveAppendMaskedNotRefused(t *testing.T) {
 	sub := svc.Subscribe(run.PublicID)
 	defer sub.Close()
 
-	appended, outcome, err := svc.AppendSpansWithOutcome(ctx, run.PublicID, "joe", []SpanInput{
+	appended, outcome, err := svc.AppendSpansWithOutcome(ctx, run.PublicID, joeUser, []SpanInput{
 		{SpanID: "a1", Category: CategoryExec, Tool: "bash", Name: "cat .env", Args: json.RawMessage(`{"command": "cat .env"}`),
 			Output: []byte("GITHUB_TOKEN=" + tok + "\nDEBUG=1\n"), StartOffsetMS: 0, DurationMS: 5},
 	})
@@ -314,7 +314,7 @@ func TestLiveAppendMaskedNotRefused(t *testing.T) {
 
 	// A clean append reports no redaction of its own; the run keeps the
 	// masked total.
-	_, outcome, err = svc.AppendSpansWithOutcome(ctx, run.PublicID, "joe", []SpanInput{
+	_, outcome, err = svc.AppendSpansWithOutcome(ctx, run.PublicID, joeUser, []SpanInput{
 		{SpanID: "a2", Category: CategoryReason, Name: "thought", StartOffsetMS: 5, DurationMS: 5},
 	})
 	if err != nil {
@@ -362,7 +362,7 @@ func TestRunScanFailureFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = svc.AppendSpansWithOutcome(cancelled, run.PublicID, "joe", []SpanInput{
+	_, _, err = svc.AppendSpansWithOutcome(cancelled, run.PublicID, joeUser, []SpanInput{
 		{SpanID: "a1", Category: CategoryExec, Tool: "bash", Name: "x", Output: []byte("key " + tok), StartOffsetMS: 0, DurationMS: 1},
 	})
 	if !errors.Is(err, redact.ErrScanFailed) {
@@ -442,7 +442,7 @@ func TestOversizeSpanStoredUnscannedWarns(t *testing.T) {
 	}
 
 	logs.Reset()
-	if _, _, err := svc.AppendSpansWithOutcome(ctx, run.PublicID, "joe", []SpanInput{
+	if _, _, err := svc.AppendSpansWithOutcome(ctx, run.PublicID, joeUser, []SpanInput{
 		{SpanID: "a1", Category: CategoryExec, Tool: "bash", Name: "y", Output: output, StartOffsetMS: 1, DurationMS: 1},
 	}); err != nil {
 		t.Fatal(err)
@@ -454,7 +454,7 @@ func TestOversizeSpanStoredUnscannedWarns(t *testing.T) {
 
 	// A clean, in-cap write logs nothing.
 	logs.Reset()
-	if _, _, err := svc.AppendSpansWithOutcome(ctx, run.PublicID, "joe", []SpanInput{
+	if _, _, err := svc.AppendSpansWithOutcome(ctx, run.PublicID, joeUser, []SpanInput{
 		{SpanID: "a2", Category: CategoryReason, Name: "thought", StartOffsetMS: 2, DurationMS: 1},
 	}); err != nil {
 		t.Fatal(err)
@@ -542,7 +542,7 @@ func TestSpanOutputMaskGrowthAtCap(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := svc.AppendSpans(context.Background(), run.PublicID, run.Provenance.ActorID, in.Spans); !errors.Is(err, errs.ErrTooLarge) {
+			if _, err := svc.AppendSpans(context.Background(), run.PublicID, run.Access.OwnerUserID, in.Spans); !errors.Is(err, errs.ErrTooLarge) {
 				t.Fatalf("append err = %v; want ErrTooLarge", err)
 			}
 		})
