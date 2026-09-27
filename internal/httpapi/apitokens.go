@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net/http"
@@ -316,9 +315,6 @@ func (a *TokenAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 		grant, ok = (*g)[sha256.Sum256([]byte(token))]
 	}
 	if !ok || grant.UserID == "" {
-		// Touch a constant-time compare against a fixed sentinel so an unknown
-		// token does not resolve visibly faster than a byte-mismatched one.
-		subtle.ConstantTimeCompare([]byte(token), []byte(token))
 		return nil, errs.ErrUnauthorized
 	}
 	scopes := humanScopes()
