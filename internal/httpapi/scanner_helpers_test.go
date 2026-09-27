@@ -10,26 +10,24 @@ package httpapi
 // Governing: ADR-0023, SPEC-0017 RD-1
 //
 // @joestump 09/26/2026 - Added for cairn#292.
+// @joestump 09/27/2026 - One scanner per test binary: testScanner shares
+// sharedTestScanner's instance (#293) instead of building a second.
 
 import (
-	"sync"
-
 	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/store"
 )
 
-var defaultTestScanner = sync.OnceValues(func() (*redact.Scanner, error) {
-	return redact.New(redact.Config{})
-})
-
-// testScanner is the shared default scanner. Building it cannot fail without
-// a configuration, so a failure is a broken build and panics.
+// testScanner is the shared default scanner, the same instance
+// sharedTestScanner hands the test servers' Config.Redaction, for callers
+// with no testing.TB. Building it cannot fail without a
+// configuration, so a failure is a broken build and panics.
 func testScanner() *redact.Scanner {
-	s, err := defaultTestScanner()
-	if err != nil {
-		panic("build the redaction scanner: " + err.Error())
+	sharedScannerOnce.Do(func() { sharedScanner, sharedScannerErr = redact.New(redact.Config{}) })
+	if sharedScannerErr != nil {
+		panic("build the redaction scanner: " + sharedScannerErr.Error())
 	}
-	return s
+	return sharedScanner
 }
 
 // withScanner fills in the default scanner when opts has none.
