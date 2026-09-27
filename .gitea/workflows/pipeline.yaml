@@ -82,7 +82,7 @@ jobs:
       publish_image: false
     secrets: inherit
 
-  # ---- 4b. integration tests (Postgres + Garage) --------------------------
+  # Integration tests (Postgres + Garage)
   # Roughly half of cairn's suite gates itself on CAIRN_TEST_DATABASE_URL and
   # self-skips when it is unset. Until this job existed nothing on the CI that
   # gates merges ever set it, so ~270 tests — every httpapi integration test,
@@ -115,6 +115,13 @@ jobs:
   #     files do not exist. Garage needs a config file and ships a distroless
   #     image with no shell, so neither a bind mount nor an entrypoint heredoc
   #     works: `docker create` → `docker cp` → `docker start` does.
+  #
+  # @joestump-agent 09/27/2026 - Stop cancelled runs leaking their network and
+  #   sidecars (stumpcloud/stumpcloud#501). Everything the job creates now
+  #   carries ci.owner/ci.run labels, a first step reaps cairn-ci-* leftovers
+  #   older than timeout-minutes with no live task container attached (a
+  #   cancelled run never reaches the teardown), and the teardown reports a
+  #   network it cannot remove instead of hiding it.
   integration:
     name: integration (postgres + garage)
     needs: [secrets]
@@ -135,6 +142,11 @@ jobs:
       NET: cairn-ci-${{ gitea.run_id }}
       PG: cairn-pg-${{ gitea.run_id }}
       GARAGE: cairn-garage-${{ gitea.run_id }}
+      # The reaper step only touches cairn-ci-* leftovers older than this many
+      # minutes, the same window the job itself is bounded by: a younger
+      # network may belong to a live job that is still pulling sidecar images
+      # and has not attached its own container yet.
+      STALE_MINUTES: "20"
       # Garage refuses to serve until a layout is applied, so the bucket and key
       # are created after the node is up rather than baked into the image.
       S3_BUCKET: cairn
@@ -144,6 +156,46 @@ jobs:
       # A real hang still panics with a goroutine dump that names the test.
       GO_TEST_TIMEOUT: 15m
     steps:
+      # A cancelled run never reaches `Tear down`: act_runner kills the job
+      # container outright, taking the `if: always()` step with it, so every
+      # superseding push used to leak a network (a whole /16) plus two running
+      # sidecars onto this shared daemon. Reclaim them: anything cairn-ci-*
+      # older than this job's own timeout window whose GITEA-ACTIONS-TASK-*
+      # container is no longer running belongs to a run that is definitely
+      # gone. The age floor is what makes that safe to run at job start: a
+      # young network may still belong to a live job that is pulling sidecar
+      # images and has not attached its own container yet.
+      - name: Reap leftovers from cancelled runs
+        run: |
+          set -euo pipefail
+          now="$(date +%s)"
+          stale=$(( STALE_MINUTES * 60 ))
+          for net in $(docker network ls --filter 'name=^cairn-ci-' --format '{{.Name}}'); do
+            age=$(( now - $(docker network inspect -f '{{.Created.Unix}}' "$net") ))
+            [ "$age" -gt "$stale" ] || continue
+            live=""
+            for c in $(docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' "$net"); do
+              case "${c#/}" in
+                GITEA-ACTIONS-TASK-*)
+                  if [ "$(docker inspect -f '{{.State.Running}}' "${c#/}" 2>/dev/null)" = "true" ]; then
+                    live=1
+                  fi
+                  ;;
+              esac
+              [ -z "$live" ] || break
+            done
+            if [ -n "$live" ]; then
+              echo "keeping $net: a live job container is still attached"
+              continue
+            fi
+            for c in $(docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' "$net"); do
+              echo "reaping sidecar ${c#/} left by $net (${age}s old)"
+              docker rm -f "${c#/}" >/dev/null
+            done
+            echo "reaping $net (${age}s old, no live job container attached)"
+            docker network rm "$net" >/dev/null
+          done
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v6
@@ -154,7 +206,8 @@ jobs:
       - name: Start Postgres and Garage on a run-scoped network
         run: |
           set -euo pipefail
-          docker network create "$NET"
+          docker network create \
+            --label ci.owner=cairn --label "ci.run=${{ gitea.run_id }}" "$NET"
 
           # Durability off: this database lives for one run and is thrown away,
           # so there is nothing to protect from a crash. Every DB-gated test
@@ -166,6 +219,7 @@ jobs:
           # 13688, 13784). It changes no SQL semantics: transactions, locks
           # and visibility are identical; only the flush to disk is skipped.
           docker run -d --name "$PG" --network "$NET" --network-alias postgres \
+            --label ci.owner=cairn --label "ci.run=${{ gitea.run_id }}" \
             -e POSTGRES_USER=cairn -e POSTGRES_PASSWORD=cairn -e POSTGRES_DB=cairn \
             postgres:16-alpine \
             -c fsync=off -c synchronous_commit=off -c full_page_writes=off
@@ -205,6 +259,7 @@ jobs:
           TOML
 
           docker create --name "$GARAGE" --network "$NET" --network-alias garage \
+            --label ci.owner=cairn --label "ci.run=${{ gitea.run_id }}" \
             dxflrs/garage:v1.0.1
           docker cp garage-ci.toml "$GARAGE":/etc/garage.toml
           rm -f garage-ci.toml
@@ -310,7 +365,14 @@ jobs:
         run: |
           docker network disconnect "$NET" "$HOSTNAME" >/dev/null 2>&1 || true
           docker rm -f "$PG" "$GARAGE" >/dev/null 2>&1 || true
-          docker network rm "$NET" >/dev/null 2>&1 || true
+          # The one failure NOT to hide: `docker network rm` only fails when
+          # something is still attached, and hiding it is how a network kept
+          # its /16 until a human went looking. Name the holders instead; the
+          # reaper step of a later run finishes the job.
+          if ! docker network rm "$NET" >/dev/null 2>&1; then
+            echo "::warning::$NET could not be removed, still attached:"
+            docker network inspect "$NET" -f '{{range .Containers}}  {{println .Name}}{{end}}' || true
+          fi
 
   # ---- 5. ai review (PRs only, and only once the build is green) -----------
   # aibot.yml still exists beside this file, narrowed to the conversation
