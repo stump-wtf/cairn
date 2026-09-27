@@ -536,13 +536,16 @@ func TestIntegrationSettingsSubscriptions(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Authorization", "Bearer "+subsOpToken)
 	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "x"})
-	resp, err := http.DefaultClient.Do(req)
+	// A bearer is not a browser session, so requireWebSession (A20) sends it
+	// to sign in before the form handler runs.
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := noFollow.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("form from a bearer token = %d, want 403", resp.StatusCode)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("form from a bearer token = %d, want 303 to sign in", resp.StatusCode)
 	}
 	if list, _ = listSubs(t, srv.URL, u); len(list.Subscriptions) != 0 {
 		t.Fatal("a refused form created a subscription")
