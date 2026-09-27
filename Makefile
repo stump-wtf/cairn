@@ -3,6 +3,12 @@
 GO ?= go
 PKGS ?= ./...
 
+# Extra flags for `go test`, empty by default so `make test` is plain
+# `go test ./...` from a clean checkout. CI's integration job passes an explicit
+# -timeout here: go's default is 10m per test binary, and a shared runner under
+# load can push internal/httpapi past that without anything being hung.
+GOTESTFLAGS ?=
+
 # Optional path to a built cairn binary for `make verify-cli`. Without it only
 # the import-graph gate runs, which needs no build.
 CLI_BIN ?=
@@ -11,11 +17,11 @@ build:
 	$(GO) build $(PKGS)
 
 test:
-	$(GO) test $(PKGS)
+	$(GO) test $(GOTESTFLAGS) $(PKGS)
 
 # Concurrency-sensitive code (streaming ingest) MUST pass under the race detector.
 test-race:
-	$(GO) test -race $(PKGS)
+	$(GO) test -race $(GOTESTFLAGS) $(PKGS)
 
 # The trajectory viewer's pure scrubber math has a plain-node unit test (no
 # DOM). Skipped silently when node is absent, so a Go-only box still passes.

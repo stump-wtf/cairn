@@ -122,7 +122,15 @@ jobs:
     # Six runners share one daemon at capacity 3, so a job that hangs holding a
     # network and two sidecars costs a third of the fleet until it is reaped.
     # The bootstrap waits are individually bounded; this bounds the whole job.
-    timeout-minutes: 20
+    #
+    # Sized against the go test -timeout below (GO_TEST_TIMEOUT), not guessed.
+    # Under load, setup plus the probe step has taken ~9 of the old 20 minutes
+    # (run 13784) before `make test` started. So 15m for the tests would have
+    # been cut off by the job cap, and the goroutine dump that names the stuck
+    # test would never have been printed. 30 = the 15m test timeout plus the
+    # ~9m setup seen under load, rounded up. A genuine hang is still reaped,
+    # and go test reports it first.
+    timeout-minutes: 30
     env:
       NET: cairn-ci-${{ gitea.run_id }}
       PG: cairn-pg-${{ gitea.run_id }}
@@ -130,6 +138,11 @@ jobs:
       # Garage refuses to serve until a layout is applied, so the bucket and key
       # are created after the node is up rather than baked into the image.
       S3_BUCKET: cairn
+      # Per test BINARY, not per job; go's default is 10m. Locally the slowest
+      # package (httpapi) takes under a minute against the fsync-off Postgres
+      # started below, so 15m is headroom for a loaded runner, not a budget.
+      # A real hang still panics with a goroutine dump that names the test.
+      GO_TEST_TIMEOUT: 15m
     steps:
       - uses: actions/checkout@v4
 
@@ -143,9 +156,19 @@ jobs:
           set -euo pipefail
           docker network create "$NET"
 
+          # Durability off: this database lives for one run and is thrown away,
+          # so there is nothing to protect from a crash. Every DB-gated test
+          # builds a private schema and runs all 18 migrations, each its own
+          # commit, and on the shared runners' contended disk those fsyncs ARE
+          # the suite. Measured on internal/httpapi (345 tests, same laptop):
+          # schema setup ~1s → ~75ms, and the package 310s → 38s. With fsync on,
+          # the package hit go test's 10m per-binary timeout under load (runs
+          # 13688, 13784). It changes no SQL semantics: transactions, locks
+          # and visibility are identical; only the flush to disk is skipped.
           docker run -d --name "$PG" --network "$NET" --network-alias postgres \
             -e POSTGRES_USER=cairn -e POSTGRES_PASSWORD=cairn -e POSTGRES_DB=cairn \
-            postgres:16-alpine
+            postgres:16-alpine \
+            -c fsync=off -c synchronous_commit=off -c full_page_writes=off
 
           # Generated per run, never committed: a literal 64-hex rpc_secret in
           # this file is precisely what the gitleaks job upstream exists to
@@ -245,7 +268,7 @@ jobs:
           CAIRN_TEST_S3_BUCKET: cairn
         run: |
           set -euo pipefail
-          go test ./internal/store/ ./internal/webhook/ -count=1 -v 2>&1 | tee /tmp/probe.log
+          go test ./internal/store/ ./internal/webhook/ -count=1 -v -timeout "$GO_TEST_TIMEOUT" 2>&1 | tee /tmp/probe.log
           if grep -q 'set CAIRN_TEST_DATABASE_URL' /tmp/probe.log; then
             echo "::error::the DB-gated tests self-skipped — CAIRN_TEST_DATABASE_URL never reached them"
             exit 1
@@ -261,7 +284,7 @@ jobs:
           CAIRN_TEST_DATABASE_URL: postgres://cairn:cairn@postgres:5432/cairn?sslmode=disable
           CAIRN_TEST_S3_ENDPOINT: garage:3900
           CAIRN_TEST_S3_BUCKET: cairn
-        run: make test
+        run: make test GOTESTFLAGS="-timeout=$GO_TEST_TIMEOUT"
 
       # The S3 harnesses are the dangerous half: unlike the DB ones they do not
       # skip when CAIRN_TEST_S3_ENDPOINT is unusable, they fall back to an
