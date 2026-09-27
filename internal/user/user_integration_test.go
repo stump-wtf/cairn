@@ -215,6 +215,13 @@ func TestFindExistingUserOnly(t *testing.T) {
 	ctx := context.Background()
 	joe := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "joe-sub", Email: "joe@example.com", EmailVerified: true})
 	sam := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "sam-sub", Email: "sam@example.com"})
+	// Resolve never stores an unverified primary email, so sam's row has
+	// none and cannot tell whether FindByVerifiedEmail checks the flag. The
+	// schema allows the pair, so plant one: it must still not be found.
+	if _, err := pool.Exec(ctx, `INSERT INTO users (primary_email, email_verified, display_handle)
+		VALUES ('planted@example.com', false, 'planted')`); err != nil {
+		t.Fatalf("plant unverified primary email: %v", err)
+	}
 
 	u, err := s.FindByIdentity(ctx, pocketIssuer, "joe-sub")
 	if err != nil || u.ID != joe.ID {
@@ -229,12 +236,13 @@ func TestFindExistingUserOnly(t *testing.T) {
 	}
 
 	for name, find := range map[string]func() (*User, error){
-		"unknown subject":   func() (*User, error) { return s.FindByIdentity(ctx, pocketIssuer, "nobody") },
-		"subject elsewhere": func() (*User, error) { return s.FindByIdentity(ctx, githubIssuer, "joe-sub") },
-		"blank identity":    func() (*User, error) { return s.FindByIdentity(ctx, "", "") },
-		"unknown email":     func() (*User, error) { return s.FindByVerifiedEmail(ctx, "nobody@example.com") },
-		"unverified email":  func() (*User, error) { return s.FindByVerifiedEmail(ctx, "sam@example.com") },
-		"blank email":       func() (*User, error) { return s.FindByVerifiedEmail(ctx, " ") },
+		"unknown subject":    func() (*User, error) { return s.FindByIdentity(ctx, pocketIssuer, "nobody") },
+		"subject elsewhere":  func() (*User, error) { return s.FindByIdentity(ctx, githubIssuer, "joe-sub") },
+		"blank identity":     func() (*User, error) { return s.FindByIdentity(ctx, "", "") },
+		"unknown email":      func() (*User, error) { return s.FindByVerifiedEmail(ctx, "nobody@example.com") },
+		"unverified email":   func() (*User, error) { return s.FindByVerifiedEmail(ctx, "sam@example.com") },
+		"unverified primary": func() (*User, error) { return s.FindByVerifiedEmail(ctx, "planted@example.com") },
+		"blank email":        func() (*User, error) { return s.FindByVerifiedEmail(ctx, " ") },
 	} {
 		if u, err := find(); !errors.Is(err, ErrNotFound) {
 			t.Errorf("%s: got %+v, %v; want ErrNotFound", name, u, err)
@@ -245,7 +253,7 @@ func TestFindExistingUserOnly(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&n); err != nil {
 		t.Fatalf("count users: %v", err)
 	}
-	if n != 2 {
-		t.Fatalf("users = %d after lookups, want 2 (a lookup created a user)", n)
+	if n != 3 {
+		t.Fatalf("users = %d after lookups, want 3 (a lookup created a user)", n)
 	}
 }
