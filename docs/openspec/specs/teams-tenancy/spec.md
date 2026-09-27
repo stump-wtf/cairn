@@ -595,7 +595,10 @@ that fails against the unfixed code.
 
 The migration MUST create one user per distinct existing `owner_id` and `actor_id` string (recorded
 as an unverified legacy email), set `owner_user_id` on every artifact from `owner_id`, and create no
-team. A user's first sign-in whose verified email equals a legacy row's string MUST claim that row.
+team. A sign-in whose verified email equals a legacy row's string MUST claim that row, whether or
+not it is the identity's first sign-in. An `(issuer, subject)` that a pre-upgrade session recorded
+acting as a legacy string MUST be linked to that string's user, unless more than one OIDC identity
+acted as the same string or the session came from GitHub (keyed then on the login).
 Existing `link` artifacts MUST remain `link`; existing `private` artifacts MUST remain `private` and
 become unreadable to everyone but their owner. Every Bin listing for a user with no teams MUST
 return the same artifacts it returned before.

@@ -25,8 +25,14 @@ reaches 1.0.
   `user_id`. The free-form `owner_id` / `actor_id` strings are gone, and every
   ownership check compares user ids. Wire fields named `actor_id` keep their
   name and are rendered from the user row: its verified email, else the name it
-  was known by. A first sign-in whose **verified** email equals a pre-upgrade
-  owner string claims that owner's artifacts; an unverified one never does.
+  was known by. A sign-in whose **verified** email (see `CAIRN_OIDC_TRUST_EMAIL`)
+  equals a pre-upgrade owner string claims that owner's artifacts, whether or
+  not it is the identity's first; an unverified one never does. An OIDC
+  identity that a pre-upgrade session shows acting as an owner string is
+  linked to that owner by the migration, so it lands on its own Bin at its
+  next sign-in even without a verified email. That evidence is not used when
+  two or more OIDC identities acted as the same email, or for GitHub sessions
+  (keyed then on the renameable login).
   `CAIRN_API_TOKENS` entries and the dev logins resolve their actor to a user
   the same way, so they keep the Bin they had.
 - **Existing users land on their account when they sign in** (SPEC-0023).

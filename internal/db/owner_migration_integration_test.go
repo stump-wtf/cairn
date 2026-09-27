@@ -452,3 +452,143 @@ func TestOwnerMigrationLegacyRowClaimedByVerifiedSignIn(t *testing.T) {
 		t.Errorf("mixed-case legacy Bin after claim = %v, want %v", got, want)
 	}
 }
+
+// identityUser is the user an (issuer, subject) identity is linked to, or ""
+// when it has no identity row.
+func identityUser(t *testing.T, pool *pgxpool.Pool, issuer, subject string) string {
+	t.Helper()
+	var id string
+	err := pool.QueryRow(context.Background(),
+		`SELECT user_id::text FROM user_identities WHERE issuer = $1 AND subject = $2`, issuer, subject).Scan(&id)
+	if err != nil && !strings.Contains(err.Error(), "no rows") {
+		t.Fatalf("identity %s|%s: %v", issuer, subject, err)
+	}
+	return id
+}
+
+// preUsersSession records a session minted before users existed: main's OIDC
+// callback acted as the email claim, so actor is usually an email.
+func preUsersSession(t *testing.T, pool *pgxpool.Pool, tok byte, issuer, subject, actor string) {
+	t.Helper()
+	mustExec(t, pool, `INSERT INTO sessions (token_hash, actor_id, issuer, subject, csrf_token, expires_at)
+		VALUES (repeat($1, 64), $2, $3, $4, 'c', now() - interval '1 day')`,
+		string(tok), actor, issuer, subject)
+}
+
+// Joe's decision on #384: an existing user signing in through OIDC lands on
+// their existing account and Bin. The pre-users session is the evidence of
+// which string an (issuer, subject) acted as, so the migration links that
+// identity to the string's user, and the operator's next sign-in reaches their
+// Bin even though live Pocket ID sends email_verified false. Before this
+// change only a session whose actor WAS its subject was linked, so an email
+// owner's identity came back as a fresh, empty user.
+func TestOwnerMigrationLinksPreUsersSessionEvidence(t *testing.T) {
+	pool := preOwnerPool(t)
+	ctx := context.Background()
+	const pocket = "https://id.example.com"
+
+	// The operator: main keyed their session on the email claim.
+	legacyArtifact(t, pool, "joe@example.com", "joe@example.com", 2*time.Second)
+	legacyArtifact(t, pool, "joe@example.com", "joe@example.com", time.Second)
+	preUsersSession(t, pool, 'a', pocket, "sub-joe", "joe@example.com")
+
+	// Two identities that acted as one email: ambiguous, so neither is linked.
+	legacyArtifact(t, pool, "shared@example.com", "shared@example.com", 0)
+	preUsersSession(t, pool, 'b', pocket, "sub-one", "shared@example.com")
+	preUsersSession(t, pool, 'c', pocket, "sub-two", "shared@example.com")
+
+	// A GitHub session keyed on a login: never linked.
+	legacyArtifact(t, pool, "gh@example.com", "gh@example.com", 0)
+	preUsersSession(t, pool, 'd', "https://github.com", "1234", "gh@example.com")
+
+	// #326 shipped first and kim's first sign-in after it was unverified: her
+	// identity got an email-less user keyed on her subject.
+	legacyArtifact(t, pool, "kim@example.com", "kim@example.com", 0)
+	preUsersSession(t, pool, 'e', pocket, "sub-kim", "kim@example.com")
+	stray := mustUUID(t, pool, `INSERT INTO users (display_handle) VALUES ('kim') RETURNING id::text`)
+	mustExec(t, pool, `INSERT INTO user_identities (user_id, issuer, subject, email, email_verified)
+		VALUES ($1, $2, 'sub-kim', 'kim@example.com', false)`, stray, pocket)
+	mustExec(t, pool, `INSERT INTO sessions (token_hash, actor_id, issuer, subject, user_id, csrf_token, expires_at)
+		VALUES (repeat('f', 64), 'sub-kim', $1, 'sub-kim', $2, 'c', now() + interval '1 day')`, pocket, stray)
+
+	// Sam signed in verified after #326: that identity is settled and stays.
+	sam := mustUUID(t, pool, `INSERT INTO users (primary_email, email_verified, display_handle)
+		VALUES ('sam@example.com', true, 'sam') RETURNING id::text`)
+	mustExec(t, pool, `INSERT INTO user_identities (user_id, issuer, subject, email, email_verified)
+		VALUES ($1, $2, 'sub-sam', 'sam@example.com', true)`, sam, pocket)
+	preUsersSession(t, pool, 'g', pocket, "sub-sam", "old-sam@example.com")
+	legacyArtifact(t, pool, "old-sam@example.com", "old-sam@example.com", 0)
+
+	before := binBefore(t, pool)
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	if got, want := identityUser(t, pool, pocket, "sub-joe"), userRendering(t, pool, "joe@example.com"); got != want {
+		t.Errorf("sub-joe links to %q, want joe@example.com's user %s", got, want)
+	}
+	for _, sub := range []string{"sub-one", "sub-two"} {
+		if got := identityUser(t, pool, pocket, sub); got != "" {
+			t.Errorf("ambiguous %s was linked to %s", sub, got)
+		}
+	}
+	if got := identityUser(t, pool, "https://github.com", "1234"); got != "" {
+		t.Errorf("login-keyed GitHub session was linked to %s", got)
+	}
+	if got, want := identityUser(t, pool, pocket, "sub-kim"), userRendering(t, pool, "kim@example.com"); got != want {
+		t.Errorf("sub-kim links to %q, want kim@example.com's user %s (not the stray %s)", got, want, stray)
+	}
+	if got := identityUser(t, pool, pocket, "sub-sam"); got != sam {
+		t.Errorf("settled sub-sam moved to %s, want %s", got, sam)
+	}
+
+	// The operator's next sign-in: live Pocket ID, email_verified false.
+	users := user.NewStore(pool)
+	joe, err := users.Resolve(ctx, user.Identity{Issuer: pocket, Subject: "sub-joe", Email: "joe@example.com"})
+	if err != nil {
+		t.Fatalf("sign-in: %v", err)
+	}
+	if got, want := binOf(t, pool, joe.ID), before["joe@example.com"]; len(want) == 0 || fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("operator's Bin after sign-in = %v, want %v", got, want)
+	}
+	// An ambiguous identity with an unverified email reaches nothing.
+	one, err := users.Resolve(ctx, user.Identity{Issuer: pocket, Subject: "sub-one", Email: "shared@example.com"})
+	if err != nil {
+		t.Fatalf("sub-one sign-in: %v", err)
+	}
+	if got := binOf(t, pool, one.ID); len(got) != 0 {
+		t.Fatalf("an ambiguous identity reached %v with an unverified email", got)
+	}
+}
+
+// The #384 review's probe against migrated data: the operator's first
+// sign-in after the upgrade is unverified and has no session evidence (a new
+// subject), the next one is verified. The second claims the legacy Bin.
+// Against the one-shot resolver both returned the same fresh user.
+func TestOwnerMigrationLaterVerifiedSignInClaimsLegacyBin(t *testing.T) {
+	pool := preOwnerPool(t)
+	ctx := context.Background()
+	legacyArtifact(t, pool, "joe@example.com", "joe@example.com", time.Second)
+	legacyArtifact(t, pool, "joe@example.com", "joe@example.com", 0)
+	before := binBefore(t, pool)
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	users := user.NewStore(pool)
+	id := user.Identity{Issuer: "https://id.example.com", Subject: "sub-joe", Email: "joe@example.com"}
+	first, err := users.Resolve(ctx, id)
+	if err != nil {
+		t.Fatalf("first sign-in: %v", err)
+	}
+	if got := binOf(t, pool, first.ID); len(got) != 0 {
+		t.Fatalf("an unverified sign-in reached the legacy Bin: %v", got)
+	}
+	id.EmailVerified = true
+	later, err := users.Resolve(ctx, id)
+	if err != nil {
+		t.Fatalf("later sign-in: %v", err)
+	}
+	if got, want := binOf(t, pool, later.ID), before["joe@example.com"]; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("Bin after the verified sign-in = %v, want %v", got, want)
+	}
+}
