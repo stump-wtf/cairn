@@ -182,3 +182,21 @@ func TestResolveRematchVerifiesOwnUser(t *testing.T) {
 		t.Fatalf("verified sign-in = %+v, want user %s holding ann@example.com", later, first.ID)
 	}
 }
+
+// Suspension is not escaped by rematching: an identity whose unverified user
+// is suspended stays on that user when it later presents a verified email
+// that a legacy owner holds, so the sign-in is refused rather than landing on
+// the legacy user (SPEC-0023 "Suspending a user offboards them").
+func TestResolveRematchKeepsSuspendedUser(t *testing.T) {
+	s, pool := newTestStore(t)
+	ctx := context.Background()
+	legacy := mustResolveActor(t, s, "lee@example.com")
+	first := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "sub-lee", Email: "lee@example.com"})
+	if _, err := pool.Exec(ctx, `UPDATE users SET suspended_at = now() WHERE id = $1`, first.ID); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+	later := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "sub-lee", Email: "lee@example.com", EmailVerified: true})
+	if later.ID != first.ID || later.SuspendedAt == nil {
+		t.Fatalf("suspended identity resolved to %+v, want its suspended user %s (not legacy %s)", later, first.ID, legacy.ID)
+	}
+}

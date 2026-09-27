@@ -342,9 +342,11 @@ func (s *Store) ResolveActor(ctx context.Context, key string) (*User, error) {
 // user leaves its owner stranded. A user the identity leaves keeps whatever
 // it owns and any other identities.
 func (s *Store) rematch(ctx context.Context, tx pgx.Tx, id Identity, current string) (string, error) {
+	// A suspended user is settled too: moving the identity to another user
+	// would let a suspended person sign straight back in as that user.
 	var settled bool
 	if err := tx.QueryRow(ctx,
-		`SELECT primary_email IS NOT NULL AND email_verified FROM users WHERE id = $1`, current,
+		`SELECT (primary_email IS NOT NULL AND email_verified) OR suspended_at IS NOT NULL FROM users WHERE id = $1`, current,
 	).Scan(&settled); err != nil {
 		return "", fmt.Errorf("user: read identity's user: %w", err)
 	}
