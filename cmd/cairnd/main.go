@@ -95,8 +95,10 @@ func newStoreOptions(cfg *config.Config, emitter *outboundhook.Emitter) store.Op
 // (RD-2): Cairn never runs with scanning silently disabled. store_unscanned is
 // a risky opt-in, so it is announced at startup by name (RD-7).
 //
-// @joestump 09/25/2026 - Added for cairn#289. Nothing consumes the scanner
-// yet; the wiring stories pass it to store, annotation, trajectory and webhook.
+// @joestump 09/25/2026 - Added for cairn#289. The wiring stories pass it to
+// store, annotation, trajectory and webhook.
+// @joestump 09/26/2026 - cairn#291 passes it to the comment and trace write
+// paths through httpapi.Config.
 func newRedactionScanner(cfg *config.Config, logger *slog.Logger) (*redact.Scanner, error) {
 	s, err := redact.New(redact.Config{
 		MaxScanBytes:  cfg.RedactionMaxScanBytes,
@@ -241,6 +243,8 @@ func run(logger *slog.Logger) error {
 		HookEndpointRatePerSecond: cfg.HookEndpointRatePerSecond,
 		HookEndpointRateBurst:     cfg.HookEndpointRateBurst,
 
+		// Comments, traces and webhook captures are masked before they are
+		// stored (SPEC-0017).
 		Redaction: scanner,
 		Metrics:   metricsReg,
 	}, logger)

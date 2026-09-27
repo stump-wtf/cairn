@@ -121,9 +121,11 @@ type Config struct {
 	HookIngressRateBurst      int
 	HookEndpointRatePerSecond float64
 	HookEndpointRateBurst     int
-	// Redaction is the ingest secret scanner (ADR-0023, SPEC-0017) the
-	// services New builds scan with; cairnd always sets it. Metrics counts
-	// their scans in cairn_redactions_total and may be nil.
+	// Redaction is the ingest secret scanner the comment, trace and webhook
+	// write paths mask credentials with (ADR-0023, SPEC-0017), and Metrics
+	// counts its scans in cairn_redactions_total and may be nil. cairnd always
+	// sets Redaction; without it the comment and trace paths store what they
+	// are given and record the outcome "unscanned".
 	Redaction *redact.Scanner
 	Metrics   *metrics.Registry
 }
@@ -272,8 +274,13 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		mcpSessSvc *mcpsession.Service
 	)
 	if st != nil {
-		annot = annotation.NewService(st.Pool(), reg)
-		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{Registry: reg})
+		annot = annotation.NewService(st.Pool(), reg, annotation.WithRedaction(cfg.Redaction, cfg.Metrics))
+		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{
+			Registry:  reg,
+			Redaction: cfg.Redaction,
+			Metrics:   cfg.Metrics,
+			Logger:    logger,
+		})
 		hookSvc = webhook.NewService(st.Pool(), st.ObjectStore(), webhook.Options{
 			Scanner: cfg.Redaction,
 			Metrics: cfg.Metrics,
