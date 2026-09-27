@@ -15,8 +15,10 @@ import (
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/httpapi/authprovider"
 	"github.com/stump-wtf/cairn/internal/mcpsession"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/oauth"
 	"github.com/stump-wtf/cairn/internal/pat"
+	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/session"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/store"
@@ -120,6 +122,13 @@ type Config struct {
 	HookIngressRateBurst      int
 	HookEndpointRatePerSecond float64
 	HookEndpointRateBurst     int
+	// Redaction is the ingest secret scanner the comment, trace and webhook
+	// write paths mask credentials with (ADR-0023, SPEC-0017), and Metrics
+	// counts its scans in cairn_redactions_total and may be nil. cairnd always
+	// sets Redaction; without it the comment and trace paths store what they
+	// are given and record the outcome "unscanned".
+	Redaction *redact.Scanner
+	Metrics   *metrics.Registry
 }
 
 // Server is the /v1 REST adapter over the core store and the ADR-0011 web app
@@ -270,9 +279,18 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		mcpSessSvc *mcpsession.Service
 	)
 	if st != nil {
-		annot = annotation.NewService(st.Pool(), reg)
-		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{Registry: reg})
-		hookSvc = webhook.NewService(st.Pool(), st.ObjectStore(), webhook.Options{})
+		annot = annotation.NewService(st.Pool(), reg, annotation.WithRedaction(cfg.Redaction, cfg.Metrics))
+		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{
+			Registry:  reg,
+			Redaction: cfg.Redaction,
+			Metrics:   cfg.Metrics,
+			Logger:    logger,
+		})
+		hookSvc = webhook.NewService(st.Pool(), st.ObjectStore(), webhook.Options{
+			Scanner: cfg.Redaction,
+			Metrics: cfg.Metrics,
+			Logger:  logger,
+		})
 		// The web session store lives in the same Postgres as the core, so the
 		// single binary carries its schema and a scaled deployment shares one
 		// session table (ADR-0012).
@@ -463,6 +481,16 @@ func (s *Server) mountAPI(r chi.Router) {
 		r.With(s.requireHumanSession).Get("/mcp/sessions", s.handleListMCPSessions)
 		r.With(s.requireHumanSession, s.enforceCSRF).Delete("/mcp/sessions/{id}", s.handleEndMCPSession)
 
+		// OAuth grants (A20, issue #343; SPEC-0023 REQ "Closing the Audited
+		// Surfaces"): the human Settings surface for seeing and revoking
+		// every OAuth connection that acts as them — including grants used
+		// purely over REST, which never open an MCP session and so appear
+		// nowhere else. Session-authenticated only and CSRF-guarded on
+		// writes, for the same reason as the token and MCP session routes
+		// above.
+		r.With(s.requireHumanSession).Get("/oauth/grants", s.handleListGrants)
+		r.With(s.requireHumanSession, s.enforceCSRF).Delete("/oauth/grants/{id}", s.handleRevokeGrant)
+
 		// Link-capability reads: a valid id grants read; unknown/expired ids
 		// return a uniform 404 (ADR-0007).
 		r.Get("/artifacts/{id}", s.handleGet)
@@ -545,6 +573,9 @@ type artifactResponse struct {
 	// re-deriving it from expires_at against its own clock skew.
 	ExpiresIn        string `json:"expires_in"`
 	ExpiresInSeconds int64  `json:"expires_in_seconds"`
+	// OwnerRedaction is the ingest scan outcome, set only for the owner and
+	// omitted for everyone else (SPEC-0017 RD-9, see redaction.go).
+	OwnerRedaction
 }
 
 type provenanceView struct {
