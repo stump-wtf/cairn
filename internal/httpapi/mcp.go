@@ -45,6 +45,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -749,6 +750,10 @@ func (s *Server) mcpScopeErr(ctx context.Context, tool, scope string) error {
 func (s *Server) mcpToolErr(ctx context.Context, tool string, err error) error {
 	code := errs.CodeOf(err)
 	attrs := []any{"tool", tool, "code", code, "error", err}
+	if reqID := middleware.GetReqID(ctx); reqID != "" {
+		attrs = append(attrs, "request_id", reqID)
+	}
+	attrs = append(attrs, redactionLogAttrs(err, mcpRedactionSurface[tool])...)
 	if code == errs.CodeInternal {
 		s.log.ErrorContext(ctx, "mcp: tool call failed", attrs...)
 	} else {
@@ -815,7 +820,8 @@ func (s *Server) mcpReadArtifact(ctx context.Context, req *mcp.CallToolRequest, 
 	if err != nil {
 		return nil, mcpReadOutput{}, s.mcpToolErr(ctx, "artifact_read", err)
 	}
-	out := mcpReadOutput{artifactResponse: s.toArtifactResponse(art)}
+	// The owner also sees the scan outcome (SPEC-0017 RD-9).
+	out := mcpReadOutput{artifactResponse: s.toViewerArtifactResponse(art, mcpActor(req.Extra))}
 
 	if art.ShareType == artifact.TypeBundle && in.Path == "" {
 		members, err := s.store.ListMembers(ctx, id)
@@ -1018,7 +1024,7 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 	if err != nil {
 		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", err)
 	}
-	return nil, mcpCreateOutput{artifactResponse: s.toArtifactResponse(art)}, nil
+	return nil, mcpCreateOutput{artifactResponse: s.toOwnerArtifactResponse(art)}, nil
 }
 
 // --- bundle_create ---------------------------------------------------------------
@@ -1105,7 +1111,7 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 	if err != nil {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", err)
 	}
-	out := mcpBundleCreateOutput{artifactResponse: s.toArtifactResponse(art)}
+	out := mcpBundleCreateOutput{artifactResponse: s.toOwnerArtifactResponse(art)}
 	created, err := s.store.ListMembers(ctx, art.PublicID)
 	if err != nil {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", err)

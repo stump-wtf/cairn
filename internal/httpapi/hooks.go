@@ -103,6 +103,16 @@ type requestView struct {
 	BodySize    int64               `json:"body_size"`
 	Body        []byte              `json:"body,omitempty"`
 	BodyRef     *bodyRefView        `json:"body_ref,omitempty"`
+	// What the ingest scanner did to this capture before it was stored
+	// (SPEC-0017 RD-4, RD-9); every field above is the stored, masked form.
+	// A capture's reader sees it: the sender is an anonymous third party, and
+	// the outcome holds only a status, counts and rule IDs.
+	RedactionStatus string          `json:"redaction_status"`
+	Redacted        bool            `json:"redacted"`
+	Redactions      *redactionsView `json:"redactions"`
+	// Withheld names the fields (query, headers, body) Cairn replaced with a
+	// notice because it could not store them safely.
+	Withheld []string `json:"redaction_withheld,omitempty"`
 }
 
 // bodyRefView describes a captured request's large body stored as a
@@ -320,7 +330,10 @@ func toRequestView(r webhook.Request) requestView {
 	v := requestView{
 		Seq: r.Seq, ReceivedAt: r.ReceivedAt, Method: r.Method, Path: r.Path, Query: r.Query,
 		Headers: r.Headers, Status: r.Status, ContentType: r.ContentType, BodySize: r.BodySize,
+		Withheld: r.Withheld,
 	}
+	own := ownerRedactionOf(r.Redaction)
+	v.RedactionStatus, v.Redacted, v.Redactions = own.RedactionStatus, *own.Redacted, own.Redactions
 	if r.Inline != nil {
 		v.Body = r.Inline
 	}

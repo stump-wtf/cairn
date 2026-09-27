@@ -25,10 +25,14 @@
 //     from one IP or at one endpoint is 429'd and captures nothing (REQ
 //     "Rate Limiting").
 //   - Header hygiene — delegated to webhook.Capture's sanitizeHeaders
-//     (webhook/sanitize.go), which drops Authorization/Cookie/hop-by-hop
-//     headers before a row is ever written, so a captured record is a
-//     sanitized projection, never a replayable credential dump (REQ "Header
-//     Hygiene & Ephemerality as Containment").
+//     (webhook/sanitize.go), which drops Cookie/hop-by-hop headers and masks
+//     Authorization's value before a row is ever written, so a captured
+//     record is a sanitized projection, never a replayable credential dump
+//     (REQ "Header Hygiene & Ephemerality as Containment").
+//   - Credential masking — Capture scans the query, headers and body with
+//     the ingest scanner and stores only the masked form (SPEC-0017 RD-4).
+//     It never refuses a capture over what it finds: a field it cannot store
+//     safely is withheld, and this handler's response is unchanged.
 //   - No SSRF — Cairn never fetches or follows any URL a payload contains;
 //     this handler only ever writes bytes it already has to storage (REQ
 //     "Redirect & SSRF Validation").

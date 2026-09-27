@@ -15,6 +15,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/id"
 	"github.com/stump-wtf/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/store"
 )
@@ -591,12 +592,23 @@ func (s *Service) insertRunArtifact(ctx context.Context, tx pgx.Tx, in RunInput)
 }
 
 func (s *Service) insertRun(ctx context.Context, tx pgx.Tx, artID int64, in RunInput, status Status, endedAt *time.Time) (int64, error) {
+	// The scan outcome commits with the run it describes. Nothing scans runs
+	// yet, so the zero Summary records "unscanned" until #291 sets it from the
+	// scanner (and folds appends in with store.AccumulateRedaction).
+	//
+	// Governing: ADR-0023, SPEC-0017 RD-9
+	outcome, err := redact.Summary{}.Normalized()
+	if err != nil {
+		return 0, fmt.Errorf("trajectory: run redaction outcome: %w", err)
+	}
 	var runID int64
-	err := tx.QueryRow(ctx, `
-		INSERT INTO runs (artifact_id, prompt, model, status, started_at, ended_at, token_count)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO runs (artifact_id, prompt, model, status, started_at, ended_at, token_count,
+		                  redaction_status, redaction_count, redaction_rules)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id`,
 		artID, in.Prompt, in.Model, string(status), in.StartedAt, endedAt, in.TokenCount,
+		string(outcome.Status), outcome.Count, outcome.Rules,
 	).Scan(&runID)
 	if err != nil {
 		return 0, fmt.Errorf("trajectory: insert run: %w", err)

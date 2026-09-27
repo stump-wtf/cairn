@@ -1,0 +1,122 @@
+# Cairn Ingest Redaction Rules
+#
+# Cairn's detector config: gitleaks' default ruleset plus the contextual
+# credential shapes Harness's internal/redact masks, so a value masked in
+# Harness output is masked in a Cairn artifact too. Every rule here names a
+# secretGroup (or has no group, so the whole match is the secret), and the
+# masker replaces only the secret, which keeps the label: an Authorization
+# header stays `Authorization: Bearer [REDACTED]`.
+#
+# `[extend] useDefault = true` is the contract for readers. internal/redact
+# does NOT let gitleaks perform the extend: gitleaks tracks extend depth in a
+# package global that is never reset, so from the third build in one process
+# the default rules are silently dropped. redact strips the extend and merges
+# config.DefaultConfig itself (see config.go).
+#
+# The value rules refuse a value that starts with "[" or "$", as Harness's do:
+# a mask already in place, or a reference to a secret ($TOKEN, ${VAR:-}), is
+# never matched. That keeps masking idempotent and the fail-closed re-scan of a
+# masked body clean.
+#
+# Governing: ADR-0023, SPEC-0017 RD-2, RD-3
+#
+# @joestump 09/23/2026 - Ported from Harness internal/redact (origin/main) for
+# cairn#289.
+
+title = "cairn ingest redaction"
+
+[extend]
+useDefault = true
+
+# A PEM private key: the whole block, or to the end of a clipped one. The
+# default private-key rule needs a 64-byte body and an END line.
+[[rules]]
+id = "cairn-private-key"
+description = "PEM private key block (Harness shape)"
+regex = '''-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?s:.*?)(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)'''
+keywords = ["-----begin"]
+
+# URL userinfo with a password: scheme://user:secret@host.
+[[rules]]
+id = "cairn-url-userinfo"
+description = "Password in URL userinfo (Harness shape)"
+regex = '''(?i)\b[a-z][a-z0-9+.-]*://[^\s/@:\[\]]+:([^\s/@$\[][^\s/@]*)@'''
+secretGroup = 1
+keywords = ["://"]
+
+# A token as the whole http(s) userinfo: https://<token>@host.
+[[rules]]
+id = "cairn-url-token"
+description = "Token as the whole http(s) URL userinfo (Harness shape)"
+regex = '''(?i)\bhttps?://([^\s/@:\[\]$]+)@'''
+secretGroup = 1
+keywords = ["http"]
+
+# Authorization-style headers with a scheme word: the value after it.
+[[rules]]
+id = "cairn-authorization"
+description = "Authorization or Proxy-Authorization header value after its scheme (Harness shape)"
+regex = '''(?i)\b(?:proxy-)?authorization\s*[:=]\s*(?:bearer|token|basic|digest)\s+([^\s"',;\[$][^\s"',;]*)'''
+secretGroup = 1
+keywords = ["authorization"]
+
+# Authorization-style headers with no scheme word: a bare value long enough not
+# to be the scheme word itself (the longest, bearer and digest, are six letters).
+[[rules]]
+id = "cairn-authorization-bare"
+description = "Authorization or Proxy-Authorization header value with no scheme (Harness shape)"
+regex = '''(?i)\b(?:proxy-)?authorization\s*[:=]\s*([^\s"',;\[$][^\s"',;]{7,})'''
+secretGroup = 1
+keywords = ["authorization"]
+
+# API-key-style headers: X-API-Key, Auth-Token, Private-Token and friends.
+[[rules]]
+id = "cairn-api-key-header"
+description = "API-key-style header value (Harness shape)"
+regex = '''(?i)\b(?:x-)?(?:api-?key|auth-?token|access-?token|private-token|gitea-token)\s*:\s*([^\s"',;\[$][^\s"',;@]*)'''
+secretGroup = 1
+keywords = ["api", "token"]
+
+# Vendor token prefixes, with Harness's looser lengths. The default rules pin
+# exact lengths (ghp_ must be followed by exactly 36 characters, hvs. by 90 or
+# more), so a truncated or test-shaped token Harness masks would pass them.
+[[rules]]
+id = "cairn-vendor-token"
+description = "Vendor token prefix: GitHub, GitLab, Slack, sk-, AWS key id, OpenBao/Vault, JWT (Harness shape)"
+regex = '''\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|hv[sbr]\.[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})\b'''
+keywords = ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "glpat-", "xox", "sk-", "akia", "hvs.", "hvb.", "hvr.", "eyj"]
+
+# A secret-named assignment: GITEA_TOKEN=…, "password": "…", api_key: ….
+# The name must END in the secret word (max_tokens= is not a secret); a value
+# starting with "=" is Go's := and one starting with "-" is the next flag or a
+# ${VAR:-default}. A quoted value is masked with its quotes, as Harness does.
+#
+# Harness's pattern also matches the name's leading characters,
+# `(?:^|[^\w.${-])[a-z0-9_.-]*`, before the secret word. Only the value is
+# masked, so that prefix changes nothing but speed, and it made this rule
+# 2.5x slower (every identifier character is a candidate match start). It is
+# dropped here; the value class still refuses ${…} defaults and $VAR
+# references.
+[[rules]]
+id = "cairn-secret-assignment"
+description = "Value of a secret-named assignment (Harness shape)"
+regex = '''(?i)(?:token|secret|password|passwd|passphrase|api[_-]?key|access[_-]?key|private[_-]?key)"?\s*[=:]\s*("[^"$][^"]*"|'[^'$][^']*'|[^\s"',;&=\[$-][^\s"',;&]*)'''
+secretGroup = 1
+keywords = ["token", "secret", "passw", "passphrase", "key"]
+
+# A secret-named flag given its value as the next word.
+[[rules]]
+id = "cairn-secret-flag"
+description = "Value of a secret-named command-line flag (Harness shape)"
+regex = '''(?i)\s--?(?:password|passwd|token|api-key|secret|client-secret)\s+("[^"$][^"]*"|'[^'$][^']*'|[^\s"'\[$-]\S*)'''
+secretGroup = 1
+keywords = ["passw", "token", "api-key", "secret"]
+
+# Basic auth handed to curl or wget through -u / --user. Scoped to those
+# tools, because docker's -u names a uid and gid.
+[[rules]]
+id = "cairn-basic-auth-cli"
+description = "Password handed to curl or wget -u/--user (Harness shape)"
+regex = '''\b(?:curl|wget)\b[^|;&\n]*?\s(?:-u|--user)\s+[^\s:]+:([^\s\[$]\S*)'''
+secretGroup = 1
+keywords = ["curl", "wget"]
