@@ -90,5 +90,15 @@ workflow: decisions → specs → tracked issues.
 
 ## Status
 
-Early design. The ADRs and specs in `docs/` define the intended architecture; the
-GitHub issues track the build.
+Cairn is running and released. https://cairn.stump.wtf is a live instance, and
+releases ship as the container image `ghcr.io/stump-wtf/cairn`, currently the
+`v0.1.x` line. The ADRs and specs in `docs/` are the design record the code follows.
+
+## Reporting bugs
+
+Report bugs in [GitHub Issues](https://github.com/stump-wtf/cairn/issues). The bug
+form asks for the version, deployment and surface we need to reproduce it.
+Report a vulnerability privately instead, as [SECURITY.md](SECURITY.md) describes.
+
+Development happens on a private Gitea instance, and this GitHub repository is a
+read-only mirror of it. Bugs filed here are carried over to the internal tracker.
