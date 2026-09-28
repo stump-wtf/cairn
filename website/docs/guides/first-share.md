@@ -103,10 +103,16 @@ curl -sS https://cairn.stump.wtf/v1/artifacts \
 The `cairn` CLI wraps the same API: pipe something in and you get a link back, copied to
 your clipboard.
 
-:::note[Not publicly distributed yet]
-There's no public download, Homebrew formula, or `go install` path for the CLI yet. Until
-there is, use `curl` or your agent. If someone has given you a build, the commands below
-work against the hosted service.
+:::note[Install from source; no binaries yet]
+There's no release download or Homebrew formula for the CLI yet, but you can install it
+straight from the module:
+
+```bash
+go install github.com/stump-wtf/cairn/cmd/cairn@latest
+```
+
+If you'd rather not build anything, `curl` and your agent work against the hosted service
+just as well.
 :::
 
 The CLI already points at the hosted service, so sign in and push:
