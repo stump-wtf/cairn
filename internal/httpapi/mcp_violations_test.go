@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/stump-wtf/cairn/internal/errs"
@@ -107,6 +108,78 @@ func TestMCPToolErrorShapes(t *testing.T) {
 			t.Fatalf("error %#v does not carry its violation", err)
 		}
 	})
+}
+
+// The TypeScript SDK validates a result's structuredContent — error results
+// included — against the outputSchema the tool published at tools/list, and
+// throws McpError(InvalidParams) on a mismatch. Before the widening this
+// threw away the very violations VE-7 exists to deliver: the error content
+// {code, violations} is not the success object, and every typed tool's
+// success schema is closed. This runs that exact client check over the wire
+// shapes: the outputSchema as tools/list sent it, and the structuredContent
+// as a failed artifact_create returned it.
+//
+// Governing: SPEC-0019 VE-7.
+func TestIntegrationMCPOutputSchemaAdmitsToolErrors(t *testing.T) {
+	srv, _ := mcpTestServer(t, mcpConfig(), store.Options{})
+	token := mintMCPToken(t, srv, "sam@stump.rocks", []string{"artifacts:write"})
+	sess := mcpClient(t, srv, token, nil, "agent")
+
+	tools, err := sess.ListTools(context.Background(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	if len(tools.Tools) == 0 {
+		t.Fatal("no tools advertised; the walk below would vacuously pass")
+	}
+	// OutputSchema is `any` on the wire, so judge each tool by what it
+	// actually published: typed tools must publish a widened object schema,
+	// the two a2ui tools (Out of `any`) must publish none.
+	published := make(map[string]*jsonschema.Resolved, len(tools.Tools))
+	for _, tl := range tools.Tools {
+		if tl.OutputSchema == nil {
+			switch tl.Name {
+			case "a2ui_action", "a2ui_error":
+			default:
+				t.Errorf("%s published no outputSchema; a failed call's error content would arrive unvalidated", tl.Name)
+			}
+			continue
+		}
+		raw, err := json.Marshal(tl.OutputSchema)
+		if err != nil {
+			t.Fatalf("re-encode %s outputSchema: %v", tl.Name, err)
+		}
+		var s jsonschema.Schema
+		if err := json.Unmarshal(raw, &s); err != nil {
+			t.Fatalf("decode %s outputSchema %s: %v", tl.Name, raw, err)
+		}
+		if s.Type != "object" {
+			t.Errorf("%s outputSchema root type = %q, want object", tl.Name, s.Type)
+		}
+		if len(s.AnyOf) != 2 {
+			t.Errorf("%s outputSchema has %d anyOf branches, want success + tool error", tl.Name, len(s.AnyOf))
+		}
+		resolved, err := s.Resolve(&jsonschema.ResolveOptions{})
+		if err != nil {
+			t.Fatalf("resolve %s outputSchema: %v", tl.Name, err)
+		}
+		published[tl.Name] = resolved
+	}
+	if len(published) == 0 {
+		t.Fatal("no tool published an outputSchema; the check below would vacuously pass")
+	}
+
+	res := callTool(t, sess, "artifact_create", map[string]any{"body": "task", "tags": []string{"Handoff"}})
+	if !res.IsError || res.StructuredContent == nil {
+		t.Fatalf("artifact_create with tag Handoff: IsError=%v structuredContent=%v, want a VE-7 error", res.IsError, res.StructuredContent)
+	}
+	resolved := published["artifact_create"]
+	if resolved == nil {
+		t.Fatal("artifact_create published no outputSchema")
+	}
+	if err := resolved.Validate(jsonRoundTrip(t, res.StructuredContent)); err != nil {
+		t.Fatalf("error structuredContent fails artifact_create's published outputSchema — a TS-SDK client would throw instead of showing the violation: %v", err)
+	}
 }
 
 // VE-7 scenario "Agent learns the tag rule".

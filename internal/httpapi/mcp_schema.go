@@ -1,4 +1,4 @@
-// Tool input schema shaping for the MCP surface.
+// Tool input and output schema shaping for the MCP surface.
 //
 // The SDK infers a tool's input schema from its handler's In type. For Go's
 // nil-able kinds — a slice, a map, a pointer — that inference is faithful to
@@ -23,20 +23,31 @@
 // which every client can represent, so it sends an array and validation
 // passes on the first try.
 //
-// Governing: SPEC-0007 REQ "Create & Push", REQ "Agent-Shaped Tool Schemas".
+// The output side has the mirror-image problem. A tool's outputSchema is
+// inferred from its Out struct, so it describes only success — but a failed
+// call also carries structuredContent (VE-7), and the TypeScript SDK
+// validates that against the published schema, errors included. widenForToolErrors
+// (below) admits the error shape alongside the success shape instead.
+//
+// Governing: SPEC-0007 REQ "Create & Push", REQ "Agent-Shaped Tool Schemas";
+// SPEC-0019 VE-7.
 package httpapi
 
 import (
+	"bytes"
 	"fmt"
+	"reflect"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// addTool registers a tool with a client-representable input schema. It is a
-// drop-in for mcp.AddTool and every tool on this surface goes through it, so
-// no future tool can reintroduce a union-typed parameter by accident. A tool
-// that sets InputSchema explicitly keeps it untouched.
+// addTool registers a tool with a client-representable input schema and an
+// output schema that admits both the success shape and the structured error
+// shape a failed call carries. It is a drop-in for mcp.AddTool and every
+// tool on this surface goes through it, so no future tool can reintroduce a
+// union-typed parameter or republish a success-only output schema by
+// accident. Schemas set explicitly on the tool are kept untouched.
 //
 // Inference failure panics, matching mcp.AddTool's own contract: a tool whose
 // schema cannot be derived is a programming error caught at construction, not
@@ -49,7 +60,112 @@ func addTool[In, Out any](srv *mcp.Server, t *mcp.Tool, h mcp.ToolHandlerFor[In,
 		}
 		t.InputSchema = collapseNullableUnions(schema)
 	}
+	if t.OutputSchema == nil && reflect.TypeFor[Out]() != reflect.TypeFor[any]() {
+		schema, err := jsonschema.For[Out](nil)
+		if err != nil {
+			panic(fmt.Sprintf("addTool: tool %q: infer output schema: %v", t.Name, err))
+		}
+		t.OutputSchema = widenForToolErrors(t.Name, collapseNullableUnions(schema))
+	}
 	mcp.AddTool(srv, t, h)
+}
+
+// widenForToolErrors wraps a tool's success output schema so the published
+// outputSchema also admits the VE-7 structured error content
+// (mcpToolErrorContent) that mcpToolErrorMiddleware attaches to a failed
+// call.
+//
+// Without this the error content fails the tool's own published schema — it
+// is not the success object, and the success schema is closed
+// (additionalProperties: false) — and the TypeScript SDK client, which
+// validates every result carrying structuredContent, error results included,
+// throws McpError(InvalidParams) instead of showing the agent the violations.
+// The agent then loses both the violations and the message, which is worse
+// than no structured errors at all.
+//
+// The root keeps "type": "object", the shape the MCP spec and every client
+// require of an outputSchema, and anyOfs the two branches. The widening is
+// exact, not a loosening: `required` is what tells the branches apart, so a
+// payload that is neither a success nor a {code, violations} error still
+// fails. The error branch is inferred from mcpToolErrorContent itself, so it
+// cannot drift from what the middleware actually marshals.
+func widenForToolErrors(tool string, success *jsonschema.Schema) *jsonschema.Schema {
+	toolError, err := jsonschema.For[mcpToolErrorContent](nil)
+	if err != nil {
+		panic(fmt.Sprintf("addTool: tool %q: infer tool-error output schema: %v", tool, err))
+	}
+	collapseNullableUnions(toolError)
+
+	root := &jsonschema.Schema{
+		Type:  "object",
+		AnyOf: []*jsonschema.Schema{success, toolError},
+	}
+	if len(success.Defs) > 0 || len(toolError.Defs) > 0 {
+		root.Defs = mergeSchemaDefs(tool, success.Defs, toolError.Defs)
+	}
+	stripBooleanSchemas(root)
+	return root
+}
+
+// mergeSchemaDefs merges the two branches' $defs into the widened root, where
+// any "#/$defs/..." reference inside a branch resolves. A key defined by both
+// is a construction-time ambiguity that would silently repoint one branch's
+// references, so it panics like any other inference failure in addTool.
+func mergeSchemaDefs(tool string, a, b map[string]*jsonschema.Schema) map[string]*jsonschema.Schema {
+	merged := make(map[string]*jsonschema.Schema, len(a)+len(b))
+	for k, v := range a {
+		merged[k] = v
+	}
+	for k, v := range b {
+		if _, dup := merged[k]; dup {
+			panic(fmt.Sprintf("addTool: tool %q: $defs key %q is defined by both output branches", tool, k))
+		}
+		merged[k] = v
+	}
+	return merged
+}
+
+// stripBooleanSchemas replaces every schema that is just `true` — what
+// jsonschema-go emits for an `any`-typed field, e.g. a violation's `limit` —
+// with a description-only schema object. A boolean schema admits exactly the
+// same instances, but strict clients have dropped whole tools over a bare
+// `true` where a schema object was expected (all ten of this surface's tools
+// vanished from Claude Code once, over five such fields in input schemas),
+// and an object that carries a description says the same thing while being
+// something every client can represent. A real constraint, notably
+// `additionalProperties: false`, marshals as `false`, not `true`, and is
+// left alone.
+func stripBooleanSchemas(s *jsonschema.Schema) {
+	if s == nil {
+		return
+	}
+	if raw, err := s.MarshalJSON(); err == nil && bytes.Equal(bytes.TrimSpace(raw), []byte("true")) {
+		*s = jsonschema.Schema{Description: "the violated limit, as any JSON value"}
+		return
+	}
+	for _, sub := range s.Properties {
+		stripBooleanSchemas(sub)
+	}
+	for _, sub := range s.PatternProperties {
+		stripBooleanSchemas(sub)
+	}
+	for _, sub := range s.Defs {
+		stripBooleanSchemas(sub)
+	}
+	for _, sub := range s.Definitions {
+		stripBooleanSchemas(sub)
+	}
+	for _, group := range [][]*jsonschema.Schema{s.AllOf, s.AnyOf, s.OneOf, s.PrefixItems, s.ItemsArray} {
+		for _, sub := range group {
+			stripBooleanSchemas(sub)
+		}
+	}
+	for _, sub := range []*jsonschema.Schema{
+		s.Items, s.AdditionalItems, s.AdditionalProperties, s.UnevaluatedItems,
+		s.UnevaluatedProperties, s.Contains, s.Not, s.If, s.Then, s.Else,
+	} {
+		stripBooleanSchemas(sub)
+	}
 }
 
 // collapseNullableUnions rewrites every `["null", X]` union in s to plain `X`,
