@@ -52,6 +52,7 @@ type schemaObject struct {
 	Enum        []any                    `json:"enum"`
 	Required    []string                 `json:"required"`
 	Properties  map[string]*schemaObject `json:"properties"`
+	AnyOf       []*schemaObject          `json:"anyOf"`
 }
 
 func decodeSchema(t *testing.T, raw any) *schemaObject {
@@ -119,6 +120,12 @@ func TestMCPCreateToolsDocumentRedaction(t *testing.T) {
 			}
 
 			out := decodeSchema(t, tool.OutputSchema)
+			// VE-7 widens every published output schema to
+			// {type: object, anyOf: [success, tool error]}; the documented
+			// redaction fields live on the success branch (RD-9).
+			if len(out.AnyOf) > 0 {
+				out = out.AnyOf[0]
+			}
 			if p, ok := out.Properties["redacted"]; !ok || !hasType(p, "boolean") {
 				t.Errorf("output schema redacted = %+v, want a boolean property", p)
 			}

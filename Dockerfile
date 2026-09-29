@@ -1,7 +1,14 @@
 # syntax=docker/dockerfile:1
 #
-# Single static Cairn binary (ADR-0012). Migrations and (future) web assets are
-# embedded, so the runtime image is just the binary + CA certs.
+# One static Cairn binary (ADR-0012, ADR-0031): the server is `cairn serve`.
+# Migrations and (future) web assets are embedded, so the runtime image is
+# just the binary + CA certs.
+#
+# DEPLOY SAFETY (ADR-0031): the image keeps /usr/local/bin/cairnd as its
+# ENTRYPOINT, built from cmd/cairnd — a shim that execs `cairn serve "$@"`.
+# The StumpCloud edge stack (stumpcloud/ansible, compose.yaml.j2) runs this
+# image with no command override, so the entrypoint is the deploy contract;
+# existing deployments start the server unchanged.
 
 FROM golang:1.27-alpine AS build
 WORKDIR /src
@@ -10,8 +17,10 @@ RUN apk add --no-cache git
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-# Static, stripped, reproducible build.
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/cairnd ./cmd/cairnd
+# Static, stripped, reproducible builds: the one binary, plus the deprecated
+# cairnd shim that execs it (deploy safety above).
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/cairn ./cmd/cairn \
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/cairnd ./cmd/cairnd
 
 FROM alpine:3.24
 # `apk upgrade` first: a base image tag is only as fresh as its last rebuild,
@@ -20,6 +29,7 @@ FROM alpine:3.24
 # shipped libssl3/libcrypto3 3.5.7-r0 (CVE-2026-14456, fixed in 3.5.8-r0).
 RUN apk upgrade --no-cache && apk add --no-cache ca-certificates wget \
     && addgroup -S cairn && adduser -S -G cairn cairn
+COPY --from=build /out/cairn /usr/local/bin/cairn
 COPY --from=build /out/cairnd /usr/local/bin/cairnd
 USER cairn
 ENV CAIRN_HTTP_ADDR=:8080

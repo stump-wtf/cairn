@@ -91,7 +91,7 @@ later is one environment variable plus an image switch (`pgvector/pgvector:pg16`
 
 **Choice.** `search_semantic_state(singleton, model, dimensions, reindexed_at)`. At startup,
 Cairn compares it with the configuration. On a mismatch it refuses semantic queries (`503
-semantic_reindex_required`) until `cairnd search reindex --semantic` rebuilds and updates the
+semantic_reindex_required`) until `cairn search reindex --semantic` rebuilds and updates the
 row.
 
 **Rationale.** A `vector(N)` column has a fixed N. Silently mixing models produces garbage
@@ -200,7 +200,7 @@ CREATE TABLE search_semantic_state (
 );
 
 -- The vector column's dimension is set from configuration when this table is created;
--- a model change drops and recreates it through `cairnd search reindex --semantic`.
+-- a model change drops and recreates it through `cairn search reindex --semantic`.
 CREATE TABLE search_chunks (
     artifact_id  BIGINT  NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
     chunk_no     INT     NOT NULL,
@@ -320,7 +320,7 @@ gives byte stability.
 | HTTP | `internal/httpapi/search.go` (new), `api.go` (route), `webbin.go` and `templates/bin.html` (search box) |
 | MCP | `internal/httpapi/mcp.go` (`artifact_search`), `mcp_schema.go` |
 | CLI | `internal/clicmd/search.go`, `export.go` (the current `export.go` holds error helpers, so the file is renamed, not reused), `internal/cliclient` |
-| Operator | `cmd/cairnd` (`search reindex`) |
+| Operator | `internal/clicmd` (`search reindex`) |
 | Config | `internal/config/config.go` |
 | CI | `.gitea/workflows/pipeline.yaml` (pgvector image, semantic test pass), `docker-compose*.yml` |
 
@@ -338,16 +338,16 @@ gives byte stability.
 - **Query text is sent to a hosted embeddings API.** Mitigation: it is off by default, local
   models are documented first, and the operator docs state the data flow.
 - **Indexer backlog after a bulk import.** Mitigation: a bounded worker pool, the lag gauge,
-  and `cairnd search reindex --owner` for targeted rebuilds.
+  and `cairn search reindex --owner` for targeted rebuilds.
 
 ## Migration Plan
 
 1. Core migration: the new tables and indexes. No change to `artifacts`.
-2. Deploy the indexer, then backfill with `cairnd search reindex` (live artifacts only;
+2. Deploy the indexer, then backfill with `cairn search reindex` (live artifacts only;
    expired rows never get indexed).
 3. Ship REST, MCP and CLI search, the Bin box, then export.
 4. Semantic search: an operator switches to a pgvector image, sets the `CAIRN_SEARCH_*`
-   variables, restarts (the optional migrations apply), and runs `cairnd search reindex
+   variables, restarts (the optional migrations apply), and runs `cairn search reindex
    --semantic`.
 5. When ADR-0029 lands, the owner columns on `search_documents` and `search_chunks` follow its
    `owner_user_id` / `owner_team_id` split in the same migration that splits `artifacts`.

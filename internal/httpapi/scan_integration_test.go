@@ -252,8 +252,9 @@ func TestScanMCPCreate(t *testing.T) {
 	code := "var k = \"" + tok + "\"\n"
 
 	res := callTool(t, owner, "artifact_create", map[string]any{"body": code, "share_type": "code"})
-	if !res.IsError || !strings.HasPrefix(toolText(t, res), "validation_failed:") {
-		t.Errorf("code with a token: IsError=%v %q, want validation_failed", res.IsError, toolText(t, res))
+	_, violations := toolViolations(t, res)
+	if !res.IsError || !anyViolationReason(violations, errs.ReasonSecretDetected) {
+		t.Errorf("code with a token: IsError=%v err=%v violations=%+v, want validation_failed with secret_detected", res.IsError, res.GetError(), violations)
 	}
 	assertNoToken(t, "artifact_create refusal", toolText(t, res), []string{tok})
 
@@ -264,14 +265,16 @@ func TestScanMCPCreate(t *testing.T) {
 	assertNoToken(t, "artifact_create output", toolText(t, res), []string{tok})
 
 	res = callTool(t, owner, "artifact_create", map[string]any{"body": "fine", "redaction": "off"})
-	if !res.IsError || !strings.HasPrefix(toolText(t, res), "validation_failed:") {
-		t.Errorf("redaction off: IsError=%v %q, want validation_failed", res.IsError, toolText(t, res))
+	gotCode, violations := toolViolations(t, res)
+	if !res.IsError || gotCode != errs.CodeValidation || !anyViolationReason(violations, errs.ReasonUnknownValue) {
+		t.Errorf("redaction off: IsError=%v err=%v code=%s violations=%+v, want validation_failed with unknown_value", res.IsError, res.GetError(), gotCode, violations)
 	}
 
 	members := []map[string]any{{"name": "a.txt", "body": "a"}, {"name": "b.env", "body": "TOKEN=" + tok}}
 	res = callTool(t, owner, "bundle_create", map[string]any{"members": members})
-	if !res.IsError || !strings.HasPrefix(toolText(t, res), "validation_failed:") {
-		t.Errorf("bundle with a token: IsError=%v %q, want validation_failed", res.IsError, toolText(t, res))
+	_, violations = toolViolations(t, res)
+	if !res.IsError || !anyViolationReason(violations, errs.ReasonSecretDetected) {
+		t.Errorf("bundle with a token: IsError=%v err=%v violations=%+v, want validation_failed with secret_detected", res.IsError, res.GetError(), violations)
 	}
 	res = callTool(t, owner, "bundle_create", map[string]any{"members": members, "redaction": "mask"})
 	var bundle mcpBundleCreateOutput
@@ -291,4 +294,14 @@ func mcpTestServerLogs(t *testing.T, logs io.Writer) (*httptest.Server, *store.S
 	srv := httptest.NewServer(New(st, nil, nil, mcpConfig(), slog.New(slog.NewTextHandler(logs, nil))).Handler())
 	t.Cleanup(srv.Close)
 	return srv, st
+}
+
+// anyViolationReason checks if any violation in the list has the given reason.
+func anyViolationReason(vs []errs.Violation, reason errs.Reason) bool {
+	for _, v := range vs {
+		if v.Reason == reason {
+			return true
+		}
+	}
+	return false
 }

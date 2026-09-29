@@ -157,7 +157,7 @@ set, otherwise the instance quota for its kind (`CAIRN_PERMANENT_USER_MAX_COUNT`
 `CAIRN_PERMANENT_TEAM_MAX_BYTES`). When neither is set, that dimension MUST NOT limit
 retains. No quota MAY be applied by default.
 
-When retention is enabled and no instance quota is set for a dimension, `cairnd` MUST log a
+When retention is enabled and no instance quota is set for a dimension, `cairn serve` MUST log a
 WARN at startup that permanent storage is unbounded in that dimension, and the self-hosting
 guide MUST call this out.
 
@@ -222,7 +222,7 @@ a `404`.
    explicitly, on the OAuth consent screen or when minting the PAT.
 
 `retention:write` MUST NOT be part of the default agent grant. It MUST NOT confer release,
-delete, TTL, visibility or rotation. When `CAIRN_PERMANENT_AGENT_RETAIN=true`, `cairnd` MUST
+delete, TTL, visibility or rotation. When `CAIRN_PERMANENT_AGENT_RETAIN=true`, `cairn serve` MUST
 log a WARN at startup naming the setting, and the self-hosting guide MUST call it out. This amends SPEC-0007 REQ "Exactly Three Consent
 Scopes": the three default scopes are unchanged, and one opt-in scope is added.
 
@@ -388,17 +388,17 @@ The capability MUST be exposed on every surface (ADR-0003 parity), in these shap
 
 ### Requirement: REQ-12 Operator Commands and Audit
 
-`cairnd` MUST provide operator subcommands. Running `cairnd` with no subcommand MUST still
+`cairn` MUST provide the operator subcommands. Running `cairn serve` MUST still
 start the server.
 
-- `cairnd retention quota get|set|unset --user <id> | --team <id> [--count N] [--bytes SIZE]`
+- `cairn retention quota get|set|unset --user <id> | --team <id> [--count N] [--bytes SIZE]`
   manages per-owner overrides of the instance quotas. An override MAY set a limit where no
   instance quota exists, or `unlimited` where one does; `unset` returns the owner to the
   instance quota, or to no quota if none is set.
-- `cairnd retention release (--owner <id> | --all) --ttl <dur> --reason <text>` bulk-releases
+- `cairn retention release (--owner <id> | --all) --ttl <dur> --reason <text>` bulk-releases
   permanent artifacts. It MUST emit one `artifact.released` event and one audit row per
   artifact.
-- `cairnd retention purge-tombstone <id> --reason <text>` removes a tombstone for a legal
+- `cairn retention purge-tombstone <id> --reason <text>` removes a tombstone for a legal
   takedown. After the purge the id MUST return the uniform 404 and MUST still never be
   reused.
 

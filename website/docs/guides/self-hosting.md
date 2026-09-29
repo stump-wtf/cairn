@@ -29,8 +29,9 @@ process, one database, one bucket.
 
 ## Which variable is which
 
-Several names look alike but belong to different programs. The server,
-`cairnd`, reads its settings from its own environment. The `cairn` CLI reads
+Several names look alike but belong to different programs. The server — the
+same `cairn` binary, run as `cairn serve` — reads its settings from its own
+environment. The `cairn` CLI reads
 different names, from the shell of whoever is running it. Setting a server
 variable in your shell does nothing for the CLI, and the reverse is also true.
 
@@ -51,7 +52,7 @@ is the exception: it rejects `CAIRN_API_TOKENS` secrets with `401`.
 
 ## Configuration
 
-Everything comes from the environment; `cairnd` takes no flags. Every variable
+Everything comes from the environment; `cairn serve` takes no flags. Every variable
 is read from the `CAIRN_` namespace. The one file cairn ever reads is the
 optional redaction allowlist that `CAIRN_REDACTION_ALLOWLIST_FILE` names (see
 [Secret redaction](#secret-redaction)).
@@ -106,7 +107,7 @@ Three settings are easy to get wrong:
   development seams.** The dev password is disabled the moment any real
   provider is configured, OIDC (`CAIRN_OIDC_ISSUER`) or GitHub
   (`CAIRN_GITHUB_CLIENT_ID`), and its route then answers `404`. The insecure
-  bearer shortcut defaults off, and `cairnd` refuses to start with it on
+  bearer shortcut defaults off, and `cairn serve` refuses to start with it on
   while `CAIRN_BASE_URL` is `https`. Leave both alone on a real deployment.
 - **Your IdP must mark emails verified, or you must trust it.** A sign-in is
   keyed on the provider's `(issuer, subject)`. Its email only identifies a
@@ -164,7 +165,9 @@ services:
     volumes: [miniodata:/data]
     restart: unless-stopped
 
-  cairnd:
+  # The image's entrypoint runs the server (`cairn serve`); no command
+  # override is needed.
+  cairn:
     image: ghcr.io/stump-wtf/cairn:latest
     depends_on:
       postgres: {condition: service_healthy}
@@ -190,7 +193,7 @@ services:
 
   caddy:
     image: caddy:2-alpine
-    depends_on: [cairnd]
+    depends_on: [cairn]
     ports: ["80:80", "443:443"]
     environment:
       CAIRN_DOMAIN: ${CAIRN_DOMAIN}
@@ -213,7 +216,7 @@ and next to it a three-line `Caddyfile`:
 
 {$CAIRN_DOMAIN} {
 	encode gzip
-	reverse_proxy cairnd:8080 {
+	reverse_proxy cairn:8080 {
 		header_up X-Forwarded-For {remote_host}
 	}
 }
@@ -249,11 +252,11 @@ quay.io. Any S3-compatible store works; substitute Garage or MinIO from your
 preferred registry freely.
 </details>
 
-`docker compose logs cairnd` on a healthy start looks like this:
+`docker compose logs cairn` on a healthy start looks like this:
 
 ```json
 {"time":"…","level":"INFO","msg":"retention reaper started","interval":"1h0m0s","batch":500}
-{"time":"…","level":"INFO","msg":"cairnd listening","addr":":8080"}
+{"time":"…","level":"INFO","msg":"cairn serve listening","addr":":8080"}
 ```
 
 Migrations run on first boot before that line — there is no migrate step to
@@ -271,7 +274,7 @@ a first credential without an identity provider, see
 
 ```bash
 git clone https://github.com/stump-wtf/cairn && cd cairn
-go build -o cairnd ./cmd/cairnd
+go build -o cairn ./cmd/cairn
 
 export CAIRN_DATABASE_URL='host=localhost port=5432 user=cairn password=secret dbname=cairn sslmode=disable'
 export CAIRN_BASE_URL='https://cairn.example.com'
@@ -279,7 +282,7 @@ export CAIRN_S3_ENDPOINT='s3.example.com'
 export CAIRN_S3_ACCESS_KEY='…'
 export CAIRN_S3_SECRET_KEY='…'
 export CAIRN_S3_USE_SSL=true
-./cairnd
+./cairn serve
 ```
 
 Go 1.26.5 or newer (see `go.mod`). `sslmode=disable` above assumes the
@@ -392,8 +395,8 @@ keeps the old environment.
 docker compose up -d
 ```
 
-The WARN above is gone from `docker compose logs cairnd`. On the binary
-path, export `CAIRN_API_TOKENS` in the environment `cairnd` starts from and
+The WARN above is gone from `docker compose logs cairn`. On the binary
+path, export `CAIRN_API_TOKENS` in the environment `cairn serve` starts from and
 restart it instead.
 
 **3. Use it as `CAIRN_TOKEN`.** The server's secret is the client's token:
@@ -423,7 +426,7 @@ old secret answers `401` from then on.
 
 Treat the bootstrap token as the long-lived secret it is. It never expires and
 cannot be revoked from Settings; it works until you remove it from the
-environment and recreate the server. `cairnd` keeps only its SHA-256 digest in
+environment and recreate the server. The server keeps only its SHA-256 digest in
 memory, but the plaintext sits in your `.env` and in the container's
 environment, so protect that file like the token itself.
 
@@ -441,7 +444,7 @@ and `curl -u`. See [ADR-0023](../decisions/ADR-0023.md) and
 [SPEC-0017](../specs/ingest-redaction/index.md).
 
 **There is deliberately no off switch.** No variable, request header, or tool
-argument turns scanning off, and cairnd refuses to start if the scanner cannot
+argument turns scanning off, and `cairn serve` refuses to start if the scanner cannot
 be built. A writer can only downgrade a rejecting type to masking for one
 request (`X-Cairn-Redaction: mask`, `--redact=mask`, or `redaction: "mask"` over
 MCP). Any other value is refused: the API answers `validation_failed`, and the
@@ -476,7 +479,7 @@ before scanning existed), a count, and the rule IDs. Never the value.
 | `CAIRN_REDACTION_ALLOWLIST_FILE` | *(empty)* | A path to an operator allowlist TOML, described below. Empty means no allowlist. A file that is missing or does not parse stops startup. |
 
 The compose file above passes none of these through, so the defaults apply.
-To change one, add it to the `cairnd` service's `environment`. For an
+To change one, add it to the `cairn` service's `environment`. For an
 allowlist, also mount the file read-only into the container and point the
 variable at the path inside it.
 

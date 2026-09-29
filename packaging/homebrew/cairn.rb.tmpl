@@ -8,7 +8,7 @@ class Cairn < Formula
   # public source tarball. cairn pins prebuilt binaries instead, four url/sha256
   # pairs installed directly, so installing needs no Go toolchain. The release
   # path is built around that: a v* tag publishes cross-platform archives to
-  # github.com/stump-wtf/cairn-cli (binaries only), and the tap-bump job renders
+  # github.com/stump-wtf/cairn (binaries only), and the tap-bump job renders
   # this file from those assets.
   #
   # The urls carry the version literally, with no separate `version` line.
@@ -23,22 +23,22 @@ class Cairn < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/stump-wtf/cairn-cli/releases/download/v@VERSION@/cairn_@VERSION@_darwin_arm64.tar.gz"
+      url "https://github.com/stump-wtf/cairn/releases/download/v@VERSION@/cairn_@VERSION@_darwin_arm64.tar.gz"
       sha256 "@SHA256_DARWIN_ARM64@"
     end
     on_intel do
-      url "https://github.com/stump-wtf/cairn-cli/releases/download/v@VERSION@/cairn_@VERSION@_darwin_amd64.tar.gz"
+      url "https://github.com/stump-wtf/cairn/releases/download/v@VERSION@/cairn_@VERSION@_darwin_amd64.tar.gz"
       sha256 "@SHA256_DARWIN_AMD64@"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/stump-wtf/cairn-cli/releases/download/v@VERSION@/cairn_@VERSION@_linux_arm64.tar.gz"
+      url "https://github.com/stump-wtf/cairn/releases/download/v@VERSION@/cairn_@VERSION@_linux_arm64.tar.gz"
       sha256 "@SHA256_LINUX_ARM64@"
     end
     on_intel do
-      url "https://github.com/stump-wtf/cairn-cli/releases/download/v@VERSION@/cairn_@VERSION@_linux_amd64.tar.gz"
+      url "https://github.com/stump-wtf/cairn/releases/download/v@VERSION@/cairn_@VERSION@_linux_amd64.tar.gz"
       sha256 "@SHA256_LINUX_AMD64@"
     end
   end

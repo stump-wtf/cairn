@@ -9,7 +9,7 @@ requires: [SPEC-0010]
 
 ## Overview
 
-`cairnd` serves the published documentation itself. The Docusaurus bundle built
+`cairn serve` serves the published documentation itself. The Docusaurus bundle built
 from `website/` (SPEC-0010, ADR-0014) is embedded in the server binary behind the
 `docs` build tag and served at `/docs/*` from the same process that serves the
 API, the MCP endpoint, and the web app shell. A `cairn-docs` container or any
@@ -24,7 +24,7 @@ without-Node build degrades.
 
 ### Requirement: Embedded Bundle Build
 
-The packaged `cairnd` binary MUST embed the Docusaurus build output at
+The packaged server binary (started as `cairn serve`) MUST embed the Docusaurus build output at
 `website/build/` via `go:embed`, compiled with the `docs` build tag. A build
 without the tag MUST compile and pass `go test` with no Node toolchain present,
 serving a stub page that states the binary was built without embedded docs.
@@ -48,7 +48,7 @@ serving a stub page that states the binary was built without embedded docs.
 
 ### Requirement: Route and Content Serving
 
-`cairnd` MUST serve the embedded bundle under the `/docs/` path prefix, with the
+`cairn serve` MUST serve the embedded bundle under the `/docs/` path prefix, with the
 prefix matching the bundle's configured base path. The server MUST NOT claim
 routes outside `/docs/*`; the API, MCP, and app shell routes are unchanged.
 
@@ -86,15 +86,15 @@ self-hosting guide and the compose files in the same change.
 
 The single-image runtime MUST be the only supported self-host path: the
 published guide (`website/docs/guides/self-hosting.md`) MUST be the one
-documented deployment path, describing one `cairnd` service with embedded
+documented deployment path, describing one `cairn serve` service with embedded
 docs. The `ghcr.io/stump-wtf/cairn` pull contract MUST keep working across
 the change — same name, same env surface, same ports.
 
 #### Scenario: Compose bring-up
 
 - **WHEN** a fresh self-hoster follows the guide's compose path
-- **THEN** the stack is cairnd + Postgres + S3 + Caddy, and the guide pages are
-  served by cairnd at the same origin
+- **THEN** the stack is cairn serve + Postgres + S3 + Caddy, and the guide pages are
+  served by cairn serve at the same origin
 
 #### Scenario: Existing pullers unaffected
 
@@ -105,7 +105,7 @@ the change — same name, same env surface, same ports.
 
 - **WHEN** the converge lands on cloud01
 - **THEN** the `cairn-docs` container and its dedicated edge route are gone, the
-  edge proxies `/docs/*` to `cairnd`, and the live guide renders identical
+  edge proxies `/docs/*` to `cairn serve`, and the live guide renders identical
   content from the binary
 
 ### Requirement: Verification Honesty

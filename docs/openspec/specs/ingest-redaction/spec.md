@@ -84,7 +84,7 @@ the operator allowlist (RD-8). The detector MUST be configured with:
 
 The system MUST NOT load a `.gitleaksignore`, a baseline, or any
 uploader-supplied configuration. A detector that fails to build at startup MUST
-stop cairnd from starting. Cairn MUST NOT run with scanning silently disabled.
+stop cairn serve from starting. Cairn MUST NOT run with scanning silently disabled.
 
 #### Scenario: Inline allow comment does not exempt
 
@@ -100,7 +100,7 @@ stop cairnd from starting. Cairn MUST NOT run with scanning silently disabled.
 #### Scenario: Bad config stops startup
 
 - **WHEN** the operator allowlist file does not parse
-- **THEN** cairnd exits with an error naming the file, and serves nothing
+- **THEN** cairn serve exits with an error naming the file, and serves nothing
 
 ### Requirement: RD-3 Harness-Compatible Rules and Mask
 
@@ -218,7 +218,7 @@ MUST be stored with status `not_scanned_oversize`, which the owner can see.
 Gitleaks' own size skip MUST never apply (RD-2).
 
 `store_unscanned` is a risky option, so it is off by default and loud when on:
-`cairnd` MUST log a WARN at startup naming `CAIRN_REDACTION_OVERSIZE`, and MUST
+`cairn serve` MUST log a WARN at startup naming `CAIRN_REDACTION_OVERSIZE`, and MUST
 log a WARN each time it stores a field unscanned, carrying the artifact's id and
 the field's size and never its content. The self-hosting guide MUST call the
 setting out in a warning admonition.
@@ -262,7 +262,7 @@ operator configuration and MUST NOT be settable by any user, token or request.
 #### Scenario: Path allowlist refused
 
 - **WHEN** the allowlist file contains a `paths` entry
-- **THEN** cairnd refuses to start, and names the entry as unsupported
+- **THEN** cairn serve refuses to start, and names the entry as unsupported
 
 ### Requirement: RD-9 Recorded Outcome Without Values
 
