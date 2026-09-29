@@ -142,6 +142,21 @@ func Render(source []byte) (*Rendered, error) {
 	return out, nil
 }
 
+// RenderHTML renders a markdown body to sanitized inline HTML for surfaces
+// that embed a rendered fragment rather than a full block document (comment
+// bodies, #411). It reuses Render's converter and sanitizer: goldmark runs
+// without html.WithUnsafe so raw HTML a commenter pastes is omitted, and
+// bluemonday strips any residue — the same two-layer XSS stance as artifact
+// bodies. It deliberately mints no block ids, so comment markup cannot
+// introduce ids into the artifact's block-id space (ADR-0006).
+func RenderHTML(source string) template.HTML {
+	var buf bytes.Buffer
+	if err := gm.Convert([]byte(source), &buf); err != nil {
+		return ""
+	}
+	return template.HTML(sanitizer.SanitizeBytes(buf.Bytes())) //nolint:gosec // sanitized above
+}
+
 // nestTOC turns a flat, document-ordered list of headings into a multi-level
 // tree by heading level, so a `##` under a `#` becomes its child. Levels that
 // skip (a `###` directly under a `#`) attach to the nearest shallower heading,

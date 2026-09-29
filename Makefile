@@ -1,7 +1,13 @@
-.PHONY: build test test-race test-js vet fmt fmt-check lint check tidy up down migrate ci verify-cli
+.PHONY: build test test-race test-js test-scripts vet fmt fmt-check lint check tidy up down migrate ci verify-cli release-snapshot website
 
 GO ?= go
 PKGS ?= ./...
+
+# Extra flags for `go test`, empty by default so `make test` is plain
+# `go test ./...` from a clean checkout. CI's integration job passes an explicit
+# -timeout here: go's default is 10m per test binary, and a shared runner under
+# load can push internal/httpapi past that without anything being hung.
+GOTESTFLAGS ?=
 
 # Optional path to a built cairn binary for `make verify-cli`. Without it only
 # the import-graph gate runs, which needs no build.
@@ -11,11 +17,11 @@ build:
 	$(GO) build $(PKGS)
 
 test:
-	$(GO) test $(PKGS)
+	$(GO) test $(GOTESTFLAGS) $(PKGS)
 
 # Concurrency-sensitive code (streaming ingest) MUST pass under the race detector.
 test-race:
-	$(GO) test -race $(PKGS)
+	$(GO) test -race $(GOTESTFLAGS) $(PKGS)
 
 # The trajectory viewer's pure scrubber math has a plain-node unit test (no
 # DOM). Skipped silently when node is absent, so a Go-only box still passes.
@@ -54,7 +60,22 @@ lint: fmt-check vet
 verify-cli:
 	@scripts/verify-cli-artifact.sh $(CLI_BIN)
 
-check: lint test verify-cli
+# Tests for the release scripts themselves (scripts/*.test.sh): fixtures each
+# gate must pass or fail, each for its own reason. No Go build, so it is cheap
+# enough for every run. A glob, so a new script's tests join by existing.
+test-scripts:
+	@set -e; n=0; for t in scripts/*.test.sh; do \
+		[ -e "$$t" ] || continue; echo "==> $$t"; "$$t"; n=$$((n + 1)); \
+	done; [ "$$n" -gt 0 ] || { echo "no scripts/*.test.sh found; nothing was tested"; exit 1; }
+
+# A local dry run of the whole release: both builds, both archives, the CLI
+# post hook, then the archive-composition check the release job runs before it
+# publishes. Needs goreleaser on PATH; publishes nothing.
+release-snapshot:
+	goreleaser release --snapshot --clean
+	scripts/verify-release-archives.sh dist
+
+check: lint test verify-cli test-scripts
 
 tidy:
 	$(GO) mod tidy
@@ -66,4 +87,14 @@ up:
 down:
 	docker compose down -v
 
-ci: fmt-check vet build test-race test-js
+ci: fmt-check vet build test-race test-js test-scripts
+
+# The docs site's own gate: its unit tests, the typecheck, and the full build.
+# The build is what runs the design-record validator (a front-matter edge to a
+# record that does not exist throws) and, from its postBuild hook, the bundle
+# scan for private hosts and credentials. Not part of `ci` or `check`, so a
+# Go-only box still passes those; the pipeline runs it as its own `website` job.
+# DOCS_URL / DOCS_BASE_URL match the public build, not the Pages one.
+website:
+	cd website && npm ci --no-audit --no-fund && npm test && npm run typecheck && \
+		DOCS_URL=https://cairn.stump.wtf DOCS_BASE_URL=/ npm run build

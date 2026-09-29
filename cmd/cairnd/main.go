@@ -21,8 +21,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/config"
 	"github.com/stump-wtf/cairn/internal/db"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/httpapi"
 	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/objectstore"
@@ -32,6 +34,10 @@ import (
 )
 
 func main() {
+	if wantsVersion(os.Args[1:]) {
+		fmt.Println("cairnd " + versionString())
+		return
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(logger); err != nil {
 		logger.Error("cairnd exited", "error", err)
@@ -115,6 +121,19 @@ func newRedactionScanner(cfg *config.Config, logger *slog.Logger) (*redact.Scann
 	return s, nil
 }
 
+// newEventEmitter returns the lifecycle-event emitter the core services beyond
+// the store receive (ADR-0022, SPEC-0016 EV-2), as a nil INTERFACE when no
+// outbound emitter exists. The same typed-nil hazard as newStoreOptions
+// (cairn#201) applies: httpapi.Config.Events and trajectory.Options.Emitter are
+// event.Emitter interfaces, so assigning a nil *outboundhook.Emitter would make
+// every "is an emitter installed?" guard read true.
+func newEventEmitter(emitter *outboundhook.Emitter) event.Emitter {
+	if emitter == nil {
+		return nil
+	}
+	return emitter
+}
+
 func run(logger *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -130,6 +149,11 @@ func run(logger *slog.Logger) error {
 	// One metrics registry for the process (ADR-0021). Not served until #256;
 	// the services count into it from the start.
 	metricsReg := metrics.New()
+
+	approvalClass, err := annotation.NewApprovalClass(cfg.ApprovalReactions)
+	if err != nil {
+		return fmt.Errorf("config CAIRN_APPROVAL_REACTIONS: %w", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -220,6 +244,8 @@ func run(logger *slog.Logger) error {
 	// The /v1 REST/JSON adapter over the core service (ADR-0012).
 	api := httpapi.New(svc, nil, nil, httpapi.Config{
 		BaseURL:               cfg.BaseURL,
+		Events:                newEventEmitter(emitter),
+		ApprovalClass:         approvalClass,
 		MaxUploadBytes:        cfg.MaxUploadBytes,
 		DefaultTTL:            cfg.DefaultTTL,
 		RatePerSecond:         cfg.RatePerSecond,

@@ -208,6 +208,143 @@ func TestReasonRegistryIsClosed(t *testing.T) {
 	}
 }
 
+// VE-2: "each registry entry is documented in the public error reference". The
+// page's Reasons section must list exactly the registry, in order, both in its
+// summary table and as one example heading per reason, so a reason cannot ship
+// undocumented and the page cannot document one the code does not have.
+func TestReasonRegistryIsDocumented(t *testing.T) {
+	s := errorReferenceReasons(t)
+
+	want := strings.Join(reasonStrings(Reasons), ",")
+	for _, probe := range []struct {
+		what string
+		re   *regexp.Regexp
+	}{
+		{"table rows", regexp.MustCompile("(?m)^\\| `([a-z_]+)` \\|")},
+		{"example headings", regexp.MustCompile("(?m)^### `([a-z_]+)`$")},
+	} {
+		var got []string
+		for _, m := range probe.re.FindAllStringSubmatch(s, -1) {
+			got = append(got, m[1])
+		}
+		if strings.Join(got, ",") != want {
+			t.Errorf("error reference %s drifted from the registry:\n page: %v\n code: %v", probe.what, got, reasonStrings(Reasons))
+		}
+	}
+}
+
+// The error reference says its examples are what the server sends. Each
+// example under a "### `reason`" heading must be valid JSON with that reason,
+// and must be byte for byte the violation NewViolation builds from the
+// example's own field, location, limit, unit, value and extra keys (plus, for
+// the reasons whose sentence takes one, some WithExpect description). A change
+// to a message's wording, a value echo over MaxValueBytes, or a value on a
+// secret_detected example therefore fails here rather than leaving the page
+// wrong.
+func TestErrorReferenceExamplesMatchNewViolation(t *testing.T) {
+	s := errorReferenceReasons(t)
+	heading := regexp.MustCompile("(?m)^### `([a-z_]+)`$")
+	block := regexp.MustCompile("(?s)```json\n(.*?)\n```")
+	locs := heading.FindAllStringSubmatchIndex(s, -1)
+	if len(locs) != len(Reasons) {
+		t.Fatalf("%d example headings, want %d", len(locs), len(Reasons))
+	}
+	for i, loc := range locs {
+		reason := s[loc[2]:loc[3]]
+		end := len(s)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		m := block.FindStringSubmatch(s[loc[1]:end])
+		if m == nil {
+			t.Errorf("%s: no json example", reason)
+			continue
+		}
+		doc, err := decodeNumbers([]byte(m[1]))
+		if err != nil {
+			t.Errorf("%s: example is not valid JSON: %v", reason, err)
+			continue
+		}
+		if doc["reason"] != reason {
+			t.Errorf("%s: example has reason %v", reason, doc["reason"])
+			continue
+		}
+
+		field, _ := doc["field"].(string)
+		location, _ := doc["location"].(string)
+		var opts []Opt
+		if l, ok := doc["limit"]; ok {
+			unit, _ := doc["unit"].(string)
+			opts = append(opts, WithLimit(l, unit))
+		}
+		if v, ok := doc["value"].(string); ok {
+			opts = append(opts, WithValue(v))
+		}
+		for k, v := range doc {
+			switch k {
+			case "field", "location", "reason", "limit", "unit", "value", "message":
+			default:
+				opts = append(opts, WithExtra(k, v))
+			}
+		}
+		msg, _ := doc["message"].(string)
+		build := func(extra ...Opt) map[string]any {
+			b, err := json.Marshal(NewViolation(field, Location(location), Reason(reason), append(opts[:len(opts):len(opts)], extra...)...))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := decodeNumbers(b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return got
+		}
+		got := build()
+		for j := 0; j < len(msg) && got["message"] != msg; j++ {
+			if cand := build(WithExpect(msg[j:])); cand["message"] == msg {
+				got = cand
+			}
+		}
+		gb, _ := json.Marshal(got)
+		db, _ := json.Marshal(doc)
+		if string(gb) != string(db) {
+			t.Errorf("%s: the example is not what NewViolation builds:\n page: %s\n code: %s", reason, db, gb)
+		}
+	}
+}
+
+// errorReferenceReasons is the "## Reasons" section of the public error
+// reference, up to the next second-level heading.
+func errorReferenceReasons(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile("../../website/docs/product/errors.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	start := strings.Index(s, "\n## Reasons\n")
+	if start < 0 {
+		t.Fatal(`"## Reasons" section not found in the error reference`)
+	}
+	s = s[start+1:]
+	if end := strings.Index(s[len("## Reasons"):], "\n## "); end >= 0 {
+		s = s[:len("## Reasons")+end]
+	}
+	return s
+}
+
+// decodeNumbers decodes a JSON object keeping numbers as json.Number, so a
+// limit of 2592000 stays "2592000" rather than becoming 2.592e+06.
+func decodeNumbers(b []byte) (map[string]any, error) {
+	d := json.NewDecoder(strings.NewReader(string(b)))
+	d.UseNumber()
+	var m map[string]any
+	if err := d.Decode(&m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 func declaredReasons(t *testing.T) []Reason {
 	t.Helper()
 	fset := token.NewFileSet()
