@@ -265,14 +265,14 @@ func TestScanMCPCreate(t *testing.T) {
 	assertNoToken(t, "artifact_create output", toolText(t, res), []string{tok})
 
 	res = callTool(t, owner, "artifact_create", map[string]any{"body": "fine", "redaction": "off"})
-	code, violations := toolViolations(t, res)
-	if !res.IsError || code != errs.CodeValidation || !anyViolationReason(violations, errs.ReasonNotAllowed) {
-		t.Errorf("redaction off: IsError=%v err=%v code=%s violations=%+v, want validation_failed with not_allowed", res.IsError, res.GetError(), code, violations)
+	gotCode, violations := toolViolations(t, res)
+	if !res.IsError || gotCode != errs.CodeValidation || !anyViolationReason(violations, errs.ReasonNotAllowed) {
+		t.Errorf("redaction off: IsError=%v err=%v code=%s violations=%+v, want validation_failed with not_allowed", res.IsError, res.GetError(), gotCode, violations)
 	}
 
 	members := []map[string]any{{"name": "a.txt", "body": "a"}, {"name": "b.env", "body": "TOKEN=" + tok}}
 	res = callTool(t, owner, "bundle_create", map[string]any{"members": members})
-	_, violations := toolViolations(t, res)
+	_, violations = toolViolations(t, res)
 	if !res.IsError || !anyViolationReason(violations, errs.ReasonSecretDetected) {
 		t.Errorf("bundle with a token: IsError=%v err=%v violations=%+v, want validation_failed with secret_detected", res.IsError, res.GetError(), violations)
 	}
@@ -305,4 +305,3 @@ func anyViolationReason(vs []errs.Violation, reason errs.Reason) bool {
 	}
 	return false
 }
-
