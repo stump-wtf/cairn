@@ -95,7 +95,7 @@ type Service struct {
 	// scanner masks credentials in comment bodies before they are stored, and
 	// metrics counts each scan (SPEC-0017). A Service built without them stores
 	// bodies as written and records the outcome "unscanned", never "clean";
-	// cairnd always wires both.
+	// cairn serve always wires both.
 	scanner *redact.Scanner
 	metrics *metrics.Registry
 	// events receives comment.created, reaction.added and reaction.removed

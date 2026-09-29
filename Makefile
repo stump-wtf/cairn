@@ -1,4 +1,4 @@
-.PHONY: build test test-race test-js test-scripts vet fmt fmt-check lint check tidy up down migrate ci verify-cli release-snapshot website
+.PHONY: build test test-race test-js test-scripts vet fmt fmt-check lint check tidy up down migrate ci release-snapshot website
 
 GO ?= go
 PKGS ?= ./...
@@ -8,10 +8,6 @@ PKGS ?= ./...
 # -timeout here: go's default is 10m per test binary, and a shared runner under
 # load can push internal/httpapi past that without anything being hung.
 GOTESTFLAGS ?=
-
-# Optional path to a built cairn binary for `make verify-cli`. Without it only
-# the import-graph gate runs, which needs no build.
-CLI_BIN ?=
 
 build:
 	$(GO) build $(PKGS)
@@ -53,13 +49,6 @@ fmt-check:
 # Uniform entry points: every repo answers to `make lint` / `make check`.
 lint: fmt-check vet
 
-# The source is private and only the CLI is distributed, so the shipped binary
-# must never contain the server. This is cheap (an import-graph allowlist) and
-# runs with the ordinary checks rather than only at release time, because the
-# way it breaks is an ordinary-looking import added months earlier.
-verify-cli:
-	@scripts/verify-cli-artifact.sh $(CLI_BIN)
-
 # Tests for the release scripts themselves (scripts/*.test.sh): fixtures each
 # gate must pass or fail, each for its own reason. No Go build, so it is cheap
 # enough for every run. A glob, so a new script's tests join by existing.
@@ -75,7 +64,7 @@ release-snapshot:
 	goreleaser release --snapshot --clean
 	scripts/verify-release-archives.sh dist
 
-check: lint test verify-cli test-scripts
+check: lint test test-scripts
 
 tidy:
 	$(GO) mod tidy

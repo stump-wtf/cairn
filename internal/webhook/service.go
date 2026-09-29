@@ -78,7 +78,7 @@ type Options struct {
 	// Now overrides the clock, for deterministic tests.
 	Now func() time.Time
 	// Scanner masks credentials in every capture before it is stored
-	// (SPEC-0017 RD-4). cairnd always sets it. Without one, captures are
+	// (SPEC-0017 RD-4). cairn serve always sets it. Without one, captures are
 	// stored as sent, apart from header hygiene, and read "unscanned".
 	Scanner *redact.Scanner
 	// Metrics counts each scan in cairn_redactions_total; nil counts nothing.

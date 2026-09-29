@@ -119,6 +119,7 @@ decided by the server and only ever displayed here (SPEC-0008).`,
 		newLoginCmd(streams, flags, configPathOverride),
 		newLogoutCmd(streams, flags, configPathOverride),
 		newWhoamiCmd(streams, flags, configPathOverride),
+		newServeCmd(streams),
 	)
 
 	return root

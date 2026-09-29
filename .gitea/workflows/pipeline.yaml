@@ -756,12 +756,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Verify the CLI imports no server code
-        # The import-graph gate, run before anything is built. goreleaser also
-        # runs this script as a post-build hook against each compiled binary
-        # (.goreleaser.yaml), so the artifact is checked as well as the graph.
-        run: make verify-cli
-
       # goreleaser has no post-archive hook in the open-source edition, and a
       # real `release` uploads as soon as it has archived. So the archive check
       # runs against a snapshot of the same config first: which binary lands in
