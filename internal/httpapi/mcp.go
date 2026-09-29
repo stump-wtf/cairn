@@ -1381,17 +1381,26 @@ type mcpRunSpanInput struct {
 // SpanInput values, re-marshaling each span's Args back to the
 // json.RawMessage the core trajectory service expects (the inverse of
 // [mcpAnchorInput.anchorRefJSON], same reasoning).
-func toRunSpanInputs(tool string, spans []mcpRunSpanInput) ([]trajectory.SpanInput, error) {
+//
+// Every span whose args cannot be encoded is named as spans[n].args in one
+// error: the batch is reported cumulatively, like the trajectory service's
+// own span checks.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-4
+func toRunSpanInputs(spans []mcpRunSpanInput) ([]trajectory.SpanInput, error) {
 	if len(spans) == 0 {
 		return nil, nil
 	}
 	out := make([]trajectory.SpanInput, 0, len(spans))
-	for _, sp := range spans {
+	var bad []*errs.Invalid
+	for i, sp := range spans {
 		var args json.RawMessage
 		if sp.Args != nil {
 			b, err := json.Marshal(sp.Args)
 			if err != nil {
-				return nil, fmt.Errorf("validation_failed: %s: span %q args is not valid JSON", tool, sp.SpanID)
+				bad = append(bad, errs.Violate(fmt.Sprintf("spans[%d].args", i), errs.LocBody, errs.ReasonInvalidFormat,
+					errs.WithExpect("a JSON object")))
+				continue
 			}
 			args = b
 		}
@@ -1411,6 +1420,9 @@ func toRunSpanInputs(tool string, spans []mcpRunSpanInput) ([]trajectory.SpanInp
 			DurationMS:         sp.DurationMS,
 			ProducedArtifactID: sp.ProducedArtifactID,
 		})
+	}
+	if len(bad) > 0 {
+		return nil, errs.Join(bad...)
 	}
 	return out, nil
 }
@@ -1516,9 +1528,9 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 	if creator.Check() != nil {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", errs.ErrUnauthorized)
 	}
-	spans, err := toRunSpanInputs("run_create", in.Spans)
+	spans, err := toRunSpanInputs(in.Spans)
 	if err != nil {
-		return nil, mcpRunOutput{}, err
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", err)
 	}
 	now := s.now()
 	started := in.StartedAt
@@ -1551,7 +1563,7 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 	case "open":
 		run, err = s.traj.OpenRun(ctx, rin)
 	default:
-		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", errs.Validationf("mode must be \"batch\" or \"open\""))
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", checkRunMode(in.Mode))
 	}
 	if err != nil {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", err)
@@ -1589,9 +1601,9 @@ func (s *Server) mcpAppendRunSpans(ctx context.Context, req *mcp.CallToolRequest
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_append_spans", errs.ErrUnauthorized)
 	}
 	id := normalizeMCPHandle(in.ID)
-	spans, err := toRunSpanInputs("run_append_spans", in.Spans)
+	spans, err := toRunSpanInputs(in.Spans)
 	if err != nil {
-		return nil, mcpRunOutput{}, err
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_append_spans", err)
 	}
 	_, outcome, err := s.traj.AppendSpansWithOutcome(ctx, id, actorID, spans)
 	if err != nil {
@@ -1661,7 +1673,8 @@ func (a mcpAnchorInput) anchorRefJSON() (json.RawMessage, error) {
 	}
 	b, err := json.Marshal(a.AnchorRef)
 	if err != nil {
-		return nil, fmt.Errorf("validation_failed: anchor_ref is not valid JSON")
+		// Governing: ADR-0025, SPEC-0019 VE-1
+		return nil, errs.Violate("anchor_ref", errs.LocBody, errs.ReasonInvalidFormat, errs.WithExpect("a JSON object"))
 	}
 	return b, nil
 }
@@ -1724,7 +1737,7 @@ func (s *Server) mcpComment(ctx context.Context, req *mcp.CallToolRequest, in mc
 	id := normalizeMCPHandle(in.ID)
 	ref, err := in.anchorRefJSON()
 	if err != nil {
-		return nil, mcpCommentOutput{}, err
+		return nil, mcpCommentOutput{}, s.mcpToolErr(ctx, "artifact_comment", err)
 	}
 	comment, err := s.annot.AddComment(ctx, id, annotation.CommentInput{
 		AnchorType: sharetype.Anchor(in.AnchorType),
@@ -1786,7 +1799,7 @@ func (s *Server) mcpReact(ctx context.Context, req *mcp.CallToolRequest, in mcpR
 	id := normalizeMCPHandle(in.ID)
 	ref, err := in.anchorRefJSON()
 	if err != nil {
-		return nil, mcpReactOutput{}, err
+		return nil, mcpReactOutput{}, s.mcpToolErr(ctx, "artifact_react", err)
 	}
 	reaction, _, err := s.annot.React(ctx, id, sharetype.Anchor(in.AnchorType), ref, in.Emoji, reactor)
 	if err != nil {
