@@ -198,7 +198,7 @@ the `vector` extension MUST fail startup with an error that names the missing ex
 #### Scenario: Enabled without the extension
 
 - **WHEN** `CAIRN_SEARCH_SEMANTIC=true` and the database lacks the `vector` extension
-- **THEN** `cairnd` MUST refuse to start and log that the `vector` extension is required
+- **THEN** `cairn serve` MUST refuse to start and log that the `vector` extension is required
 
 #### Scenario: Semantic requested while disabled
 
@@ -218,7 +218,7 @@ size and timeout MUST all be operator configuration. None of them MUST come from
 - A returned vector whose length differs from `CAIRN_SEARCH_EMBEDDING_DIMENSIONS` MUST be
   rejected as a configuration error, logged once per batch, and counted.
 
-Semantic search sends artifact text to that endpoint. While it is enabled, `cairnd` MUST log
+Semantic search sends artifact text to that endpoint. While it is enabled, `cairn serve` MUST log
 a WARN at startup naming the endpoint's host and stating that artifact text is sent to it, and
 the self-hosting guide MUST call out the data flow in a warning admonition.
 
@@ -285,9 +285,9 @@ require `expires_at > now()`.
 
 ### Requirement: REQ-11 Reindex and Model Changes
 
-`cairnd search reindex [--semantic] [--owner <id>]` MUST rebuild documents (and, with
+`cairn search reindex [--semantic] [--owner <id>]` MUST rebuild documents (and, with
 `--semantic`, chunks and vectors). Changing the embeddings model or its dimensions MUST
-require a semantic reindex. On startup, `cairnd` MUST detect a stored dimension that differs
+require a semantic reindex. On startup, `cairn serve` MUST detect a stored dimension that differs
 from the configured one and refuse semantic queries until the reindex completes. It MUST
 report this through a readiness message and a metric. Lexical search MUST keep working
 throughout.
@@ -295,7 +295,7 @@ throughout.
 #### Scenario: Model swap
 
 - **WHEN** the operator changes the model from a 768-dimension one to a 1024-dimension one and restarts
-- **THEN** semantic and hybrid queries MUST return `503` with reason `semantic_reindex_required` until `cairnd search reindex --semantic` completes, while lexical queries succeed
+- **THEN** semantic and hybrid queries MUST return `503` with reason `semantic_reindex_required` until `cairn search reindex --semantic` completes, while lexical queries succeed
 
 ### Requirement: REQ-12 Surfaces
 
@@ -356,7 +356,7 @@ Agent search MUST be off unless the operator enables it. `CAIRN_SEARCH_AGENTS` (
 `agent_search_disabled`. Human sessions and human tokens MUST be unaffected either way.
 
 When the operator sets it to `true`, agent search MUST reach exactly what the agent's human can
-read (REQ-1), and nothing more. `cairnd` MUST log a WARN at startup naming
+read (REQ-1), and nothing more. `cairn serve` MUST log a WARN at startup naming
 `CAIRN_SEARCH_AGENTS` and stating that agents can discover every artifact their human can read.
 The self-hosting guide MUST call the setting out in a warning admonition. The consent screen
 line for `artifacts:read` MUST read "Read and search artifacts you can access" only while agent
@@ -373,7 +373,7 @@ everything its human owns.
 
 #### Scenario: Operator enables agent search
 
-- **WHEN** the operator sets `CAIRN_SEARCH_AGENTS=true` and starts `cairnd`
+- **WHEN** the operator sets `CAIRN_SEARCH_AGENTS=true` and starts `cairn serve`
 - **THEN** the startup log MUST carry a WARN naming the setting, and an agent's search MUST return only artifacts its human can read
 
 ### Requirement: REQ-15 Metrics
@@ -414,7 +414,7 @@ backoff.
 
 The indexer MUST be a bounded worker pool with explicit startup and graceful shutdown on
 context cancellation, like the reaper. Queue items MUST be claimed with
-`FOR UPDATE SKIP LOCKED`, so several `cairnd` processes can share the work. An artifact
+`FOR UPDATE SKIP LOCKED`, so several `cairn serve` processes can share the work. An artifact
 deleted while it is being indexed MUST NOT leave a document or chunk behind: the write MUST
 fail on the foreign key, and that failure MUST be treated as a no-op. Tests MUST run with race
 detection.

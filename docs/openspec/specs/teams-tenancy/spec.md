@@ -410,7 +410,7 @@ rebinding. Redirects MUST NOT be followed; a 3xx is a failed delivery. Each atte
 after 5 seconds. Delivery MUST NOT block artifact creation.
 
 `CAIRN_OUTBOUND_ALLOW_HTTP` is a risky option (signed payloads and capability URLs in cleartext),
-so it is off by default and loud when on: `cairnd` MUST log a WARN at startup naming it, and the
+so it is off by default and loud when on: `cairn serve` MUST log a WARN at startup naming it, and the
 self-hosting guide MUST call it out in a warning admonition.
 
 #### Scenario: Rebinding target
@@ -438,7 +438,7 @@ signing and retry requirements apply to subscription deliveries unchanged.
 
 - **GIVEN** a deployment upgraded with `CAIRN_OUTBOUND_WEBHOOK_URLS` still set
 - **WHEN** any user, the operator included, creates an artifact tagged `handoff`
-- **THEN** no request is made to that URL, and cairnd starts and runs normally
+- **THEN** no request is made to that URL, and cairn serve starts and runs normally
 
 #### Scenario: No code reads the variables
 
@@ -465,12 +465,12 @@ position and the new form, and the CHANGELOG MUST say so.
 #### Scenario: Token naming a non-operator
 
 - **WHEN** `CAIRN_API_TOKENS` contains an entry naming a user who is not an operator
-- **THEN** cairnd refuses to start and logs "CAIRN_API_TOKENS entry 2: user is not an operator"
+- **THEN** cairn serve refuses to start and logs "CAIRN_API_TOKENS entry 2: user is not an operator"
 
 #### Scenario: Legacy entry refused
 
 - **WHEN** `CAIRN_API_TOKENS` contains a free-form `secret:ci-bot` entry
-- **THEN** cairnd refuses to start and names that entry's position and the `secret:<user>[:agent|:human]`
+- **THEN** cairn serve refuses to start and names that entry's position and the `secret:<user>[:agent|:human]`
   form, never the secret
 
 #### Scenario: Token cannot impersonate
@@ -622,7 +622,7 @@ the user row.
 #### Scenario: A failed comparison leaves the old schema
 
 - **WHEN** the backfill would change any user's Bin listing
-- **THEN** the migration aborts, nothing is dropped, and `cairnd` refuses to start with an error
+- **THEN** the migration aborts, nothing is dropped, and `cairn serve` refuses to start with an error
   naming the first mismatched owner
 
 ### Requirement: Re-Identifying Existing Private Artifacts
