@@ -65,7 +65,7 @@ func addTool[In, Out any](srv *mcp.Server, t *mcp.Tool, h mcp.ToolHandlerFor[In,
 		if err != nil {
 			panic(fmt.Sprintf("addTool: tool %q: infer output schema: %v", t.Name, err))
 		}
-		t.OutputSchema = widenForToolErrors(t.Name, collapseNullableUnions(schema))
+		t.OutputSchema = widenForToolErrors(t.Name, schema)
 	}
 	mcp.AddTool(srv, t, h)
 }
@@ -89,11 +89,32 @@ func addTool[In, Out any](srv *mcp.Server, t *mcp.Tool, h mcp.ToolHandlerFor[In,
 // payload that is neither a success nor a {code, violations} error still
 // fails. The error branch is inferred from mcpToolErrorContent itself, so it
 // cannot drift from what the middleware actually marshals.
+//
+// The success branch is the SDK's own inference, untouched apart from the
+// boolean-schema strip — notably NOT run through collapseNullableUnions. The
+// SDK validates the marshalled success output against this branch server-side
+// (applySchema), and a nil Go slice or map marshals as null: run_create with
+// no spans sends "spans": null, statsView with no timings
+// "time_by_category_ms": null. Collapsing the union the way the INPUT side
+// does would therefore turn every such response into a server-side
+// "validating tool output" failure — which is exactly what CI caught on the
+// first try. Clients only validate output against this schema; they never
+// send it, so the union costs nothing. The error branch is collapsed because
+// the middleware guarantees non-empty violations, so its null case is dead.
+//
+// Both branches are deep-copied before any transform. jsonschema.For caches
+// schema trees by type and shares nodes across them, so an in-place rewrite
+// of one type's schema rewrites every type sharing a node — the first
+// attempt collapsed mcpRunOutput's cached `spans` union and stamped the
+// limit's replacement description onto run spans' items without either tree
+// knowing about the other.
 func widenForToolErrors(tool string, success *jsonschema.Schema) *jsonschema.Schema {
 	toolError, err := jsonschema.For[mcpToolErrorContent](nil)
 	if err != nil {
 		panic(fmt.Sprintf("addTool: tool %q: infer tool-error output schema: %v", tool, err))
 	}
+
+	success, toolError = success.CloneSchemas(), toolError.CloneSchemas()
 	collapseNullableUnions(toolError)
 
 	root := &jsonschema.Schema{
@@ -140,7 +161,7 @@ func stripBooleanSchemas(s *jsonschema.Schema) {
 		return
 	}
 	if raw, err := s.MarshalJSON(); err == nil && bytes.Equal(bytes.TrimSpace(raw), []byte("true")) {
-		*s = jsonschema.Schema{Description: "the violated limit, as any JSON value"}
+		*s = jsonschema.Schema{Description: "any JSON value"}
 		return
 	}
 	for _, sub := range s.Properties {

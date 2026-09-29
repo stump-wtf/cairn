@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -293,6 +294,55 @@ func TestAddToolKeepsUntypedOutputSchemaNil(t *testing.T) {
 	})
 	if tool.OutputSchema != nil {
 		t.Fatalf("Out=any tool published an outputSchema of %T, want none", tool.OutputSchema)
+	}
+}
+
+// TestWidenedSchemaAdmitsNilSuccessFields is the regression for what CI
+// caught on the widening's first attempt: the SDK validates the marshalled
+// SUCCESS output against the published schema server-side, and a nil Go
+// slice or map marshals as null — run_create with no spans sends
+// "spans": null, statsView with no timings "time_by_category_ms": null. So
+// the success branch must keep the inferred null unions; only the error
+// branch (non-empty by construction) is collapsed. Built from the real Out
+// value, exactly as the wire will carry it.
+func TestWidenedSchemaAdmitsNilSuccessFields(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	tool := &mcp.Tool{Name: "probe", Description: "probe"}
+	addTool(srv, tool, func(context.Context, *mcp.CallToolRequest, mcpRunCreateInput) (*mcp.CallToolResult, mcpRunOutput, error) {
+		return nil, mcpRunOutput{}, nil
+	})
+
+	schema, ok := tool.OutputSchema.(*jsonschema.Schema)
+	if !ok {
+		t.Fatalf("OutputSchema is %T, want *jsonschema.Schema", tool.OutputSchema)
+	}
+	resolved, err := schema.Resolve(&jsonschema.ResolveOptions{})
+	if err != nil {
+		t.Fatalf("resolve widened schema: %v", err)
+	}
+
+	spans, err := json.Marshal(schema.AnyOf[0].Properties["spans"])
+	if err != nil {
+		t.Fatalf("marshal spans subschema: %v", err)
+	}
+	if !bytes.Contains(spans, []byte(`"null"`)) || !bytes.Contains(spans, []byte(`"array"`)) {
+		t.Fatalf("spans subschema %s does not admit the null union the SDK infers for a nil slice", spans)
+	}
+
+	// A run_create success the way the CI failure produced it: mode "open"
+	// sends no spans, so the run's Spans is a nil slice and marshals as
+	// "spans": null on the wire — and must still validate server-side.
+	// time_by_category_ms is always a non-nil map (categoryMap makes one),
+	// so it stays populated, as the real output does.
+	out := jsonRoundTrip(t, mcpRunOutput{
+		ID: "r1b2c3d4e5f6", URL: "https://cairn.stump.wtf/run/r1b2c3d4e5f6",
+		MCP: "mcp://cairn/run/r1b2c3d4e5f6", Status: "open",
+		Provenance: provenanceView{Actor: "u1", Channel: "via MCP", CapturedAt: time.Now()},
+		StartedAt:  time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour),
+		Stats: statsView{SpanCount: 0, TimeByCategoryMS: map[string]int64{}},
+	})
+	if err := resolved.Validate(out); err != nil {
+		t.Errorf("nil-field success output rejected by the widened schema — every such call would fail server-side: %v", err)
 	}
 }
 
