@@ -39,7 +39,13 @@ name: pipeline
 
 on:
   push:
-    branches: [main]
+    # train/** is the merge train (ADR-0032): a train commit is main plus one
+    # squash-committed PR, and it must run exactly the pipeline a PR runs so
+    # the train can gate the merge on green CI for that exact head. Publishing
+    # and deploying stay limited to main and tags: image, docs-image, deploy
+    # and pages sit behind the main-only gate, release and tap-bump behind
+    # tag-only, so a train branch can prove green but ship nothing.
+    branches: [main, 'train/**']
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -82,7 +88,7 @@ jobs:
       publish_image: false
     secrets: inherit
 
-  # ---- 4b. integration tests (Postgres + Garage) --------------------------
+  # Integration tests (Postgres + Garage)
   # Roughly half of cairn's suite gates itself on CAIRN_TEST_DATABASE_URL and
   # self-skips when it is unset. Until this job existed nothing on the CI that
   # gates merges ever set it, so ~270 tests — every httpapi integration test,
@@ -115,6 +121,13 @@ jobs:
   #     files do not exist. Garage needs a config file and ships a distroless
   #     image with no shell, so neither a bind mount nor an entrypoint heredoc
   #     works: `docker create` → `docker cp` → `docker start` does.
+  #
+  # @joestump-agent 09/27/2026 - Stop cancelled runs leaking their network and
+  #   sidecars (stumpcloud/stumpcloud#501). Everything the job creates now
+  #   carries ci.owner/ci.run labels, a first step reaps cairn-ci-* leftovers
+  #   older than STALE_MINUTES (20m) with no live task container attached (a
+  #   cancelled run never reaches the teardown), and the teardown reports a
+  #   network it cannot remove instead of hiding it.
   integration:
     name: integration (postgres + garage)
     needs: [secrets]
@@ -122,15 +135,76 @@ jobs:
     # Six runners share one daemon at capacity 3, so a job that hangs holding a
     # network and two sidecars costs a third of the fleet until it is reaped.
     # The bootstrap waits are individually bounded; this bounds the whole job.
-    timeout-minutes: 20
+    #
+    # Sized against the go test -timeout below (GO_TEST_TIMEOUT), not guessed.
+    # Under load, setup plus the probe step has taken ~9 of the old 20 minutes
+    # (run 13784) before `make test` started. So 15m for the tests would have
+    # been cut off by the job cap, and the goroutine dump that names the stuck
+    # test would never have been printed. 30 = the 15m test timeout plus the
+    # ~9m setup seen under load, rounded up. A genuine hang is still reaped,
+    # and go test reports it first.
+    timeout-minutes: 30
     env:
       NET: cairn-ci-${{ gitea.run_id }}
       PG: cairn-pg-${{ gitea.run_id }}
       GARAGE: cairn-garage-${{ gitea.run_id }}
+      # The reaper step only touches cairn-ci-* leftovers older than this many
+      # minutes. The floor covers only the setup window between network
+      # creation and this job's own container attaching to it — the sidecar
+      # image pulls, worst observed ~9m under load — not timeout-minutes;
+      # once the task container is attached and running, the live check
+      # protects the job whatever its age. 20 is double that worst case and
+      # under the job cap, so stale leftovers still reap within one window.
+      STALE_MINUTES: "20"
       # Garage refuses to serve until a layout is applied, so the bucket and key
       # are created after the node is up rather than baked into the image.
       S3_BUCKET: cairn
+      # Per test BINARY, not per job; go's default is 10m. Locally the slowest
+      # package (httpapi) takes under a minute against the fsync-off Postgres
+      # started below, so 15m is headroom for a loaded runner, not a budget.
+      # A real hang still panics with a goroutine dump that names the test.
+      GO_TEST_TIMEOUT: 15m
     steps:
+      # A cancelled run never reaches `Tear down`: act_runner kills the job
+      # container outright, taking the `if: always()` step with it, so every
+      # superseding push used to leak a network (a whole /16) plus two running
+      # sidecars onto this shared daemon. Reclaim them: anything cairn-ci-*
+      # older than STALE_MINUTES whose GITEA-ACTIONS-TASK-* container is no
+      # longer running belongs to a run that is definitely gone. The age
+      # floor is what makes that safe to run at job start: a young network
+      # may still belong to a live job that is pulling sidecar images and
+      # has not attached its own container yet.
+      - name: Reap leftovers from cancelled runs
+        run: |
+          set -euo pipefail
+          now="$(date +%s)"
+          stale=$(( STALE_MINUTES * 60 ))
+          for net in $(docker network ls --filter 'name=^cairn-ci-' --format '{{.Name}}'); do
+            age=$(( now - $(docker network inspect -f '{{.Created.Unix}}' "$net") ))
+            [ "$age" -gt "$stale" ] || continue
+            live=""
+            for c in $(docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' "$net"); do
+              case "${c#/}" in
+                GITEA-ACTIONS-TASK-*)
+                  if [ "$(docker inspect -f '{{.State.Running}}' "${c#/}" 2>/dev/null)" = "true" ]; then
+                    live=1
+                  fi
+                  ;;
+              esac
+              [ -z "$live" ] || break
+            done
+            if [ -n "$live" ]; then
+              echo "keeping $net: a live job container is still attached"
+              continue
+            fi
+            for c in $(docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' "$net"); do
+              echo "reaping sidecar ${c#/} left by $net (${age}s old)"
+              docker rm -f "${c#/}" >/dev/null
+            done
+            echo "reaping $net (${age}s old, no live job container attached)"
+            docker network rm "$net" >/dev/null
+          done
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v6
@@ -141,11 +215,23 @@ jobs:
       - name: Start Postgres and Garage on a run-scoped network
         run: |
           set -euo pipefail
-          docker network create "$NET"
+          docker network create \
+            --label ci.owner=cairn --label "ci.run=${{ gitea.run_id }}" "$NET"
 
+          # Durability off: this database lives for one run and is thrown away,
+          # so there is nothing to protect from a crash. Every DB-gated test
+          # builds a private schema and runs all 18 migrations, each its own
+          # commit, and on the shared runners' contended disk those fsyncs ARE
+          # the suite. Measured on internal/httpapi (345 tests, same laptop):
+          # schema setup ~1s → ~75ms, and the package 310s → 38s. With fsync on,
+          # the package hit go test's 10m per-binary timeout under load (runs
+          # 13688, 13784). It changes no SQL semantics: transactions, locks
+          # and visibility are identical; only the flush to disk is skipped.
           docker run -d --name "$PG" --network "$NET" --network-alias postgres \
+            --label ci.owner=cairn --label "ci.run=${{ gitea.run_id }}" \
             -e POSTGRES_USER=cairn -e POSTGRES_PASSWORD=cairn -e POSTGRES_DB=cairn \
-            postgres:16-alpine
+            postgres:16-alpine \
+            -c fsync=off -c synchronous_commit=off -c full_page_writes=off
 
           # Generated per run, never committed: a literal 64-hex rpc_secret in
           # this file is precisely what the gitleaks job upstream exists to
@@ -182,6 +268,7 @@ jobs:
           TOML
 
           docker create --name "$GARAGE" --network "$NET" --network-alias garage \
+            --label ci.owner=cairn --label "ci.run=${{ gitea.run_id }}" \
             dxflrs/garage:v1.0.1
           docker cp garage-ci.toml "$GARAGE":/etc/garage.toml
           rm -f garage-ci.toml
@@ -245,7 +332,7 @@ jobs:
           CAIRN_TEST_S3_BUCKET: cairn
         run: |
           set -euo pipefail
-          go test ./internal/store/ ./internal/webhook/ -count=1 -v 2>&1 | tee /tmp/probe.log
+          go test ./internal/store/ ./internal/webhook/ -count=1 -v -timeout "$GO_TEST_TIMEOUT" 2>&1 | tee /tmp/probe.log
           if grep -q 'set CAIRN_TEST_DATABASE_URL' /tmp/probe.log; then
             echo "::error::the DB-gated tests self-skipped — CAIRN_TEST_DATABASE_URL never reached them"
             exit 1
@@ -261,7 +348,7 @@ jobs:
           CAIRN_TEST_DATABASE_URL: postgres://cairn:cairn@postgres:5432/cairn?sslmode=disable
           CAIRN_TEST_S3_ENDPOINT: garage:3900
           CAIRN_TEST_S3_BUCKET: cairn
-        run: make test
+        run: make test GOTESTFLAGS="-timeout=$GO_TEST_TIMEOUT"
 
       # The S3 harnesses are the dangerous half: unlike the DB ones they do not
       # skip when CAIRN_TEST_S3_ENDPOINT is unusable, they fall back to an
@@ -272,9 +359,12 @@ jobs:
       - name: Assert the object-store tests really hit Garage
         run: |
           set -euo pipefail
-          docker exec "$GARAGE" /garage bucket info "$S3_BUCKET"
-          objects="$(docker exec "$GARAGE" /garage bucket info "$S3_BUCKET" \
-            | awk '/^Objects:/{print $2; exit}')"
+          info="$(docker exec "$GARAGE" /garage bucket info "$S3_BUCKET")"
+          printf '%s\n' "$info"
+          # Parse the captured output, not a live pipe: awk's early exit used
+          # to SIGPIPE docker exec and fail the step with 141 on a healthy,
+          # non-empty bucket.
+          objects="$(printf '%s\n' "$info" | awk '/^Objects:/{print $2}')"
           if [ "${objects:-0}" -eq 0 ]; then
             echo "::error::Garage's bucket is empty — the S3-backed tests fell back to the in-memory store"
             exit 1
@@ -287,7 +377,47 @@ jobs:
         run: |
           docker network disconnect "$NET" "$HOSTNAME" >/dev/null 2>&1 || true
           docker rm -f "$PG" "$GARAGE" >/dev/null 2>&1 || true
-          docker network rm "$NET" >/dev/null 2>&1 || true
+          # The one failure NOT to hide: `docker network rm` only fails when
+          # something is still attached, and hiding it is how a network kept
+          # its /16 until a human went looking. Name the holders instead; the
+          # reaper step of a later run finishes the job.
+          if ! docker network rm "$NET" >/dev/null 2>&1; then
+            echo "::warning::$NET could not be removed, still attached:"
+            docker network inspect "$NET" -f '{{range .Containers}}  {{println .Name}}{{end}}' || true
+          fi
+
+  # ---- 4c. website: tests, record validator, docs build -------------------
+  # Until this job existed nothing on a pull_request touched website/. The only
+  # jobs that built it (docs-image, pages) sit behind main-only, and the test
+  # suite and typecheck ran only on the GitHub mirror, after merge. So a PR could
+  # pass every required check and then break main's docs build, which happened
+  # repeatedly (a dangling front-matter edge, a record-id collision, a private
+  # host in the bundle), each fixed by a follow-up PR.
+  #
+  # `npm run build` is the part that matters most: it runs the design-record
+  # validator over docs/adrs and docs/openspec (a front-matter edge naming a
+  # record that is not in the tree throws), the link guard, and, from its
+  # postBuild hook, the bundle scan for private hosts and credentials.
+  #
+  # Its own job, not a step in `build`, so a red check says the docs broke
+  # rather than "lint + test". Node 22, matching website/package.json `engines`:
+  # the record plugin is TypeScript run directly by node, which needs 22.18+.
+  website:
+    name: website
+    needs: [secrets]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: make website
+        run: make website
 
   # ---- 5. ai review (PRs only, and only once the build is green) -----------
   # aibot.yml still exists beside this file, narrowed to the conversation
@@ -296,7 +426,7 @@ jobs:
   # review waits for a build rather than racing it, and the two triggers cannot
   # both fire on the same event.
   review:
-    needs: [build, integration]
+    needs: [build, integration, website]
     if: ${{ github.event_name == 'pull_request' }}
     uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/aibot.yaml@main
     secrets: inherit
@@ -440,10 +570,12 @@ jobs:
           password: ${{ secrets.GIT_AUTH_TOKEN }}
 
       - name: Deploy Cairn to cloud01
-        # v2.1.0 exactly: the first release where ssh_private_key is a real,
-        # delivered input. @v2 was not moved forward to it, so do not "tidy"
-        # this back to the major alias without checking what v2 points at.
-        uses: https://gitea.stump.rocks/stumpcloud/ansible-runner@v2.1.0
+        # Pinned to an exact release, not the @v2 alias, so a runner change
+        # reaches this deploy only through a reviewed bump. v2.1.0 is the floor:
+        # the first release where ssh_private_key is a real, delivered input.
+        # v2.1.1 reads playbook/inventory/ssh_hosts from INPUT_* rather than
+        # argv; stump.wtf/switchboard deploys to the same cloud01 host on it.
+        uses: https://gitea.stump.rocks/stumpcloud/ansible-runner@v2.1.1
         with:
           playbook: playbooks/services/cairn.yaml
           inventory: gva.yaml
@@ -555,8 +687,10 @@ jobs:
       # Exported to the build as DOCS_URL. garage-pages-deploy slugifies the
       # owner — dots to dashes — so stump.wtf serves as stump-wtf; passing it
       # here means the deploy target and the URL the bundle bakes into its
-      # canonical links cannot drift apart. docusaurus.config.ts carries the
-      # same value as its default, so a local build is not wrong either.
+      # canonical links cannot drift apart. docusaurus.config.ts does NOT
+      # default to this host: an unconfigured build advertises the public
+      # origin, and a Pages-shaped DOCS_URL alone is what bases this bundle
+      # at /cairn/ (website/scripts/site-location.mjs).
       site_url: https://stump-wtf.pages.stump.rocks
     secrets: inherit
 
@@ -575,9 +709,10 @@ jobs:
         run: echo "tagged build is green — releasing ${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
 
   # ---- 12. release ---------------------------------------------------------
-  # Builds the cross-platform `cairn` CLI and publishes it to the PUBLIC
-  # stump-wtf/cairn-cli repo (see .goreleaser.yaml). Only the client ships:
-  # the server is a container image built by the image job above.
+  # Builds the cross-platform `cairn` CLI and the `cairnd` server archives and
+  # publishes both to the PUBLIC stump-wtf/cairn-cli repo (see .goreleaser.yaml).
+  # They are separate archives that never mix (cairn#361); the container image
+  # is still built by the image job above.
   #
   # This runs on Gitea, not the GitHub mirror, because this runner is the only
   # host that can reach both sides — Gitea over the LAN and github.com
@@ -623,6 +758,21 @@ jobs:
         # runs this script as a post-build hook against each compiled binary
         # (.goreleaser.yaml), so the artifact is checked as well as the graph.
         run: make verify-cli
+
+      # goreleaser has no post-archive hook in the open-source edition, and a
+      # real `release` uploads as soon as it has archived. So the archive check
+      # runs against a snapshot of the same config first: which binary lands in
+      # which archive is a property of the config, not the version, and a
+      # snapshot publishes nothing. Costs one extra build on tags only.
+      - name: GoReleaser snapshot (publishes nothing)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean
+
+      - name: Verify each archive holds only its own binary
+        run: scripts/verify-release-archives.sh dist
 
       - name: GoReleaser
         uses: goreleaser/goreleaser-action@v6

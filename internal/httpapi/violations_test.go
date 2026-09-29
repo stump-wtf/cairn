@@ -89,9 +89,10 @@ func TestViolationTTLOverCap(t *testing.T) {
 func TestViolationMalformedTTL(t *testing.T) {
 	srv := storelessServer(t, noRateLimit())
 	for raw, reason := range map[string]errs.Reason{
-		"7d": errs.ReasonInvalidFormat,
-		"0":  errs.ReasonNotPositive,
-		"-5": errs.ReasonNotPositive,
+		"7d":                    errs.ReasonInvalidFormat,
+		"0":                     errs.ReasonNotPositive,
+		"-5":                    errs.ReasonNotPositive,
+		"-99999999999999999999": errs.ReasonNotPositive, // out of int64 range, still negative
 	} {
 		env := postCreate(t, srv.URL+"/v1/artifacts", map[string]string{"X-Cairn-Ttl-Seconds": raw}, "hello")
 		v := env.Error.Violations[0]
@@ -157,6 +158,24 @@ func TestViolationMultipartTagsFromEverySource(t *testing.T) {
 	}
 	if vs[2].Reason != errs.ReasonTooLong || vs[2].Location != errs.LocForm || vs[2].Value != nil || vs[2].Limit != float64(maxTagFieldBytes) {
 		t.Fatalf("oversize field = %+v, want too_long with the field cap and no echo", vs[2])
+	}
+}
+
+// A multipart body can carry any number of tag fields, and the loop no longer
+// stops at the first bad one, so the recorded violations must stay bounded
+// however many bad fields arrive — oversize or malformed ones included.
+func TestTagSetBoundsRecordedViolations(t *testing.T) {
+	var ts tagSet
+	oversize := strings.Repeat("x", maxTagFieldBytes+1)
+	for i := 0; i < 10*errs.MaxViolations; i++ {
+		ts.addFormField(strings.NewReader(oversize))
+		ts.addFormField(strings.NewReader("Bad"))
+	}
+	if len(ts.bad) > errs.MaxViolations {
+		t.Fatalf("recorded %d violations, want at most %d", len(ts.bad), errs.MaxViolations)
+	}
+	if got := len(errs.ViolationsOf(ts.err())); got != errs.MaxViolations {
+		t.Fatalf("err carries %d violations, want %d", got, errs.MaxViolations)
 	}
 }
 

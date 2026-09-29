@@ -248,3 +248,30 @@ func TestRenderFencedCodeBlock(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderHTMLCommentBody pins RenderHTML, the comment-body path (#411),
+// without needing Postgres: markdown formats, the same payloads
+// TestSanitizeStripsScript covers are stripped, and — unlike Render — no
+// element carries an id, so a comment cannot mint one into the artifact's
+// block-id space (ADR-0006).
+func TestRenderHTMLCommentBody(t *testing.T) {
+	body := "# Heading\n\n**bold** and `code`\n\n" +
+		"<script>alert('xss')</script>\n\n" +
+		"<img src=x onerror=\"alert(1)\">\n\n" +
+		"[click me](javascript:alert(2))\n\n" +
+		"- [ ] task\n"
+	s := string(RenderHTML(body))
+	for _, want := range []string{"<h1>Heading</h1>", "<strong>bold</strong>", "<code>code</code>", "<li>"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("RenderHTML missing %q:\n%s", want, s)
+		}
+	}
+	for _, bad := range []string{"<script", "onerror", "javascript:", "alert(", "id=", "<input"} {
+		if strings.Contains(s, bad) {
+			t.Errorf("RenderHTML output still contains %q:\n%s", bad, s)
+		}
+	}
+	if got := RenderHTML(""); got != "" {
+		t.Errorf("RenderHTML(\"\") = %q, want empty", got)
+	}
+}

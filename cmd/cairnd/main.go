@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,15 +21,23 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/config"
 	"github.com/stump-wtf/cairn/internal/db"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/httpapi"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/outboundhook"
+	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/store"
 )
 
 func main() {
+	if wantsVersion(os.Args[1:]) {
+		fmt.Println("cairnd " + versionString())
+		return
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(logger); err != nil {
 		logger.Error("cairnd exited", "error", err)
@@ -86,10 +95,64 @@ func newStoreOptions(cfg *config.Config, emitter *outboundhook.Emitter) store.Op
 	return opts
 }
 
+// newRedactionScanner builds the ingest secret scanner (ADR-0023, SPEC-0017)
+// from configuration. A build failure, such as an allowlist file that does not
+// parse or names paths, is returned so cairnd stops before serving anything
+// (RD-2): Cairn never runs with scanning silently disabled. store_unscanned is
+// a risky opt-in, so it is announced at startup by name (RD-7).
+//
+// @joestump 09/25/2026 - Added for cairn#289. The wiring stories pass it to
+// store, annotation, trajectory and webhook.
+// @joestump 09/26/2026 - cairn#291 passes it to the comment and trace write
+// paths through httpapi.Config.
+func newRedactionScanner(cfg *config.Config, logger *slog.Logger) (*redact.Scanner, error) {
+	s, err := redact.New(redact.Config{
+		MaxScanBytes:  cfg.RedactionMaxScanBytes,
+		Oversize:      redact.OversizePolicy(cfg.RedactionOversize),
+		AllowlistFile: cfg.RedactionAllowlistFile,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ingest redaction: %w", err)
+	}
+	if s.Oversize() == redact.OversizeStoreUnscanned {
+		logger.Warn("CAIRN_REDACTION_OVERSIZE=store_unscanned: text fields over the scan cap are stored WITHOUT a credential scan (status not_scanned_oversize); unset it to reject them",
+			"max_scan_bytes", s.MaxScanBytes())
+	}
+	return s, nil
+}
+
+// newEventEmitter returns the lifecycle-event emitter the core services beyond
+// the store receive (ADR-0022, SPEC-0016 EV-2), as a nil INTERFACE when no
+// outbound emitter exists. The same typed-nil hazard as newStoreOptions
+// (cairn#201) applies: httpapi.Config.Events and trajectory.Options.Emitter are
+// event.Emitter interfaces, so assigning a nil *outboundhook.Emitter would make
+// every "is an emitter installed?" guard read true.
+func newEventEmitter(emitter *outboundhook.Emitter) event.Emitter {
+	if emitter == nil {
+		return nil
+	}
+	return emitter
+}
+
 func run(logger *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+
+	// Build the ingest secret scanner before anything else starts, so a bad
+	// redaction config stops startup (SPEC-0017 RD-2).
+	scanner, err := newRedactionScanner(cfg, logger)
+	if err != nil {
+		return err
+	}
+	// One metrics registry for the process (ADR-0021). Not served until #256;
+	// the services count into it from the start.
+	metricsReg := metrics.New()
+
+	approvalClass, err := annotation.NewApprovalClass(cfg.ApprovalReactions)
+	if err != nil {
+		return fmt.Errorf("config CAIRN_APPROVAL_REACTIONS: %w", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -181,6 +244,8 @@ func run(logger *slog.Logger) error {
 	// The /v1 REST/JSON adapter over the core service (ADR-0012).
 	api := httpapi.New(svc, nil, nil, httpapi.Config{
 		BaseURL:               cfg.BaseURL,
+		Events:                newEventEmitter(emitter),
+		ApprovalClass:         approvalClass,
 		MaxUploadBytes:        cfg.MaxUploadBytes,
 		DefaultTTL:            cfg.DefaultTTL,
 		RatePerSecond:         cfg.RatePerSecond,
@@ -190,6 +255,7 @@ func run(logger *slog.Logger) error {
 		OIDCIssuer:            cfg.OIDCIssuer,
 		OIDCClientID:          cfg.OIDCClientID,
 		OIDCClientSecret:      cfg.OIDCClientSecret,
+		OIDCTrustEmail:        cfg.OIDCTrustEmail,
 		GitHubClientID:        cfg.GitHubClientID,
 		GitHubClientSecret:    cfg.GitHubClientSecret,
 		APITokens:             apiTokens,
@@ -203,6 +269,11 @@ func run(logger *slog.Logger) error {
 		HookIngressRateBurst:      cfg.HookIngressRateBurst,
 		HookEndpointRatePerSecond: cfg.HookEndpointRatePerSecond,
 		HookEndpointRateBurst:     cfg.HookEndpointRateBurst,
+
+		// Comments, traces and webhook captures are masked before they are
+		// stored (SPEC-0017).
+		Redaction: scanner,
+		Metrics:   metricsReg,
 	}, logger)
 
 	// Discover the OIDC issuer and wire the "Sign in with Pocket ID" relying

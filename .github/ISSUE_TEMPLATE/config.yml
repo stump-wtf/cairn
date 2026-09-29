@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://cairn.stump.wtf/docs/
+    about: Guides, the CLI and MCP reference, and the design record.
+  - name: Troubleshooting
+    url: https://cairn.stump.wtf/docs/guides/troubleshooting/
+    about: What each Cairn error usually means. Worth a look before filing.
+  - name: Report a security vulnerability
+    url: https://github.com/stump-wtf/cairn/security/policy
+    about: Report it privately, as the security policy describes, not in a public issue.

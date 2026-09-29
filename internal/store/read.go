@@ -23,7 +23,8 @@ func (s *Store) GetByPublicID(ctx context.Context, publicID string) (*artifact.A
 		SELECT id, public_id, share_type, title, body_sha256, size_bytes,
 		       media_type, previewable, actor_id, on_behalf_of, model, channel,
 		       captured_at, owner_id, visibility,
-		       reaction_count, comment_count, pin_count, tags, expires_at, created_at
+		       reaction_count, comment_count, pin_count, tags, expires_at, created_at,
+		       redaction_status, redaction_count, redaction_rules
 		FROM artifacts
 		WHERE public_id = $1 AND expires_at > now()`
 
@@ -38,6 +39,7 @@ func (s *Store) GetByPublicID(ctx context.Context, publicID string) (*artifact.A
 		&a.Access.OwnerID, &a.Access.Visibility,
 		&a.ReactionCount, &a.CommentCount, &a.PinCount, &a.Tags,
 		&a.ExpiresAt, &a.CreatedAt,
+		&a.Redaction.Status, &a.Redaction.Count, &a.Redaction.Rules,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

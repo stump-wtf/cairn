@@ -26,7 +26,9 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/id"
+	"github.com/stump-wtf/cairn/internal/redact"
 )
 
 // Category is an OPEN set of span categories: any non-empty string is accepted
@@ -213,6 +215,12 @@ type RunInput struct {
 	Access     artifact.AccessPolicy
 	ExpiresAt  time.Time
 	Spans      []SpanInput
+	// ActorKind and Auth classify the creator's credential, derived by the
+	// adapter from the authenticated principal (ADR-0022, SPEC-0016 EV-4).
+	// They are plumbing only for now: trajectory emits no event yet, so
+	// nothing reads them until trajectory emission lands (#313).
+	ActorKind event.ActorKind
+	Auth      event.AuthMethod
 }
 
 func (in RunInput) validate() error {
@@ -280,6 +288,9 @@ type Run struct {
 	ExpiresAt  time.Time
 	Spans      []*Span // ordered roots
 	Stats      Stats
+	// Redaction is the run's recorded ingest scan outcome, every write folded
+	// in (SPEC-0017 RD-9). It is the owner's to see; see httpapi.
+	Redaction redact.Summary
 }
 
 // preparedSpan is a SpanInput with its service-derived depth and sibling seq.

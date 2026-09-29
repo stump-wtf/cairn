@@ -10,7 +10,9 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/session"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // The minimal web session surface (SPEC-0001, ADR-0004). A browser logs in once
@@ -103,9 +105,11 @@ func (a *SessionAuthenticator) Authenticate(r *http.Request) (*Principal, error)
 	// session now that the UI that exercises it exists.
 	return &Principal{
 		ActorID: sess.ActorID,
+		UserID:  sess.UserID,
 		Channel: artifact.ChannelWeb,
 		Scopes:  map[string]bool{scopeArtifactsWrite: true, scopeAnnotationsWrite: true, scopeSharingManage: true},
 		Ambient: true,
+		Auth:    event.AuthSession,
 	}, nil
 }
 
@@ -159,7 +163,9 @@ func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 // crafted ?next=https://evil is ignored (SPEC-0001 Redirect & SSRF Validation).
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !s.loginEnabled() {
-		s.renderWebError(w, r, errs.ErrForbidden)
+		// A disabled dev login is indistinguishable from an absent route
+		// (SPEC-0023 "Dev login on a GitHub-only deployment").
+		s.renderWebError(w, r, errs.ErrNotFound)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxAnnotationRequestBytes)
@@ -180,9 +186,22 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=1&next="+url.QueryEscape(next), http.StatusSeeOther)
 		return
 	}
+	// The dev login still gets a user row, keyed on the typed name under the
+	// dev issuer and never linked by email: it proves nothing about any
+	// mailbox. Its session acts as the typed name, as it always has.
+	var userID string
+	if s.users != nil {
+		u, err := s.users.Resolve(r.Context(), user.Identity{Issuer: user.DevIssuer, Subject: actor, Handle: user.HandleFromEmail(actor)})
+		if err != nil {
+			s.log.ErrorContext(r.Context(), "web: resolve dev user failed", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		userID = u.ID
+	}
 	// Dev-password sessions carry no provider provenance: empty issuer and
 	// subject (SPEC-0012 records provenance only for real IdP logins).
-	sess, err := s.sessions.Create(r.Context(), "", "", actor, s.cfg.SessionTTL)
+	sess, err := s.sessions.Create(r.Context(), "", "", actor, userID, s.cfg.SessionTTL)
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "web: create session failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -245,8 +264,16 @@ func (s *Server) handleWhoami(w http.ResponseWriter, r *http.Request) {
 // page it wanted after signing in (SPEC-0001 Authentication & Authorization).
 func (s *Server) requireWebSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p, err := s.auth.Authenticate(r)
-		if err != nil || p == nil {
+		// Browser sessions only (A20, issue #343; SPEC-0023 REQ "Closing the
+		// Audited Surfaces"): a bearer token — a PAT, an OAuth access token,
+		// a static CAIRN_API_TOKENS entry — is not a browser, and the pages
+		// that list and revoke every credential acting as the user must
+		// never render for one. sessionPrincipal is the Ambient+!IsAgent
+		// gate the OAuth consent screen uses for the identical reason; a
+		// bearer principal is never Ambient, so it fails here and is
+		// redirected to sign in like any other stranger.
+		p, ok := s.sessionPrincipal(r)
+		if !ok {
 			http.Redirect(w, r, s.loginRedirectPath()+"?next="+url.QueryEscape(safeNext(r.URL.RequestURI())), http.StatusSeeOther)
 			return
 		}
@@ -269,13 +296,15 @@ func (s *Server) loginRedirectPath() string {
 
 // loginEnabled reports whether the dev-password form can be used to establish
 // a session. Demoted by ADR-0013 to a local-dev-only fallback: it additionally
-// requires OIDC to be unconfigured, so a deployment that has wired Pocket ID
-// can never fall back to the shared dev password even if one is still set in
-// its environment. A session store, a credential verifier, and a configured
-// dev password must all be present too (a pure-unit server wiring, or a
-// deployment that set no password, has login disabled and fails closed).
+// requires every production provider to be unconfigured — OIDC and GitHub
+// alike — so a deployment that has wired either can never fall back to the
+// shared dev password even if one is still set in its environment (SPEC-0023
+// REQ "Users and Identities", audit A6). A session store, a credential
+// verifier, and a configured dev password must all be present too (a
+// pure-unit server wiring, or a deployment that set no password, has login
+// disabled and fails closed).
 func (s *Server) loginEnabled() bool {
-	return s.oidc == nil && s.sessions != nil && s.verifier != nil && s.cfg.DevLoginPassword != ""
+	return s.oidc == nil && s.gh == nil && s.sessions != nil && s.verifier != nil && s.cfg.DevLoginPassword != ""
 }
 
 // setCookie writes a cookie scoped to the whole site. httpOnly is set for the

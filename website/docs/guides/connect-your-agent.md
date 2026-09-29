@@ -27,6 +27,12 @@ It speaks MCP over Streamable HTTP. There are two ways to authorize an agent:
 
 To mint a token, see [Mint a personal access token](./first-share.md#mint-a-personal-access-token).
 
+Running your own instance? Replace `https://cairn.stump.wtf` below with your server's
+address. The `CAIRN_TOKEN` these configs expand is a client-side variable, not the server's
+`CAIRN_API_TOKENS`; [Which variable is which](./self-hosting.md#which-variable-is-which)
+sorts out the look-alike names. A static `CAIRN_API_TOKENS` secret does not work here:
+`/mcp` accepts only a personal access token or an OAuth token.
+
 ## Claude Code
 
 ### With OAuth
@@ -74,8 +80,30 @@ claude plugin install cairn@claude-plugin-cairn
 
 ## Crush
 
-Add Cairn to `crush.json`, either in your project or in `~/.config/crush/crush.json`, and
-export `CAIRN_TOKEN` wherever Crush runs:
+Crush reads two config formats. `crushrc` is Bash with a few Crush builtins, and it's the
+current one. `crush.json` is the original format: Crush still reads it, but its own config
+docs now call it deprecated, and new options only land in `crushrc`. Either one can hold
+everything on this page, so use `crushrc` for anything new.
+
+`crushrc` needs Crush v0.88.0 or later; check with `crush --version`. Older versions don't
+look for a `crushrc` at all and skip it without an error, so on those use the `crush.json`
+forms below.
+
+Add Cairn to `~/.config/crush/crushrc`, or to a `crushrc` in your project, and export
+`CAIRN_TOKEN` wherever Crush runs:
+
+```bash
+mcp add cairn --type http \
+  --url "https://cairn.stump.wtf/mcp" \
+  --header Authorization "Bearer $CAIRN_TOKEN" \
+  --timeout 120
+```
+
+`crushrc` runs as Bash when Crush starts, so `$CAIRN_TOKEN` is expanded then and the token
+itself never lands in the file.
+
+If you're still on `crush.json`, this is the equivalent. Crush expands `$CAIRN_TOKEN` in
+it when it loads the config:
 
 ```json
 {
@@ -90,38 +118,58 @@ export `CAIRN_TOKEN` wherever Crush runs:
 }
 ```
 
-Crush expands `$CAIRN_TOKEN` when it loads the config, so the token itself never lands in
-the file.
-
 ### Add the Cairn skill (optional)
 
-Crush finds skills by path instead of installing a plugin. Clone the plugin, then add its
-`skills` directory to `options.skills_paths` in the same `crush.json`:
+Crush finds skills by path instead of installing a plugin. Clone the plugin first. A clone
+does nothing on its own: either tell Crush where it is, or copy the skill somewhere Crush
+already looks.
 
 ```bash
 git clone https://github.com/stump-wtf/claude-plugin-cairn.git ~/src/claude-plugin-cairn
 ```
 
+**Register the clone** with one line in your `crushrc`:
+
+```bash
+option skill-path ~/src/claude-plugin-cairn/skills
+```
+
+`option skill-path` adds to the list of skill directories rather than replacing it, and
+Bash expands the `~` before Crush sees it. In the deprecated `crush.json`, the same list is
+`options.skills_paths`. Write the full path there, not `~`:
+
 ```json
 {
   "options": {
-    "skills_paths": ["~/src/claude-plugin-cairn/skills"]
+    "skills_paths": ["/home/you/src/claude-plugin-cairn/skills"]
   }
 }
 ```
 
-Add to that list rather than replacing it, and note that `~` is expanded for you. Crush
-also scans a few directories with no configuration at all, among them
-`~/.config/crush/skills` and `~/.agents/skills`, plus `.crush/skills` and `.agents/skills`
-inside the project you're working in. Copying the skill's folder into one of those works
-too, and the project ones are handy when only one repo should get it.
+Crush expands a `~` in `skills_paths` when it looks for skills, so the skill would still
+load. It doesn't expand it when it checks whether a file the skill reads sits inside a
+skills directory, so those reads would get truncated and ask for permission.
+
+**Or copy the skill into a directory Crush scans**, with no configuration at all:
+
+```bash
+mkdir -p ~/.config/crush/skills
+cp -R ~/src/claude-plugin-cairn/skills/* ~/.config/crush/skills/
+```
+
+Crush also scans `~/.agents/skills` and `~/.claude/skills`, plus `.crush/skills` and
+`.agents/skills` inside the project you're working in. The project ones are handy when
+only one repo should get the skill.
 
 Copy it, though — don't symlink it. Crush resolves symlinks before deciding whether a file
-sits inside a configured skills directory, so a symlinked skill still loads, while the
-files it wants to read resolve back to wherever you cloned them, outside that directory.
-Those reads then get truncated and ask for permission, which looks like the skill
-misbehaving rather than a path problem. To keep the files where you cloned them, add that
-path to `skills_paths` instead.
+sits inside a skills directory, so a symlinked skill still loads, while the files it wants
+to read resolve back to wherever you cloned them, outside that directory. Those reads then
+get truncated and ask for permission, which looks like the skill misbehaving rather than a
+path problem. To keep the files where you cloned them, register the clone's path instead.
+
+The plugin's README, in the repository you just cloned
+(`github.com/stump-wtf/claude-plugin-cairn`), is the canonical version of these steps. If
+the two ever disagree, follow the README.
 
 ## Did the skill load?
 
@@ -250,6 +298,15 @@ into the conversation; it's already stored.
 Bodies must be text. MCP has no binary path yet, so upload images and other binary files
 over REST or with the CLI.
 
+### When a call is rejected
+
+A tool call that fails validation returns an error result whose text says what was
+wrong, such as `tags[0]: "Handoff" must be lowercase`. Its structured content is
+`{"code": "validation_failed", "violations": [...]}`: one entry per problem, each naming
+the argument (`field`), a stable `reason` code, and any `limit` it broke. An agent
+should fix the named arguments and call again, rather than retry the same call.
+[Errors](../product/errors.md) lists every reason, with an example of each.
+
 ## Capturing a run as a trace
 
 A trace records what an agent did: each reasoning turn, tool call, and sub-agent, laid
@@ -272,6 +329,49 @@ Pick one category vocabulary and stick to it for the whole run: either operation
 `implementation`, `review`, `testing`, …). Every MCP call passes through the agent's own
 context window, so page a large capture in modest batches, or post the whole thing as
 JSON to `POST /v1/runs` instead. The server's `run_capture` prompt has the full guidance.
+
+### Link a span to the artifact it produced
+
+When a run creates an artifact, such as a report, a receipt, or a summary of a pull
+request, set `produced_artifact_id` on the span that created it. The trace then renders
+that span as a link to the artifact, so a reader can go from the run to what it made.
+
+Create the artifact first, then send the span with its id. In this two-span example the
+`reason` span drafts a report, and the `write` span that shared it links to the result:
+
+```json
+[
+  {
+    "span_id": "s7",
+    "category": "reason",
+    "name": "Summarize the test failures",
+    "start_offset_ms": 41000,
+    "duration_ms": 3200,
+    "output": "Three failures, all in the reaper integration test. Writing them up."
+  },
+  {
+    "span_id": "s8",
+    "category": "write",
+    "tool": "artifact_create",
+    "name": "Share the failure report",
+    "args": {"share_type": "markdown", "title": "reaper test failures"},
+    "start_offset_ms": 44200,
+    "duration_ms": 600,
+    "output": "Created https://cairn.stump.wtf/7Kq2mZ",
+    "produced_artifact_id": "7Kq2mZ"
+  }
+]
+```
+
+- Only a span whose `category` is `write` can carry `produced_artifact_id`. On any other
+  category, the whole batch is rejected.
+- The artifact has to exist, and not have expired, when the span arrives. Otherwise the
+  batch fails validation, so create the artifact before you append the span.
+- The value can be the bare id or the `mcp://cairn/<id>` handle.
+- The field is the same on `run_create`, `run_append_spans`, `POST /v1/runs`, and
+  `POST /v1/runs/<id>/spans`. The example is the MCP shape; over REST, `output` is
+  base64-encoded. When you read the run back, each linked span lists its artifacts in
+  `produced_artifact_ids`, an array.
 
 ## A2UI views
 

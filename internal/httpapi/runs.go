@@ -106,6 +106,11 @@ type runResponse struct {
 	ExpiresAt  time.Time      `json:"expires_at"`
 	Stats      statsView      `json:"stats"`
 	Spans      []spanView     `json:"spans"`
+	// OwnerRedaction is the ingest scan outcome, for the owner only (SPEC-0017
+	// RD-9). On a create it is the run's; on an append it is that append's, so
+	// the response reports the redactions the request itself caused; on a read
+	// it is the run's total.
+	OwnerRedaction
 }
 
 type statsView struct {
@@ -158,6 +163,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := s.now()
+	actor := p.EventActor()
 	started := req.StartedAt
 	if started.IsZero() {
 		started = now
@@ -180,6 +186,8 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		Access:    artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 		Spans:     toSpanInputs(req.Spans),
+		ActorKind: actor.Kind,
+		Auth:      actor.Auth,
 	}
 
 	var (
@@ -199,7 +207,9 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, nil)
 		return
 	}
-	s.writeJSON(w, http.StatusCreated, s.toRunResponse(run))
+	resp := s.toRunResponse(run)
+	resp.OwnerRedaction = ownerRedactionOf(run.Redaction)
+	s.writeJSON(w, http.StatusCreated, resp)
 }
 
 // handleAppendSpans appends one or more spans to an open run (incremental
@@ -221,7 +231,8 @@ func (s *Server) handleAppendSpans(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	if _, err := s.traj.AppendSpans(r.Context(), id, p.ActorID, toSpanInputs(req.Spans)); err != nil {
+	_, outcome, err := s.traj.AppendSpansWithOutcome(r.Context(), id, p.ActorID, toSpanInputs(req.Spans))
+	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
@@ -230,7 +241,12 @@ func (s *Server) handleAppendSpans(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	s.writeJSON(w, http.StatusOK, s.toRunResponse(run))
+	// Only the owner may append, so the caller is the owner.
+	resp := s.toRunResponse(run)
+	resp.OwnerRedaction = ownerRedactionOf(outcome)
+	viewer, _ := s.optionalPrincipal(r)
+	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // handleCloseRun closes an open run, stamping ended_at from the span tree so it
@@ -243,7 +259,7 @@ func (s *Server) handleCloseRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	run, err := s.traj.CloseRun(r.Context(), id, p.ActorID)
+	run, err := s.traj.CloseRun(r.Context(), id, p.EventActor())
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
@@ -261,7 +277,13 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	s.writeJSON(w, http.StatusOK, s.toRunResponse(run))
+	resp := s.toRunResponse(run)
+	viewer, _ := s.optionalPrincipal(r)
+	if viewer != nil && viewer.ActorID != "" && viewer.ActorID == run.Access.OwnerID {
+		resp.OwnerRedaction = ownerRedactionOf(run.Redaction)
+	}
+	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // handleGetSpanOutput lazily streams a span's output — the deferred fetch the

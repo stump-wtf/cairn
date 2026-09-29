@@ -13,14 +13,18 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/httpapi/authprovider"
 	"github.com/stump-wtf/cairn/internal/mcpsession"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/oauth"
 	"github.com/stump-wtf/cairn/internal/pat"
+	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/session"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/store"
 	"github.com/stump-wtf/cairn/internal/trajectory"
+	"github.com/stump-wtf/cairn/internal/user"
 	"github.com/stump-wtf/cairn/internal/webhook"
 )
 
@@ -57,6 +61,17 @@ type Config struct {
 	// span stream, which keep proxies from idling the connection out and let the
 	// server notice a vanished client on the next write. Defaults to 15s.
 	StreamHeartbeat time.Duration
+	// Events, when non-nil, receives the lifecycle events of the core services
+	// this adapter constructs (ADR-0022, SPEC-0016 EV-2): the trajectory
+	// service's artifact.created for runs and run.closed, and the annotation
+	// service's comment.created, reaction.added and reaction.removed. Nil is
+	// inert. Artifact and bundle creations reach their emitter through
+	// store.Options instead.
+	Events event.Emitter
+	// ApprovalClass is the EV-5 approval class the annotation service
+	// classifies reactions with (CAIRN_APPROVAL_REACTIONS). The zero value is
+	// the default class, 👍 ✅ ✔️.
+	ApprovalClass annotation.ApprovalClass
 	// DevLoginPassword is the shared secret the MVP dev login (SPEC-0001,
 	// ADR-0004) accepts for any actor id. Demoted to a local-dev-only fallback
 	// by ADR-0013: it is honored only when OIDC is unconfigured (see
@@ -74,6 +89,10 @@ type Config struct {
 	OIDCIssuer       string
 	OIDCClientID     string // defaults to "cairn" when empty
 	OIDCClientSecret string
+	// OIDCTrustEmail treats the OIDC issuer's email claim as verified even
+	// when its email_verified claim is absent or false: the operator has
+	// declared that issuer authoritative for emails (CAIRN_OIDC_TRUST_EMAIL).
+	OIDCTrustEmail bool
 	// GitHub human login (SPEC-0012): a second provider beside Pocket ID.
 	// GitHubConfigured() gates EnableGitHub — the provider joins the registry
 	// (and the login page renders its button) only when both are set. The
@@ -119,6 +138,13 @@ type Config struct {
 	HookIngressRateBurst      int
 	HookEndpointRatePerSecond float64
 	HookEndpointRateBurst     int
+	// Redaction is the ingest secret scanner the comment, trace and webhook
+	// write paths mask credentials with (ADR-0023, SPEC-0017), and Metrics
+	// counts its scans in cairn_redactions_total and may be nil. cairnd always
+	// sets Redaction; without it the comment and trace paths store what they
+	// are given and record the outcome "unscanned".
+	Redaction *redact.Scanner
+	Metrics   *metrics.Registry
 }
 
 // Server is the /v1 REST adapter over the core store and the ADR-0011 web app
@@ -143,6 +169,9 @@ type Server struct {
 	sessions      session.Store
 	verifier      CredentialVerifier
 	secureCookies bool
+	// users resolves sign-in identities to user rows (SPEC-0023 REQ "Users and
+	// Identities"). Nil on storeless unit wirings, where no sign-in completes.
+	users *user.Store
 	// oidc is the OIDC relying-party wiring (ADR-0013): nil until EnableOIDC
 	// discovers the configured issuer (or forever nil when OIDC is not
 	// configured), gating both the /auth/login|callback routes and whether the
@@ -260,18 +289,32 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		traj       *trajectory.Service
 		hookSvc    *webhook.Service
 		sessions   session.Store
+		users      *user.Store
 		oauthSvc   *oauth.Service
 		patSvc     *pat.Service
 		mcpSessSvc *mcpsession.Service
 	)
 	if st != nil {
-		annot = annotation.NewService(st.Pool(), reg)
-		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{Registry: reg})
-		hookSvc = webhook.NewService(st.Pool(), st.ObjectStore(), webhook.Options{})
+		annot = annotation.NewService(st.Pool(), reg,
+			annotation.WithRedaction(cfg.Redaction, cfg.Metrics),
+			annotation.WithEvents(cfg.Events),
+			annotation.WithApprovalClass(cfg.ApprovalClass))
+		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{
+			Registry:  reg,
+			Redaction: cfg.Redaction,
+			Metrics:   cfg.Metrics,
+			Logger:    logger,
+		})
+		hookSvc = webhook.NewService(st.Pool(), st.ObjectStore(), webhook.Options{
+			Scanner: cfg.Redaction,
+			Metrics: cfg.Metrics,
+			Logger:  logger,
+		})
 		// The web session store lives in the same Postgres as the core, so the
 		// single binary carries its schema and a scaled deployment shares one
 		// session table (ADR-0012).
 		sessions = session.NewPostgresStore(st.Pool())
+		users = user.NewStore(st.Pool())
 		// The OAuth 2.1 authorization server is an in-process peer of the core —
 		// not a separate service (SPEC-0007 design "In-process adapter over the
 		// core"). Access tokens are audience-bound to this deployment's public
@@ -337,6 +380,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		now:                 time.Now,
 		webTmpl:             parseWebTemplates(),
 		sessions:            sessions,
+		users:               users,
 		verifier:            DevPasswordVerifier{Password: cfg.DevLoginPassword},
 		secureCookies:       strings.HasPrefix(cfg.BaseURL, "https://"),
 		oauth:               oauthSvc,
@@ -456,6 +500,16 @@ func (s *Server) mountAPI(r chi.Router) {
 		r.With(s.requireHumanSession).Get("/mcp/sessions", s.handleListMCPSessions)
 		r.With(s.requireHumanSession, s.enforceCSRF).Delete("/mcp/sessions/{id}", s.handleEndMCPSession)
 
+		// OAuth grants (A20, issue #343; SPEC-0023 REQ "Closing the Audited
+		// Surfaces"): the human Settings surface for seeing and revoking
+		// every OAuth connection that acts as them — including grants used
+		// purely over REST, which never open an MCP session and so appear
+		// nowhere else. Session-authenticated only and CSRF-guarded on
+		// writes, for the same reason as the token and MCP session routes
+		// above.
+		r.With(s.requireHumanSession).Get("/oauth/grants", s.handleListGrants)
+		r.With(s.requireHumanSession, s.enforceCSRF).Delete("/oauth/grants/{id}", s.handleRevokeGrant)
+
 		// Link-capability reads: a valid id grants read; unknown/expired ids
 		// return a uniform 404 (ADR-0007).
 		r.Get("/artifacts/{id}", s.handleGet)
@@ -538,6 +592,9 @@ type artifactResponse struct {
 	// re-deriving it from expires_at against its own clock skew.
 	ExpiresIn        string `json:"expires_in"`
 	ExpiresInSeconds int64  `json:"expires_in_seconds"`
+	// OwnerRedaction is the ingest scan outcome, set only for the owner and
+	// omitted for everyone else (SPEC-0017 RD-9, see redaction.go).
+	OwnerRedaction
 }
 
 type provenanceView struct {

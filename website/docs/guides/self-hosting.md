@@ -27,10 +27,34 @@ and how to tell it worked.
 There is no external secret manager, no message broker, and no sidecar. One
 process, one database, one bucket.
 
+## Which variable is which
+
+Several names look alike but belong to different programs. The server,
+`cairnd`, reads its settings from its own environment. The `cairn` CLI reads
+different names, from the shell of whoever is running it. Setting a server
+variable in your shell does nothing for the CLI, and the reverse is also true.
+
+| Name | Read by | What it is |
+|---|---|---|
+| `CAIRN_API_TOKENS` | the server | The list of static bearer credentials the server accepts, `secret:actor[:role]`. See [First run: bootstrap a credential](#first-run-bootstrap-a-credential). |
+| `CAIRN_TOKEN` | the `cairn` CLI | The one bearer token the CLI sends, the same as `--token`. The MCP client configs in [Connect your agent](./connect-your-agent.md) expand it from your shell too, but `/mcp` accepts only a personal access token or an OAuth token there, never a `CAIRN_API_TOKENS` secret. |
+| `CAIRN_BASE_URL` | the server | The public origin the server builds short links and its OIDC redirect URI from. |
+| `CAIRN_URL` | the `cairn` CLI | The server the CLI talks to, the same as `--url`. It defaults to the hosted service, so a self-hoster sets it. |
+| `CAIRN_OUTBOUND_WEBHOOK_URLS` | the server | Where the server sends `artifact.created` events. |
+| `CAIRN_OUTBOUND_WEBHOOK_SECRET` | the server | The secret the server signs those events with. A receiver checks signatures against the same value. |
+| `CAIRN_API_TOKEN` (singular) | nothing | A common slip. You want `CAIRN_API_TOKENS` on the server, or `CAIRN_TOKEN` for the CLI. |
+
+The pairs connect like this: one secret in the server's `CAIRN_API_TOKENS` is
+the value a REST or CLI client puts in `CAIRN_TOKEN`, and the server's
+`CAIRN_BASE_URL` is the address a client puts in `CAIRN_URL`. The MCP endpoint
+is the exception: it rejects `CAIRN_API_TOKENS` secrets with `401`.
+
 ## Configuration
 
 Everything comes from the environment; `cairnd` takes no flags. Every variable
-is read from the `CAIRN_` namespace and nothing is ever loaded from a file.
+is read from the `CAIRN_` namespace. The one file cairn ever reads is the
+optional redaction allowlist that `CAIRN_REDACTION_ALLOWLIST_FILE` names (see
+[Secret redaction](#secret-redaction)).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -42,14 +66,16 @@ is read from the `CAIRN_` namespace and nothing is ever loaded from a file.
 | `CAIRN_S3_BUCKET` | `cairn` | Bucket name; created on connect if missing. |
 | `CAIRN_S3_REGION` | `us-east-1` | Region string most S3 implementations accept. |
 | `CAIRN_S3_USE_SSL` | `false` | Set `true` when the endpoint speaks HTTPS. |
-| `CAIRN_API_TOKENS` | *(empty)* | Static bearer credentials for headless agents, comma-separated `secret:actor[:role]`. **Empty means the bearer surface accepts no tokens** — it fails closed. Real per-agent tokens come from OAuth or a personal access token minted in Settings. Wired through the compose file above; on the Docker path with no OIDC provider yet this is the only way to get a working credential. |
+| `CAIRN_API_TOKENS` | *(empty)* | Static bearer credentials for headless agents, comma-separated `secret:actor[:role]`. **Empty means the bearer surface accepts no tokens** — it fails closed. Real per-agent tokens come from OAuth or a personal access token minted in Settings. Wired through the compose file above; on the Docker path with no OIDC provider yet this is the only way to get a working credential. See [First run: bootstrap a credential](#first-run-bootstrap-a-credential). |
 | `CAIRN_OIDC_ISSUER` | *(empty)* | Issuer URL of your OIDC provider. **Its presence is the switch that turns OIDC on** and, just as importantly, turns the dev-password login off (below). |
 | `CAIRN_OIDC_CLIENT_ID` | `cairn` | Client id registered at your provider. |
 | `CAIRN_OIDC_CLIENT_SECRET` | *(empty)* | Client secret. The redirect URI is not configurable — it is always `<base>/auth/callback`. |
+| `CAIRN_OIDC_TRUST_EMAIL` | `false` | Declares your OIDC provider **authoritative for emails**: its `email` claim counts as verified even when the ID token's `email_verified` is absent or `false`. A verified email links a sign-in to the user who owns it, including the Bin an existing user had before users existed. Set it only for a provider you run whose users **cannot set their own email** (Pocket ID with LDAP-synced users, say). Never set it for a provider that lets people type any email: that would let them sign in as someone else. GitHub sign-ins always use GitHub's primary verified email and ignore this setting. |
 | `CAIRN_DEV_LOGIN_PASSWORD` | *(empty)* | Shared-secret web login accepted for any actor id. Honored **only while `CAIRN_OIDC_ISSUER` is unset** — a deployment that configures OIDC can never fall back to it. Empty disables interactive login entirely. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_DEV_INSECURE_BEARER_AUTH` | `false` | Makes the API trust any bearer token as its own actor id with no verification. A local-development shortcut that must never be enabled in production. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_OUTBOUND_WEBHOOK_URLS` | *(empty)* | Comma-separated URLs that receive a signed `artifact.created` event. Empty = the feature is inert. These URLs are bearer capabilities; never log or share them. |
 | `CAIRN_OUTBOUND_WEBHOOK_SECRET` | *(empty)* | When set, every delivery carries `X-Cairn-Signature: sha256=<hex>` over the raw body. |
+| `CAIRN_APPROVAL_REACTIONS` | 👍,✅,✔️ | Comma-separated emoji whose reaction counts as an approval on reaction events. Skin tones and VS-16 are ignored when matching. Only a browser-session reaction is ever an approval. A malformed entry fails startup. |
 | `CAIRN_DEFAULT_TTL` | `168h` | Default artifact expiry (Go duration; 7 days). |
 | `CAIRN_MAX_UPLOAD_BYTES` | `67108864` | Max upload size, enforced incrementally — an oversize upload is rejected mid-stream with 413, not after buffering. |
 | `CAIRN_PREVIEW_MAX_BYTES` | `5242880` | Bodies above this skip the rich viewer and use the generic file path. |
@@ -62,6 +88,10 @@ is read from the `CAIRN_` namespace and nothing is ever loaded from a file.
 | `CAIRN_HOOK_ENDPOINT_RATE_PER_SECOND` / `CAIRN_HOOK_ENDPOINT_RATE_BURST` | `10` / `50` | Per-endpoint limit on the same route. |
 | `CAIRN_REAP_INTERVAL` / `CAIRN_REAP_BATCH` / `CAIRN_REAP_OBJECT_GRACE` | `1h` / `500` / `1h` | Background expiry-reaper tuning. |
 | `CAIRN_STAGING_LIFECYCLE_TTL` | `168h` | S3 lifecycle expiration applied to the `staging/` prefix only, so crashed-upload debris is reaped. Never applied to committed blobs. |
+| `CAIRN_REDACTION_REJECT_TYPES` | `code,bundle` | Share types whose creates are refused, not masked, when a credential is found. See [Secret redaction](#secret-redaction). |
+| `CAIRN_REDACTION_MAX_SCAN_BYTES` | `16777216` | Per-field credential-scan cap in bytes (16 MiB). |
+| `CAIRN_REDACTION_OVERSIZE` | `reject` | What happens to a text field over the scan cap: `reject` or `store_unscanned`. **Leave it at `reject`.** |
+| `CAIRN_REDACTION_ALLOWLIST_FILE` | *(empty)* | Path to the operator's value-only allowlist TOML. Empty means no allowlist. |
 
 Three settings are easy to get wrong:
 
@@ -73,9 +103,19 @@ Three settings are easy to get wrong:
   bearer token until a human mints a personal access token or an agent
   completes OAuth. That is the safe direction.
 - **`CAIRN_DEV_LOGIN_PASSWORD` and `CAIRN_DEV_INSECURE_BEARER_AUTH` are
-  development seams.** The dev password loses to OIDC the moment
-  `CAIRN_OIDC_ISSUER` is set; the insecure bearer shortcut defaults off and
-  has no production reason to exist. Leave both alone on a real deployment.
+  development seams.** The dev password is disabled the moment any real
+  provider is configured, OIDC (`CAIRN_OIDC_ISSUER`) or GitHub
+  (`CAIRN_GITHUB_CLIENT_ID`), and its route then answers `404`. The insecure
+  bearer shortcut defaults off, and `cairnd` refuses to start with it on
+  while `CAIRN_BASE_URL` is `https`. Leave both alone on a real deployment.
+- **Your IdP must mark emails verified, or you must trust it.** A sign-in is
+  keyed on the provider's `(issuer, subject)`. Its email only identifies a
+  person when it is verified: the ID token says `email_verified: true`, or
+  you set `CAIRN_OIDC_TRUST_EMAIL=true` for a provider you run whose users
+  cannot change their own email. Otherwise the user is keyed on their subject
+  and does not see artifacts owned by that email until a later sign-in
+  carries a verified one. Pocket ID sends `email_verified: false` unless
+  `EMAILS_VERIFIED` is set, so set one of the two before upgrading.
 
 ## Get the image
 
@@ -141,9 +181,11 @@ services:
       CAIRN_OIDC_ISSUER: ${CAIRN_OIDC_ISSUER:-}
       CAIRN_OIDC_CLIENT_ID: ${CAIRN_OIDC_CLIENT_ID:-cairn}
       CAIRN_OIDC_CLIENT_SECRET: ${CAIRN_OIDC_CLIENT_SECRET:-}
+      CAIRN_OIDC_TRUST_EMAIL: ${CAIRN_OIDC_TRUST_EMAIL:-false}
       CAIRN_API_TOKENS: ${CAIRN_API_TOKENS:-}
       CAIRN_OUTBOUND_WEBHOOK_URLS: ${CAIRN_OUTBOUND_WEBHOOK_URLS:-}
       CAIRN_OUTBOUND_WEBHOOK_SECRET: ${CAIRN_OUTBOUND_WEBHOOK_SECRET:-}
+      CAIRN_APPROVAL_REACTIONS: ${CAIRN_APPROVAL_REACTIONS:-}
     restart: unless-stopped
 
   caddy:
@@ -221,7 +263,9 @@ background workers came up.
 The one thing `docker compose up` cannot do is authenticate anybody. Without
 OIDC configured there is no interactive login, and without tokens nothing can
 call the API — see [Sign-in (OIDC)](#sign-in-oidc) and
-[Tokens for agents](#tokens-for-agents) before exposing the instance.
+[Tokens for agents](#tokens-for-agents) before exposing the instance. To get
+a first credential without an identity provider, see
+[First run: bootstrap a credential](#first-run-bootstrap-a-credential).
 
 ### As a binary
 
@@ -250,9 +294,11 @@ healthy-start logs are the same two lines as the Docker path.
 |---|---|
 | `db: ping: failed to connect … connection refused` | The DSN is right but nothing is listening — the database isn't up yet, or the hostname is wrong inside the compose network. |
 | `s3: …` connect errors on boot | Wrong `CAIRN_S3_ENDPOINT` (host:port, no scheme) or the store isn't reachable. Cairn retries via the container restart policy in the Docker path; as a binary it exits and it is yours to restart. |
+| `config CAIRN_REDACTION_…: …` | A redaction variable has a value cairn does not accept, such as a `CAIRN_REDACTION_OVERSIZE` other than `reject` or `store_unscanned`, or a scan cap that is not a positive integer. |
+| `ingest redaction: redaction allowlist <path>: …` | The allowlist file is missing, does not parse, or has an entry cairn refuses. The message names the entry. See [the allowlist format](#operator-allowlist). |
 
-All of them say which one failed in the log line — `db:`, `s3:` — and fail
-closed rather than starting half-configured.
+All of them say which one failed in the log line — `db:`, `s3:`, `config`,
+`ingest redaction:` — and fail closed rather than starting half-configured.
 
 ### Behind a reverse proxy
 
@@ -288,7 +334,9 @@ startup it discovers the provider from the issuer URL (failing closed if the
 discovery document is missing), and the login page gains a sign-in button
 where without OIDC it offers nothing at all. Users are created on first
 sign-in, keyed on the OIDC subject, so whoever can authenticate at your
-provider can sign in here — restrict access at the provider.
+provider can sign in here — restrict access at the provider. A sign-in with
+a verified email (see `CAIRN_OIDC_TRUST_EMAIL`) joins the user who already
+owns that email instead of creating one.
 
 To confirm it took: open `/login`. With OIDC configured you get the provider
 button; with nothing configured there is no login at all — the deployment
@@ -307,7 +355,201 @@ Two ways to authorize an agent, both documented in
 
 Minting a PAT is deliberately a browser-only action (Settings is
 session-authenticated and CSRF-guarded); there is no API to mint tokens with a
-token, by design.
+token, by design. Both paths need someone who can sign in, so a new instance
+starts with the bootstrap credential below.
+
+## First run: bootstrap a credential
+
+A fresh instance has no users, and minting a personal access token needs a
+browser session, which needs a sign-in provider such as
+[OIDC](#sign-in-oidc). Until sign-in works, the only credential
+that exists is one you put in `CAIRN_API_TOKENS` yourself. The server logs
+this WARN at startup while it has neither:
+
+```text
+no API tokens (CAIRN_API_TOKENS), no OIDC (CAIRN_OIDC_ISSUER), and no dev web login (CAIRN_DEV_LOGIN_PASSWORD) configured: all authenticated endpoints will reject every caller
+```
+
+**1. Generate a secret and give it to the server.** In the directory that
+holds `compose.yaml` and `.env`:
+
+```bash
+SECRET=$(openssl rand -hex 32)
+printf 'CAIRN_API_TOKENS=%s:you@example.com\n' "$SECRET" >> .env
+```
+
+The entry is `secret:actor`. Use the email address you will sign in with as
+the actor: today cairn names an OIDC user by the provider's `email` claim, so
+what you create now stays attributed to you afterwards. Append `:agent`
+(`secret:actor:agent`) for an agent-role token, which gets the three agent
+scopes and never `sharing:manage`. Several entries are separated by commas.
+
+**2. Recreate the server** so it reads the new value. `docker compose up -d`
+does that when `.env` changes; `docker compose restart` does not, because it
+keeps the old environment.
+
+```bash
+docker compose up -d
+```
+
+The WARN above is gone from `docker compose logs cairnd`. On the binary
+path, export `CAIRN_API_TOKENS` in the environment `cairnd` starts from and
+restart it instead.
+
+**3. Use it as `CAIRN_TOKEN`.** The server's secret is the client's token:
+
+```bash
+export CAIRN_TOKEN="$SECRET"
+curl -sS https://cairn.example.com/v1/whoami -H "Authorization: Bearer $CAIRN_TOKEN"
+```
+
+```json
+{"actor_id":"you@example.com","channel":"via API","authenticated":true}
+```
+
+If you use the `cairn` CLI, also set `CAIRN_URL=https://cairn.example.com`,
+since the CLI talks to the hosted service unless told otherwise. Then
+`cairn whoami` prints `✓ authorized as you@example.com · via API`.
+
+The bootstrap secret works on the REST API under `/v1` and with the `cairn`
+CLI. It does not work on `/mcp`, which answers `401` to any static
+`CAIRN_API_TOKENS` secret: an agent connecting over MCP needs a personal access
+token or OAuth, so it waits for sign-in.
+
+**4. Replace it once sign-in works.** When OIDC is configured, sign in, mint
+personal access tokens in Settings → **API tokens**, then delete the
+`CAIRN_API_TOKENS` line from `.env` and run `docker compose up -d` again. The
+old secret answers `401` from then on.
+
+Treat the bootstrap token as the long-lived secret it is. It never expires and
+cannot be revoked from Settings; it works until you remove it from the
+environment and recreate the server. `cairnd` keeps only its SHA-256 digest in
+memory, but the plaintext sits in your `.env` and in the container's
+environment, so protect that file like the token itself.
+
+## Secret redaction
+
+Cairn scans every text it stores for credentials before it stores it:
+artifact bodies and titles, bundle members, comments, trace runs and spans, and
+webhook captures. A hit is either **masked**, which replaces only the secret
+value with the literal `[REDACTED]` and stores the rest, or **rejected**, which
+refuses the write with an error that names the field, the rule, and the line,
+never the value. The engine is the gitleaks v8 library with its default ruleset
+plus cairn's own rules for the shapes agents leak most: `Authorization`
+headers, API-key headers, passwords in URLs, secret-named assignments and flags,
+and `curl -u`. See [ADR-0023](../decisions/ADR-0023.md) and
+[SPEC-0017](../specs/ingest-redaction/index.md).
+
+**There is deliberately no off switch.** No variable, request header, or tool
+argument turns scanning off, and cairnd refuses to start if the scanner cannot
+be built. A writer can only downgrade a rejecting type to masking for one
+request (`X-Cairn-Redaction: mask`, `--redact=mask`, or `redaction: "mask"` over
+MCP). Any other value is refused: the API answers `validation_failed`, and the
+CLI stops with a usage error before it sends anything.
+
+### What is masked and what is rejected
+
+| Content | Fields scanned | Default |
+|---|---|---|
+| `markdown`, and a `file` whose body sniffs as text | body, title | mask |
+| `code` | body, title | **reject** |
+| `bundle` | each text member, title | **reject** |
+| Trace run (batch create and append) | run title, prompt, span name, args, output | mask |
+| Comment (create and edit) | body | mask |
+| Webhook capture | query, headers, body | mask |
+
+A `file` upload whose media type names a programming language is stored as
+code, so it rejects like code. Masking changes the stored bytes, so the stored
+SHA-256 is of the masked body and the create response says `redacted: true`
+(see [Troubleshooting](./troubleshooting.md#a-checksum-differs-after-upload)).
+The owner sees the outcome on each artifact: a status (`clean`, `masked`,
+`not_scanned_binary`, `not_scanned_oversize`, or `unscanned` for content stored
+before scanning existed), a count, and the rule IDs. Never the value.
+
+### Variables
+
+| Variable | Default | Accepted values |
+|---|---|---|
+| `CAIRN_REDACTION_REJECT_TYPES` | `code,bundle` | Comma-separated share types, case-insensitive, whitespace trimmed. Only artifact and bundle creates consult it: traces, comments, and webhook captures always mask. Names are not checked against the known share types, so a misspelt type silently masks. Empty or unset means the default. |
+| `CAIRN_REDACTION_MAX_SCAN_BYTES` | `16777216` (16 MiB) | A positive integer number of bytes, applied to each scanned field. An artifact or bundle body over 1 MiB is scanned in overlapping windows read back from staging, never buffered whole. Zero, a negative number, or a non-integer stops startup. |
+| `CAIRN_REDACTION_OVERSIZE` | `reject` | `reject` refuses a text field over the cap with `too_large_to_scan`. `store_unscanned` stores it unscanned with status `not_scanned_oversize`. Anything else, including a different case, stops startup. |
+| `CAIRN_REDACTION_ALLOWLIST_FILE` | *(empty)* | A path to an operator allowlist TOML, described below. Empty means no allowlist. A file that is missing or does not parse stops startup. |
+
+The compose file above passes none of these through, so the defaults apply.
+To change one, add it to the `cairnd` service's `environment`. For an
+allowlist, also mount the file read-only into the container and point the
+variable at the path inside it.
+
+Webhook captures are never refused, because the sender is an anonymous third
+party. Under `reject`, a capture field over the cap is replaced with a notice
+and named in the capture's `redaction_withheld` list instead.
+
+:::warning[`CAIRN_REDACTION_OVERSIZE=store_unscanned` stores credentials]
+With `store_unscanned`, any text field over `CAIRN_REDACTION_MAX_SCAN_BYTES` is
+stored **exactly as sent, with no credential scan**, and everyone the link
+reaches can read whatever secret it holds. Cairn logs a WARN naming
+`CAIRN_REDACTION_OVERSIZE` at startup, and another WARN, with the artifact's id
+and the field's size, each time it stores a field unscanned. Leave it at
+`reject`. If large text needs sharing, raise the cap instead: a bigger cap costs
+scan time, while `store_unscanned` costs the scan.
+:::
+
+### Operator allowlist
+
+`CAIRN_REDACTION_ALLOWLIST_FILE` exempts values, never places. The file is
+operator configuration read once at startup; no user, token, or request can set
+or change it. It accepts only these three top-level keys, each optional:
+
+```toml
+# Values matching one of these regexes are not masked or rejected. Each regex is
+# matched against the detected value, and every alternative must be anchored
+# with ^ and $.
+regexes = [
+  '''^cairn-docs-fixture-[0-9]{4}$''',
+]
+
+# A detected value containing any of these words, ignoring case, is exempt.
+stopwords = [
+  "cairn-demo-placeholder",
+]
+
+# Rule IDs to switch off entirely.
+disabledRules = []
+```
+
+Cairn refuses to start, naming the file and the entry, when:
+
+- a regex does not compile, is not anchored, or matches the empty string.
+  Anchored means every alternative starts with `^` and ends with `$`, so
+  `^a$|^b$` is accepted and `^a|.+$` is refused. A flag such as `(?i)` is
+  allowed; `(?m)` is refused, because it makes `^` and `$` match at every line;
+- a stopword or a `disabledRules` entry is empty;
+- a `disabledRules` entry is not a known rule ID;
+- the file has `paths`, `commits`, or any other key. Path allowlists are
+  refused because an uploader chooses their own file names, and an upload has
+  no commits to match.
+
+**List only inert fixture values**: the placeholder strings your own tests,
+docs, and demos use, which authenticate nowhere. Never list a real credential,
+even a revoked one, and never a pattern that could match one. A stopword
+exempts every detected value that *contains* it, so keep stopwords long and
+specific. Prefer an anchored regex for one exact value, and prefer either to
+`disabledRules`, which blinds cairn to a whole shape of secret.
+
+### What scanning does not catch
+
+Scanning is defence in depth, not a guarantee. These pass through:
+
+- **Secrets in shapes no rule recognises**, such as a bare random string with no
+  label, prefix, or header around it.
+- **Archives.** Zip, tar, gzip, and the like are never unpacked.
+- **Images and other binary bodies.** A body whose leading bytes match a known
+  binary signature is stored unscanned with status `not_scanned_binary`. A body
+  declared as an image that is really text is scanned.
+- **Anything over the cap** when `CAIRN_REDACTION_OVERSIZE=store_unscanned`.
+
+Treat a shared link as readable by anyone it reaches, and rotate any credential
+that was ever pasted into one.
 
 ## Verify the whole loop
 
@@ -325,15 +567,15 @@ curl -sS http://127.0.0.1:8080/healthz
 ok
 ```
 
-**2. Sign in and mint a token.** With OIDC configured, sign in at `/login`
-in a browser, then Settings → **API tokens**. (The verification run used the
-dev-password login: the form posts `actor`, `password`, and the CSRF field
-the login page embeds — a browser does all of that for you.)
+**2. Get a token.** On a fresh instance, use the secret from
+[First run: bootstrap a credential](#first-run-bootstrap-a-credential). Once
+OIDC works, sign in at `/login` in a browser and mint one in Settings →
+**API tokens** instead. Either way, it goes in `CAIRN_TOKEN`.
 
 **3. Create an artifact over REST.**
 
 ```bash
-export CAIRN_TOKEN='cairn_pat_…'
+export CAIRN_TOKEN='…'   # the bootstrap secret, or a cairn_pat_… token
 
 curl -sS http://127.0.0.1:8080/v1/artifacts \
   -H "Authorization: Bearer $CAIRN_TOKEN" \
@@ -372,7 +614,10 @@ Nothing is stored for a rejected request.
 
 **6. Connect an agent over MCP.** Any MCP client speaking Streamable HTTP can
 reach `<base>/mcp`. The verification used a bare JSON-RPC exchange — what a
-real client does for you — with the PAT from step 2:
+real client does for you — with a personal access token. The bootstrap secret
+from step 2 gets `401` here, because `/mcp` accepts only a personal access
+token or an OAuth token, so on a fresh instance this step waits until sign-in
+works:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8080/mcp \

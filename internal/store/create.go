@@ -13,6 +13,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 )
 
 // CreateArtifactInput is the transport-agnostic create request. Provenance,
@@ -34,6 +35,11 @@ type CreateArtifactInput struct {
 	// the adapter passes them through from the request as-is; CreateArtifact
 	// normalizes them.
 	Tags []string
+	// ActorKind and Auth classify the creator's credential. The adapter derives
+	// them from the authenticated principal, never from the request, and they
+	// travel only on the creation event (ADR-0022, SPEC-0016 EV-4).
+	ActorKind event.ActorKind
+	Auth      event.AuthMethod
 }
 
 func (in CreateArtifactInput) validate() error {
@@ -150,7 +156,7 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("create: commit: %w", err)
 	}
-	s.emitCreated(art)
+	s.emitCreated(art, in.ActorKind, in.Auth)
 	return art, nil
 }
 
@@ -191,11 +197,20 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 		INSERT INTO artifacts
 			(public_id, share_type, title, body_sha256, size_bytes, media_type,
 			 previewable, actor_id, on_behalf_of, model, channel, captured_at,
-			 owner_id, visibility, expires_at, tags)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			 owner_id, visibility, expires_at, tags,
+			 redaction_status, redaction_count, redaction_rules)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		RETURNING id, created_at`
 
 	tags := tagsParam(art.Tags)
+	// The outcome commits with the row it describes (SPEC-0017 "Database
+	// Operation Standards"). An unset Redaction is written as "unscanned".
+	//
+	// Governing: ADR-0023, SPEC-0017 RD-9
+	rStatus, rCount, rRules, err := redactionColumns(art.Redaction)
+	if err != nil {
+		return fmt.Errorf("create: %w", err)
+	}
 
 	for attempt := 0; attempt < idMaxAttempts; attempt++ {
 		// Savepoint so a unique conflict aborts only this attempt, not the tx.
@@ -219,7 +234,7 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 			art.MediaType, art.Previewable, art.Provenance.ActorID,
 			art.Provenance.OnBehalfOf, art.Provenance.Model, art.Provenance.Channel,
 			art.Provenance.CapturedAt, art.Access.OwnerID, art.Access.Visibility,
-			art.ExpiresAt, tags,
+			art.ExpiresAt, tags, rStatus, rCount, rRules,
 		).Scan(&art.ID, &art.CreatedAt)
 		if err != nil {
 			_ = sp.Rollback(ctx)
