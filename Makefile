@@ -1,4 +1,4 @@
-.PHONY: build test test-race test-js test-scripts vet fmt fmt-check lint check tidy up down migrate ci release-snapshot website
+.PHONY: build test test-race test-js test-scripts vet fmt fmt-check lint tidy-check check tidy up down migrate ci release-snapshot website
 
 GO ?= go
 PKGS ?= ./...
@@ -47,7 +47,11 @@ fmt-check:
 	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
 
 # Uniform entry points: every repo answers to `make lint` / `make check`.
-lint: fmt-check vet
+# tidy-check is here because goreleaser runs `go mod tidy` as a release hook
+# (.goreleaser.yaml before hooks): an untidy module dirties the tree mid-release
+# and goreleaser aborts with "git is in a dirty state", so the tag ships
+# nothing. Caught on every PR instead.
+lint: tidy-check fmt-check vet
 
 # Tests for the release scripts themselves (scripts/*.test.sh): fixtures each
 # gate must pass or fail, each for its own reason. No Go build, so it is cheap
@@ -68,6 +72,14 @@ check: lint test test-scripts
 
 tidy:
 	$(GO) mod tidy
+
+# Fail when `go mod tidy` would change go.mod or go.sum, restoring whatever
+# it touched so the working tree is left as the caller had it.
+tidy-check:
+	@d=$$(mktemp -d); cp go.mod go.sum $$d/; $(GO) mod tidy; \
+	s=0; cmp -s go.mod $$d/go.mod || s=1; cmp -s go.sum $$d/go.sum || s=1; \
+	cp $$d/go.mod $$d/go.sum .; rm -rf $$d; \
+	if [ $$s -ne 0 ]; then echo "go mod tidy would change go.mod/go.sum: run 'make tidy' and commit the result"; exit 1; fi
 
 # Local dependencies: Postgres + MinIO (S3-compatible object storage).
 up:
