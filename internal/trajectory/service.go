@@ -198,6 +198,13 @@ func (s *Service) CreateBatchRun(ctx context.Context, in RunInput) (*Run, error)
 		return nil, err
 	}
 	outcome := scan.summary
+	// The tree is validated before any output is spilled, so a malformed batch
+	// costs no object-store writes. It runs on the masked spans, which are the
+	// ones persisted; masking never touches a span's id, parent or category.
+	prepared, err := prepareSpans(map[string]int{}, map[string]int{}, map[string]bool{}, in.Spans)
+	if err != nil {
+		return nil, err
+	}
 	dispositions, err := s.spillOutputs(ctx, in.Spans)
 	if err != nil {
 		return nil, err
@@ -222,10 +229,6 @@ func (s *Service) CreateBatchRun(ctx context.Context, in RunInput) (*Run, error)
 		return nil, err
 	}
 
-	prepared, err := prepareSpans(map[string]int{}, map[string]int{}, map[string]bool{}, in.Spans)
-	if err != nil {
-		return nil, err
-	}
 	// A fresh run's stream sequence starts at 0; its id is not handed out until
 	// after commit, so no live subscriber can exist yet and none is published to.
 	if err := s.persistSpans(ctx, tx, runID, in.Access.OwnerID, 0, prepared, dispositions); err != nil {
@@ -252,6 +255,10 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 		return nil, err
 	}
 	outcome := scan.summary
+	prepared, err := prepareSpans(map[string]int{}, map[string]int{}, map[string]bool{}, in.Spans)
+	if err != nil {
+		return nil, err
+	}
 	dispositions, err := s.spillOutputs(ctx, in.Spans)
 	if err != nil {
 		return nil, err
@@ -273,11 +280,7 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 		return nil, err
 	}
 
-	if len(in.Spans) > 0 {
-		prepared, err := prepareSpans(map[string]int{}, map[string]int{}, map[string]bool{}, in.Spans)
-		if err != nil {
-			return nil, err
-		}
+	if len(prepared) > 0 {
 		// Seed spans start the sequence at 0 like a batch; the run id has not been
 		// returned yet, so no live subscriber exists to publish to.
 		if err := s.persistSpans(ctx, tx, runID, in.Access.OwnerID, 0, prepared, dispositions); err != nil {
@@ -309,7 +312,7 @@ func (s *Service) AppendSpans(ctx context.Context, publicID, actorID string, spa
 // row accumulates every append's.
 func (s *Service) AppendSpansWithOutcome(ctx context.Context, publicID, actorID string, spans []SpanInput) ([]*Span, redact.Summary, error) {
 	if len(spans) == 0 {
-		return nil, redact.Summary{}, errs.Validationf("trajectory: no spans to append")
+		return nil, redact.Summary{}, fmt.Errorf("trajectory: no spans to append: %w", errs.Violate("spans", errs.LocBody, errs.ReasonRequired))
 	}
 	spans, scan, err := s.scanSpans(ctx, spans)
 	if err != nil {
@@ -376,8 +379,16 @@ func (s *Service) appendSpans(ctx context.Context, publicID, actorID string, spa
 		return s.spansByID(ctx, rr.runID, spans)
 	}
 	if newCount != len(spans) {
-		return nil, errs.Validationf(
-			"trajectory: append mixes %d new spans with already-present spans; resend the whole batch or only the new spans", newCount)
+		// Name every already-present span, so the caller can drop exactly those
+		// and resend only the new ones (SPEC-0019 VE-4).
+		var present []*errs.Invalid
+		for i, sp := range spans {
+			if existingIDs[sp.SpanID] {
+				present = append(present, errs.Violate(spanField(i, "span_id"), errs.LocBody, errs.ReasonDuplicate, errs.WithValue(sp.SpanID)))
+			}
+		}
+		return nil, fmt.Errorf("trajectory: append mixes %d new spans with already-present spans; resend the whole batch or only the new spans: %w",
+			newCount, errs.Join(present...))
 	}
 
 	prepared, err := prepareSpans(existingDepth, existingChildCount, existingIDs, spans)
@@ -549,7 +560,7 @@ func (s *Service) persistSpans(ctx context.Context, tx pgx.Tx, runID int64, owne
 			return err
 		}
 		if p.in.ProducedArtifactID != "" {
-			if err := s.insertProducedEdge(ctx, tx, runID, ownerID, p.in.SpanID, p.in.ProducedArtifactID); err != nil {
+			if err := s.insertProducedEdge(ctx, tx, runID, ownerID, i, p.in.SpanID, p.in.ProducedArtifactID); err != nil {
 				return err
 			}
 		}
@@ -593,6 +604,7 @@ func (s *Service) nextStreamBase(ctx context.Context, tx pgx.Tx, runID int64) (i
 }
 
 // insertProducedEdge resolves the produced artifact's public id to its internal
+// insertProducedEdge resolves the produced artifact's public id to its internal
 // id and records the directed edge. The target must be readable by the run's
 // owner: until SPEC-0024's readableTargets helper exists that means owner_id
 // equality, so unknown, expired and foreign ids all produce the identical
@@ -600,14 +612,16 @@ func (s *Service) nextStreamBase(ctx context.Context, tx pgx.Tx, runID int64) (i
 // Every Surface"). The id arrives already normalized from prepareSpans, so an
 // mcp://cairn/<id> handle resolves exactly as the bare id does (issue #50).
 // Governing: SPEC-0023 REQ "Read Authorization on Every Surface", ADR-0007
-func (s *Service) insertProducedEdge(ctx context.Context, tx pgx.Tx, runID int64, ownerID, spanID, pid string) error {
+func (s *Service) insertProducedEdge(ctx context.Context, tx pgx.Tx, runID int64, ownerID string, index int, spanID, pid string) error {
 	var artID int64
 	err := tx.QueryRow(ctx,
 		`SELECT id FROM artifacts WHERE public_id = $1 AND expires_at > now() AND owner_id = $2`, pid, ownerID,
 	).Scan(&artID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errs.Validationf("trajectory: span %q produced-artifact %q not found", spanID, pid)
+			return fmt.Errorf("trajectory: span %q produced-artifact %q not found: %w", spanID, pid,
+				errs.Violate(spanField(index, "produced_artifact_id"), errs.LocBody, errs.ReasonNotAllowed,
+					errs.WithValue(pid), errs.WithExpect("it names no live artifact")))
 		}
 		return fmt.Errorf("trajectory: resolve produced-artifact %q: %w", pid, err)
 	}
