@@ -255,6 +255,7 @@ func run(logger *slog.Logger) error {
 		OIDCIssuer:            cfg.OIDCIssuer,
 		OIDCClientID:          cfg.OIDCClientID,
 		OIDCClientSecret:      cfg.OIDCClientSecret,
+		OIDCTrustEmail:        cfg.OIDCTrustEmail,
 		GitHubClientID:        cfg.GitHubClientID,
 		GitHubClientSecret:    cfg.GitHubClientSecret,
 		APITokens:             apiTokens,

@@ -7,6 +7,46 @@ reaches 1.0.
 
 ## [Unreleased]
 
+### Security
+
+- **Users and identities** (SPEC-0023, #326). Sign-ins now resolve to user rows
+  keyed on the provider's `(issuer, subject)`. A new identity joins an existing
+  user only through a verified email equal (case-insensitively) to that user's
+  primary email; the OIDC callback ignores an email whose `email_verified`
+  claim is not true, closing a takeover where an IdP-typed email became the
+  owner (audit A5). GitHub identities key on the numeric account id. The dev
+  password login is disabled whenever OIDC or GitHub is configured, and answers
+  `404` (A6). Anonymous and other readers see the creator's display handle, not
+  their email (A18).
+- **Existing users land on their account when they sign in** (SPEC-0023).
+  Matching by verified email is no longer one-shot: an identity whose user has
+  no verified email yet is matched again on every sign-in that carries one, so
+  a first sign-in that arrived unverified no longer strands the owner's Bin.
+
+### Added
+
+- **`CAIRN_OIDC_TRUST_EMAIL`** (default `false`). Declares the OIDC provider
+  authoritative for emails, so its `email` claim counts as verified even when
+  `email_verified` is absent or `false` (Pocket ID sends `false` unless
+  `EMAILS_VERIFIED` is set). Set it only for a provider you run whose users
+  cannot set their own email; on one where they can, it lets anyone sign in as
+  the owner of any email they type. GitHub is unaffected: it always uses the
+  primary verified email.
+
+### Upgrade notes
+
+- **Take a database backup first.** Migration `0017_users` adds the `users`
+  and `user_identities` tables and `sessions.user_id`.
+- **OIDC must send `email_verified: true`, or set `CAIRN_OIDC_TRUST_EMAIL`.**
+  A sign-in whose email is not verified is keyed on its subject and does not
+  reach artifacts owned by that email until a later sign-in carries a verified
+  one. Confirm your provider marks the operator's email verified, or, for a
+  provider you run whose users cannot change their email (Pocket ID with LDAP
+  sync), set `CAIRN_OIDC_TRUST_EMAIL=true` before the first sign-in after the
+  upgrade.
+- **`CAIRN_DEV_INSECURE_BEARER_AUTH` with an `https` `CAIRN_BASE_URL` now fails
+  boot** (A21). It was never safe there.
+
 ### Changed
 
 - **Outbound webhooks**: the `artifact.created` body appends two keys to `data`:

@@ -327,15 +327,18 @@ func (s *Server) renderShellFor(w http.ResponseWriter, r *http.Request, wantPref
 	// A logged-in viewer sees the comment composer; an anonymous link reader sees
 	// the read-only thread (posting requires a session + CSRF). Resolution is
 	// optional — an absent/invalid credential simply yields the read-only view.
-	if p, ok := s.optionalPrincipal(r); ok {
+	viewer, ok := s.optionalPrincipal(r)
+	if ok {
 		vm.Authenticated = true
-		vm.Actor = p.ActorID
-		vm.ShareDialog.IsOwner = p.ActorID == a.Access.OwnerID
+		vm.Actor = viewer.ActorID
+		vm.ShareDialog.IsOwner = viewer.ActorID == a.Access.OwnerID
 		// The scan outcome is the owner's alone (SPEC-0017 RD-9).
-		if isOwner(p.ActorID, a) {
+		if isOwner(viewer.ActorID, a) {
 			vm.Redaction = redactionBadgeOf(a.Redaction)
 		}
 	}
+	s.maskActors(r.Context(), viewer, &vm.Provenance, vm.Comments)
+	vm.ShareDialog.Provenance.Actor = vm.Provenance.Actor
 	s.renderWeb(w, r, "shell", vm)
 }
 

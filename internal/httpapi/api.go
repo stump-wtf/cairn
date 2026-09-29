@@ -24,6 +24,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/store"
 	"github.com/stump-wtf/cairn/internal/trajectory"
+	"github.com/stump-wtf/cairn/internal/user"
 	"github.com/stump-wtf/cairn/internal/webhook"
 )
 
@@ -88,6 +89,10 @@ type Config struct {
 	OIDCIssuer       string
 	OIDCClientID     string // defaults to "cairn" when empty
 	OIDCClientSecret string
+	// OIDCTrustEmail treats the OIDC issuer's email claim as verified even
+	// when its email_verified claim is absent or false: the operator has
+	// declared that issuer authoritative for emails (CAIRN_OIDC_TRUST_EMAIL).
+	OIDCTrustEmail bool
 	// GitHub human login (SPEC-0012): a second provider beside Pocket ID.
 	// GitHubConfigured() gates EnableGitHub — the provider joins the registry
 	// (and the login page renders its button) only when both are set. The
@@ -164,6 +169,9 @@ type Server struct {
 	sessions      session.Store
 	verifier      CredentialVerifier
 	secureCookies bool
+	// users resolves sign-in identities to user rows (SPEC-0023 REQ "Users and
+	// Identities"). Nil on storeless unit wirings, where no sign-in completes.
+	users *user.Store
 	// oidc is the OIDC relying-party wiring (ADR-0013): nil until EnableOIDC
 	// discovers the configured issuer (or forever nil when OIDC is not
 	// configured), gating both the /auth/login|callback routes and whether the
@@ -281,6 +289,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		traj       *trajectory.Service
 		hookSvc    *webhook.Service
 		sessions   session.Store
+		users      *user.Store
 		oauthSvc   *oauth.Service
 		patSvc     *pat.Service
 		mcpSessSvc *mcpsession.Service
@@ -305,6 +314,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		// single binary carries its schema and a scaled deployment shares one
 		// session table (ADR-0012).
 		sessions = session.NewPostgresStore(st.Pool())
+		users = user.NewStore(st.Pool())
 		// The OAuth 2.1 authorization server is an in-process peer of the core —
 		// not a separate service (SPEC-0007 design "In-process adapter over the
 		// core"). Access tokens are audience-bound to this deployment's public
@@ -370,6 +380,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		now:                 time.Now,
 		webTmpl:             parseWebTemplates(),
 		sessions:            sessions,
+		users:               users,
 		verifier:            DevPasswordVerifier{Password: cfg.DevLoginPassword},
 		secureCookies:       strings.HasPrefix(cfg.BaseURL, "https://"),
 		oauth:               oauthSvc,

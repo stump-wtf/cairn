@@ -852,6 +852,7 @@ func (s *Server) mcpReadArtifact(ctx context.Context, req *mcp.CallToolRequest, 
 	}
 	// The owner also sees the scan outcome (SPEC-0017 RD-9).
 	out := mcpReadOutput{artifactResponse: s.toViewerArtifactResponse(art, mcpActor(req.Extra))}
+	out.Provenance.Actor = s.displayActor(ctx, &Principal{ActorID: mcpActor(req.Extra)}, out.Provenance.Actor)
 
 	if art.ShareType == artifact.TypeBundle && in.Path == "" {
 		members, err := s.store.ListMembers(ctx, id)
@@ -1731,7 +1732,11 @@ func (s *Server) mcpReadRun(ctx context.Context, req *mcp.ReadResourceRequest) (
 	if err != nil {
 		return nil, s.mcpToolErr(ctx, "resources/read run", err)
 	}
-	body, err := json.Marshal(s.toRunResponse(run))
+	resp := s.toRunResponse(run)
+	// Parity with REST GET /v1/runs/{id}: only the creator sees their own
+	// email (SPEC-0023 REQ "Users and Identities", audit A18).
+	resp.Provenance.Actor = s.displayActor(ctx, &Principal{ActorID: mcpActor(req.Extra)}, resp.Provenance.Actor)
+	body, err := json.Marshal(resp)
 	if err != nil {
 		return nil, s.mcpToolErr(ctx, "resources/read run", fmt.Errorf("encode run: %w", err))
 	}
@@ -1890,7 +1895,11 @@ func (s *Server) mcpReadHook(ctx context.Context, req *mcp.ReadResourceRequest) 
 	if err != nil {
 		return nil, s.mcpToolErr(ctx, "resources/read hook", err)
 	}
-	body, err := json.Marshal(s.toHookResponse(ep, page.Requests, page.NextBefore))
+	resp := s.toHookResponse(ep, page.Requests, page.NextBefore)
+	// Parity with REST GET /v1/hooks/{id} (SPEC-0023 REQ "Users and
+	// Identities", audit A18).
+	resp.Provenance.Actor = s.displayActor(ctx, &Principal{ActorID: mcpActor(req.Extra)}, resp.Provenance.Actor)
+	body, err := json.Marshal(resp)
 	if err != nil {
 		return nil, s.mcpToolErr(ctx, "resources/read hook", fmt.Errorf("encode hook: %w", err))
 	}

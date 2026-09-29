@@ -244,6 +244,8 @@ func (s *Server) handleAppendSpans(w http.ResponseWriter, r *http.Request) {
 	// Only the owner may append, so the caller is the owner.
 	resp := s.toRunResponse(run)
 	resp.OwnerRedaction = ownerRedactionOf(outcome)
+	viewer, _ := s.optionalPrincipal(r)
+	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
 	s.writeJSON(w, http.StatusOK, resp)
 }
 
@@ -276,9 +278,11 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := s.toRunResponse(run)
-	if viewer := s.optionalActor(r); viewer.ID != "" && viewer.ID == run.Access.OwnerID {
+	viewer, _ := s.optionalPrincipal(r)
+	if viewer != nil && viewer.ActorID != "" && viewer.ActorID == run.Access.OwnerID {
 		resp.OwnerRedaction = ownerRedactionOf(run.Redaction)
 	}
+	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
 	s.writeJSON(w, http.StatusOK, resp)
 }
 

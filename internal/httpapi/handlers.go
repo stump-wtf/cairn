@@ -314,11 +314,14 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	}
 	// A link read needs no credential, but an owner who sends one also sees
 	// the scan outcome (SPEC-0017 RD-9).
-	var viewer string
-	if p, ok := s.optionalPrincipal(r); ok {
-		viewer = p.ActorID
+	viewer, _ := s.optionalPrincipal(r)
+	var viewerActor string
+	if viewer != nil {
+		viewerActor = viewer.ActorID
 	}
-	s.writeJSON(w, http.StatusOK, s.toViewerArtifactResponse(art, viewer))
+	resp := s.toViewerArtifactResponse(art, viewerActor)
+	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // handleGetBody streams the raw body, re-verifiable against the stored SHA-256.

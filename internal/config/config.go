@@ -89,6 +89,14 @@ type Config struct {
 	OIDCIssuer       string // e.g. https://pocket-id.stump.rocks
 	OIDCClientID     string // defaults to "cairn"
 	OIDCClientSecret string
+	// OIDCTrustEmail declares the OIDC issuer authoritative for its users'
+	// emails: its email claim counts as verified whatever its email_verified
+	// claim says. For an IdP the operator runs, whose users cannot set their
+	// own email (Pocket ID with LDAP sync sends email_verified false unless
+	// EMAILS_VERIFIED is set). Never set it for an IdP where a user types
+	// their own email: a verified email links to, and claims, the user who
+	// owns it (SPEC-0023 REQ "Users and Identities").
+	OIDCTrustEmail bool
 
 	// GitHub human login (SPEC-0012): a second production provider beside
 	// Pocket ID. OAuth 2.0 authorization-code — GitHub has no OIDC login — so
@@ -208,6 +216,15 @@ func Load() (*Config, error) {
 	var err error
 	if c.DevInsecureBearerAuth, err = envBool("CAIRN_DEV_INSECURE_BEARER_AUTH", false); err != nil {
 		return nil, err
+	}
+	if c.OIDCTrustEmail, err = envBool("CAIRN_OIDC_TRUST_EMAIL", false); err != nil {
+		return nil, err
+	}
+	// The insecure bearer lets anyone act as anyone, delete included (audit
+	// A21). An https base URL means a real deployment, so refuse to boot
+	// rather than serve it (SPEC-0023 REQ "Users and Identities").
+	if c.DevInsecureBearerAuth && strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.BaseURL)), "https://") {
+		return nil, fmt.Errorf("CAIRN_DEV_INSECURE_BEARER_AUTH is enabled with an https CAIRN_BASE_URL (%s): the insecure bearer trusts any token as any actor and is for local http development only", c.BaseURL)
 	}
 	if c.S3UseSSL, err = envBool("CAIRN_S3_USE_SSL", false); err != nil {
 		return nil, err
