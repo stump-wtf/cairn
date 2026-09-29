@@ -712,10 +712,9 @@ jobs:
         run: echo "tagged build is green — releasing ${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
 
   # ---- 12. release ---------------------------------------------------------
-  # Builds the cross-platform `cairn` CLI and the `cairnd` server archives and
-  # publishes both to the PUBLIC stump-wtf/cairn-cli repo (see .goreleaser.yaml).
-  # They are separate archives that never mix (cairn#361); the container image
-  # is still built by the image job above.
+  # Builds the cross-platform `cairn` archives — one binary, the whole program
+  # since ADR-0031 — and publishes them to the PUBLIC stump-wtf/cairn repo (see
+  # .goreleaser.yaml). The container image is still built by the image job above.
   #
   # This runs on Gitea, not the GitHub mirror, because this runner is the only
   # host that can reach both sides — Gitea over the LAN and github.com
@@ -738,7 +737,7 @@ jobs:
           set -euo pipefail
           if [ -z "${GH_RELEASE_TOKEN:-}" ]; then
             echo "::error::GH_RELEASE_TOKEN is not set. Create a GitHub PAT with" \
-                 "contents:write on stump-wtf/cairn-cli and add it as an org or" \
+                 "contents:write on stump-wtf/cairn and add it as an org or" \
                  "repo Actions secret named GH_RELEASE_TOKEN. Without it the tag" \
                  "lands but nothing is published."
             exit 1
@@ -778,7 +777,7 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
-          # goreleaser reads GITHUB_TOKEN; the value is the cairn-cli PAT.
+          # goreleaser reads GITHUB_TOKEN; the value is the cairn release PAT.
           GITHUB_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
 
   # ---- 13. Homebrew tap bump ----------------------------------------------
@@ -796,7 +795,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
-      GH_REPO_URL: https://github.com/stump-wtf/cairn-cli
+      GH_REPO_URL: https://github.com/stump-wtf/cairn
     steps:
       - name: Require the tap push token
         run: |

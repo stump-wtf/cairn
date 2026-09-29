@@ -3,7 +3,7 @@
 # THIS WORKFLOW PUBLISHES THE IMAGE AND NOTHING ELSE. Binaries, the GitHub
 # Release, and the Homebrew tap bump are all owned by the Gitea pipeline
 # (.gitea/workflows/pipeline.yaml: tag-only -> release -> tap-bump), which
-# publishes archives to stump-wtf/cairn-cli via .goreleaser.yaml.
+# publishes archives to stump-wtf/cairn via .goreleaser.yaml.
 #
 # That split is deliberate, and it replaces a real collision. This file used to
 # run goreleaser itself, with the same .goreleaser.yaml the Gitea job uses. Tags
@@ -12,11 +12,12 @@
 # `replace_existing_artifacts: true` meant they overwrote each other silently
 # rather than erroring. Whichever finished last won and nothing reported a
 # problem. (The old job was also pointed at a repo its GITHUB_TOKEN does not
-# cover: the token is scoped to stump-wtf/cairn while the config targets
-# stump-wtf/cairn-cli.)
+# cover: the token is scoped to stump-wtf/cairn, which is where .goreleaser.yaml
+# targets the binaries now (ADR-0031); the config's old cairn-cli destination is
+# gone.)
 #
 # One tag, two writers, two destinations, no shared names:
-#   * Gitea  -> binaries to stump-wtf/cairn-cli, then the tap bump
+#   * Gitea  -> binaries to stump-wtf/cairn, then the tap bump
 #   * GitHub -> the ghcr.io image, here
 #
 # ghcr.io lives here because GITHUB_TOKEN is the credential that works on this

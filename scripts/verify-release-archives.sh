@@ -1,41 +1,40 @@
 #!/usr/bin/env bash
 #
-# Each Release Archive Holds Its Own Binary, And Only That
+# The Release Archive Holds Its One Binary, And Only That
 #
-# A release carries two kinds of archive (cairn#361): `cairn_*`, the CLI, and
-# `cairnd_*`, the server. This script fails if either ever holds the other's
-# binary, anything but its binary plus LICENSE, or is missing for a platform
-# the release promises. It runs over goreleaser's dist/ from a snapshot build
-# BEFORE the real release job publishes, because goreleaser has no post-archive
-# hook in the open-source edition: by the time a real `release` has archived,
-# it has also uploaded.
+# A release carries one kind of archive: `cairn_*`, the whole program (ADR-0031
+# folded the server into it; the former separate `cairnd_*` archives are gone).
+# This script fails if an archive holds anything but its binary plus LICENSE,
+# or is missing for a platform the release promises. It runs over goreleaser's
+# dist/ from a snapshot build BEFORE the real release job publishes, because
+# goreleaser has no post-archive hook in the open-source edition: by the time a
+# real `release` has archived, it has also uploaded.
 #
-# It complements scripts/verify-cli-artifact.sh rather than replacing it. That
-# script is a per-binary goreleaser hook and answers "did the CLI binary pick
-# up server code?". This one answers "did the packaging put the right binary
-# in the right archive?", which is a config property: an archive with no `ids`
-# takes every build, so adding the cairnd build without scoping the CLI archive
-# would have shipped both binaries under the CLI's name.
+# "Which binary is in the archive" is a config property, not a build outcome:
+# an archive with no `ids` takes every build, so adding a build without scoping
+# the archive would ship binaries under the wrong name. That is what the
+# member and unaccounted-archive checks below catch.
 #
-# The cairnd check carries a POSITIVE CONTROL for the same reason the CLI gate
-# does: a marker search that cannot find the server's own packages in the
-# server binary is not measuring anything, and its "no CLI code" result would
-# be vacuous.
+# The reproducibility check matters for the same reason it ever did: Harness
+# pins this archive by URL and SHA-256, so its bytes must not depend on who
+# built it. The build is -trimpath with mod_timestamp and .goreleaser.yaml
+# pins every tar header; this is what notices if that stops holding.
 #
 # Usage:
 #   scripts/verify-release-archives.sh [dist-dir]     (default: dist)
 #
 # @joestump 09/23/2026 - Created for cairn#361, alongside the cairnd build.
-# @joestump 09/26/2026 - Check the cairnd tar headers too: owner, group and
-#   mode came from the builder, so the pinned digest varied by machine.
+# @joestump 09/26/2026 - Check the tar headers too: owner, group and mode came
+#   from the builder, so the pinned digest varied by machine.
+# @joestump-agent 09/29/2026 - One binary (ADR-0031): the cairnd archive
+#   checks and the positive control are gone with the second build; the
+#   header checks now guard the cairn archive itself.
 
 set -euo pipefail
 
 DIST="${1:-dist}"
-MODULE="github.com/stump-wtf/cairn"
 
-CLI_PLATFORMS=(linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64 windows_arm64)
-SERVER_PLATFORMS=(linux_amd64 linux_arm64 darwin_amd64 darwin_arm64)
+PLATFORMS=(linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64 windows_arm64)
 
 fail() { echo "::error::$*" >&2; exit 1; }
 
@@ -58,10 +57,10 @@ list_members() {
   esac | sed -e 's#^\./##' -e '/\/$/d' -e '/^$/d' | LC_ALL=C sort
 }
 
-# find_archive <prefix> <platform>: the one archive for that platform, or empty.
+# find_archive <platform>: the one archive for that platform, or empty.
 find_archive() {
-  local prefix="$1" platform="$2" f
-  for f in "$DIST"/"${prefix}"_*_"${platform}".tar.gz "$DIST"/"${prefix}"_*_"${platform}".zip; do
+  local platform="$1" f
+  for f in "$DIST"/cairn_*_"${platform}".tar.gz "$DIST"/cairn_*_"${platform}".zip; do
     [ -f "$f" ] && { echo "$f"; return 0; }
   done
   return 0
@@ -82,55 +81,41 @@ check_archive() {
   checked=$((checked + 1))
 }
 
-echo "==> CLI archives (cairn_*)"
-for p in "${CLI_PLATFORMS[@]}"; do
-  a="$(find_archive cairn "$p")"
+echo "==> cairn archives (cairn_*)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+for p in "${PLATFORMS[@]}"; do
+  a="$(find_archive "$p")"
   [ -n "$a" ] || fail "no cairn archive for $p in $DIST"
   bin=cairn
   case "$p" in windows_*) bin=cairn.exe ;; esac
   check_archive "$a" "$bin"
-done
-
-echo "==> server archives (cairnd_*)"
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
-for p in "${SERVER_PLATFORMS[@]}"; do
-  a="$(find_archive cairnd "$p")"
-  [ -n "$a" ] || fail "no cairnd archive for $p in $DIST"
-  case "$a" in *.tar.gz) ;; *) fail "$(basename "$a"): cairnd ships as tar.gz only" ;; esac
-  check_archive "$a" cairnd
-
-  # The bytes, not just the name: a server binary that is really the CLI (or
-  # carries it) would pass the member check above.
-  rm -rf "$tmp/x" && mkdir -p "$tmp/x"
-  tar -xzf "$a" -C "$tmp/x" cairnd
-  control="$(grep -a -c -F "${MODULE}/internal/httpapi" "$tmp/x/cairnd" || true)"
-  [ "$control" -gt 0 ] || fail "positive control failed: '${MODULE}/internal/httpapi' does not appear in $(basename "$a")'s cairnd, so this check cannot tell a server from anything else"
-  cli="$(grep -a -c -F "${MODULE}/internal/clicmd" "$tmp/x/cairnd" || true)"
-  [ "$cli" -eq 0 ] || fail "CLI CODE IN THE SERVER: '${MODULE}/internal/clicmd' appears in $(basename "$a")'s cairnd"
-  echo "     server bytes ok (httpapi present, clicmd absent)"
 
   # Reproducible headers: Harness pins this archive by SHA-256, so its bytes
   # must not depend on who built it. A tar header records each member's owner,
   # group and mode, and goreleaser copies any it is not given from the file on
   # disk, which made the same commit hash differently on a laptop (uid 501) and
   # in CI. .goreleaser.yaml pins all three; this is what notices if it stops.
-  command -v python3 >/dev/null 2>&1 || fail "cannot read tar headers: python3 is not available, so the reproducibility check would prove nothing"
-  bad="$(python3 - "$a" <<'PY'
+  case "$a" in
+    *.tar.gz)
+      command -v python3 >/dev/null 2>&1 || fail "cannot read tar headers: python3 is not available, so the reproducibility check would prove nothing"
+      bad="$(python3 - "$a" <<'PY'
 import sys, tarfile
-want = {"cairnd": 0o755, "LICENSE": 0o644}
+want = {"cairn": 0o755, "LICENSE": 0o644}
 for m in tarfile.open(sys.argv[1]).getmembers():
     got = (m.uid, m.gid, m.uname, m.gname, m.mode)
     if got != (0, 0, "root", "root", want.get(m.name.lstrip("./"), -1)):
         print("%s=%d:%d/%s:%s/%o" % ((m.name,) + got), end=" ")
 PY
 )"
-  [ -z "$bad" ] || fail "NOT REPRODUCIBLE: $(basename "$a") records builder-dependent headers (${bad% }); want root:root, cairnd 0755, LICENSE 0644"
-  echo "     headers ok (root:root, fixed modes)"
+      [ -z "$bad" ] || fail "NOT REPRODUCIBLE: $(basename "$a") records builder-dependent headers (${bad% }); want root:root, cairn 0755, LICENSE 0644"
+      echo "     headers ok (root:root, fixed modes)"
+      ;;
+  esac
 done
 
-# No archive the two lists above did not account for, e.g. a third build that
-# picked up a default archive, or a cairnd for windows nobody asked for.
+# No archive the list above did not account for, e.g. a second build that
+# picked up a default archive, or a stale artifact from an earlier config.
 total=0
 for f in "$DIST"/*.tar.gz "$DIST"/*.zip; do
   [ -f "$f" ] || continue

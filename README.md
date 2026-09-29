@@ -28,7 +28,7 @@ Markdown · Code · Image · File · Bundle (multi-file) · Webhook (live reques
 The `cairn` CLI is a single static Go binary — a pure REST client of the core `/v1`
 API, with no domain logic of its own (see [ADR-0003](docs/adrs/ADR-0003-triple-surface-parity-web-cli-mcp.md)).
 The release pipeline publishes cross-platform binaries to
-[stump-wtf/cairn-cli](https://github.com/stump-wtf/cairn-cli) on each tag, but
+[stump-wtf/cairn](https://github.com/stump-wtf/cairn/releases) on each tag, but
 no release there carries them yet. Until one does, install straight from the
 module:
 
