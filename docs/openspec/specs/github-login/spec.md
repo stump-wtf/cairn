@@ -147,7 +147,7 @@ invitations; there, `invite` admits nobody (AL-3).
 
 When the effective mode is `open` and the GitHub provider is configured, anyone
 with a GitHub account can enroll. That is a risky setting, so it is never the
-default with GitHub on: `cairnd` MUST log a WARN at startup saying so, and the
+default with GitHub on: `cairn serve` MUST log a WARN at startup saying so, and the
 self-hosting guide MUST call the combination out in a warning admonition. These settings are operator
 configuration. No user, team admin, token or request may change them. There is
 no deprecated alias for any earlier variable name.
@@ -160,17 +160,17 @@ no deprecated alias for any earlier variable name.
 #### Scenario: Conflicting configuration refused
 
 - **WHEN** `CAIRN_ENROLLMENT_MODE=open` and `CAIRN_ENROLLMENT_ALLOW=github-org:acme` are both set
-- **THEN** cairnd refuses to start and names both variables
+- **THEN** cairn serve refuses to start and names both variables
 
 #### Scenario: Default mode with GitHub configured
 
 - **WHEN** GitHub credentials are set and `CAIRN_ENROLLMENT_MODE` is unset
-- **THEN** the effective mode is `invite`, and cairnd starts
+- **THEN** the effective mode is `invite`, and cairn serve starts
 
 #### Scenario: Open signup with GitHub warns
 
 - **WHEN** GitHub credentials are set and `CAIRN_ENROLLMENT_MODE=open`
-- **THEN** cairnd starts, any GitHub account may enroll, and the startup log carries a WARN that enrollment is open to every GitHub account
+- **THEN** cairn serve starts, any GitHub account may enroll, and the startup log carries a WARN that enrollment is open to every GitHub account
 
 #### Scenario: Default mode without GitHub
 
@@ -209,7 +209,7 @@ a linked GitHub identity), the GitHub provider MUST be treated as unconfigured:
 - no button is rendered;
 - `/auth/login?provider=github` and a GitHub callback return 404,
   indistinguishable from an unknown provider;
-- cairnd logs a startup warning naming the variables that would enable it.
+- cairn serve logs a startup warning naming the variables that would enable it.
 
 #### Scenario: Credentials alone admit nobody
 

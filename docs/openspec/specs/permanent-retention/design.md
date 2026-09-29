@@ -39,7 +39,7 @@ The existing machinery constrains the design:
 - Retaining traces or webhook endpoints. Deferred until trace export needs it.
 - Legal hold, WORM storage, or object-lock integration. A permanent artifact is still
   deletable by its owner, and that is deliberate.
-- An operator HTTP admin API. The host-side `cairnd` subcommands are the operator surface.
+- An operator HTTP admin API. The host-side `cairn` operator subcommands (ADR-0031) are the operator surface.
   ADR-0029 makes the operator an instance role (`CAIRN_OPERATORS`) that may bound tenant
   data but never read, route or copy it. Every command here only bounds data.
 - Dedup-aware quota accounting. Quotas count logical bytes, so that users can predict them.
@@ -121,10 +121,10 @@ approved, and it still can never unlock one.
 That adds a pending state and a notification path Cairn does not have. Approval semantics
 belong to ADR-0022's human-only reactions, not to a second approval mechanism.
 
-### Operator commands on `cairnd`
+### Operator commands on `cairn`
 
-**Choice.** `cairnd` gains subcommand dispatch. With no arguments it serves, exactly as
-today. `cairnd retention …` connects with the same `CAIRN_DATABASE_URL` and runs one
+**Choice.** The `cairn` binary gains subcommand dispatch (ADR-0031): the server is
+`cairn serve`, and `cairn retention …` connects with the same `CAIRN_DATABASE_URL` and runs one
 operation.
 
 **Rationale.** The operator is whoever holds the host and the database. There is no
@@ -226,7 +226,7 @@ CREATE TABLE retention_events (
     action       TEXT        NOT NULL CHECK (action IN
                    ('retain','release','delete','rotate','expire','operator_release','operator_purge')),
     checksum     CHAR(64),
-    actor_id     TEXT        NOT NULL,          -- 'system' for expiry, 'operator' for cairnd
+    actor_id     TEXT        NOT NULL,          -- 'system' for expiry, 'operator' for the cairn server
     on_behalf_of TEXT        NOT NULL DEFAULT '',
     channel      TEXT        NOT NULL,
     reason       TEXT        NOT NULL DEFAULT '' CHECK (char_length(reason) <= 280),
@@ -272,7 +272,7 @@ CREATE TABLE retention_quota_audit (
     owner_id   TEXT        NOT NULL,
     old_count  BIGINT, new_count BIGINT,
     old_bytes  BIGINT, new_bytes BIGINT,
-    operator   TEXT        NOT NULL,   -- CAIRN_OPERATORS identity, or host user for cairnd
+    operator   TEXT        NOT NULL,   -- CAIRN_OPERATORS identity, or host user for the cairn server
     reason     TEXT        NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -381,12 +381,12 @@ map: `409` is exit 1 with a `conflict` code.
 ### Operator commands
 
 ```
-cairnd retention quota get   --user sam@example.com
-cairnd retention quota set   --team research --count 5000 --bytes 50GiB
-cairnd retention quota unset --user sam@example.com
-cairnd retention release --owner sam@example.com --ttl 30d --reason "account closure"
-cairnd retention release --all --ttl 30d --reason "retention disabled on this instance"
-cairnd retention purge-tombstone k3Jd9 --reason "legal takedown ref 2026-114"
+cairn retention quota get   --user sam@example.com
+cairn retention quota set   --team research --count 5000 --bytes 50GiB
+cairn retention quota unset --user sam@example.com
+cairn retention release --owner sam@example.com --ttl 30d --reason "account closure"
+cairn retention release --all --ttl 30d --reason "retention disabled on this instance"
+cairn retention purge-tombstone k3Jd9 --reason "legal takedown ref 2026-114"
 ```
 
 ### Events
@@ -421,7 +421,7 @@ need adding there before a routing rule can match on them. That is a cross-repo 
 | CLI | `internal/clicmd/retain.go`, `release.go`, `retention.go` (new); `internal/cliclient` |
 | Web | `internal/httpapi/web.go`, `templates/shell.html` (panel controls, badge), `templates/error.html` or a new `tombstone.html` |
 | Events | `internal/outboundhook` (three kinds, registered in the ADR-0022 kind registry, routed by owner) |
-| Operator | `cmd/cairnd/main.go` (subcommand dispatch), `internal/retentionadmin` (new) |
+| Operator | `internal/clicmd` (subcommand dispatch), `internal/serve`, `internal/retentionadmin` (new) |
 | Config | `internal/config/config.go` |
 | Metrics | the SPEC-0014 collector package, when it lands (cairn#256) |
 
@@ -465,7 +465,7 @@ need adding there before a routing rule can match on them. That is a cross-repo 
 - Once ADR-0029 defines an operator credential, should the quota commands also get an
   HTTP surface for operators who cannot shell into the host? **Resolved (design review 2026-09-22):** yes,
   through ADR-0029's operator console, which already covers quotas and audits overrides
-  (SPEC-0023 REQ "Quotas for Permanent Retention"). `cairnd retention quota` stays the CLI.
+  (SPEC-0023 REQ "Quotas for Permanent Retention"). `cairn retention quota` stays the CLI.
 - Should retaining a closed trace be allowed with a span-digest checksum? Deferred until
   Harness trace export (F-H7) produces traces worth keeping. **Resolved (design review 2026-09-22):**
   deferred, as proposed.
