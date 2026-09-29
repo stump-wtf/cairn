@@ -39,7 +39,13 @@ name: pipeline
 
 on:
   push:
-    branches: [main]
+    # train/** is the merge train (ADR-0032): a train commit is main plus one
+    # squash-committed PR, and it must run exactly the pipeline a PR runs so
+    # the train can gate the merge on green CI for that exact head. Publishing
+    # and deploying stay limited to main and tags: image, docs-image, deploy
+    # and pages sit behind the main-only gate, release and tap-bump behind
+    # tag-only, so a train branch can prove green but ship nothing.
+    branches: [main, 'train/**']
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
