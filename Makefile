@@ -1,4 +1,4 @@
-.PHONY: build test test-race test-js vet fmt fmt-check lint check tidy up down migrate ci verify-cli website
+.PHONY: build test test-race test-js test-scripts vet fmt fmt-check lint check tidy up down migrate ci verify-cli release-snapshot website
 
 GO ?= go
 PKGS ?= ./...
@@ -60,7 +60,22 @@ lint: fmt-check vet
 verify-cli:
 	@scripts/verify-cli-artifact.sh $(CLI_BIN)
 
-check: lint test verify-cli
+# Tests for the release scripts themselves (scripts/*.test.sh): fixtures each
+# gate must pass or fail, each for its own reason. No Go build, so it is cheap
+# enough for every run. A glob, so a new script's tests join by existing.
+test-scripts:
+	@set -e; n=0; for t in scripts/*.test.sh; do \
+		[ -e "$$t" ] || continue; echo "==> $$t"; "$$t"; n=$$((n + 1)); \
+	done; [ "$$n" -gt 0 ] || { echo "no scripts/*.test.sh found; nothing was tested"; exit 1; }
+
+# A local dry run of the whole release: both builds, both archives, the CLI
+# post hook, then the archive-composition check the release job runs before it
+# publishes. Needs goreleaser on PATH; publishes nothing.
+release-snapshot:
+	goreleaser release --snapshot --clean
+	scripts/verify-release-archives.sh dist
+
+check: lint test verify-cli test-scripts
 
 tidy:
 	$(GO) mod tidy
@@ -72,7 +87,7 @@ up:
 down:
 	docker compose down -v
 
-ci: fmt-check vet build test-race test-js
+ci: fmt-check vet build test-race test-js test-scripts
 
 # The docs site's own gate: its unit tests, the typecheck, and the full build.
 # The build is what runs the design-record validator (a front-matter edge to a
