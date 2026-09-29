@@ -94,7 +94,7 @@ func newTestStore(t *testing.T, o Options) (*Store, *pgxpool.Pool) {
 	}
 
 	t.Cleanup(pool.Close)
-	return New(pool, obj, o), pool
+	return New(pool, obj, withScanner(t, o)), pool
 }
 
 func envOr(key, def string) string {

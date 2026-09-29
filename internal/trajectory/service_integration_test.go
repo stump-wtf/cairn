@@ -74,8 +74,11 @@ func newHarness(t *testing.T) (*Service, *store.Store, *pgxpool.Pool, *objectsto
 	}
 
 	obj := objectstore.NewMemory()
-	svc := NewService(pool, obj, Options{Redaction: testScanner(t)})
-	st := store.New(pool, obj, store.Options{})
+	// One scanner for both: the trace service masks with it, and the artifact
+	// store the tests seed through fails closed without one (SPEC-0017 RD-1).
+	sc := testScanner(t)
+	svc := NewService(pool, obj, Options{Redaction: sc})
+	st := store.New(pool, obj, store.Options{Scanner: sc})
 	return svc, st, pool, obj
 }
 

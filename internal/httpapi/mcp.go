@@ -1000,6 +1000,8 @@ type mcpCreateInput struct {
 	// Tags are client-asserted routing strings (ADR-0018); the handoff
 	// convention lives in handoffTagsDoc, published in the tool description.
 	Tags []string `json:"tags,omitempty" jsonschema:"Optional routing tags, e.g. [\"handoff\", \"lane:auto\", \"size:m\"]. Lowercase strings you assert, not provenance. See the tool description for the handoff convention and the bounds."`
+	// Redaction is the writer's downgrade (SPEC-0017 RD-5).
+	Redaction string `json:"redaction,omitempty" jsonschema:"Optional. The only value is mask: store a detected credential as [REDACTED] instead of refusing the create, which code artifacts do by default. Scanning cannot be turned off."`
 }
 
 type mcpCreateOutput struct {
@@ -1034,6 +1036,10 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 	if shareType == artifact.TypeBundle || shareType == artifact.TypeTrajectory {
 		return nil, mcpCreateOutput{}, fmt.Errorf("validation_failed: share_type must not be %q; use bundle_create for bundles or run_create for traces", shareType)
 	}
+	downgrade, err := redactionDowngrade("redaction", errs.LocBody, in.Redaction)
+	if err != nil {
+		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", err)
+	}
 	mediaType := in.MediaType
 	if mediaType == "" {
 		mediaType = sniffMarkdown(in.Body)
@@ -1051,11 +1057,12 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 			Channel:    artifact.ChannelMCP,
 			CapturedAt: now,
 		},
-		Access:    artifact.AccessPolicy{OwnerID: actorID, Visibility: artifact.VisibilityLink},
-		ExpiresAt: now.Add(s.cfg.DefaultTTL),
-		Tags:      in.Tags,
-		ActorKind: creator.Kind,
-		Auth:      creator.Auth,
+		Access:             artifact.AccessPolicy{OwnerID: actorID, Visibility: artifact.VisibilityLink},
+		ExpiresAt:          now.Add(s.cfg.DefaultTTL),
+		Tags:               in.Tags,
+		ActorKind:          creator.Kind,
+		Auth:               creator.Auth,
+		RedactionDowngrade: downgrade,
 	})
 	if err != nil {
 		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", err)
@@ -1093,6 +1100,8 @@ type mcpBundleCreateInput struct {
 	// Tags are client-asserted routing strings on the bundle as a whole
 	// (ADR-0018); see mcpCreateInput.Tags.
 	Tags []string `json:"tags,omitempty" jsonschema:"Optional routing tags, e.g. [\"handoff\", \"lane:auto\", \"size:m\"]. Lowercase strings you assert, not provenance. See the tool description for the handoff convention and the bounds."`
+	// Redaction is the writer's downgrade (SPEC-0017 RD-5).
+	Redaction string `json:"redaction,omitempty" jsonschema:"Optional. The only value is mask: store each detected credential as [REDACTED] instead of refusing the whole bundle, which bundles do by default. Scanning cannot be turned off."`
 }
 
 type mcpBundleCreateOutput struct {
@@ -1122,6 +1131,10 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 	if creator.Check() != nil {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", errs.ErrUnauthorized)
 	}
+	downgrade, err := redactionDowngrade("redaction", errs.LocBody, in.Redaction)
+	if err != nil {
+		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", err)
+	}
 	members := make([]store.MemberInput, 0, len(in.Members))
 	for _, m := range in.Members {
 		members = append(members, store.MemberInput{
@@ -1141,11 +1154,12 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 			Channel:    artifact.ChannelMCP,
 			CapturedAt: now,
 		},
-		Access:    artifact.AccessPolicy{OwnerID: actorID, Visibility: artifact.VisibilityLink},
-		ExpiresAt: now.Add(s.cfg.DefaultTTL),
-		Tags:      in.Tags,
-		ActorKind: creator.Kind,
-		Auth:      creator.Auth,
+		Access:             artifact.AccessPolicy{OwnerID: actorID, Visibility: artifact.VisibilityLink},
+		ExpiresAt:          now.Add(s.cfg.DefaultTTL),
+		Tags:               in.Tags,
+		ActorKind:          creator.Kind,
+		Auth:               creator.Auth,
+		RedactionDowngrade: downgrade,
 	})
 	if err != nil {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", err)

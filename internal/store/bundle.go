@@ -12,6 +12,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/event"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/redact"
 )
 
@@ -33,6 +34,9 @@ type CreateBundleInput struct {
 	// Tags are client-asserted routing strings on the bundle as a whole
 	// (ADR-0018); members carry none of their own.
 	Tags []string
+	// RedactionDowngrade masks where the bundle type would reject; see
+	// CreateArtifactInput.RedactionDowngrade. SPEC-0017 RD-5.
+	RedactionDowngrade bool
 	// ActorKind and Auth classify the creator's credential. The adapter derives
 	// them from the authenticated principal, never from the request, and they
 	// travel only on the creation event (ADR-0022, SPEC-0016 EV-4).
@@ -101,6 +105,15 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	if err != nil {
 		return nil, err
 	}
+	// The title is scanned before any member streams.
+	//
+	// Governing: ADR-0023, SPEC-0017 RD-4, RD-5
+	var scans scanReport
+	mode := s.redactionMode(artifact.TypeBundle, in.RedactionDowngrade)
+	title, outcome, err := s.scanTitle(ctx, metrics.SurfaceBundle, in.Title, mode, &scans)
+	if err != nil {
+		return nil, fmt.Errorf("bundle: %w", err)
+	}
 
 	// Stream every member to a staging object first. Each member's staging object
 	// is transient on EVERY path (committed OR rolled back); reclaim each
@@ -116,19 +129,44 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 		}
 	}()
 
-	var totalSize int64
+	// Each member is scanned as soon as it is staged, and every one is scanned
+	// before any is promoted. A rejected member does not stop the others, so
+	// one rejection names every member that holds a secret; any rejection
+	// aborts the whole bundle. A failed scan stops at once, closed.
+	//
+	// Governing: ADR-0023, SPEC-0017 RD-1, RD-4 (scenario "Bundle rejection
+	// names the member"), RD-6, RD-7
+	var (
+		totalSize int64
+		rejected  []*errs.Invalid
+	)
 	for i, m := range in.Members {
-		sb, err := StageBlob(ctx, s.obj, m.Body, s.maxBytes, m.DeclaredMediaType)
+		sb, err := stageBlobKeep(ctx, s.obj, m.Body, s.maxBytes, m.DeclaredMediaType, scanInMemoryBytes)
 		if err != nil {
 			return nil, fmt.Errorf("bundle: stream member %q: %w", m.Name, err)
 		}
 		staged = append(staged, stagedMember{ordinal: i, name: m.Name, blob: sb})
+		scan, err := s.scanBody(ctx, metrics.SurfaceBundle, memberContentField(i), sb, mode, &scans)
+		if err != nil {
+			var inv *errs.Invalid
+			if !errors.As(err, &inv) {
+				return nil, fmt.Errorf("bundle: member %d: %w", i, err)
+			}
+			rejected = append(rejected, inv)
+			continue
+		}
+		staged[len(staged)-1].redaction = scan
+		outcome = outcome.Merge(scan)
 		totalSize += sb.Size
+	}
+	if inv := errs.Join(rejected...); inv != nil {
+		return nil, fmt.Errorf("bundle: %w", inv)
 	}
 
 	art := &artifact.Artifact{
 		ShareType:   artifact.TypeBundle,
-		Title:       in.Title,
+		Title:       title,
+		Redaction:   outcome,
 		Size:        totalSize,
 		MediaType:   "application/vnd.cairn.bundle",
 		Previewable: s.registry.Resolve(artifact.TypeBundle).PreviewableMedia(""),
@@ -165,6 +203,7 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 		return nil, fmt.Errorf("bundle: commit: %w", err)
 	}
 	s.emitCreated(art, in.ActorKind, in.Auth)
+	s.warnUnscanned(art.PublicID, &scans)
 	return art, nil
 }
 
