@@ -163,6 +163,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := s.now()
+	actor := p.EventActor()
 	started := req.StartedAt
 	if started.IsZero() {
 		started = now
@@ -185,6 +186,8 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		Access:    artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 		Spans:     toSpanInputs(req.Spans),
+		ActorKind: actor.Kind,
+		Auth:      actor.Auth,
 	}
 
 	if err := checkRunMode(req.Mode); err != nil {
@@ -241,6 +244,8 @@ func (s *Server) handleAppendSpans(w http.ResponseWriter, r *http.Request) {
 	// Only the owner may append, so the caller is the owner.
 	resp := s.toRunResponse(run)
 	resp.OwnerRedaction = ownerRedactionOf(outcome)
+	viewer, _ := s.optionalPrincipal(r)
+	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
 	s.writeJSON(w, http.StatusOK, resp)
 }
 
@@ -254,7 +259,7 @@ func (s *Server) handleCloseRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	run, err := s.traj.CloseRun(r.Context(), id, p.ActorID)
+	run, err := s.traj.CloseRun(r.Context(), id, p.EventActor())
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
@@ -273,9 +278,11 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := s.toRunResponse(run)
-	if viewer := s.optionalActor(r); viewer != "" && viewer == run.Access.OwnerID {
+	viewer, _ := s.optionalPrincipal(r)
+	if viewer != nil && viewer.ActorID != "" && viewer.ActorID == run.Access.OwnerID {
 		resp.OwnerRedaction = ownerRedactionOf(run.Redaction)
 	}
+	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
 	s.writeJSON(w, http.StatusOK, resp)
 }
 

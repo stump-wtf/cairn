@@ -29,6 +29,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/id"
 	"github.com/stump-wtf/cairn/internal/redact"
 )
@@ -217,6 +218,12 @@ type RunInput struct {
 	Access     artifact.AccessPolicy
 	ExpiresAt  time.Time
 	Spans      []SpanInput
+	// ActorKind and Auth classify the creator's credential, derived by the
+	// adapter from the authenticated principal (ADR-0022, SPEC-0016 EV-4).
+	// They are plumbing only for now: trajectory emits no event yet, so
+	// nothing reads them until trajectory emission lands (#313).
+	ActorKind event.ActorKind
+	Auth      event.AuthMethod
 }
 
 func (in RunInput) validate() error {

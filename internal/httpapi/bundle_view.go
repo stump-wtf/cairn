@@ -286,7 +286,7 @@ func (s *Server) memberReactionCounts(ctx context.Context, publicID string) map[
 	if s.annot == nil {
 		return out
 	}
-	tallies, err := s.annot.ReactionTallies(ctx, publicID, "")
+	tallies, err := s.annot.ReactionTallies(ctx, publicID, annotation.Viewer{})
 	if err != nil {
 		s.log.WarnContext(ctx, "web: bundle reaction tallies failed", "id", publicID, "error", err)
 		return out

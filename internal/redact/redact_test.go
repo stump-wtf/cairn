@@ -306,6 +306,8 @@ func TestBadAllowlistStopsStartup(t *testing.T) {
 		{"bad regex", "regexes = ['''^(unclosed$''']", "regexes[0] does not compile"},
 		{"unanchored regex", "regexes = ['''fixture''']", "regexes[0] must be anchored"},
 		{"matches everything", "regexes = ['''^.*$''']", "matches the empty string"},
+		{"alternation escapes the anchors", "regexes = ['''^fixture|.+$''']", "regexes[0] must be anchored"},
+		{"one branch unanchored", "regexes = ['''^fixture$|leak$''']", "regexes[0] must be anchored"},
 		{"empty stopword", "stopwords = ['']", "stopwords[0] is empty"},
 		{"unknown rule", "disabledRules = ['no-such-rule']", `"no-such-rule" is not a known rule`},
 	} {
@@ -439,5 +441,22 @@ func TestConcurrentText(t *testing.T) {
 	close(errc)
 	for e := range errc {
 		t.Error(e)
+	}
+}
+
+// TestAnchored: an allowlist regex must pin every match to the whole value on
+// every branch, so an alternation cannot smuggle in an unanchored pattern.
+//
+// @joestump 09/26/2026 - Added in review of cairn#382.
+func TestAnchored(t *testing.T) {
+	for re, want := range map[string]bool{
+		`^a$`: true, `(?i)^a$`: true, `^a$|^b$`: true, `^(?:a|b)$`: true,
+		`^(a)$`: true, `^[a-z]{40}$`: true,
+		`^a|.+$`: false, `^a$|b$`: false, `a`: false, `^a`: false, `a$`: false,
+		`^a\$`: false, `(?m)^a$`: false, `(^a)|b$`: false,
+	} {
+		if got := anchored(re); got != want {
+			t.Errorf("anchored(%q) = %v, want %v", re, got, want)
+		}
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/store"
 	"github.com/stump-wtf/cairn/internal/trajectory"
@@ -56,6 +57,7 @@ func annotationRunHookSites(t *testing.T) []guardSite {
 	}
 
 	now := time.Now()
+	alice := event.Actor{ID: "alice", Channel: artifact.ChannelAPI, Kind: event.KindAgent, Auth: event.AuthAPIToken}
 	runIn := func(spans ...trajectory.SpanInput) trajectory.RunInput {
 		return trajectory.RunInput{
 			StartedAt:  now,
@@ -88,30 +90,30 @@ func annotationRunHookSites(t *testing.T) []guardSite {
 	return []guardSite{
 		// Annotations.
 		{"annotation: emoji empty", func() error {
-			_, _, err := annot.React(ctx, "x", sharetype.AnchorArtifact, nil, "", "alice")
+			_, _, err := annot.React(ctx, "x", sharetype.AnchorArtifact, nil, "", alice)
 			return err
 		}},
 		{"annotation: emoji malformed", func() error {
-			_, _, err := annot.React(ctx, "x", sharetype.AnchorArtifact, nil, "🔥 🔥", "alice")
+			_, _, err := annot.React(ctx, "x", sharetype.AnchorArtifact, nil, "🔥 🔥", alice)
 			return err
 		}},
 		{"annotation: unreact emoji", func() error {
-			_, err := annot.Unreact(ctx, "x", sharetype.AnchorArtifact, nil, "", "alice")
+			_, err := annot.Unreact(ctx, "x", sharetype.AnchorArtifact, nil, "", alice)
 			return err
 		}},
 		{"annotation: unreact anchor_ref", func() error {
-			_, err := annot.Unreact(ctx, "x", sharetype.AnchorCodeLine, json.RawMessage(`[1]`), "🔥", "alice")
+			_, err := annot.Unreact(ctx, "x", sharetype.AnchorCodeLine, json.RawMessage(`[1]`), "🔥", alice)
 			return err
 		}},
 		{"annotation: comment body empty", func() error {
-			_, err := annot.AddComment(ctx, "x", annotation.CommentInput{ActorID: "alice"})
+			_, err := annot.AddComment(ctx, "x", annotation.CommentInput{Actor: alice})
 			return err
 		}},
 		{"annotation: comment body too long", func() error {
-			_, err := annot.AddComment(ctx, "x", annotation.CommentInput{ActorID: "alice", Body: strings.Repeat("a", 16<<10+1)})
+			_, err := annot.AddComment(ctx, "x", annotation.CommentInput{Actor: alice, Body: strings.Repeat("a", 16<<10+1)})
 			return err
 		}},
-		{"annotation: edit body empty", func() error { return annot.EditComment(ctx, "x", 1, "alice", "") }},
+		{"annotation: edit body empty", func() error { return annot.EditComment(ctx, "x", 1, alice, "") }},
 		{"annotation: anchor_type not allowed", validate(sharetype.KeyCode, sharetype.KindReaction, sharetype.AnchorImageRegion, `{"x":0.5,"y":0.5}`)},
 		{"annotation: anchor_type required", validate(sharetype.KeyCode, sharetype.KindComment, "", ``)},
 		{"annotation: not commentable", validate(sharetype.KeyWebhook, sharetype.KindComment, sharetype.AnchorArtifact, ``)},

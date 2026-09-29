@@ -131,6 +131,7 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 
 	// Guard the raw body; the store additionally enforces the limit incrementally.
 	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes+1)
+	creator := p.EventActor()
 	art, err := s.store.CreateArtifact(r.Context(), store.CreateArtifactInput{
 		ShareType:         shareType,
 		Title:             firstNonEmpty(r.URL.Query().Get("title"), r.Header.Get("X-Cairn-Title")),
@@ -141,6 +142,8 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 		Access:            artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
 		ExpiresAt:         now.Add(ttl),
 		Tags:              tags.tags,
+		ActorKind:         creator.Kind,
+		Auth:              creator.Auth,
 	})
 	if err != nil {
 		s.writeError(w, r, s.mapUploadErr(err), nil)
@@ -248,6 +251,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 	}
 
 	now := s.now()
+	actor := p.EventActor()
 	prov := artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now}
 	access := artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink}
 	expires := now.Add(ttl)
@@ -263,6 +267,8 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			Access:            access,
 			ExpiresAt:         expires,
 			Tags:              tags.tags,
+			ActorKind:         actor.Kind,
+			Auth:              actor.Auth,
 		})
 		if err != nil {
 			s.writeError(w, r, s.mapUploadErr(err), nil)
@@ -283,6 +289,8 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		Access:     access,
 		ExpiresAt:  expires,
 		Tags:       tags.tags,
+		ActorKind:  actor.Kind,
+		Auth:       actor.Auth,
 	})
 	if err != nil {
 		s.writeError(w, r, s.mapUploadErr(err), nil)
@@ -306,11 +314,14 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	}
 	// A link read needs no credential, but an owner who sends one also sees
 	// the scan outcome (SPEC-0017 RD-9).
-	var viewer string
-	if p, ok := s.optionalPrincipal(r); ok {
-		viewer = p.ActorID
+	viewer, _ := s.optionalPrincipal(r)
+	var viewerActor string
+	if viewer != nil {
+		viewerActor = viewer.ActorID
 	}
-	s.writeJSON(w, http.StatusOK, s.toViewerArtifactResponse(art, viewer))
+	resp := s.toViewerArtifactResponse(art, viewerActor)
+	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // handleGetBody streams the raw body, re-verifiable against the stored SHA-256.
