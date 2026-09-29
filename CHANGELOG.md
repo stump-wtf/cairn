@@ -47,6 +47,60 @@ reaches 1.0.
 - **`CAIRN_DEV_INSECURE_BEARER_AUTH` with an `https` `CAIRN_BASE_URL` now fails
   boot** (A21). It was never safe there.
 
+### Changed
+
+- **Outbound webhooks**: the `artifact.created` body appends two keys to `data`:
+  `actor_kind` (`human` or `agent`) and `auth` (`session`, `oauth`, `pat` or
+  `api_token`), both derived from the creator's credential. No other byte
+  changes. The encoder now handles every SPEC-0016 event kind; kinds other than
+  `artifact.created` are counted and never sent to `CAIRN_OUTBOUND_WEBHOOK_URLS`.
+  (ADR-0022, SPEC-0016, #305)
+- **Traces announce themselves.** Opening a run, or uploading one whole, now
+  emits `artifact.created` with `share_type: "trajectory"`, like every other
+  artifact, so `CAIRN_OUTBOUND_WEBHOOK_URLS` targets start receiving trace
+  creations. A consumer that routes on `share_type` or tags needs no change;
+  one that assumed every event was a single-body artifact or a bundle should
+  ignore `trajectory`. Closing a run (`POST /v1/runs/{id}/close`), and a batch
+  run born closed, also emit `run.closed` with its status, span count, start,
+  end and duration; like the other new kinds it is counted and not sent to env
+  targets until owned subscriptions land. (ADR-0022, SPEC-0016 EV-2, EV-3,
+  SPEC-0023, #313)
+- **Annotations announce themselves.** A new comment emits `comment.created`,
+  a new reaction `reaction.added` (a duplicate click emits nothing), and each
+  removed reaction `reaction.removed`, whichever surface made the change.
+  Reaction events carry `approval_class` (the emoji is in the approval class)
+  and `approval` (in the class **and** stored by a browser session). An
+  agent's 👍 is stored and announced, but never as an approval, and no
+  request field can change that. The class is set by the new
+  `CAIRN_APPROVAL_REACTIONS` (comma-separated, default 👍 ✅ ✔️; skin tones
+  and VS-16 are ignored when matching), and a malformed entry fails startup.
+  Like `run.closed`, these kinds are counted and not sent to env targets
+  until owned subscriptions land. (ADR-0022, SPEC-0016 EV-2, EV-5, #311)
+- **Reactions and comments are owned per actor kind.** Each row stores the
+  server-derived `actor_kind` (`human` for a browser session, `agent` for every
+  bearer credential), and reaction idempotency is keyed per
+  `(actor_id, actor_kind)`. An agent reacting with your credentials no longer
+  shares, occupies or can withdraw your own reaction: un-react, delete-by-id
+  (403 on the other kind's row) and comment edit/delete all match the kind.
+  Reactions gain `on_behalf_of`, set exactly as on comments (the REST body
+  field, or the MCP client's name). Reaction and comment responses carry
+  `actor_kind`; reaction tallies add `human_count` and `agent_count`, and
+  `reacted` now means "a row you, as this kind, can remove". Rows written
+  before the upgrade read back `actor_kind: ""`, are never counted as human,
+  and only their own actor removes them. Migration 0022 builds the new unique
+  index concurrently and runs outside a transaction; it is safe to rerun.
+  `GET /v1/artifacts/{id}/reactions?include=reactors` also returns the rows
+  behind each tally, each with `actor_id`, `actor_kind` and `on_behalf_of`.
+  (ADR-0022, SPEC-0016 EV-6, #159)
+
+  **Upgrade note: a binary rollback breaks reactions.** Migration 0022 drops
+  the old five-column reaction key, and a binary from before this change
+  upserts on exactly that key. Once 0022 has applied, an older cairnd returns
+  500 on every reaction write (Postgres 42P10, no matching unique constraint)
+  until you roll forward again; the same holds for an old process still
+  serving while the new one migrates. The old key cannot be recreated once a
+  human and an agent row share an actor. Roll forward, not back.
+
 ## [0.1.1] - Unreleased
 
 Changes since `v0.1.0`, staged for the next patch release.
@@ -55,12 +109,14 @@ Changes since `v0.1.0`, staged for the next patch release.
 
 - **GitHub OAuth login** — a provider interface for web authentication with a
   GitHub provider as the first implementation, and login-method provenance
-  recorded on sessions. (ADR-0017, #259)
+  recorded on sessions. (ADR-0019, SPEC-0013, #259)
 
 ### Fixed
 
 - CI checks out the PR head SHA rather than the branch ref, so required checks
   gate the exact commit under review. (#245)
+- CI's integration job probes Postgres over TCP, so the tests stop racing the
+  database's first-boot initialisation. (#353)
 - Self-hosting guide: corrected env secrets and the `CAIRN_API_TOKENS` compose
   passthrough. (#239)
 - Docs build: unlinked two repository-host references that broke the build, and
@@ -68,8 +124,25 @@ Changes since `v0.1.0`, staged for the next patch release.
 
 ### Added (records)
 
-- ADR-0020 + SPEC-0013 — single-binary runtime with embedded docs; ADR-0021 +
-  SPEC-0014 — Prometheus metrics led by storage and expiry. (#251, #254, #255)
+- ADR-0019 + SPEC-0013 — GitHub login for the web app shell; ADR-0020 +
+  SPEC-0015 — single-binary runtime with embedded docs; ADR-0021 + SPEC-0014 —
+  Prometheus metrics led by storage and expiry. (#251, #254, #255, #257)
+- The Operation Stumply design records, accepted: ADR-0022 + SPEC-0016
+  (annotation and trace lifecycle events), ADR-0023 + SPEC-0017 (secret
+  redaction at ingest), ADR-0024 (enrollment modes; GitHub sign-in fails
+  closed), ADR-0025 + SPEC-0019 (actionable validation errors), ADR-0026 +
+  SPEC-0020 (opt-in permanent retention), ADR-0027 + SPEC-0021 (structured
+  receipts), ADR-0028 + SPEC-0022 (search and export by tag), ADR-0029 +
+  SPEC-0023 (teams and tenancy). Design only; none of it is implemented in this
+  release. (#360)
+
+### Removed
+
+- The repo-root production deploy path: `DEPLOY.md`, `docker-compose.prod.yml`
+  and `deploy/Caddyfile`. The prod compose never forwarded `CAIRN_API_TOKENS`,
+  `CAIRN_OIDC_*` or `CAIRN_GITHUB_*`, so it rejected every authenticated
+  caller. The self-hosting guide is now the one documented deploy path, and
+  `.env.example` lists the sign-in variables. (#362)
 
 ## [0.1.0] - 2026-09-12
 

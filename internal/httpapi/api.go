@@ -13,6 +13,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/httpapi/authprovider"
 	"github.com/stump-wtf/cairn/internal/mcpsession"
 	"github.com/stump-wtf/cairn/internal/metrics"
@@ -60,6 +61,17 @@ type Config struct {
 	// span stream, which keep proxies from idling the connection out and let the
 	// server notice a vanished client on the next write. Defaults to 15s.
 	StreamHeartbeat time.Duration
+	// Events, when non-nil, receives the lifecycle events of the core services
+	// this adapter constructs (ADR-0022, SPEC-0016 EV-2): the trajectory
+	// service's artifact.created for runs and run.closed, and the annotation
+	// service's comment.created, reaction.added and reaction.removed. Nil is
+	// inert. Artifact and bundle creations reach their emitter through
+	// store.Options instead.
+	Events event.Emitter
+	// ApprovalClass is the EV-5 approval class the annotation service
+	// classifies reactions with (CAIRN_APPROVAL_REACTIONS). The zero value is
+	// the default class, 👍 ✅ ✔️.
+	ApprovalClass annotation.ApprovalClass
 	// DevLoginPassword is the shared secret the MVP dev login (SPEC-0001,
 	// ADR-0004) accepts for any actor id. Demoted to a local-dev-only fallback
 	// by ADR-0013: it is honored only when OIDC is unconfigured (see
@@ -283,7 +295,10 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		mcpSessSvc *mcpsession.Service
 	)
 	if st != nil {
-		annot = annotation.NewService(st.Pool(), reg, annotation.WithRedaction(cfg.Redaction, cfg.Metrics))
+		annot = annotation.NewService(st.Pool(), reg,
+			annotation.WithRedaction(cfg.Redaction, cfg.Metrics),
+			annotation.WithEvents(cfg.Events),
+			annotation.WithApprovalClass(cfg.ApprovalClass))
 		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{
 			Registry:  reg,
 			Redaction: cfg.Redaction,

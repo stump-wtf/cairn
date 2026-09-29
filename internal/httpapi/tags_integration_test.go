@@ -134,8 +134,17 @@ func assertTagError(t *testing.T, resp *http.Response) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
-	if env := decodeError(t, resp); env.Error.Code != "validation_failed" || env.Error.Details["field"] != "tag" {
-		t.Fatalf("error = %+v, want validation_failed naming field tag", env.Error)
+	env := decodeError(t, resp)
+	if env.Error.Code != "validation_failed" || len(env.Error.Violations) == 0 {
+		t.Fatalf("error = %+v, want validation_failed with violations", env.Error)
+	}
+	for _, v := range env.Error.Violations {
+		if v.Field != "tag" {
+			t.Fatalf("violation %+v, want every violation on field tag", v)
+		}
+	}
+	if _, ok := env.Error.Details["field"]; ok {
+		t.Fatalf("details = %v: violation fields must not be mirrored into details (SPEC-0019 VE-5)", env.Error.Details)
 	}
 }
 
