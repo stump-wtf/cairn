@@ -82,7 +82,7 @@ func TestIntegrationAuthenticatorActorKind(t *testing.T) {
 	bearerCreate := func(t *testing.T, token string) string {
 		t.Helper()
 		req, _ := http.NewRequest(http.MethodPost,
-			srv.URL+"/v1/artifacts?type=text&actor_kind=human&auth=session&on_behalf_of=alice",
+			srv.URL+"/v1/artifacts?type=file&actor_kind=human&auth=session&on_behalf_of=alice",
 			strings.NewReader("hello"))
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "text/plain")
@@ -131,7 +131,7 @@ func TestIntegrationAuthenticatorActorKind(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sess := mcpClient(t, srv, tc.token, nil, "kind-probe")
-			res := callTool(t, sess, "artifact_create", map[string]any{"body": "over mcp", "share_type": "text"})
+			res := callTool(t, sess, "artifact_create", map[string]any{"body": "over mcp", "share_type": "file"})
 			if res.IsError {
 				t.Fatalf("artifact_create: %s", toolText(t, res))
 			}
@@ -150,7 +150,7 @@ func TestIntegrationAuthenticatorActorKind(t *testing.T) {
 		client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		resp := doLogin(t, srv, client, "alice", "devpass")
 		resp.Body.Close()
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/artifacts?type=text", strings.NewReader("from the browser"))
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/artifacts?type=file", strings.NewReader("from the browser"))
 		req.Header.Set("Content-Type", "text/plain")
 		req.Header.Set(csrfHeaderName, cookieValue(t, client, srv.URL, csrfCookieName))
 		resp, err := client.Do(req)
@@ -175,7 +175,7 @@ func TestIntegrationAuthenticatorActorKind(t *testing.T) {
 		client := &http.Client{Jar: jar, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		resp := doLogin(t, srv, client, "alice", "devpass")
 		resp.Body.Close()
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/artifacts?type=text", strings.NewReader("mixed"))
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/artifacts?type=file", strings.NewReader("mixed"))
 		req.Header.Set("Content-Type", "text/plain")
 		req.Header.Set("Authorization", "Bearer "+humanPAT)
 		req.Header.Set(csrfHeaderName, cookieValue(t, client, srv.URL, csrfCookieName))

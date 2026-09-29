@@ -15,6 +15,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/metrics"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
 // CreateArtifactInput is the transport-agnostic create request. Provenance,
@@ -47,30 +48,51 @@ type CreateArtifactInput struct {
 	Auth      event.AuthMethod
 }
 
-func (in CreateArtifactInput) validate() error {
+// ChecksumHeader is the REST create header that carries ExpectedSHA256. No
+// other surface sends a checksum, so a mismatch is reported on it.
+const ChecksumHeader = "X-Cairn-Sha256"
+
+// ChecksumMismatch is the violation for a body whose SHA-256 is not the one the
+// caller declared. Neither digest is echoed: both are digests of the raw,
+// unscanned body, and the mismatch is logged instead (SPEC-0017 RD-9).
+// errors.Is(err, errs.ErrChecksumMismatch) still holds.
+//
+// Governing: ADR-0023, ADR-0025, SPEC-0019 VE-2; SPEC-0017 RD-9, RD-10
+func ChecksumMismatch() *errs.Invalid {
+	return errs.Violate(ChecksumHeader, errs.LocHeader, errs.ReasonChecksum).Because(errs.ErrChecksumMismatch)
+}
+
+// validate checks the input before any body streams. What a caller controls
+// (the share type and the title) is reported as violations, together
+// (SPEC-0019 VE-4). The rest is server-derived, so a gap there is a bug in the
+// adapter, never the caller's fault: it is an internal error, not a client
+// violation.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-4; SPEC-0002 REQ "Artifact Aggregate
+// and Invariants"
+func (in CreateArtifactInput) validate(reg *sharetype.Registry) error {
 	switch {
-	case in.ShareType == "":
-		return errs.Validationf("create: missing share type")
-	case in.ShareType == artifact.TypeBundle:
-		// A bundle is a members-only type built via CreateBundle (NULL body +
-		// bundle_members). Accepting it on the single-body path would mint a
-		// malformed bundle (a body blob, no members), so reject a client-supplied
-		// bundle type here. SPEC-0002 REQ "Bundles with N Members".
-		return errs.Validationf("create: bundle artifacts must be created via the bundle (multipart) path")
 	case in.Provenance.Channel == "":
-		return errs.Validationf("create: provenance channel is required")
+		return errors.New("create: provenance channel is required")
 	case in.Provenance.ActorID == "":
-		return errs.Validationf("create: provenance actor is required")
+		return errors.New("create: provenance actor is required")
 	case in.Access.OwnerID == "":
-		return errs.Validationf("create: access owner is required")
+		return errors.New("create: access owner is required")
 	case in.Access.Visibility == "":
-		return errs.Validationf("create: access visibility is required")
+		return errors.New("create: access visibility is required")
 	case in.ExpiresAt.IsZero():
-		return errs.Validationf("create: expiry is required")
+		return errors.New("create: expiry is required")
 	case in.Body == nil:
-		return errs.Validationf("create: nil body")
+		return errors.New("create: nil body")
 	}
-	return nil
+	// A client-supplied bundle type is refused (not_allowed): a bundle is a
+	// members-only type built via CreateBundle (NULL body + bundle_members), and
+	// accepting it here would mint a malformed bundle (a body blob, no
+	// members). SPEC-0002 REQ "Bundles with N Members".
+	return errs.JoinErrors(
+		reg.CheckCreateType(in.ShareType, "type", errs.LocBody),
+		artifact.CheckTitle(in.Title, "title", errs.LocBody),
+	)
 }
 
 // CreateArtifact streams the body to storage with checksum verification and
@@ -83,7 +105,7 @@ func (in CreateArtifactInput) validate() error {
 // SPEC-0002 REQ "Database Operation Standards",
 // ADR-0023, SPEC-0017 RD-1 (the title and body are scanned first; scan.go)
 func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*artifact.Artifact, error) {
-	if err := in.validate(); err != nil {
+	if err := in.validate(s.registry); err != nil {
 		return nil, err
 	}
 	// Normalized before the body streams, so a bad tag costs nothing;
@@ -115,10 +137,10 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	//    unscanned body, which for a body that is only a credential is a
 	//    fingerprint of that credential.
 	//
-	// Governing: ADR-0023, SPEC-0017 RD-9, RD-10
+	// Governing: ADR-0023, ADR-0025, SPEC-0019 VE-2; SPEC-0017 RD-9, RD-10
 	if in.ExpectedSHA256 != "" && !strings.EqualFold(in.ExpectedSHA256, staged.SHA256) {
 		return nil, fmt.Errorf("create: declared checksum does not match the received body: %w",
-			errs.ErrChecksumMismatch)
+			ChecksumMismatch())
 	}
 
 	// 2b. Scan the title, then the verified bytes, before anything is promoted
