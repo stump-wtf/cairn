@@ -87,7 +87,9 @@ and access policy to the user.
 A repeatable `--tag` flag MUST attach tags to the created artifact (SPEC-0002 REQ
 "Artifact Tags"). Each flag holds one tag or a comma-separated list. Locally the CLI
 rejects only an empty tag, as a usage error reported before any network call. The tag
-charset, size and count bounds, and deduplication, are the server's to decide.
+charset, size and count bounds, and deduplication, are the server's to decide. The one
+exception is case: the CLI lower-cases ASCII uppercase in each tag before sending, and
+warns on stderr for each tag it changes (SPEC-0019 VE-9, ADR-0025).
 
 #### Scenario: Tag a piped artifact
 
@@ -246,10 +248,12 @@ discard the old one.
 ### Requirement: Machine-Readable Error Mapping and Exit Codes
 
 The CLI MUST parse the API's structured error envelope
-(`{"error":{"code","message","details","request_id"}}`, ADR-0012) and branch on the
+(`{"error":{"code","message","details","violations","request_id"}}`, ADR-0012) and branch on the
 stable machine `code`, never on prose. It MUST map each `code`, plus transport-level
 failures that have no HTTP status, onto a stable exit-code taxonomy, and MUST print the
-server's `message` (and `request_id` when present) to stderr. Exit codes MUST be:
+server's `message` (and `request_id` when present) to stderr. When the envelope carries
+specific `violations`, the CLI prints one line per violation, named by the flag or file
+argument that carried it, in place of the `message` (SPEC-0019 VE-8). Exit codes MUST be:
 
 | Exit | Meaning | Source `code` / condition |
 |------|---------|---------------------------|

@@ -192,6 +192,18 @@ Provenance channel (`via CLI`), access policy (`🔒 you + anyone with link`), e
 server-side (ADR-0005, ADR-0007). The CLI's job is faithful display and correct
 exit-code mapping — never recomputation.
 
+Tag case is the one exception, and the only thing the CLI decides (ADR-0025,
+SPEC-0019 VE-9). Before sending, it lower-cases ASCII `A`–`Z` in each `--tag`
+and prints `cairn: warning: tag "size:M" sent as "size:m"` to stderr. It changes
+no other character. The tag charset, size, count and deduplication stay the
+server's, and so does the rejection of uppercase on every other surface
+(ADR-0018).
+
+Validation errors are shown, not re-decided. The CLI maps each server violation
+onto the flag or file argument that carried it, and states limits in the units
+a user types (`--ttl 60d exceeds the server's maximum of 30d`). The verdict is
+still the server's (SPEC-0019 VE-8).
+
 ## Risks / Trade-offs
 
 - **Requires a reachable, authenticated server** (no offline mode) → accepted per
