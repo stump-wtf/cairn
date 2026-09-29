@@ -140,7 +140,7 @@ type Config struct {
 	HookEndpointRateBurst     int
 	// Redaction is the ingest secret scanner the comment, trace and webhook
 	// write paths mask credentials with (ADR-0023, SPEC-0017), and Metrics
-	// counts its scans in cairn_redactions_total and may be nil. cairnd always
+	// counts its scans in cairn_redactions_total and may be nil. cairn serve always
 	// sets Redaction; without it the comment and trace paths store what they
 	// are given and record the outcome "unscanned".
 	Redaction *redact.Scanner
