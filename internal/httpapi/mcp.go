@@ -1100,9 +1100,16 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", errs.Violate("body", errs.LocBody, errs.ReasonRequired))
 	}
 	shareType := artifact.ShareType(firstNonEmpty(in.ShareType, string(artifact.TypeFile)))
-	if shareType == artifact.TypeBundle || shareType == artifact.TypeTrajectory {
+	if shareType == artifact.TypeBundle {
+		// Same wording the REST single-body create reports via
+		// sharetype.Registry.CheckCreateType, so the two surfaces stay in
+		// parity (VE-1).
 		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", errs.Violate("share_type", errs.LocBody, errs.ReasonNotAllowed,
-			errs.WithValue(string(shareType)), errs.WithExpect("use bundle_create for bundles or run_create for traces")))
+			errs.WithValue(string(shareType)), errs.WithExpect("a bundle is created by sending several files in one multipart upload")))
+	}
+	if shareType == artifact.TypeTrajectory {
+		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", errs.Violate("share_type", errs.LocBody, errs.ReasonNotAllowed,
+			errs.WithValue(string(shareType)), errs.WithExpect("use run_create for traces")))
 	}
 	downgrade, err := redactionDowngrade("redaction", errs.LocBody, in.Redaction)
 	if err != nil {
