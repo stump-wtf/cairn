@@ -3,14 +3,16 @@ package store
 // Redaction Outcome Store Tests
 //
 // Integration tests for the recorded scan outcome (migration 0017): legacy rows
-// read "unscanned" after the migration applies, unwired create paths keep
-// writing "unscanned", the write helpers commit with the caller's transaction,
+// read "unscanned" after the migration applies, the scanned create paths write
+// "clean" or better, the write helpers commit with the caller's transaction,
 // and no outcome column can hold a planted token. Credentials are assembled at
 // run time from split literals, so no source line holds one whole.
 //
 // Governing: ADR-0023, SPEC-0017 RD-9, "Database Operation Standards"
 //
 // @joestump 09/25/2026 - Added for cairn#290.
+// @joestump 09/26/2026 - cairn#292 wired the scanner into the create paths, so
+// a clean create records "clean" rather than "unscanned".
 
 import (
 	"bytes"
@@ -90,9 +92,10 @@ func TestLegacyArtifactReadsUnscanned(t *testing.T) {
 	}
 }
 
-// TestUnwiredCreateRecordsUnscanned: until a create path runs the scanner, it
-// records "unscanned" and never claims "clean".
-func TestUnwiredCreateRecordsUnscanned(t *testing.T) {
+// TestScannedCreateRecordsClean: the create paths run the scanner (cairn#292),
+// so a body with nothing in it records "clean" on the artifact, the bundle and
+// its member, never the "unscanned" of a path the scanner is not wired into.
+func TestScannedCreateRecordsClean(t *testing.T) {
 	s, pool := newTestStore(t, Options{})
 	ctx := context.Background()
 
@@ -100,11 +103,11 @@ func TestUnwiredCreateRecordsUnscanned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := outcomeOf(t, pool, a.ID); got.Status != redact.StatusUnscanned {
-		t.Errorf("single-body create recorded %s, want unscanned", got.Status)
+	if got := outcomeOf(t, pool, a.ID); got.Status != redact.StatusClean {
+		t.Errorf("single-body create recorded %s, want clean", got.Status)
 	}
-	if a.Redaction.Status != "" && a.Redaction.Status != redact.StatusUnscanned {
-		t.Errorf("returned artifact claims %s", a.Redaction.Status)
+	if a.Redaction.Status != redact.StatusClean {
+		t.Errorf("returned artifact claims %s, want clean", a.Redaction.Status)
 	}
 
 	b, err := s.CreateBundle(ctx, CreateBundleInput{
@@ -116,15 +119,15 @@ func TestUnwiredCreateRecordsUnscanned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := outcomeOf(t, pool, b.ID); got.Status != redact.StatusUnscanned {
-		t.Errorf("bundle create recorded %s, want unscanned", got.Status)
+	if got := outcomeOf(t, pool, b.ID); got.Status != redact.StatusClean {
+		t.Errorf("bundle create recorded %s, want clean", got.Status)
 	}
 	var memberStatus string
 	if err := pool.QueryRow(ctx, `SELECT redaction_status FROM bundle_members WHERE bundle_id = $1`, b.ID).Scan(&memberStatus); err != nil {
 		t.Fatal(err)
 	}
-	if memberStatus != string(redact.StatusUnscanned) {
-		t.Errorf("bundle member recorded %s, want unscanned", memberStatus)
+	if memberStatus != string(redact.StatusClean) {
+		t.Errorf("bundle member recorded %s, want clean", memberStatus)
 	}
 }
 
@@ -251,13 +254,13 @@ func TestRecordRedactionRollsBackWithContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordRedaction(ctx, tx, RedactionArtifact, art.ID, redact.Summary{Status: redact.StatusClean}); err != nil {
+	if err := RecordRedaction(ctx, tx, RedactionArtifact, art.ID, redact.Summary{Status: redact.StatusMasked, Count: 1, Rules: map[string]int{"github-pat": 1}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := outcomeOf(t, pool, art.ID); got.Status != redact.StatusUnscanned {
+	if got := outcomeOf(t, pool, art.ID); got.Status != redact.StatusClean {
 		t.Errorf("rolled-back outcome persisted: %s", got.Status)
 	}
 }

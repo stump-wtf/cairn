@@ -57,7 +57,7 @@ func mcpTestServer(t *testing.T, cfg Config, opts store.Options) (*httptest.Serv
 		cfg.Redaction = sharedTestScanner(t)
 	}
 	pool := newTestPool(t)
-	st := store.New(pool, objectstore.NewMemory(), opts)
+	st := store.New(pool, objectstore.NewMemory(), withScanner(opts))
 	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
 	return srv, st

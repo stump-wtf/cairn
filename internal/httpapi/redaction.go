@@ -11,9 +11,38 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/redact"
 )
+
+// Writer Downgrade
+//
+// A writer may downgrade a reject-mode share type (code, bundle) to mask for
+// one create: X-Cairn-Redaction: mask over REST, or redaction: "mask" on the
+// MCP create tools. "mask" is the only value there is. Anything else, "off"
+// included, is refused as unknown_value, so no request input can turn the
+// scan off or make a mask-mode surface unscanned.
+//
+// Governing: ADR-0023, SPEC-0017 RD-5; ADR-0025, SPEC-0019 VE-1
+//
+// @joestump 09/26/2026 - Added for cairn#292.
+
+// redactionHeader is the REST create's downgrade header.
+const redactionHeader = "X-Cairn-Redaction"
+
+// redactionDowngrade reads a writer's redaction override from field: true for
+// "mask", false when absent, and an unknown_value violation otherwise.
+func redactionDowngrade(field string, loc errs.Location, raw string) (bool, error) {
+	switch raw {
+	case "":
+		return false, nil
+	case string(redact.ModeMask):
+		return true, nil
+	}
+	return false, errs.Violate(field, loc, errs.ReasonUnknownValue,
+		errs.WithValue(raw), errs.WithLimit(`"mask"`, ""))
+}
 
 // Owner-Visible Redaction Outcome
 //

@@ -31,7 +31,7 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 	if err != nil {
 		return err
 	}
-	tags, err := parseTagFlags(flags.tags)
+	tags, err := parseTagFlags(flags.tags, streams.ErrOut)
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 		sp.Stop()
 	}
 	if err != nil {
-		return err
+		return withSent(err, sentRequest{ttl: flags.ttl, tags: tags, files: args})
 	}
 
 	if flags.jsonOut {

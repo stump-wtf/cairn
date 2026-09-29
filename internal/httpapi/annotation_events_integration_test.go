@@ -190,7 +190,7 @@ func newAnnotationEventServer(t *testing.T) annotationEventServer {
 	t.Helper()
 	spy := &lifecycleSpy{}
 	pool := newTestPool(t)
-	st := store.New(pool, objectstore.NewMemory(), store.Options{MaxUploadBytes: 1 << 20})
+	st := store.New(pool, objectstore.NewMemory(), withScanner(store.Options{MaxUploadBytes: 1 << 20}))
 	cfg := mcpConfig()
 	cfg.Events = spy
 	cfg.APITokens = []APIToken{

@@ -6,24 +6,24 @@ import (
 	"strings"
 
 	"github.com/microcosm-cc/bluemonday"
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/renderer/html"
-	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/extension"
+	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/renderer/html"
 )
 
-// gm is the shared goldmark converter. It enables GitHub-flavored markdown
-// (tables, strikethrough, task lists, autolinks) but deliberately does NOT set
-// html.WithUnsafe(): raw HTML blocks and inline HTML in the body are omitted
-// rather than passed through, which is the first of two sanitization layers
-// (bluemonday is the second). WithHardWraps is off so prose wraps the way
-// markdown intends.
-var gm = goldmark.New(
-	goldmark.WithExtensions(extension.GFM),
-	goldmark.WithRendererOptions(
+// gmParser and gmRenderer are the shared goldmark converter pair. They enable
+// GitHub-flavored markdown (tables, strikethrough, task lists, autolinks) but
+// deliberately do NOT set html.WithUnsafe(): raw HTML blocks and inline HTML
+// in the body are omitted rather than passed through, which is the first of
+// two sanitization layers (bluemonday is the second). Hard wraps are off so
+// prose wraps the way markdown intends.
+var (
+	gmParser   = parser.New(parser.WithExtensions(extension.GFMParser))
+	gmRenderer = html.New(
 		html.WithXHTML(),
-	),
+		html.WithExtensions(extension.GFMHTMLRenderer),
+	)
 )
 
 // sanitizer strips any tag or attribute a rendered body must not carry — script,
@@ -97,8 +97,7 @@ type Rendered struct {
 // rather than an error — but the signature returns an error to satisfy the
 // BodyViewer contract and allow future strictness.
 func Render(source []byte) (*Rendered, error) {
-	reader := text.NewReader(source)
-	doc := gm.Parser().Parse(reader)
+	doc := gmParser.Parse(source)
 
 	out := &Rendered{Source: string(source)}
 	var flatHeadings []TOCEntry
@@ -113,7 +112,7 @@ func Render(source []byte) (*Rendered, error) {
 		blockID := BlockID(position, content)
 
 		var buf bytes.Buffer
-		if err := gm.Renderer().Render(&buf, source, node); err != nil {
+		if err := gmRenderer.Render(&buf, source, node); err != nil {
 			return nil, err
 		}
 		safe := sanitizer.SanitizeBytes(buf.Bytes())
@@ -150,8 +149,9 @@ func Render(source []byte) (*Rendered, error) {
 // bodies. It deliberately mints no block ids, so comment markup cannot
 // introduce ids into the artifact's block-id space (ADR-0006).
 func RenderHTML(source string) template.HTML {
+	src := []byte(source)
 	var buf bytes.Buffer
-	if err := gm.Convert([]byte(source), &buf); err != nil {
+	if err := gmRenderer.Render(&buf, src, gmParser.Parse(src)); err != nil {
 		return ""
 	}
 	return template.HTML(sanitizer.SanitizeBytes(buf.Bytes())) //nolint:gosec // sanitized above
@@ -208,27 +208,18 @@ func nodeText(n ast.Node, source []byte) string {
 		}
 		switch t := node.(type) {
 		case *ast.Text:
-			b.Write(t.Segment.Value(source))
+			b.WriteString(t.Value.Value(source))
 			if t.SoftLineBreak() || t.HardLineBreak() {
 				b.WriteByte(' ')
 			}
-		case *ast.String:
-			b.Write(t.Value)
+		case *ast.CodeSpan:
+			b.WriteString(t.Value.Value(source))
 		case *ast.AutoLink:
-			b.Write(t.URL(source))
-		case *ast.FencedCodeBlock:
-			writeLines(&b, t.Lines(), source)
+			b.WriteString(t.Destination.Value(source))
 		case *ast.CodeBlock:
-			writeLines(&b, t.Lines(), source)
+			_, _ = t.Value.WriteTo(&b, source)
 		}
 		return ast.WalkContinue, nil
 	})
 	return b.String()
-}
-
-func writeLines(b *strings.Builder, lines *text.Segments, source []byte) {
-	for i := 0; i < lines.Len(); i++ {
-		seg := lines.At(i)
-		b.Write(seg.Value(source))
-	}
 }

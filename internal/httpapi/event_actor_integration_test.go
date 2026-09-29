@@ -56,7 +56,7 @@ func (c *creationSpy) byID(t *testing.T, id string) store.CreationEvent {
 func TestIntegrationAuthenticatorActorKind(t *testing.T) {
 	spy := &creationSpy{}
 	pool := newTestPool(t)
-	st := store.New(pool, objectstore.NewMemory(), store.Options{MaxUploadBytes: 1 << 20, Emitter: spy})
+	st := store.New(pool, objectstore.NewMemory(), withScanner(store.Options{MaxUploadBytes: 1 << 20, Emitter: spy}))
 	cfg := mcpConfig()
 	cfg.APITokens = []APIToken{
 		{Secret: "static-human-secret", ActorID: "alice"},
