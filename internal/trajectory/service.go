@@ -14,6 +14,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/id"
 	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/objectstore"
@@ -227,7 +228,7 @@ func (s *Service) CreateBatchRun(ctx context.Context, in RunInput) (*Run, error)
 	}
 	// A fresh run's stream sequence starts at 0; its id is not handed out until
 	// after commit, so no live subscriber can exist yet and none is published to.
-	if err := s.persistSpans(ctx, tx, runID, 0, prepared, dispositions); err != nil {
+	if err := s.persistSpans(ctx, tx, runID, in.Access.OwnerID, 0, prepared, dispositions); err != nil {
 		return nil, err
 	}
 
@@ -279,7 +280,7 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 		}
 		// Seed spans start the sequence at 0 like a batch; the run id has not been
 		// returned yet, so no live subscriber exists to publish to.
-		if err := s.persistSpans(ctx, tx, runID, 0, prepared, dispositions); err != nil {
+		if err := s.persistSpans(ctx, tx, runID, in.Access.OwnerID, 0, prepared, dispositions); err != nil {
 			return nil, err
 		}
 	}
@@ -387,7 +388,7 @@ func (s *Service) appendSpans(ctx context.Context, publicID, actorID string, spa
 	if err != nil {
 		return nil, err
 	}
-	if err := s.persistSpans(ctx, tx, rr.runID, base, prepared, dispositions); err != nil {
+	if err := s.persistSpans(ctx, tx, rr.runID, rr.ownerID, base, prepared, dispositions); err != nil {
 		return nil, err
 	}
 	// The appended spans' scan outcome folds into the run and into its
@@ -420,8 +421,17 @@ func (s *Service) appendSpans(ctx context.Context, publicID, actorID string, spa
 // CloseRun closes an open run, stamping ended_at from the span tree (so it
 // matches a batch run) and freezing it against further spans. Only the owner may
 // close it; a closed run stays closed (SPEC-0004 "Run Model and Lifecycle",
-// "Non-owner cannot close a run").
-func (s *Service) CloseRun(ctx context.Context, publicID, actorID string) (*Run, error) {
+// "Non-owner cannot close a run"). The actor is the closer, derived from the
+// authenticated principal (SPEC-0016 EV-4).
+func (s *Service) CloseRun(ctx context.Context, publicID string, actor event.Actor) (*Run, error) {
+	// Every adapter derives the actor from the authenticated principal, so a
+	// missing id, kind or auth method (or a kind that contradicts the method)
+	// means a caller skipped that step: fail closed before the transaction
+	// rather than close a run nobody can attribute (EV-3, EV-4).
+	if err := actor.Check(); err != nil {
+		return nil, errs.Validationf("trajectory: close run: %v", err)
+	}
+	actorID := actor.ID
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("trajectory: begin tx: %w", err)
@@ -525,7 +535,7 @@ func (s *Service) loadSpanShape(ctx context.Context, tx pgx.Tx, runID int64) (ma
 // endpoint has a gap-free, append-monotonic resume cursor (SPEC-0004 "Live Span
 // Stream Delivery"). base is the run's current MAX(stream_seq) — 0 for a fresh
 // run, the locked current max for an append — so appends continue the sequence.
-func (s *Service) persistSpans(ctx context.Context, tx pgx.Tx, runID, baseStreamSeq int64, prepared []preparedSpan, dispositions []spilled) error {
+func (s *Service) persistSpans(ctx context.Context, tx pgx.Tx, runID int64, ownerID string, baseStreamSeq int64, prepared []preparedSpan, dispositions []spilled) error {
 	for i, p := range prepared {
 		d := dispositions[i]
 		if d.staged != nil {
@@ -539,7 +549,7 @@ func (s *Service) persistSpans(ctx context.Context, tx pgx.Tx, runID, baseStream
 			return err
 		}
 		if p.in.ProducedArtifactID != "" {
-			if err := s.insertProducedEdge(ctx, tx, runID, p.in.SpanID, p.in.ProducedArtifactID); err != nil {
+			if err := s.insertProducedEdge(ctx, tx, runID, ownerID, p.in.SpanID, p.in.ProducedArtifactID); err != nil {
 				return err
 			}
 		}
@@ -583,13 +593,17 @@ func (s *Service) nextStreamBase(ctx context.Context, tx pgx.Tx, runID int64) (i
 }
 
 // insertProducedEdge resolves the produced artifact's public id to its internal
-// id (uniform not-found for unknown/expired) and records the directed edge. The
-// id arrives already normalized from prepareSpans, so an mcp://cairn/<id> handle
-// resolves exactly as the bare id does (issue #50).
-func (s *Service) insertProducedEdge(ctx context.Context, tx pgx.Tx, runID int64, spanID, pid string) error {
+// id and records the directed edge. The target must be readable by the run's
+// owner: until SPEC-0024's readableTargets helper exists that means owner_id
+// equality, so unknown, expired and foreign ids all produce the identical
+// validation_failed error (issue #422, SPEC-0023 REQ "Read Authorization on
+// Every Surface"). The id arrives already normalized from prepareSpans, so an
+// mcp://cairn/<id> handle resolves exactly as the bare id does (issue #50).
+// Governing: SPEC-0023 REQ "Read Authorization on Every Surface", ADR-0007
+func (s *Service) insertProducedEdge(ctx context.Context, tx pgx.Tx, runID int64, ownerID, spanID, pid string) error {
 	var artID int64
 	err := tx.QueryRow(ctx,
-		`SELECT id FROM artifacts WHERE public_id = $1 AND expires_at > now()`, pid,
+		`SELECT id FROM artifacts WHERE public_id = $1 AND expires_at > now() AND owner_id = $2`, pid, ownerID,
 	).Scan(&artID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

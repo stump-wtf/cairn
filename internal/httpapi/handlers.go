@@ -132,6 +132,7 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 
 	// Guard the raw body; the store additionally enforces the limit incrementally.
 	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes+1)
+	creator := p.EventActor()
 	art, err := s.store.CreateArtifact(r.Context(), store.CreateArtifactInput{
 		ShareType:          shareType,
 		Title:              firstNonEmpty(r.URL.Query().Get("title"), r.Header.Get("X-Cairn-Title")),
@@ -142,6 +143,8 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 		Access:             artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
 		ExpiresAt:          now.Add(ttl),
 		Tags:               tags.tags,
+		ActorKind:          creator.Kind,
+		Auth:               creator.Auth,
 		RedactionDowngrade: downgrade,
 	})
 	if err != nil {
@@ -251,6 +254,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 	}
 
 	now := s.now()
+	actor := p.EventActor()
 	prov := artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now}
 	access := artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink}
 	expires := now.Add(ttl)
@@ -266,6 +270,8 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			Access:             access,
 			ExpiresAt:          expires,
 			Tags:               tags.tags,
+			ActorKind:          actor.Kind,
+			Auth:               actor.Auth,
 			RedactionDowngrade: downgrade,
 		})
 		if err != nil {
@@ -287,6 +293,8 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		Access:             access,
 		ExpiresAt:          expires,
 		Tags:               tags.tags,
+		ActorKind:          actor.Kind,
+		Auth:               actor.Auth,
 		RedactionDowngrade: downgrade,
 	})
 	if err != nil {

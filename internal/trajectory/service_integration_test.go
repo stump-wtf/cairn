@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/db"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/store"
 )
@@ -331,6 +333,103 @@ func TestBatchRunResolvesProducedArtifactHandle(t *testing.T) {
 	}
 }
 
+// TestBatchRunRejectsForeignProducedArtifact pins issue #422: a run owned by U
+// naming V's artifact must fail with an error byte-identical to a random id
+// (no existence oracle, SPEC-0023 REQ "Read Authorization on Every Surface"),
+// and no edge may be written.
+func TestBatchRunRejectsForeignProducedArtifact(t *testing.T) {
+	svc, st, pool, _ := newHarness(t)
+	ctx := context.Background()
+
+	foreignAccess := access()
+	foreignAccess.OwnerID = "someone-else"
+	art, err := st.CreateArtifact(ctx, store.CreateArtifactInput{
+		ShareType:         "markdown",
+		Title:             "someone-elses.md",
+		Body:              bytes.NewReader([]byte("# not yours\n")),
+		DeclaredMediaType: "text/markdown",
+		Provenance:        prov(),
+		Access:            foreignAccess,
+		ExpiresAt:         future(),
+	})
+	if err != nil {
+		t.Fatalf("create foreign markdown: %v", err)
+	}
+
+	in := checkoutWebAudit(art.PublicID)
+	_, err = svc.CreateBatchRun(ctx, in)
+	if err == nil {
+		t.Fatal("batch naming a foreign artifact must fail")
+	}
+	foreignErr := err.Error()
+
+	in = checkoutWebAudit("ZZZZnopeZZZZ")
+	_, err = svc.CreateBatchRun(ctx, in)
+	if err == nil {
+		t.Fatal("batch naming an unknown artifact must fail")
+	}
+	// The message embeds the id that was named, so compare with the id masked:
+	// anything left over (a distinct code, prefix, or wording for "exists but
+	// foreign" versus "does not exist") would be an existence oracle.
+	mask := func(s, id string) string { return strings.ReplaceAll(s, id, "<id>") }
+	if mask(err.Error(), "ZZZZnopeZZZZ") != mask(foreignErr, art.PublicID) {
+		t.Fatalf("foreign-artifact error %q differs from unknown-id error %q (existence oracle)", foreignErr, err.Error())
+	}
+
+	var edgeCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM produced_edges`).Scan(&edgeCount); err != nil {
+		t.Fatalf("count produced_edges: %v", err)
+	}
+	if edgeCount != 0 {
+		t.Errorf("produced-edge rows = %d, want 0 (no edge written for foreign or unknown ids)", edgeCount)
+	}
+}
+
+// TestAppendRejectsForeignProducedArtifact covers the append path of issue
+// #422: an open run owned by U cannot attach a produced edge to V's artifact.
+func TestAppendRejectsForeignProducedArtifact(t *testing.T) {
+	svc, st, pool, _ := newHarness(t)
+	ctx := context.Background()
+
+	foreignAccess := access()
+	foreignAccess.OwnerID = "someone-else"
+	art, err := st.CreateArtifact(ctx, store.CreateArtifactInput{
+		ShareType:         "markdown",
+		Title:             "someone-elses.md",
+		Body:              bytes.NewReader([]byte("# not yours\n")),
+		DeclaredMediaType: "text/markdown",
+		Provenance:        prov(),
+		Access:            foreignAccess,
+		ExpiresAt:         future(),
+	})
+	if err != nil {
+		t.Fatalf("create foreign markdown: %v", err)
+	}
+
+	in := checkoutWebAudit("")
+	in.Spans = nil
+	run, err := svc.OpenRun(ctx, in)
+	if err != nil {
+		t.Fatalf("open run: %v", err)
+	}
+	_, err = svc.AppendSpans(ctx, run.PublicID, in.Access.OwnerID, []SpanInput{{
+		SpanID: "w1", Category: CategoryWrite, Tool: "write", Name: "wrote the report",
+		ProducedArtifactID: art.PublicID,
+		StartOffsetMS:      0, DurationMS: 10,
+	}})
+	if err == nil {
+		t.Fatal("append naming a foreign artifact must fail")
+	}
+
+	var edgeCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM produced_edges`).Scan(&edgeCount); err != nil {
+		t.Fatalf("count produced_edges: %v", err)
+	}
+	if edgeCount != 0 {
+		t.Errorf("produced-edge rows = %d, want 0", edgeCount)
+	}
+}
+
 // TestAppendSpansNormalizesProducedHandle pins the append path's *returned*
 // span, which is byte-for-byte what the live SSE stream publishes: a handle-form
 // produced_artifact_id must come back as the bare id, or a viewer watching the
@@ -392,7 +491,7 @@ func TestBatchAndIncrementalConverge(t *testing.T) {
 			t.Fatalf("append %s: %v", sp.SpanID, err)
 		}
 	}
-	closed, err := svc.CloseRun(ctx, open.PublicID, "joe")
+	closed, err := svc.CloseRun(ctx, open.PublicID, event.Actor{ID: "joe", Channel: artifact.ChannelMCP, Kind: event.KindAgent, Auth: event.AuthOAuth})
 	if err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -506,7 +605,7 @@ func TestNonOwnerCannotClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	_, err = svc.CloseRun(ctx, open.PublicID, "mallory")
+	_, err = svc.CloseRun(ctx, open.PublicID, event.Actor{ID: "mallory", Channel: artifact.ChannelMCP, Kind: event.KindAgent, Auth: event.AuthOAuth})
 	if !errors.Is(err, ErrNotOwner) {
 		t.Fatalf("close by non-owner err = %v, want ErrNotOwner", err)
 	}

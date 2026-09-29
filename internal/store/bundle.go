@@ -11,6 +11,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/redact"
 )
@@ -36,6 +37,11 @@ type CreateBundleInput struct {
 	// RedactionDowngrade masks where the bundle type would reject; see
 	// CreateArtifactInput.RedactionDowngrade. SPEC-0017 RD-5.
 	RedactionDowngrade bool
+	// ActorKind and Auth classify the creator's credential. The adapter derives
+	// them from the authenticated principal, never from the request, and they
+	// travel only on the creation event (ADR-0022, SPEC-0016 EV-4).
+	ActorKind event.ActorKind
+	Auth      event.AuthMethod
 }
 
 func (in CreateBundleInput) validate() error {
@@ -196,7 +202,7 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("bundle: commit: %w", err)
 	}
-	s.emitCreated(art)
+	s.emitCreated(art, in.ActorKind, in.Auth)
 	s.warnUnscanned(art.PublicID, &scans)
 	return art, nil
 }

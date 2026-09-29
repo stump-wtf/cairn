@@ -103,9 +103,10 @@ async function loadYaml(source: string): Promise<Record<string, unknown>> {
 /**
  * Normalise a front-matter date to `YYYY-MM-DD`.
  *
- * YAML resolves an unquoted `2026-07-08` to a `Date`, and a quoted one to a
- * string, and the record contains both spellings over time. Both are accepted;
- * anything else is a validation failure that names the field.
+ * js-yaml 4 resolved an unquoted `2026-07-08` to a `Date`; js-yaml 5 leaves it
+ * a string, as it does a quoted one. Both shapes are accepted, so the record
+ * reads the same under either loader; anything else is a validation failure
+ * that names the field.
  */
 export function normaliseDate(value: unknown): string | null {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
