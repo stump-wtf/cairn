@@ -8,13 +8,14 @@
 # must fail for its OWN reason, so the test matches the error text rather than
 # just a non-zero exit.
 #
-# The "binaries" are small files carrying the package paths the verifier greps
-# for, which is all it inspects; no Go build is needed, so this runs in
+# The "binaries" are small files; no Go build is needed, so this runs in
 # `make check` in a second or two.
 #
 # @joestump 09/23/2026 - Created for cairn#361.
-# @joestump 09/26/2026 - cairnd fixtures are built root-owned, and two cases
-#   cover builder-dependent tar headers.
+# @joestump 09/26/2026 - Fixtures are built root-owned, and two cases cover
+#   builder-dependent tar headers.
+# @joestump-agent 09/29/2026 - One archive kind (ADR-0031): cairnd fixtures
+#   gone; the header checks now guard the cairn archive.
 
 set -euo pipefail
 
@@ -23,7 +24,6 @@ verify="$here/verify-release-archives.sh"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-MODULE="github.com/stump-wtf/cairn"
 V="9.9.9"
 
 # make_zip <out.zip> <dir> <files...>: python3 rather than `zip`, which slim
@@ -59,21 +59,15 @@ with tarfile.open(out, "w:gz") as t:
 PY
 }
 
-# server_tar <out.tar.gz> <dir> <files...>: a cairnd archive as the release
-# config writes it, root-owned.
-server_tar() { local out="$1" dir="$2"; shift 2; make_tar "$out" "$dir" 0 root "$@"; }
-
 # good_dist <dir>: a dist/ shaped like a correct release.
 good_dist() {
   local d="$1" p
   mkdir -p "$d/src"
   echo "MIT" > "$d/src/LICENSE"
-  printf 'x %s/internal/clicmd y\n' "$MODULE" > "$d/src/cairn"
+  echo "the cairn binary" > "$d/src/cairn"
   cp "$d/src/cairn" "$d/src/cairn.exe"
-  printf 'x %s/internal/httpapi y\n' "$MODULE" > "$d/src/cairnd"
   for p in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64; do
-    tar -czf "$d/cairn_${V}_${p}.tar.gz" -C "$d/src" cairn LICENSE
-    server_tar "$d/cairnd_${V}_${p}.tar.gz" "$d/src" cairnd LICENSE
+    make_tar "$d/cairn_${V}_${p}.tar.gz" "$d/src" 0 root cairn LICENSE
   done
   for p in windows_amd64 windows_arm64; do
     make_zip "$d/cairn_${V}_${p}.zip" "$d/src" cairn.exe LICENSE
@@ -122,57 +116,43 @@ fresh() { local d="$work/$1"; good_dist "$d"; echo "$d"; }
 d="$(fresh good)"
 expect_pass "a correct release passes" "$d"
 
-d="$(fresh cli-carries-server)"
-tar -czf "$d/cairn_${V}_linux_amd64.tar.gz" -C "$d/src" cairn cairnd LICENSE
-expect_fail "the CLI archive holding cairnd fails" "$d" "must hold exactly 'cairn' and 'LICENSE'"
+d="$(fresh extra-member)"
+make_tar "$d/cairn_${V}_linux_amd64.tar.gz" "$d/src" 0 root cairn cairn.exe LICENSE
+expect_fail "an archive holding a second binary fails" "$d" "must hold exactly 'cairn' and 'LICENSE'"
 
-d="$(fresh server-carries-cli)"
-server_tar "$d/cairnd_${V}_darwin_arm64.tar.gz" "$d/src" cairnd cairn LICENSE
-expect_fail "the server archive holding cairn fails" "$d" "must hold exactly 'cairnd' and 'LICENSE'"
-
-d="$(fresh zip-carries-server)"
-make_zip "$d/cairn_${V}_windows_amd64.zip" "$d/src" cairn.exe cairnd LICENSE
-expect_fail "a windows CLI zip holding cairnd fails" "$d" "must hold exactly 'cairn.exe' and 'LICENSE'"
+d="$(fresh zip-extra-member)"
+make_zip "$d/cairn_${V}_windows_amd64.zip" "$d/src" cairn.exe cairn LICENSE
+expect_fail "a windows zip holding a second binary fails" "$d" "must hold exactly 'cairn.exe' and 'LICENSE'"
 
 d="$(fresh no-license)"
-server_tar "$d/cairnd_${V}_linux_arm64.tar.gz" "$d/src" cairnd
-expect_fail "an archive without LICENSE fails" "$d" "must hold exactly 'cairnd' and 'LICENSE'"
+make_tar "$d/cairn_${V}_linux_arm64.tar.gz" "$d/src" 0 root cairn
+expect_fail "an archive without LICENSE fails" "$d" "must hold exactly 'cairn' and 'LICENSE'"
 
 d="$(fresh missing-platform)"
-rm "$d/cairnd_${V}_darwin_amd64.tar.gz"; write_sums "$d"
-expect_fail "a missing cairnd platform fails" "$d" "no cairnd archive for darwin_amd64"
+rm "$d/cairn_${V}_darwin_amd64.tar.gz"; write_sums "$d"
+expect_fail "a missing platform fails" "$d" "no cairn archive for darwin_amd64"
 
-d="$(fresh server-is-really-cli)"
-cp "$d/src/cairn" "$d/src/cairnd"
-server_tar "$d/cairnd_${V}_linux_amd64.tar.gz" "$d/src" cairnd LICENSE; write_sums "$d"
-expect_fail "a cairnd without server code fails the positive control" "$d" "positive control failed"
+d="$(fresh builder-owned)"
+make_tar "$d/cairn_${V}_linux_amd64.tar.gz" "$d/src" 501 joestump cairn LICENSE; write_sums "$d"
+expect_fail "an archive carrying the builder's owner fails" "$d" "NOT REPRODUCIBLE"
 
-d="$(fresh server-with-cli-code)"
-printf 'x %s/internal/httpapi %s/internal/clicmd\n' "$MODULE" "$MODULE" > "$d/src/cairnd"
-server_tar "$d/cairnd_${V}_linux_amd64.tar.gz" "$d/src" cairnd LICENSE; write_sums "$d"
-expect_fail "a cairnd carrying CLI code fails" "$d" "CLI CODE IN THE SERVER"
-
-d="$(fresh builder-owned-server)"
-make_tar "$d/cairnd_${V}_linux_arm64.tar.gz" "$d/src" 501 joestump cairnd LICENSE; write_sums "$d"
-expect_fail "a cairnd archive carrying the builder's owner fails" "$d" "NOT REPRODUCIBLE"
-
-d="$(fresh wrong-mode-server)"
+d="$(fresh wrong-mode)"
 chmod 600 "$d/src/LICENSE"
-python3 - "$d/cairnd_${V}_darwin_amd64.tar.gz" "$d/src" <<'PY'
+python3 - "$d/cairn_${V}_darwin_amd64.tar.gz" "$d/src" <<'PY'
 import os, sys, tarfile
 out, d = sys.argv[1], sys.argv[2]
 with tarfile.open(out, "w:gz") as t:
-    for n, mode in (("cairnd", 0o755), ("LICENSE", 0o600)):
+    for n, mode in (("cairn", 0o755), ("LICENSE", 0o600)):
         ti = t.gettarinfo(os.path.join(d, n), n)
         ti.uid = ti.gid = 0; ti.uname = ti.gname = "root"; ti.mode = mode
         with open(os.path.join(d, n), "rb") as f:
             t.addfile(ti, f)
 PY
 write_sums "$d"
-expect_fail "a cairnd archive with LICENSE's on-disk mode fails" "$d" "NOT REPRODUCIBLE"
+expect_fail "an archive with LICENSE's on-disk mode fails" "$d" "NOT REPRODUCIBLE"
 
 d="$(fresh unexpected-archive)"
-server_tar "$d/cairnd_${V}_windows_amd64.tar.gz" "$d/src" cairnd LICENSE; write_sums "$d"
+make_tar "$d/cairnd_${V}_windows_amd64.tar.gz" "$d/src" 0 root cairn LICENSE; write_sums "$d"
 expect_fail "an archive the release does not account for fails" "$d" "an archive exists that this release does not account for"
 
 d="$(fresh unlisted-checksum)"

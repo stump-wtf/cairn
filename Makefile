@@ -68,9 +68,9 @@ test-scripts:
 		[ -e "$$t" ] || continue; echo "==> $$t"; "$$t"; n=$$((n + 1)); \
 	done; [ "$$n" -gt 0 ] || { echo "no scripts/*.test.sh found; nothing was tested"; exit 1; }
 
-# A local dry run of the whole release: both builds, both archives, the CLI
-# post hook, then the archive-composition check the release job runs before it
-# publishes. Needs goreleaser on PATH; publishes nothing.
+# A local dry run of the whole release: the one cairn build and archive (the
+# whole program since ADR-0031), then the archive-composition check the release
+# job runs before it publishes. Needs goreleaser on PATH; publishes nothing.
 release-snapshot:
 	goreleaser release --snapshot --clean
 	scripts/verify-release-archives.sh dist
