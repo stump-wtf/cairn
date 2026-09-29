@@ -353,9 +353,12 @@ jobs:
       - name: Assert the object-store tests really hit Garage
         run: |
           set -euo pipefail
-          docker exec "$GARAGE" /garage bucket info "$S3_BUCKET"
-          objects="$(docker exec "$GARAGE" /garage bucket info "$S3_BUCKET" \
-            | awk '/^Objects:/{print $2; exit}')"
+          info="$(docker exec "$GARAGE" /garage bucket info "$S3_BUCKET")"
+          printf '%s\n' "$info"
+          # Parse the captured output, not a live pipe: awk's early exit used
+          # to SIGPIPE docker exec and fail the step with 141 on a healthy,
+          # non-empty bucket.
+          objects="$(printf '%s\n' "$info" | awk '/^Objects:/{print $2}')"
           if [ "${objects:-0}" -eq 0 ]; then
             echo "::error::Garage's bucket is empty — the S3-backed tests fell back to the in-memory store"
             exit 1
