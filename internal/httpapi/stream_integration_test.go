@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+// streamWait bounds how long a stream helper awaits the next frame before
+// failing. It is deliberately generous: on a loaded shared CI runner (the
+// pipeline runs build, website and lint jobs alongside the integration
+// suite) frame delivery has been observed to stall for whole seconds even
+// though every event is buffered and delivered — a tight timeout turns that
+// starvation into a red run on a healthy stream.
+const streamWait = 30 * time.Second
+
 // sseEvent is one parsed Server-Sent Event (or a comment line, with Comment set
 // and Event empty).
 type sseEvent struct {
@@ -120,7 +128,7 @@ func (sc *streamConn) next(t *testing.T) sseEvent {
 				continue // skip heartbeats / stream-open marker
 			}
 			return ev
-		case <-time.After(3 * time.Second):
+		case <-time.After(streamWait):
 			t.Fatal("timed out waiting for a stream event")
 		}
 	}
@@ -139,7 +147,7 @@ func (sc *streamConn) nextComment(t *testing.T) sseEvent {
 				continue
 			}
 			return ev
-		case <-time.After(3 * time.Second):
+		case <-time.After(streamWait):
 			t.Fatal("timed out waiting for a heartbeat")
 		}
 	}
@@ -155,7 +163,7 @@ func (sc *streamConn) expectEnd(t *testing.T) {
 			if !ok {
 				return
 			}
-		case <-time.After(3 * time.Second):
+		case <-time.After(streamWait):
 			t.Fatal("stream did not end when expected")
 		}
 	}
