@@ -266,8 +266,8 @@ func TestScanMCPCreate(t *testing.T) {
 
 	res = callTool(t, owner, "artifact_create", map[string]any{"body": "fine", "redaction": "off"})
 	gotCode, violations := toolViolations(t, res)
-	if !res.IsError || gotCode != errs.CodeValidation || !anyViolationReason(violations, errs.ReasonNotAllowed) {
-		t.Errorf("redaction off: IsError=%v err=%v code=%s violations=%+v, want validation_failed with not_allowed", res.IsError, res.GetError(), gotCode, violations)
+	if !res.IsError || gotCode != errs.CodeValidation || !anyViolationReason(violations, errs.ReasonUnknownValue) {
+		t.Errorf("redaction off: IsError=%v err=%v code=%s violations=%+v, want validation_failed with unknown_value", res.IsError, res.GetError(), gotCode, violations)
 	}
 
 	members := []map[string]any{{"name": "a.txt", "body": "a"}, {"name": "b.env", "body": "TOKEN=" + tok}}
