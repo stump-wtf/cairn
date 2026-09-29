@@ -19,7 +19,8 @@ import (
 )
 
 // Governing: ADR-0017 (Outbound Webhooks), SPEC-0012 REQ "Event Emission on
-// Artifact Creation" + "Signed Delivery" + "Event Payload"
+// Artifact Creation" + "Signed Delivery" + "Event Payload"; ADR-0022,
+// SPEC-0016 EV-3, EV-4, EV-8
 
 type hookedEvent struct {
 	body []byte
@@ -98,6 +99,8 @@ func TestIntegrationArtifactCreateEmitsSignedWebhook(t *testing.T) {
 			ShareType string `json:"share_type"`
 			URL       string `json:"url"`
 			ActorID   string `json:"actor_id"`
+			ActorKind string `json:"actor_kind"`
+			Auth      string `json:"auth"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(ev.body, &body); err != nil {
@@ -105,6 +108,14 @@ func TestIntegrationArtifactCreateEmitsSignedWebhook(t *testing.T) {
 	}
 	if body.Source != "cairn" || body.Kind != "artifact.created" || body.EventID == "" {
 		t.Fatalf("bad envelope: %+v", body)
+	}
+	if got := ev.hdr.Get("X-Cairn-Event"); got != body.Kind {
+		t.Fatalf("X-Cairn-Event = %q, body kind %q", got, body.Kind)
+	}
+	// The test server authenticates with the dev bearer: server-derived agent
+	// and api_token reach the wire end to end (SPEC-0016 EV-3, EV-4).
+	if body.Data.ActorKind != "agent" || body.Data.Auth != "api_token" {
+		t.Fatalf("actor_kind = %q, auth = %q, want agent and api_token", body.Data.ActorKind, body.Data.Auth)
 	}
 	if body.Data.ID != id || body.Data.ShareType == "" {
 		t.Fatalf("event data mismatch: %+v (created %s)", body.Data, id)

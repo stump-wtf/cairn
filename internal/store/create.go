@@ -13,6 +13,8 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
+	"github.com/stump-wtf/cairn/internal/metrics"
 )
 
 // CreateArtifactInput is the transport-agnostic create request. Provenance,
@@ -34,6 +36,15 @@ type CreateArtifactInput struct {
 	// the adapter passes them through from the request as-is; CreateArtifact
 	// normalizes them.
 	Tags []string
+	// RedactionDowngrade is the writer's per-request downgrade of a
+	// reject-mode share type to mask (X-Cairn-Redaction: mask, or MCP
+	// redaction: "mask"). It never disables the scan. SPEC-0017 RD-5.
+	RedactionDowngrade bool
+	// ActorKind and Auth classify the creator's credential. The adapter derives
+	// them from the authenticated principal, never from the request, and they
+	// travel only on the creation event (ADR-0022, SPEC-0016 EV-4).
+	ActorKind event.ActorKind
+	Auth      event.AuthMethod
 }
 
 func (in CreateArtifactInput) validate() error {
@@ -69,7 +80,8 @@ func (in CreateArtifactInput) validate() error {
 // Governing: ADR-0008 (Storage & Content Model),
 // SPEC-0002 REQ "Artifact Lifecycle — Create",
 // SPEC-0002 REQ "Streaming Upload with Checksum Verification",
-// SPEC-0002 REQ "Database Operation Standards"
+// SPEC-0002 REQ "Database Operation Standards",
+// ADR-0023, SPEC-0017 RD-1 (the title and body are scanned first; scan.go)
 func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*artifact.Artifact, error) {
 	if err := in.validate(); err != nil {
 		return nil, err
@@ -82,13 +94,12 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	if err != nil {
 		return nil, err
 	}
-
 	// 1. Stream the body to a staging object: compute SHA-256 incrementally
 	//    and enforce the size limit as bytes arrive. The object is NOT promoted
 	//    to its content-addressed key yet — that happens in CommitBlob under the
 	//    blob-row lock so the promotion is serialized against the reaper (§2 of
 	//    the SPEC-0009 retention design).
-	staged, err := StageBlob(ctx, s.obj, in.Body, s.maxBytes, in.DeclaredMediaType)
+	staged, err := stageBlobKeep(ctx, s.obj, in.Body, s.maxBytes, in.DeclaredMediaType, scanInMemoryBytes)
 	if err != nil {
 		return nil, fmt.Errorf("create: stream body: %w", err)
 	}
@@ -99,10 +110,33 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	// Governing: SPEC-0002 REQ "Content Addressing and Blobs".
 	defer staged.Discard(ctx, s.obj)
 
-	// 2. Verify a client-declared checksum, if one was provided.
+	// 2. Verify a client-declared checksum, if one was provided. Neither digest
+	//    goes into the error: it is logged, and both are digests of the raw,
+	//    unscanned body, which for a body that is only a credential is a
+	//    fingerprint of that credential.
+	//
+	// Governing: ADR-0023, SPEC-0017 RD-9, RD-10
 	if in.ExpectedSHA256 != "" && !strings.EqualFold(in.ExpectedSHA256, staged.SHA256) {
-		return nil, fmt.Errorf("create: expected %s got %s: %w",
-			in.ExpectedSHA256, staged.SHA256, errs.ErrChecksumMismatch)
+		return nil, fmt.Errorf("create: declared checksum does not match the received body: %w",
+			errs.ErrChecksumMismatch)
+	}
+
+	// 2b. Scan the title, then the verified bytes, before anything is promoted
+	//     or committed. Both use the body's mode, which needs its media type.
+	//     A mask repoints staged at the masked copy, so the SHA-256, size and
+	//     dedup key below are the stored bytes'; a rejection returns here, and
+	//     the deferred Discard removes the staging object.
+	//
+	// Governing: ADR-0023, SPEC-0017 RD-1, RD-4, RD-5, RD-6, RD-7, RD-10
+	var scans scanReport
+	mode := s.artifactRedactionMode(in.ShareType, staged.MediaType, in.RedactionDowngrade)
+	title, titleScan, err := s.scanTitle(ctx, metrics.SurfaceArtifact, in.Title, mode, &scans)
+	if err != nil {
+		return nil, fmt.Errorf("create: %w", err)
+	}
+	bodyScan, err := s.scanBody(ctx, metrics.SurfaceArtifact, bodyField, staged, mode, &scans)
+	if err != nil {
+		return nil, fmt.Errorf("create: %w", err)
 	}
 
 	// Decide previewability at ingest from the share type + sniffed/declared
@@ -117,7 +151,7 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 
 	art := &artifact.Artifact{
 		ShareType:   effectiveType,
-		Title:       in.Title,
+		Title:       title,
 		BodySHA256:  staged.SHA256,
 		Size:        staged.Size,
 		MediaType:   staged.MediaType,
@@ -126,6 +160,8 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 		Access:      in.Access,
 		Tags:        tags,
 		ExpiresAt:   in.ExpiresAt,
+		// Written with the row, in the same transaction (SPEC-0017 RD-9).
+		Redaction: bodyScan.Merge(titleScan),
 	}
 
 	// 3. Persist metadata atomically: lock/register the blob row and promote its
@@ -150,7 +186,8 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("create: commit: %w", err)
 	}
-	s.emitCreated(art)
+	s.emitCreated(art, in.ActorKind, in.Auth)
+	s.warnUnscanned(art.PublicID, &scans)
 	return art, nil
 }
 
@@ -191,11 +228,20 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 		INSERT INTO artifacts
 			(public_id, share_type, title, body_sha256, size_bytes, media_type,
 			 previewable, actor_id, on_behalf_of, model, channel, captured_at,
-			 owner_id, visibility, expires_at, tags)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			 owner_id, visibility, expires_at, tags,
+			 redaction_status, redaction_count, redaction_rules)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		RETURNING id, created_at`
 
 	tags := tagsParam(art.Tags)
+	// The outcome commits with the row it describes (SPEC-0017 "Database
+	// Operation Standards"). An unset Redaction is written as "unscanned".
+	//
+	// Governing: ADR-0023, SPEC-0017 RD-9
+	rStatus, rCount, rRules, err := redactionColumns(art.Redaction)
+	if err != nil {
+		return fmt.Errorf("create: %w", err)
+	}
 
 	for attempt := 0; attempt < idMaxAttempts; attempt++ {
 		// Savepoint so a unique conflict aborts only this attempt, not the tx.
@@ -219,7 +265,7 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 			art.MediaType, art.Previewable, art.Provenance.ActorID,
 			art.Provenance.OnBehalfOf, art.Provenance.Model, art.Provenance.Channel,
 			art.Provenance.CapturedAt, art.Access.OwnerID, art.Access.Visibility,
-			art.ExpiresAt, tags,
+			art.ExpiresAt, tags, rStatus, rCount, rRules,
 		).Scan(&art.ID, &art.CreatedAt)
 		if err != nil {
 			_ = sp.Rollback(ctx)

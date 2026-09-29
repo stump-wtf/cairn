@@ -17,6 +17,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/markdown"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
@@ -326,11 +327,18 @@ func (s *Server) renderShellFor(w http.ResponseWriter, r *http.Request, wantPref
 	// A logged-in viewer sees the comment composer; an anonymous link reader sees
 	// the read-only thread (posting requires a session + CSRF). Resolution is
 	// optional — an absent/invalid credential simply yields the read-only view.
-	if p, ok := s.optionalPrincipal(r); ok {
+	viewer, ok := s.optionalPrincipal(r)
+	if ok {
 		vm.Authenticated = true
-		vm.Actor = p.ActorID
-		vm.ShareDialog.IsOwner = p.ActorID == a.Access.OwnerID
+		vm.Actor = viewer.ActorID
+		vm.ShareDialog.IsOwner = viewer.ActorID == a.Access.OwnerID
+		// The scan outcome is the owner's alone (SPEC-0017 RD-9).
+		if isOwner(viewer.ActorID, a) {
+			vm.Redaction = redactionBadgeOf(a.Redaction)
+		}
 	}
+	s.maskActors(r.Context(), viewer, &vm.Provenance, vm.Comments)
+	vm.ShareDialog.Provenance.Actor = vm.Provenance.Actor
 	s.renderWeb(w, r, "shell", vm)
 }
 
@@ -388,6 +396,10 @@ type shellView struct {
 	Actor         string
 	// ShareDialog is the Share button's view model (#46).
 	ShareDialog shareDialogView
+	// Redaction is the ingest scan outcome, set only when the viewer owns the
+	// artifact; nil for everyone else, so the template renders nothing
+	// (SPEC-0017 RD-9).
+	Redaction *redactionBadgeView
 }
 
 // shareDialogView is the Share dialog's view model (#46, SPEC-0001 REQ "Share
@@ -470,10 +482,15 @@ type commentLine struct {
 	ID         int64
 	Actor      string
 	OnBehalfOf string
-	Body       string
-	When       string
-	IsReply    bool
-	Deleted    bool
+	// BodyHTML is the comment body rendered through the internal/markdown
+	// goldmark pipeline (no html.WithUnsafe + the bluemonday sanitizer, the
+	// same two-layer stance as artifact bodies), so the comment-item partial
+	// shows formatted HTML instead of literal markdown source (#411). The
+	// template emits it verbatim; deleted comments never reach it.
+	BodyHTML template.HTML
+	When     string
+	IsReply  bool
+	Deleted  bool
 	// AnchorContext is a short human cue for a non-whole-artifact anchor — e.g.
 	// `on span s2` or `on "…quote…"` — shown as a purple prefix on the comment
 	// card (design t7a "anchor context"). Empty for a whole-artifact comment.
@@ -603,7 +620,7 @@ func toCommentLines(cs []annotation.Comment) []commentLine {
 			ID:            c.ID,
 			Actor:         c.ActorID,
 			OnBehalfOf:    c.OnBehalfOf,
-			Body:          c.Body,
+			BodyHTML:      markdown.RenderHTML(c.Body),
 			When:          humanizeSince(c.CreatedAt),
 			IsReply:       c.ParentID != nil,
 			Deleted:       c.Deleted,

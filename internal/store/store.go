@@ -13,14 +13,18 @@
 package store
 
 import (
+	"log/slog"
 	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/id"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
@@ -53,6 +57,12 @@ type Store struct {
 	registry   *sharetype.Registry
 	newID      func() (string, error)
 	emitter    CreationEmitter
+
+	// The ingest secret scan (scan.go).
+	scanner     *redact.Scanner
+	rejectTypes []artifact.ShareType
+	metrics     *metrics.Registry
+	log         *slog.Logger
 }
 
 // CreationEvent is the transport-agnostic fact that an artifact came into
@@ -78,12 +88,51 @@ type CreationEvent struct {
 	// Tags are client-asserted (ADR-0018): carried so a consumer can route on
 	// them, never so it can trust them.
 	Tags []string
+	// ActorKind and Auth are the creator's server-derived credential class
+	// (ADR-0022, SPEC-0016 EV-4).
+	ActorKind event.ActorKind
+	Auth      event.AuthMethod
+	// OwnerID is the artifact's owner, carried so owned subscriptions can be
+	// selected without a lookup (ADR-0029). It is never put on the wire
+	// (SPEC-0016 EV-7).
+	OwnerID string
+}
+
+// Event is the artifact.created lifecycle event this creation announces. It is
+// what makes CreationEmitter a thin adapter over event.Emitter: an
+// implementation forwards Emit(ev.Event()), so the creation path and every
+// other kind share one encoder.
+//
+// Governing: ADR-0022, SPEC-0016 EV-1 "Event Kind Registry", EV-3 "Payload
+// Shape"
+func (c CreationEvent) Event() event.Event {
+	return event.Event{
+		Kind: event.ArtifactCreated,
+		Subject: event.Subject{
+			PublicID:  c.PublicID,
+			ShareType: c.ShareType,
+			Title:     c.Title,
+			WebPath:   c.WebPath,
+			Tags:      c.Tags,
+			ExpiresAt: c.ExpiresAt,
+			OwnerID:   c.OwnerID,
+		},
+		Actor: event.Actor{
+			ID:         c.ActorID,
+			Channel:    artifact.Channel(c.Channel),
+			OnBehalfOf: c.OnBehalfOf,
+			Kind:       c.ActorKind,
+			Auth:       c.Auth,
+		},
+		Model: c.Model,
+	}
 }
 
 // CreationEmitter receives post-commit creation events. Implementations MUST
 // be safe for concurrent use and MUST NOT block or panic the caller: an emit
 // failure is the emitter's problem, never the create request's
-// (SPEC-0012 REQ "Event Emission on Artifact Creation").
+// (SPEC-0012 REQ "Event Emission on Artifact Creation"). The outbound emitter
+// implements it by forwarding CreationEvent.Event to event.Emitter.
 type CreationEmitter interface {
 	EmitArtifactCreated(CreationEvent)
 }
@@ -107,6 +156,20 @@ type Options struct {
 	// (REST/web/CLI/MCP) at this single choke point. Nil = inert
 	// (SPEC-0012 REQ "Delivery Targets from Configuration").
 	Emitter CreationEmitter
+	// Scanner is the ingest secret scanner (ADR-0023, SPEC-0017). Every
+	// artifact and bundle create scans its title and bodies with it before
+	// anything is stored. There is no unscanned mode: with a nil Scanner,
+	// every create fails closed as an internal error.
+	Scanner *redact.Scanner
+	// RedactionRejectTypes lists the share types whose creates refuse a
+	// detected secret rather than mask it (CAIRN_REDACTION_REJECT_TYPES). Nil
+	// means DefaultRedactionRejectTypes; an empty, non-nil list rejects none.
+	RedactionRejectTypes []string
+	// Metrics counts each scan in cairn_redactions_total. Nil counts nothing.
+	Metrics *metrics.Registry
+	// Logger receives the WARN for each field stored unscanned under
+	// CAIRN_REDACTION_OVERSIZE=store_unscanned. Nil means slog.Default().
+	Logger *slog.Logger
 }
 
 // New constructs a Store over a Postgres pool and an object store.
@@ -127,6 +190,10 @@ func New(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *Store {
 	if registry == nil {
 		registry = sharetype.Default()
 	}
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Store{
 		pool:       pool,
 		obj:        obj,
@@ -135,6 +202,11 @@ func New(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *Store {
 		registry:   registry,
 		newID:      newID,
 		emitter:    opts.Emitter,
+
+		scanner:     opts.Scanner,
+		rejectTypes: rejectTypesOf(opts.RedactionRejectTypes),
+		metrics:     opts.Metrics,
+		log:         logger,
 	}
 }
 
@@ -144,7 +216,7 @@ func New(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *Store {
 //
 // Governing: ADR-0017 (Outbound Webhooks), SPEC-0012 REQ "Event Emission on
 // Artifact Creation"
-func (s *Store) emitCreated(a *artifact.Artifact) {
+func (s *Store) emitCreated(a *artifact.Artifact, kind event.ActorKind, auth event.AuthMethod) {
 	if s.emitter == nil {
 		return
 	}
@@ -152,7 +224,7 @@ func (s *Store) emitCreated(a *artifact.Artifact) {
 		PublicID:   a.PublicID,
 		ShareType:  a.ShareType,
 		Title:      a.Title,
-		WebPath:    "/" + joinPath(s.registry.URLPrefixFor(a.ShareType).Web, a.PublicID),
+		WebPath:    WebPath(s.registry, a.ShareType, a.PublicID),
 		ActorID:    a.Provenance.ActorID,
 		Model:      a.Provenance.Model,
 		Channel:    string(a.Provenance.Channel),
@@ -161,8 +233,20 @@ func (s *Store) emitCreated(a *artifact.Artifact) {
 		OnBehalfOf: a.Provenance.OnBehalfOf,
 		// Cloned so the emitter never shares a backing array with the
 		// artifact the create call hands back to its caller.
-		Tags: slices.Clone(a.Tags),
+		Tags:      slices.Clone(a.Tags),
+		ActorKind: kind,
+		Auth:      auth,
+		OwnerID:   a.Access.OwnerID,
 	})
+}
+
+// WebPath is an artifact's registry-derived, origin-agnostic web path: the
+// share type's web prefix (if any) joined to the public id. Every producer of
+// a lifecycle event builds its Subject.WebPath through this one function, so a
+// run's event links to the same page as any other artifact's (SPEC-0016 EV-3
+// "Subject fields resolve the artifact for every kind").
+func WebPath(reg *sharetype.Registry, st artifact.ShareType, publicID string) string {
+	return "/" + joinPath(reg.URLPrefixFor(st).Web, publicID)
 }
 
 // joinPath joins an optional single-segment prefix and an id without a slash

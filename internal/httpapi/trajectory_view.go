@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/sharetype"
@@ -311,14 +312,17 @@ func (s *Server) handleRunShell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	vm := s.buildTrajectoryView(r.Context(), a, run)
-	if p, ok := s.optionalPrincipal(r); ok {
+	viewer, ok := s.optionalPrincipal(r)
+	if ok {
 		vm.Authenticated = true
-		vm.Actor = p.ActorID
-		vm.ShareDialog.IsOwner = p.ActorID == a.Access.OwnerID
+		vm.Actor = viewer.ActorID
+		vm.ShareDialog.IsOwner = viewer.ActorID == a.Access.OwnerID
 		if c, cerr := r.Cookie(csrfCookieName); cerr == nil {
 			vm.CSRFToken = c.Value
 		}
 	}
+	s.maskActors(r.Context(), viewer, &vm.Provenance, vm.Comments)
+	vm.ShareDialog.Provenance.Actor = vm.Provenance.Actor
 	s.renderWeb(w, r, "trajectory", vm)
 }
 
@@ -786,7 +790,7 @@ func (s *Server) reactionIndex(ctx context.Context, publicID string) map[string]
 	if s.annot == nil {
 		return out
 	}
-	tallies, err := s.annot.ReactionTallies(ctx, publicID, "")
+	tallies, err := s.annot.ReactionTallies(ctx, publicID, annotation.Viewer{})
 	if err != nil {
 		s.log.WarnContext(ctx, "web: trajectory reaction tallies failed", "id", publicID, "error", err)
 		return out
