@@ -124,23 +124,28 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 	ttl, ttlErr := requestedTTL(r, s.cfg)
 	shareType, typeErr := s.requestedShareType(r)
 	title, titleErr := requestedTitle(r)
-	if err := errs.JoinErrors(ttlErr, typeErr, titleErr, tags.addFromRequest(r)); err != nil {
+	downgrade, redErr := redactionDowngrade(redactionHeader, errs.LocHeader, r.Header.Get(redactionHeader))
+	if err := errs.JoinErrors(ttlErr, typeErr, titleErr, redErr, tags.addFromRequest(r)); err != nil {
 		s.writeError(w, r, err, nil)
 		return
 	}
 
 	// Guard the raw body; the store additionally enforces the limit incrementally.
 	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes+1)
+	creator := p.EventActor()
 	art, err := s.store.CreateArtifact(r.Context(), store.CreateArtifactInput{
-		ShareType:         shareType,
-		Title:             title,
-		Body:              body,
-		DeclaredMediaType: r.Header.Get("Content-Type"),
-		ExpectedSHA256:    r.Header.Get(store.ChecksumHeader),
-		Provenance:        artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now},
-		Access:            artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
-		ExpiresAt:         now.Add(ttl),
-		Tags:              tags.tags,
+		ShareType:          shareType,
+		Title:              title,
+		Body:               body,
+		DeclaredMediaType:  r.Header.Get("Content-Type"),
+		ExpectedSHA256:     r.Header.Get(store.ChecksumHeader),
+		Provenance:         artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now},
+		Access:             artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
+		ExpiresAt:          now.Add(ttl),
+		Tags:               tags.tags,
+		ActorKind:          creator.Kind,
+		Auth:               creator.Auth,
+		RedactionDowngrade: downgrade,
 	})
 	if err != nil {
 		s.writeError(w, r, s.mapUploadErr(err), nil)
@@ -169,6 +174,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 	// body is spooled.
 	var tags tagSet
 	ttl, ttlErr := requestedTTL(r, s.cfg)
+	downgrade, redErr := redactionDowngrade(redactionHeader, errs.LocHeader, r.Header.Get(redactionHeader))
 	_ = tags.addFromRequest(r)
 	mr := multipart.NewReader(r.Body, boundary)
 
@@ -205,7 +211,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			_ = part.Close()
 			continue
 		}
-		if err := errs.JoinErrors(ttlErr, titleErr, tags.err()); err != nil {
+		if err := errs.JoinErrors(ttlErr, titleErr, redErr, tags.err()); err != nil {
 			_ = part.Close()
 			s.writeError(w, r, err, nil)
 			return
@@ -266,7 +272,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		files = append(files, spooledFile{name: part.FileName(), media: part.Header.Get("Content-Type"), file: tmp, size: n})
 	}
 
-	if err := errs.JoinErrors(ttlErr, titleErr, tags.err()); err != nil {
+	if err := errs.JoinErrors(ttlErr, titleErr, redErr, tags.err()); err != nil {
 		s.writeError(w, r, err, nil)
 		return
 	}
@@ -286,6 +292,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 	}
 
 	now := s.now()
+	actor := p.EventActor()
 	prov := artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now}
 	access := artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink}
 	expires := now.Add(ttl)
@@ -298,14 +305,17 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			return
 		}
 		art, err := s.store.CreateArtifact(r.Context(), store.CreateArtifactInput{
-			ShareType:         shareType,
-			Title:             firstNonEmpty(title, f.name),
-			Body:              f.file,
-			DeclaredMediaType: f.media,
-			Provenance:        prov,
-			Access:            access,
-			ExpiresAt:         expires,
-			Tags:              tags.tags,
+			ShareType:          shareType,
+			Title:              firstNonEmpty(title, f.name),
+			Body:               f.file,
+			DeclaredMediaType:  f.media,
+			Provenance:         prov,
+			Access:             access,
+			ExpiresAt:          expires,
+			Tags:               tags.tags,
+			ActorKind:          actor.Kind,
+			Auth:               actor.Auth,
+			RedactionDowngrade: downgrade,
 		})
 		if err != nil {
 			s.writeError(w, r, s.mapUploadErr(err), nil)
@@ -320,12 +330,15 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		members = append(members, store.MemberInput{Name: f.name, Body: f.file, DeclaredMediaType: f.media})
 	}
 	art, err := s.store.CreateBundle(r.Context(), store.CreateBundleInput{
-		Title:      title,
-		Members:    members,
-		Provenance: prov,
-		Access:     access,
-		ExpiresAt:  expires,
-		Tags:       tags.tags,
+		Title:              title,
+		Members:            members,
+		Provenance:         prov,
+		Access:             access,
+		ExpiresAt:          expires,
+		Tags:               tags.tags,
+		ActorKind:          actor.Kind,
+		Auth:               actor.Auth,
+		RedactionDowngrade: downgrade,
 	})
 	if err != nil {
 		s.writeError(w, r, s.mapUploadErr(err), nil)
@@ -349,11 +362,14 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	}
 	// A link read needs no credential, but an owner who sends one also sees
 	// the scan outcome (SPEC-0017 RD-9).
-	var viewer string
-	if p, ok := s.optionalPrincipal(r); ok {
-		viewer = p.ActorID
+	viewer, _ := s.optionalPrincipal(r)
+	var viewerActor string
+	if viewer != nil {
+		viewerActor = viewer.ActorID
 	}
-	s.writeJSON(w, http.StatusOK, s.toViewerArtifactResponse(art, viewer))
+	resp := s.toViewerArtifactResponse(art, viewerActor)
+	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
+	s.writeJSON(w, http.StatusOK, resp)
 }
 
 // handleGetBody streams the raw body, re-verifiable against the stored SHA-256.

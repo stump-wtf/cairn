@@ -89,6 +89,14 @@ type Config struct {
 	OIDCIssuer       string // e.g. https://pocket-id.stump.rocks
 	OIDCClientID     string // defaults to "cairn"
 	OIDCClientSecret string
+	// OIDCTrustEmail declares the OIDC issuer authoritative for its users'
+	// emails: its email claim counts as verified whatever its email_verified
+	// claim says. For an IdP the operator runs, whose users cannot set their
+	// own email (Pocket ID with LDAP sync sends email_verified false unless
+	// EMAILS_VERIFIED is set). Never set it for an IdP where a user types
+	// their own email: a verified email links to, and claims, the user who
+	// owns it (SPEC-0023 REQ "Users and Identities").
+	OIDCTrustEmail bool
 
 	// GitHub human login (SPEC-0012): a second production provider beside
 	// Pocket ID. OAuth 2.0 authorization-code — GitHub has no OIDC login — so
@@ -107,6 +115,12 @@ type Config struct {
 	// X-Cairn-Signature header. Empty URL list = the feature is inert.
 	OutboundWebhookURLs   []string
 	OutboundWebhookSecret string
+
+	// ApprovalReactions is CAIRN_APPROVAL_REACTIONS split on commas: the emoji
+	// whose reaction is an approval (ADR-0022, SPEC-0016 EV-5). Empty means the
+	// default class, 👍 ✅ ✔️. cmd/cairnd normalizes and validates it with
+	// annotation.NewApprovalClass at startup, so a bad entry fails the process.
+	ApprovalReactions []string
 
 	// OAuth 2.1 authorization-server tuning (SPEC-0007, ADR-0004):
 	// access-token lifetime (~1h default), rotating refresh-token lifetime
@@ -192,10 +206,25 @@ func Load() (*Config, error) {
 	if err := validateWebhookURLs(c.OutboundWebhookURLs); err != nil {
 		return nil, err
 	}
+	// Governing: SPEC-0016 EV-5 "Approval Class and the Approval Bit".
+	for _, raw := range strings.Split(os.Getenv("CAIRN_APPROVAL_REACTIONS"), ",") {
+		if e := strings.TrimSpace(raw); e != "" {
+			c.ApprovalReactions = append(c.ApprovalReactions, e)
+		}
+	}
 
 	var err error
 	if c.DevInsecureBearerAuth, err = envBool("CAIRN_DEV_INSECURE_BEARER_AUTH", false); err != nil {
 		return nil, err
+	}
+	if c.OIDCTrustEmail, err = envBool("CAIRN_OIDC_TRUST_EMAIL", false); err != nil {
+		return nil, err
+	}
+	// The insecure bearer lets anyone act as anyone, delete included (audit
+	// A21). An https base URL means a real deployment, so refuse to boot
+	// rather than serve it (SPEC-0023 REQ "Users and Identities").
+	if c.DevInsecureBearerAuth && strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.BaseURL)), "https://") {
+		return nil, fmt.Errorf("CAIRN_DEV_INSECURE_BEARER_AUTH is enabled with an https CAIRN_BASE_URL (%s): the insecure bearer trusts any token as any actor and is for local http development only", c.BaseURL)
 	}
 	if c.S3UseSSL, err = envBool("CAIRN_S3_USE_SSL", false); err != nil {
 		return nil, err

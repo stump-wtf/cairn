@@ -17,6 +17,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/httpapi/authprovider"
 	"github.com/stump-wtf/cairn/internal/session"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // EnableGitHub wires the GitHub login provider when configured. A no-op
@@ -190,7 +191,19 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad destination", http.StatusBadRequest)
 		return
 	}
-	sess, err := s.sessions.Create(r.Context(), identity.Issuer, identity.Subject, identity.Actor, s.cfg.SessionTTL)
+	u, actor, err := s.resolveSignIn(r.Context(), user.Identity{
+		Issuer:        identity.Issuer,
+		Subject:       identity.Subject,
+		Email:         identity.Email,
+		EmailVerified: identity.EmailVerified,
+		Handle:        identity.Handle,
+	})
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "github: resolve user failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	sess, err := s.sessions.Create(r.Context(), identity.Issuer, identity.Subject, actor, u.ID, s.cfg.SessionTTL)
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "github: create session failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

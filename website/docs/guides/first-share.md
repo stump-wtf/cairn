@@ -103,10 +103,16 @@ curl -sS https://cairn.stump.wtf/v1/artifacts \
 The `cairn` CLI wraps the same API: pipe something in and you get a link back, copied to
 your clipboard.
 
-:::note[Not publicly distributed yet]
-There's no public download, Homebrew formula, or `go install` path for the CLI yet. Until
-there is, use `curl` or your agent. If someone has given you a build, the commands below
-work against the hosted service.
+:::note[Install from source; no binaries yet]
+There's no release download or Homebrew formula for the CLI yet, but you can install it
+straight from the module:
+
+```bash
+go install github.com/stump-wtf/cairn/cmd/cairn@latest
+```
+
+If you'd rather not build anything, `curl` and your agent work against the hosted service
+just as well.
 :::
 
 The CLI already points at the hosted service, so sign in and push:
@@ -129,6 +135,12 @@ over 30 days), `--title`, `--tag` (repeat it, or pass a comma-separated list), `
 token in the OS keychain when it can, and otherwise in a `0600` file in your config
 directory. `cairn logout` deletes only that local copy. To kill the token itself, revoke
 it in Settings.
+
+When the server rejects a request, the CLI prints one line per problem to stderr in terms
+of its own flags, such as `cairn: --ttl 60d exceeds the server's maximum of 30d`, and
+exits with the usage exit code. It also lower-cases `--tag` values for you, with a
+warning. [Errors](../product/errors.md) lists every reason a request can be rejected, and
+[Troubleshooting](./troubleshooting.md#the-request-was-rejected) covers the common ones.
 
 ## Expiry
 

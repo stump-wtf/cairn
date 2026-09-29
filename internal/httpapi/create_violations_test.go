@@ -54,8 +54,11 @@ func createPathRemainingSites(t *testing.T) []guardSite {
 	// The store's own create paths, driven through their real entry points so a
 	// regression inside validate (or at the checksum or member-size check) is
 	// caught, not only one in the helpers they call. Every rejection below
-	// happens before the store touches Postgres, so no pool is needed.
-	st := store.New(nil, objectstore.NewMemory(), store.Options{MaxUploadBytes: 10})
+	// happens before the store touches Postgres, so no pool is needed. The
+	// scanner is the shared test one: a store without a scanner fails every
+	// create closed (ADR-0023), so the member-too-large site would die at the
+	// scan, not at the size check.
+	st := store.New(nil, objectstore.NewMemory(), withScanner(store.Options{MaxUploadBytes: 10}))
 	now := time.Now()
 	prov := artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelAPI, CapturedAt: now}
 	access := artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink}
@@ -376,8 +379,9 @@ func TestViolationBundleTooManyMembers(t *testing.T) {
 		wantViolation{"members", errs.LocForm, errs.ReasonTooMany, float64(store.MaxBundleMembers), errs.UnitCount, "<none>"})
 }
 
-// A checksum mismatch names the header, echoes the digest the caller sent,
-// and still matches errs.ErrChecksumMismatch in the store.
+// A checksum mismatch names the header, echoes no digest (SPEC-0017 RD-9:
+// both digests are fingerprints of the raw body), and still matches
+// errs.ErrChecksumMismatch in the store.
 func TestIntegrationViolationChecksumMismatch(t *testing.T) {
 	srv := testServer(t, noRateLimit(), store.Options{MaxUploadBytes: 1 << 20})
 	sum := sha256.Sum256([]byte("something else"))
@@ -386,7 +390,7 @@ func TestIntegrationViolationChecksumMismatch(t *testing.T) {
 	env := postExpect(t, srv.URL+"/v1/artifacts", map[string]string{store.ChecksumHeader: sent},
 		strings.NewReader("the body"), http.StatusBadRequest)
 	assertViolations(t, env, errs.CodeValidation,
-		wantViolation{store.ChecksumHeader, errs.LocHeader, errs.ReasonChecksum, nil, "", sent})
+		wantViolation{store.ChecksumHeader, errs.LocHeader, errs.ReasonChecksum, nil, "", "<none>"})
 }
 
 // The multipart bundle path creates normally when every member is valid, so

@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/store"
 )
 
-// Governing: ADR-0017 (Outbound Webhooks), SPEC-0012 REQ "Event Payload"
+// Governing: ADR-0017 (Outbound Webhooks), SPEC-0012 REQ "Event Payload";
+// ADR-0022, SPEC-0016 EV-3 "Payload Shape"
 
 var updateGolden = flag.Bool("update", false, "rewrite the testdata/*.golden.json payload files")
 
@@ -23,9 +25,12 @@ func goldenEmitter() *Emitter {
 	return New(nil, "", "https://cairn.example", slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
-// restEvent is a creation over REST/CLI: no on-behalf-of, no tags. Its golden
-// was generated before the payload grew on_behalf_of and tags, so a match
-// proves that growth is byte-for-byte additive for every existing consumer.
+// restEvent is a creation over REST/CLI with a personal access token: no
+// on-behalf-of, no tags. Its golden was generated before the payload grew
+// on_behalf_of and tags, and regenerated exactly once for ADR-0022, whose only
+// change is the appended actor_kind and auth keys. A match proves every other
+// byte is unchanged for every existing consumer (SPEC-0016 EV-3
+// "artifact.created gains only appended keys").
 func restEvent() store.CreationEvent {
 	return store.CreationEvent{
 		PublicID:  "7Kq2mZ",
@@ -36,6 +41,10 @@ func restEvent() store.CreationEvent {
 		Model:     "claude-opus-5",
 		Channel:   "via API",
 		ExpiresAt: time.Date(2026, 9, 18, 8, 0, 0, 0, time.UTC),
+		ActorKind: event.KindAgent,
+		Auth:      event.AuthPAT,
+		// Routing only: never on the wire, so the golden cannot contain it.
+		OwnerID: "owner-never-on-the-wire",
 	}
 }
 
@@ -46,6 +55,7 @@ func handoffEvent() store.CreationEvent {
 	ev.ShareType = artifact.TypeBundle
 	ev.Title = "handoff: fix flaky reaper test"
 	ev.Channel = "via MCP"
+	ev.Auth = event.AuthOAuth
 	ev.OnBehalfOf = "claude-code/2.1.0"
 	ev.Tags = []string{
 		"handoff",
@@ -87,7 +97,7 @@ var (
 )
 
 func TestGoldenPayloadREST(t *testing.T) {
-	raw, err := goldenEmitter().encode(restEvent(), goldenEventID, goldenCreatedAt)
+	raw, err := goldenEmitter().encode(restEvent().Event(), goldenEventID, goldenCreatedAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +105,7 @@ func TestGoldenPayloadREST(t *testing.T) {
 }
 
 func TestGoldenPayloadHandoff(t *testing.T) {
-	raw, err := goldenEmitter().encode(handoffEvent(), goldenEventID, goldenCreatedAt)
+	raw, err := goldenEmitter().encode(handoffEvent().Event(), goldenEventID, goldenCreatedAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +118,7 @@ func TestGoldenPayloadHandoff(t *testing.T) {
 func TestEmptyTagsOmitted(t *testing.T) {
 	ev := restEvent()
 	ev.Tags = []string{}
-	raw, err := goldenEmitter().encode(ev, goldenEventID, goldenCreatedAt)
+	raw, err := goldenEmitter().encode(ev.Event(), goldenEventID, goldenCreatedAt)
 	if err != nil {
 		t.Fatal(err)
 	}

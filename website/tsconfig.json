@@ -4,8 +4,15 @@
 {
   "extends": "@docusaurus/tsconfig",
   "compilerOptions": {
-    "baseUrl": ".",
-    "ignoreDeprecations": "6.0",
+    // TypeScript 7 removed baseUrl, and @docusaurus/tsconfig still sets it, so
+    // null unsets the inherited value. paths is restated here because a paths
+    // entry resolves against the tsconfig that declares it: inherited from
+    // node_modules/@docusaurus/tsconfig, `@site/*` would point inside that
+    // package instead of at this site.
+    "baseUrl": null,
+    "paths": {
+      "@site/*": ["./*"]
+    },
     "strict": true,
     // The record pipeline is loaded by three different runtimes — jiti
     // (Docusaurus config and plugin loading), plain `node` (the generate script

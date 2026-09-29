@@ -97,7 +97,7 @@ func newTestStore(t *testing.T, o Options) (*Store, *pgxpool.Pool) {
 	}
 
 	t.Cleanup(pool.Close)
-	return New(pool, obj, o), pool
+	return New(pool, obj, withScanner(t, o)), pool
 }
 
 func envOr(key, def string) string {
@@ -230,14 +230,16 @@ func TestHashMismatchRejected(t *testing.T) {
 	if !errors.Is(err, errs.ErrChecksumMismatch) {
 		t.Fatalf("err = %v, want it to still match errs.ErrChecksumMismatch", err)
 	}
-	// The error is logged, so it must not carry the received body's digest.
+	// The error is logged, so it must not carry the received body's digest, and
+	// the violation must not echo the declared one either: both are digests of
+	// the raw, unscanned body (SPEC-0017 RD-9).
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte("body with a wrong declared checksum"))); strings.Contains(err.Error(), got) {
 		t.Fatalf("checksum error carries the received body's SHA-256: %v", err)
 	}
 	vs := errs.ViolationsOf(err)
 	if len(vs) != 1 || vs[0].Field != ChecksumHeader || vs[0].Location != errs.LocHeader ||
-		vs[0].Reason != errs.ReasonChecksum || vs[0].Value == nil || *vs[0].Value != in.ExpectedSHA256 {
-		t.Fatalf("violations = %+v, want one checksum_mismatch on %s echoing the sent digest", vs, ChecksumHeader)
+		vs[0].Reason != errs.ReasonChecksum || vs[0].Value != nil {
+		t.Fatalf("violations = %+v, want one checksum_mismatch on %s with no digest echoed", vs, ChecksumHeader)
 	}
 
 	var artifacts int

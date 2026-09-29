@@ -107,8 +107,12 @@ owners.
 Cairn MUST keep a `users` table and a `user_identities` table with one row per `(issuer, subject)`
 that has signed in. A sign-in MUST resolve its identity by `(issuer, subject)`. A new identity MUST
 link to an existing user only when the provider asserts a verified email equal (after lower-casing)
-to that user's primary email; otherwise it MUST create a new user. The OIDC callback MUST ignore an
-email whose `email_verified` claim is not true. GitHub identities MUST key on the numeric account id.
+to that user's primary email; otherwise it MUST create a new user. Matching MUST NOT be one-shot: an
+identity whose user has no verified primary email MUST be matched the same way on every sign-in that
+carries a verified email, and move to the user it matches. The OIDC callback MUST ignore an email
+whose `email_verified` claim is not true, unless the operator has declared the issuer authoritative
+for emails (`CAIRN_OIDC_TRUST_EMAIL`), which MUST default off. GitHub identities MUST key on the
+numeric account id.
 
 Every owner and actor reference MUST be a user id. Display surfaces MAY show the user's email to
 themselves and to members of a shared team, and MUST show a display handle, not an email, to
@@ -127,7 +131,19 @@ configured, and `CAIRN_DEV_INSECURE_BEARER_AUTH` MUST refuse to start when `CAIR
 #### Scenario: Unverified email cannot claim a user
 
 - **WHEN** an OIDC identity presents `email: victim@example.com` with `email_verified: false`
-- **THEN** a new user is created, and the victim's artifacts are not reachable by it
+- **THEN** a new user is created, and the victim's artifacts are not reachable by it, on that sign-in
+  or any later one that is still unverified
+
+#### Scenario: Issuer trusted for emails
+
+- **GIVEN** `CAIRN_OIDC_TRUST_EMAIL` is set for the operator's own Pocket ID
+- **WHEN** a user signs in there as `joe@example.com` with no `email_verified` claim
+- **THEN** the email counts as verified, and the sign-in reaches the user and artifacts it owns
+
+#### Scenario: A later verified sign-in matches
+
+- **WHEN** an identity's first sign-in carried an unverified email, and a later one carries it verified
+- **THEN** the later sign-in moves the identity to the user that email matches
 
 #### Scenario: Dev login on a GitHub-only deployment
 

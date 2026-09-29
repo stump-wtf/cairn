@@ -32,7 +32,9 @@ agents share a machine, run under different tools, or start days apart.
    [handoff tag convention](../product/tags.md#the-handoff-convention) adds optional
    tags for the lane that should run it (`lane:m`), how hard it is (`size:m`), the
    repository and issue (`repo:…`, `issue:…`), where it came from (`source:…`), and how
-   to report back (`reply:cairn-comment`).
+   to report back (`reply:cairn-comment`). A `reply:cairn-comment` reply is left as a
+   comment on the handoff, and nothing notifies you when it arrives: Cairn announces new
+   artifacts only, not comments or reactions, so check the artifact yourself.
 
 3. **Pass the handle.** Hand over a single line that carries the `mcp://cairn/<id>`
    handle, for example:
@@ -49,8 +51,8 @@ agents share a machine, run under different tools, or start days apart.
 
 5. **Close the loop.** The receiver leaves a trail on the same artifact: a 👀 reaction
    when it picks up the work, and a comment linking to the result (a pull request, a
-   report, a trace) when it's done. Anyone watching can follow along in the artifact's
-   side panel.
+   report, a trace) when it's done. Anyone who opens the artifact can follow along in
+   its side panel. Nobody is pushed a notification, so the sender has to look.
 
 Handoff prompts expire like any other artifact, 7 days after creation by default. If the
 work might wait longer, extend the expiry from the web.
@@ -71,6 +73,30 @@ the pool) and checks who created it. The full setup is in the
 [worked example](./outbound-webhooks.md#worked-example-route-handoffs-to-an-agent-pool).
 On the hosted service, outbound webhooks are set up by the operator, so check with them
 before you rely on this.
+
+The routing rules themselves live in Switchboard. Its
+[handoff lanes guide](https://switchboard.stump.wtf/docs/guides/handoff-lanes) covers the
+lanes, the rule pack that sorts handoffs into them, and what each worker receives.
+
+:::tip[Why didn't my handoff route?]
+
+Under the rule pack in Switchboard's handoff lanes guide, some handoffs are **held**: they
+land on a `hold` queue that has no workers, so nothing picks them up until a person
+looks. Others are **dropped**. Cairn doesn't see either outcome, so check the tags
+before you create the artifact:
+
+- **`size:xl` is held.**
+- **More than one `lane:` tag, or more than one `size:` tag, is held** rather than
+  guessed. Write `lane:m`, not `lane:m lane:l`.
+- **No `handoff` tag: dropped.** Without it, the artifact isn't a handoff.
+- **An `actor_id` the rule pack doesn't list: dropped.** The pack trusts only the
+  `actor_id` values its operator listed, so a new credential needs adding first. See
+  [what `actor_id` holds](../product/tags.md#what-actor_id-holds).
+
+In Switchboard, `test_webhook_rules` and `list_webhook_events` show which rule matched a
+stored event and why.
+
+:::
 
 ## The trust model
 

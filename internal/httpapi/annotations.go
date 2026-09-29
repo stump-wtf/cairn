@@ -11,6 +11,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
@@ -24,21 +25,28 @@ const maxAnnotationRequestBytes = 32 << 10
 
 // reactionRequest is the POST/DELETE reactions body: the anchor to attach to
 // and the emoji. anchor_ref is the raw locator object, validated per anchor_type
-// by the registry (an absent ref is the whole-artifact `{}`).
+// by the registry (an absent ref is the whole-artifact `{}`). on_behalf_of
+// records an agent acting for the human, exactly as on a comment (SPEC-0016
+// EV-6); it is ignored on DELETE, which matches by actor and kind alone.
 type reactionRequest struct {
 	AnchorType string          `json:"anchor_type"`
 	AnchorRef  json.RawMessage `json:"anchor_ref,omitempty"`
 	Emoji      string          `json:"emoji"`
+	OnBehalfOf string          `json:"on_behalf_of,omitempty"`
 }
 
 // reactionResponse is the JSON view of a stored reaction. ID is the handle the
-// DELETE /reactions/{rid} shape removes.
+// DELETE /reactions/{rid} shape removes. actor_kind is the server-derived kind
+// of the credential that reacted ("" for a row older than kinds), so a viewer
+// can show an agent's reaction the way it shows an agent's comment.
 type reactionResponse struct {
 	ID         int64           `json:"id"`
 	AnchorType string          `json:"anchor_type"`
 	AnchorRef  json.RawMessage `json:"anchor_ref"`
 	Emoji      string          `json:"emoji"`
 	ActorID    string          `json:"actor_id"`
+	ActorKind  string          `json:"actor_kind"`
+	OnBehalfOf string          `json:"on_behalf_of,omitempty"`
 	CreatedAt  time.Time       `json:"created_at"`
 }
 
@@ -48,13 +56,36 @@ type tallyResponse struct {
 	Reactions []tallyView `json:"reactions"`
 }
 
+// tallyView is one per-anchor emoji tally. human_count and agent_count split
+// count by the stored actor kind; rows older than kinds are in neither.
+// reactors is present only on an ?include=reactors read: the rows behind the
+// tally, oldest first, with the provenance a comment carries.
 type tallyView struct {
-	AnchorType string `json:"anchor_type"`
-	AnchorKey  string `json:"anchor_key"`
-	Emoji      string `json:"emoji"`
-	Count      int    `json:"count"`
-	Reacted    bool   `json:"reacted"`
+	AnchorType string        `json:"anchor_type"`
+	AnchorKey  string        `json:"anchor_key"`
+	Emoji      string        `json:"emoji"`
+	Count      int           `json:"count"`
+	HumanCount int           `json:"human_count"`
+	AgentCount int           `json:"agent_count"`
+	Reacted    bool          `json:"reacted"`
+	Reactors   []reactorView `json:"reactors,omitempty"`
 }
+
+// reactorView is one reaction row behind a tally: who reacted, the
+// server-derived kind they reacted as ("" for a row older than kinds), and the
+// self-reported harness they acted through — the same provenance fields a
+// commentResponse carries (SPEC-0016 EV-6, SPEC-0009). id is the handle
+// DELETE /reactions/{rid} takes.
+type reactorView struct {
+	ID         int64     `json:"id"`
+	ActorID    string    `json:"actor_id"`
+	ActorKind  string    `json:"actor_kind"`
+	OnBehalfOf string    `json:"on_behalf_of,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// includeReactors is the only value GET /reactions accepts for ?include.
+const includeReactors = "reactors"
 
 // commentRequest is the POST comments body. A nil parent_id is a thread root; a
 // reply may omit the anchor to inherit its root's (SPEC-0006 "Threaded
@@ -76,6 +107,7 @@ type commentResponse struct {
 	AnchorKey  string          `json:"anchor_key"`
 	ParentID   *int64          `json:"parent_id,omitempty"`
 	ActorID    string          `json:"actor_id"`
+	ActorKind  string          `json:"actor_kind"`
 	OnBehalfOf string          `json:"on_behalf_of,omitempty"`
 	Body       string          `json:"body"`
 	CreatedAt  time.Time       `json:"created_at"`
@@ -108,7 +140,7 @@ func (s *Server) handleReact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reaction, created, err := s.annot.React(
-		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, p.ActorID)
+		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, bodyActor(p, req.OnBehalfOf))
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id, "anchor_type": req.AnchorType})
 		return
@@ -137,7 +169,7 @@ func (s *Server) handleUnreact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.annot.Unreact(
-		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, p.ActorID); err != nil {
+		r.Context(), id, sharetype.Anchor(req.AnchorType), req.AnchorRef, req.Emoji, p.EventActor()); err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id, "anchor_type": req.AnchorType})
 		return
 	}
@@ -159,7 +191,7 @@ func (s *Server) handleUnreactByID(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, errs.Validationf("reaction id must be an integer"), map[string]string{"id": id})
 		return
 	}
-	if err := s.annot.UnreactByID(r.Context(), id, rid, p.ActorID); err != nil {
+	if err := s.annot.UnreactByID(r.Context(), id, rid, p.EventActor()); err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
@@ -171,12 +203,49 @@ func (s *Server) handleUnreactByID(w http.ResponseWriter, r *http.Request) {
 // artifact's link capability: a valid id reads, an unknown/expired id is a
 // uniform 404. When the reader is authenticated, each tally carries their "did
 // I react" flag; an anonymous link read gets all-false.
+//
+// ?include=reactors also returns the rows behind each tally with their actor,
+// kind and on_behalf_of, so a viewer can show an agent's reaction the way it
+// shows an agent's comment. It is opt-in so the default read stays the one
+// GROUP BY the per-anchor tier specifies. The rows are a second read: under a
+// concurrent react a tally's count and its reactors can differ by that row.
+//
+// Governing: SPEC-0006 REQ "Count Aggregation", SPEC-0016 EV-6, SPEC-0009 REQ
+// "Actor Captures Human and On-Behalf-Of Model".
 func (s *Server) handleListReactions(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	withReactors := false
+	switch r.URL.Query().Get("include") {
+	case "":
+	case includeReactors:
+		withReactors = true
+	default:
+		s.writeError(w, r, errs.Validationf("include must be %q", includeReactors), map[string]string{"id": id})
+		return
+	}
 	tallies, err := s.annot.ReactionTallies(r.Context(), id, s.optionalActor(r))
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
+	}
+	var byTally map[tallyKey][]reactorView
+	if withReactors {
+		rows, err := s.annot.ListReactions(r.Context(), id)
+		if err != nil {
+			s.writeError(w, r, err, map[string]string{"id": id})
+			return
+		}
+		byTally = make(map[tallyKey][]reactorView, len(tallies))
+		for _, row := range rows {
+			k := tallyKey{string(row.Anchor.Type), row.Anchor.Key, row.Emoji}
+			byTally[k] = append(byTally[k], reactorView{
+				ID:         row.ID,
+				ActorID:    row.ActorID,
+				ActorKind:  string(row.ActorKind),
+				OnBehalfOf: row.OnBehalfOf,
+				CreatedAt:  row.CreatedAt,
+			})
+		}
 	}
 	out := tallyResponse{Reactions: make([]tallyView, 0, len(tallies))}
 	for _, t := range tallies {
@@ -185,11 +254,18 @@ func (s *Server) handleListReactions(w http.ResponseWriter, r *http.Request) {
 			AnchorKey:  t.AnchorKey,
 			Emoji:      t.Emoji,
 			Count:      t.Count,
+			HumanCount: t.HumanCount,
+			AgentCount: t.AgentCount,
 			Reacted:    t.Reacted,
+			Reactors:   byTally[tallyKey{string(t.AnchorType), t.AnchorKey, t.Emoji}],
 		})
 	}
 	s.writeJSON(w, http.StatusOK, out)
 }
+
+// tallyKey is the (anchor_type, anchor_key, emoji) grouping a tally and its
+// reactor rows share.
+type tallyKey struct{ anchorType, anchorKey, emoji string }
 
 // handleComment posts a comment or a one-level reply (SPEC-0006 REQ "Threaded
 // Comments"). Registry validation gates the anchor — a comment on a
@@ -211,8 +287,7 @@ func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
 		AnchorType: sharetype.Anchor(req.AnchorType),
 		AnchorRef:  req.AnchorRef,
 		ParentID:   req.ParentID,
-		ActorID:    p.ActorID,
-		OnBehalfOf: req.OnBehalfOf,
+		Actor:      bodyActor(p, req.OnBehalfOf),
 		Body:       req.Body,
 	})
 	if err != nil {
@@ -222,6 +297,18 @@ func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
 	resp := toCommentResponse(comment)
 	resp.OwnerRedaction = ownerRedactionOf(comment.Redaction)
 	s.writeJSON(w, http.StatusCreated, resp)
+}
+
+// bodyActor is the author of a REST comment or reaction. The actor — and so
+// its kind and auth — comes from the principal alone. on_behalf_of is the one
+// asserted field the body may set: it names a harness for display and never
+// changes the derived kind, and neither commentRequest nor reactionRequest has
+// a field a client could use to assert one (SPEC-0016 EV-4 "Client cannot
+// assert the kind", EV-6 on_behalf_of "populated exactly as for comments").
+func bodyActor(p *Principal, onBehalfOf string) event.Actor {
+	a := p.EventActor()
+	a.OnBehalfOf = onBehalfOf
+	return a
 }
 
 // handleListComments returns one artifact's comments in thread order with
@@ -235,8 +322,18 @@ func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := commentsResponse{Comments: make([]commentResponse, 0, len(comments))}
+	actors := make([]string, 0, len(comments))
 	for _, c := range comments {
 		out.Comments = append(out.Comments, toCommentResponse(c))
+		actors = append(actors, c.ActorID)
+	}
+	// This read is link-capability, so anonymous readers reach it too: every
+	// commenter but the viewer is shown by display handle, exactly as the web
+	// shell's thread is (SPEC-0023 REQ "Users and Identities", audit A18).
+	viewer, _ := s.optionalPrincipal(r)
+	shown := s.displayActors(r.Context(), viewer, actors...)
+	for i := range out.Comments {
+		out.Comments[i].ActorID = shown[out.Comments[i].ActorID]
 	}
 	s.writeJSON(w, http.StatusOK, out)
 }
@@ -258,20 +355,22 @@ func (s *Server) decodeAnnotationBody(w http.ResponseWriter, r *http.Request, ds
 	return nil
 }
 
-// optionalActor resolves the caller's actor id when the read carries valid
-// credentials, or "" for an anonymous link read. It never rejects: annotation
-// reads are gated by the artifact's link capability, not by authentication, so
-// an absent or invalid credential simply yields the anonymous "did I react"
-// view (all false).
-func (s *Server) optionalActor(r *http.Request) string {
+// optionalActor resolves the caller's actor id and derived kind when the read
+// carries valid credentials, or the zero Viewer for an anonymous link read. It
+// never rejects: annotation reads are gated by the artifact's link capability,
+// not by authentication, so an absent or invalid credential simply yields the
+// anonymous "did I react" view (all false). The kind matters: a human's
+// browser must not see their agent's reaction as their own toggle.
+func (s *Server) optionalActor(r *http.Request) annotation.Viewer {
 	if s.auth == nil {
-		return ""
+		return annotation.Viewer{}
 	}
 	p, err := s.auth.Authenticate(r)
 	if err != nil || p == nil {
-		return ""
+		return annotation.Viewer{}
 	}
-	return p.ActorID
+	a := p.EventActor()
+	return annotation.Viewer{ID: a.ID, Kind: a.Kind}
 }
 
 func toReactionResponse(r annotation.Reaction) reactionResponse {
@@ -281,6 +380,8 @@ func toReactionResponse(r annotation.Reaction) reactionResponse {
 		AnchorRef:  r.Anchor.Ref,
 		Emoji:      r.Emoji,
 		ActorID:    r.ActorID,
+		ActorKind:  string(r.ActorKind),
+		OnBehalfOf: r.OnBehalfOf,
 		CreatedAt:  r.CreatedAt,
 	}
 }
@@ -293,6 +394,7 @@ func toCommentResponse(c annotation.Comment) commentResponse {
 		AnchorKey:  c.Anchor.Key,
 		ParentID:   c.ParentID,
 		ActorID:    c.ActorID,
+		ActorKind:  string(c.ActorKind),
 		OnBehalfOf: c.OnBehalfOf,
 		Body:       c.Body,
 		CreatedAt:  c.CreatedAt,

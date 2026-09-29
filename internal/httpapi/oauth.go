@@ -12,6 +12,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/oauth"
 	"github.com/stump-wtf/cairn/internal/session"
 )
@@ -740,5 +741,6 @@ func (a *OAuthAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 		Channel: artifact.ChannelAPI,
 		IsAgent: true,
 		Scopes:  scopes,
+		Auth:    event.AuthOAuth,
 	}, nil
 }
