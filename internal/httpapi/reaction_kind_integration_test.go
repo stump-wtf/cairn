@@ -29,7 +29,7 @@ import (
 // her own 👍 apart.
 func TestIntegrationReactionPerKindOwnership(t *testing.T) {
 	pool := newTestPool(t)
-	st := store.New(pool, objectstore.NewMemory(), store.Options{MaxUploadBytes: 1 << 20})
+	st := store.New(pool, objectstore.NewMemory(), withScanner(store.Options{MaxUploadBytes: 1 << 20}))
 	cfg := mcpConfig()
 	cfg.DevInsecureBearerAuth = true // bearer "alice" is alice's agent (api_token)
 	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
