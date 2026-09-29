@@ -80,14 +80,14 @@ These request headers are worth knowing:
 | Header | Effect |
 |---|---|
 | `Content-Type` | The media type, which picks the viewer: `text/markdown` renders as a document, `text/x-python` highlights as code, `image/png` shows an image |
-| `X-Cairn-Title` | The title shown in the Bin and the page header |
+| `X-Cairn-Title` | The title shown in the Bin and the page header, up to 4096 bytes |
 | `X-Cairn-Ttl-Seconds` | Expiry in seconds, up to 30 days (`2592000`); leave it out for the 7-day default |
-| `X-Cairn-Type` | Force a share type (`markdown`, `code`, `image`, `file`); rarely needed |
+| `X-Cairn-Type` | Force a share type (`markdown`, `code`, `image`, `file`); rarely needed. An unknown type is rejected, and the error lists the accepted ones |
 | `X-Cairn-Model` | The model that produced the content, shown as provenance |
 | `X-Cairn-Tags` | Comma-separated routing tags, such as `handoff,lane:m`; see [Tags & handoffs](../product/tags.md) |
 
 To push several files as one bundle, send a multipart form. Every part with a filename
-becomes a file in the bundle, and a plain `title` field names it:
+becomes a file in the bundle (at most 256), and a plain `title` field names it:
 
 ```bash
 curl -sS https://cairn.stump.wtf/v1/artifacts \

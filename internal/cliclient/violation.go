@@ -37,6 +37,10 @@ const (
 	ReasonTooMany    = "too_many"
 	ReasonTooLarge   = "too_large"
 	ReasonInvalid    = "invalid"
+	// ReasonSecretDetected and ReasonTooLargeToScan are the ingest secret
+	// scan's rejections (SPEC-0017 RD-11).
+	ReasonSecretDetected = "secret_detected"
+	ReasonTooLargeToScan = "too_large_to_scan"
 )
 
 // UnitSeconds and UnitBytes are the limit units the CLI reformats.

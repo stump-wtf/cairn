@@ -348,7 +348,10 @@ jobs:
           CAIRN_TEST_DATABASE_URL: postgres://cairn:cairn@postgres:5432/cairn?sslmode=disable
           CAIRN_TEST_S3_ENDPOINT: garage:3900
           CAIRN_TEST_S3_BUCKET: cairn
-        run: make test GOTESTFLAGS="-timeout=$GO_TEST_TIMEOUT"
+        # -count=1 (#399): a warm toolcache must not report the DB-gated
+        # suites `(cached)` without running them; the timeout itself stays
+        # sized in GO_TEST_TIMEOUT above.
+        run: make test GOTESTFLAGS="-timeout=$GO_TEST_TIMEOUT -count=1"
 
       # The S3 harnesses are the dangerous half: unlike the DB ones they do not
       # skip when CAIRN_TEST_S3_ENDPOINT is unusable, they fall back to an
