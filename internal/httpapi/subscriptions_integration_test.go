@@ -60,9 +60,10 @@ func subsAPIServer(t *testing.T, withKey bool, logs io.Writer) (*httptest.Server
 	pool := newTestPool(t)
 	withTokenOperators(t, pool, &cfg)
 	cfg.Subscriptions = newTestSubscriptions(pool, testSubsPolicy(), withKey)
+	cfg.Redaction = sharedTestScanner(t)
 	var opts store.Options
 	wireSubscriptions(t, pool, &cfg, &opts)
-	st := store.New(pool, objectstore.NewMemory(), opts)
+	st := store.New(pool, objectstore.NewMemory(), withScanner(opts))
 	srv := httptest.NewServer(newResolvedServer(t, st, cfg, slog.New(slog.NewTextHandler(logs, nil))).Handler())
 	t.Cleanup(srv.Close)
 	return srv, &testSubs{Service: cfg.Subscriptions, pool: pool}

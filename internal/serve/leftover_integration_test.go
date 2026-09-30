@@ -19,6 +19,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/config"
 	"github.com/stump-wtf/cairn/internal/db"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/store"
 	"github.com/stump-wtf/cairn/internal/subscription"
@@ -147,6 +148,10 @@ func TestLeftoverVariableDeliversNothing(t *testing.T) {
 			Access:     artifact.AccessPolicy{OwnerUserID: u.ID, Visibility: artifact.VisibilityLink},
 			ExpiresAt:  time.Now().Add(time.Hour),
 			Tags:       []string{"handoff"},
+			// Server-derived, as every surface sets them: a creation event
+			// without them is refused before delivery (SPEC-0016 EV-4).
+			ActorKind: event.KindAgent,
+			Auth:      event.AuthAPIToken,
 		}); err != nil {
 			t.Fatalf("create: %v", err)
 		}
