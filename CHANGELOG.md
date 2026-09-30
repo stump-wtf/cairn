@@ -33,12 +33,12 @@ reaches 1.0.
   next sign-in even without a verified email. That evidence is not used when
   two or more OIDC identities acted as the same email, or for GitHub sessions
   (keyed then on the renameable login).
-  `CAIRN_API_TOKENS` entries and the dev logins resolve their actor to a user
-  the same way, so they keep the Bin they had. Reactions and comments stay
-  owned per actor kind: the reaction key becomes
-  `(artifact_id, anchor_type, anchor_key, emoji, user_id, actor_kind)`, and
-  `actor_kind` and `on_behalf_of` keep their stored values, so an agent's
-  reaction and its human's stay two rows and per-kind tallies are unchanged.
+  The dev logins resolve their actor to a user the same way, so they keep the
+  Bin they had. Reactions and comments stay owned per actor kind: the reaction
+  key becomes `(artifact_id, anchor_type, anchor_key, emoji, user_id,
+  actor_kind)`, and `actor_kind` and `on_behalf_of` keep their stored values,
+  so an agent's reaction and its human's stay two rows and per-kind tallies
+  are unchanged.
 - **Operator profile** (SPEC-0023 REQ "Operator and User Profiles" and
   "Operator Surfaces Bound Tenant Data and Never Read It", #330). The operator
   is named by `CAIRN_OPERATORS` (comma-separated `<issuer>|<subject>`) or
@@ -54,6 +54,17 @@ reaches 1.0.
   affected user reads it in Settings. Operator routes need a browser session,
   and operator status never widens what the operator may read (audit A12,
   A13).
+- **Static API tokens act only as an operator's user** (SPEC-0023 REQ "Static
+  API Tokens Act as an Operator's User", #333, audit A2). `CAIRN_API_TOKENS`
+  entries are now `secret:<user>[:agent|:human]`, where `<user>` is an
+  `<issuer>|<subject>` or a verified email that must resolve at boot to an
+  existing user who is listed in `CAIRN_OPERATORS`. A token acts as that user
+  and no other, defaults to agent scopes (no `sharing:manage`, no delete), and
+  is listed on its user's Settings page as operator-provisioned. Before this a
+  token acted as whatever string the operator typed, with human scopes by
+  default, so the operator could impersonate anyone. A token therefore no
+  longer keeps the Bin its old `secret:actor` entry had: see the upgrade note
+  on orphaned legacy Bins.
 - **Existing users land on their account when they sign in** (SPEC-0023).
   Matching by verified email is no longer one-shot: an identity whose user has
   no verified email yet is matched again on every sign-in that carries one, so
@@ -70,6 +81,56 @@ reaches 1.0.
   primary verified email.
 
 ### Upgrade notes
+
+- **Legacy `CAIRN_API_TOKENS` entries now fail boot.** Every free-form
+  `secret:actor[:role]` entry is refused, with no grace period, and
+  `cairn serve` exits with `CAIRN_API_TOKENS entry N: legacy secret:actor
+  entries are no longer accepted; …`, naming the entry's position and the new
+  form, never the secret. Before upgrading, rewrite each entry as
+  `secret:<user>[:agent|:human]` naming an operator (Settings → Account shows
+  your `<issuer>|<subject>`), make sure that operator has signed in once and
+  is in `CAIRN_OPERATORS`, and move every other consumer to a personal access
+  token. Remove the variable entirely if nothing needs it. Tokens now default
+  to the **agent** role: add `:human` where a script changes sharing, expiry
+  or deletes.
+- **A legacy token actor's Bin is orphaned unless you move it.** Migration
+  `0023` turned each old token actor into a user known by that string, and
+  until now the token reached that user. After upgrading no credential acts
+  as it: a token names an operator's own user, and a sign-in claims a legacy
+  user only by a verified email equal to its name, so a non-email actor such
+  as `ci-bot` is never claimed. Its Bin (pins, permanent artifacts, anything
+  not yet expired) stays in the database with nobody able to manage or delete
+  it. Nothing is deleted, so you can fix this any time after `0023` has run
+  (the queries need its columns), but expiring artifacts are still reaped on
+  schedule meanwhile. List what such users own:
+
+  ```sql
+  SELECT u.actor_key, a.public_id, a.title, a.expires_at
+    FROM artifacts a
+    JOIN users u ON u.id = a.owner_user_id
+   WHERE u.primary_email IS NULL
+     AND u.actor_key IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id)
+   ORDER BY u.actor_key, a.created_at;
+  ```
+
+  To keep one, move its artifacts to the operator's user, with the old actor
+  and the operator's verified email filled in. If the email matches no user
+  the update fails on `artifacts_one_owner` and changes nothing:
+
+  ```sql
+  BEGIN;
+  UPDATE artifacts
+     SET owner_user_id = (SELECT id FROM users
+                           WHERE primary_email = 'you@example.com' AND email_verified)
+   WHERE owner_user_id = (SELECT id FROM users
+                           WHERE actor_key = 'ci-bot' AND primary_email IS NULL);
+  COMMIT;
+  ```
+
+  This changes ownership only: `created_by_user_id`, comments and reactions
+  keep crediting the old actor. Never delete the legacy user, since deleting
+  a user deletes the artifacts it owns.
 
 - **Take a database backup first.** Migration `0017_users` adds the `users`
   and `user_identities` tables and `sessions.user_id`.

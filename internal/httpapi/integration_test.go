@@ -45,8 +45,9 @@ func testServer(t *testing.T, cfg Config, opts store.Options) *httptest.Server {
 		cfg.Redaction = sharedTestScanner(t)
 	}
 	pool := newTestPool(t)
+	withTokenOperators(t, pool, &cfg)
 	st := store.New(pool, objectstore.NewMemory(), withScanner(opts))
-	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	srv := httptest.NewServer(newResolvedServer(t, st, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
 	return srv
 }

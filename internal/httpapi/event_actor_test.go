@@ -67,9 +67,10 @@ func TestPrincipalEventActor(t *testing.T) {
 // database. The PAT, OAuth and session authenticators are covered end to end in
 // TestIntegrationAuthenticatorActorKind.
 func TestStaticAuthenticatorsDeriveAuth(t *testing.T) {
+	// Entries as ResolveAPITokens leaves them: bound to an operator's user.
 	tokens := NewTokenAuthenticator([]APIToken{
-		{Secret: "human-secret", ActorID: "alice"},
-		{Secret: "agent-secret", ActorID: "alice", IsAgent: true},
+		{Secret: "human-secret", User: "alice", UserID: testTokenUserID},
+		{Secret: "agent-secret", User: "alice", UserID: testTokenUserID, IsAgent: true},
 	})
 	cases := []struct {
 		name  string

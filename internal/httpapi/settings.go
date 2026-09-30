@@ -3,6 +3,8 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -58,6 +60,10 @@ type settingsView struct {
 	// the affected user may always read (SPEC-0023 REQ "Operator Surfaces
 	// Bound Tenant Data and Never Read It").
 	OperatorActions []auditRowView
+	// StaticTokens are the CAIRN_API_TOKENS entries acting as this user,
+	// listed as operator-provisioned (SPEC-0023 REQ "Static API Tokens Act as
+	// an Operator's User"). Only an operator can have any.
+	StaticTokens []staticTokenRowView
 	// Grants lists the human's live OAuth connections (A20, issue #343) —
 	// clients authorized over REST or MCP alike, each revocable here.
 	Grants []grantRowView
@@ -67,6 +73,37 @@ type settingsView struct {
 // settings page renders, for settings.js's list-refresh path.
 type grantsResponse struct {
 	Grants []grantRowView `json:"grants"`
+}
+
+// staticTokenRowView is one operator-provisioned token: its position in
+// CAIRN_API_TOKENS, its role and the scopes that role grants. The secret is
+// never part of it.
+type staticTokenRowView struct {
+	Position   int
+	IsAgent    bool
+	ScopeLabel string
+}
+
+// toStaticTokenRows projects the resolved static tokens acting as one user.
+func toStaticTokenRows(tokens []APIToken) []staticTokenRowView {
+	rows := make([]staticTokenRowView, 0, len(tokens))
+	for _, t := range tokens {
+		scopes := humanScopes()
+		if t.IsAgent {
+			scopes = agentScopes()
+		}
+		names := make([]string, 0, len(scopes))
+		for sc := range scopes {
+			names = append(names, sc)
+		}
+		sort.Strings(names)
+		rows = append(rows, staticTokenRowView{
+			Position:   t.Position,
+			IsAgent:    t.IsAgent,
+			ScopeLabel: strings.Join(names, " "),
+		})
+	}
+	return rows
 }
 
 // scopeOptionView is one checkbox in the token-creation form: the wire scope
@@ -205,6 +242,7 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	vm.StaticTokens = toStaticTokenRows(s.staticTokens.forUser(p.UserID))
 	if p.Issuer != "" && p.Subject != "" {
 		vm.Provenance = p.Issuer + "|" + p.Subject
 	}

@@ -196,12 +196,15 @@ func newAnnotationEventServer(t *testing.T) annotationEventServer {
 	st := store.New(pool, objectstore.NewMemory(), withScanner(store.Options{MaxUploadBytes: 1 << 20}))
 	cfg := mcpConfig()
 	cfg.Events = spy
+	// Both static tokens name alice, who is an operator (SPEC-0023 REQ
+	// "Static API Tokens Act as an Operator's User").
 	cfg.APITokens = []APIToken{
-		{Secret: "static-human-secret", ActorID: "alice"},
-		{Secret: "static-agent-secret", ActorID: "alice", IsAgent: true},
+		{Secret: "static-human-secret", User: "alice"},
+		{Secret: "static-agent-secret", User: "alice", IsAgent: true},
 	}
 	cfg.DevInsecureBearerAuth = true
-	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	withTokenOperators(t, pool, &cfg)
+	srv := httptest.NewServer(newResolvedServer(t, st, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
 
 	// A PAT belongs to a user (SPEC-0023 REQ "Owner Model"): alice's, the

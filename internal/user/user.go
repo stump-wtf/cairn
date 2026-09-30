@@ -296,9 +296,10 @@ func subjectIsActorKey(subject string) bool {
 	return subject != "" && !strings.Contains(subject, "@") && !strings.HasPrefix(subject, "user:")
 }
 
-// ResolveActor returns the user a string-keyed credential names: a
-// CAIRN_API_TOKENS entry, the development login, or the insecure development
-// bearer. key resolves to the user whose id it spells as "user:<id>", else the
+// ResolveActor returns the user a string-keyed credential names: the
+// development login or the insecure development bearer. CAIRN_API_TOKENS
+// entries never reach it; they name an existing operator through
+// FindByIdentity or FindByVerifiedEmail and never create a user. key resolves to the user whose id it spells as "user:<id>", else the
 // user whose actor key it is, else the user whose VERIFIED primary email it
 // is, else a new unverified user with key as its actor key, which a later
 // sign-in with that email verified claims. That is the order the ownership
@@ -329,6 +330,32 @@ func (s *Store) ResolveActor(ctx context.Context, key string) (*User, error) {
 		}
 		return u, err
 	}
+}
+
+// FindByIdentity returns the user a sign-in identity belongs to, or
+// ErrNotFound when no one has signed in with it. Unlike Resolve it never
+// creates anything: it is for configuration that must name a user who
+// already exists (SPEC-0023 REQ "Static API Tokens Act as an Operator's
+// User").
+func (s *Store) FindByIdentity(ctx context.Context, issuer, subject string) (*User, error) {
+	if issuer == "" || subject == "" {
+		return nil, ErrNotFound
+	}
+	return scanUser(s.pool.QueryRow(ctx, selectUser+`
+		 WHERE id = (SELECT user_id FROM user_identities WHERE issuer = $1 AND subject = $2)`,
+		issuer, subject))
+}
+
+// FindByVerifiedEmail returns the user whose VERIFIED primary email is email
+// (compared after NormalizeEmail), or ErrNotFound. An unverified email never
+// names a user, and nothing is created.
+func (s *Store) FindByVerifiedEmail(ctx context.Context, email string) (*User, error) {
+	email = NormalizeEmail(email)
+	if email == "" {
+		return nil, ErrNotFound
+	}
+	return scanUser(s.pool.QueryRow(ctx, selectUser+`
+		 WHERE primary_email = $1 AND email_verified`, email))
 }
 
 // rematch settles a known identity that now presents a verified email. When

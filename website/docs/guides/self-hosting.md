@@ -37,7 +37,7 @@ variable in your shell does nothing for the CLI, and the reverse is also true.
 
 | Name | Read by | What it is |
 |---|---|---|
-| `CAIRN_API_TOKENS` | the server | The list of static bearer credentials the server accepts, `secret:actor[:role]`. See [First run: bootstrap a credential](#first-run-bootstrap-a-credential). |
+| `CAIRN_API_TOKENS` | the server | Static bearer credentials for the operator's own automation, `secret:<user>[:agent\|:human]`. See [Static tokens for the operator](#static-tokens-for-the-operator). |
 | `CAIRN_TOKEN` | the `cairn` CLI | The one bearer token the CLI sends, the same as `--token`. The MCP client configs in [Connect your agent](./connect-your-agent.md) expand it from your shell too, but `/mcp` accepts only a personal access token or an OAuth token there, never a `CAIRN_API_TOKENS` secret. |
 | `CAIRN_BASE_URL` | the server | The public origin the server builds short links and its OIDC redirect URI from. |
 | `CAIRN_URL` | the `cairn` CLI | The server the CLI talks to, the same as `--url`. It defaults to the hosted service, so a self-hoster sets it. |
@@ -67,7 +67,7 @@ optional redaction allowlist that `CAIRN_REDACTION_ALLOWLIST_FILE` names (see
 | `CAIRN_S3_BUCKET` | `cairn` | Bucket name; created on connect if missing. |
 | `CAIRN_S3_REGION` | `us-east-1` | Region string most S3 implementations accept. |
 | `CAIRN_S3_USE_SSL` | `false` | Set `true` when the endpoint speaks HTTPS. |
-| `CAIRN_API_TOKENS` | *(empty)* | Static bearer credentials for headless agents, comma-separated `secret:actor[:role]`. **Empty means the bearer surface accepts no tokens** — it fails closed. Real per-agent tokens come from OAuth or a personal access token minted in Settings. Wired through the compose file above; on the Docker path with no OIDC provider yet this is the only way to get a working credential. See [First run: bootstrap a credential](#first-run-bootstrap-a-credential). |
+| `CAIRN_API_TOKENS` | *(empty)* | Static bearer credentials for **the operator's own automation**, comma-separated `secret:<user>[:agent\|:human]`. `<user>` is an [operator](#the-operator)'s `<issuer>\|<subject>` or verified email, and they must have signed in once. Tokens default to agent scopes. An entry naming anyone else, and every legacy `secret:actor` entry, **fails boot** ([details](#static-tokens-for-the-operator)). **Empty means the bearer surface accepts no static tokens** — it fails closed. Everyone else uses OAuth or a personal access token minted in Settings. Wired through the compose file above. |
 | `CAIRN_OIDC_ISSUER` | *(empty)* | Issuer URL of your OIDC provider. **Its presence is the switch that turns OIDC on** and, just as importantly, turns the dev-password login off (below). |
 | `CAIRN_OIDC_CLIENT_ID` | `cairn` | Client id registered at your provider. |
 | `CAIRN_OIDC_CLIENT_SECRET` | *(empty)* | Client secret. The redirect URI is not configurable — it is always `<base>/auth/callback`. |
@@ -104,7 +104,9 @@ Three settings are easy to get wrong:
   also means a wrong base URL points your login flow at the wrong origin.
 - **`CAIRN_API_TOKENS` fails closed.** Unset, nothing can call the API with a
   bearer token until a human mints a personal access token or an agent
-  completes OAuth. That is the safe direction.
+  completes OAuth. That is the safe direction. Set, every entry must name an
+  operator who has already signed in, so on a fresh instance configure sign-in
+  and `CAIRN_OPERATORS` first, sign in once, then add the tokens.
 - **`CAIRN_DEV_LOGIN_PASSWORD` and `CAIRN_DEV_INSECURE_BEARER_AUTH` are
   development seams.** The dev password is disabled the moment any real
   provider is configured, OIDC (`CAIRN_OIDC_ISSUER`) or GitHub
@@ -270,9 +272,9 @@ background workers came up.
 The one thing `docker compose up` cannot do is authenticate anybody. Without
 OIDC configured there is no interactive login, and without tokens nothing can
 call the API — see [Sign-in (OIDC)](#sign-in-oidc) and
-[Tokens for agents](#tokens-for-agents) before exposing the instance. To get
-a first credential without an identity provider, see
-[First run: bootstrap a credential](#first-run-bootstrap-a-credential).
+[Tokens for agents](#tokens-for-agents) before exposing the instance. Every
+credential belongs to a user who has signed in, so the first one starts with a
+sign-in: see [First run: bootstrap a credential](#first-run-bootstrap-a-credential).
 
 ### As a binary
 
@@ -301,11 +303,16 @@ healthy-start logs are the same two lines as the Docker path.
 |---|---|
 | `db: ping: failed to connect … connection refused` | The DSN is right but nothing is listening — the database isn't up yet, or the hostname is wrong inside the compose network. |
 | `s3: …` connect errors on boot | Wrong `CAIRN_S3_ENDPOINT` (host:port, no scheme) or the store isn't reachable. Cairn retries via the container restart policy in the Docker path; as a binary it exits and it is yours to restart. |
+| `CAIRN_API_TOKENS entry N: legacy secret:actor entries are no longer accepted …` | The Nth token is in the old free-form shape. Rewrite it as `secret:<user>[:agent\|:human]` ([details](#static-tokens-for-the-operator)). |
+| `CAIRN_API_TOKENS entry N: user is not an operator` | The Nth token names a real user who is not listed in `CAIRN_OPERATORS`. Give them a personal access token instead. |
+| `CAIRN_API_TOKENS entry N: no user; …` | Nobody with that identity or verified email has signed in yet. Sign in once, then restart. |
 | `config CAIRN_REDACTION_…: …` | A redaction variable has a value cairn does not accept, such as a `CAIRN_REDACTION_OVERSIZE` other than `reject` or `store_unscanned`, or a scan cap that is not a positive integer. |
 | `ingest redaction: redaction allowlist <path>: …` | The allowlist file is missing, does not parse, or has an entry cairn refuses. The message names the entry. See [the allowlist format](#operator-allowlist). |
 
 All of them say which one failed in the log line — `db:`, `s3:`, `config`,
-`ingest redaction:` — and fail closed rather than starting half-configured.
+`ingest redaction:`, `CAIRN_API_TOKENS entry N` — and fail closed rather than
+starting half-configured. A token error names the entry's position, never its
+secret.
 
 ### Behind a reverse proxy
 
@@ -412,76 +419,84 @@ Two ways to authorize an agent, both documented in
 Minting a PAT is deliberately a browser-only action (Settings is
 session-authenticated and CSRF-guarded); there is no API to mint tokens with a
 token, by design. Both paths need someone who can sign in, so a new instance
-starts with the bootstrap credential below.
+starts with the first sign-in below.
 
 ## First run: bootstrap a credential
 
-A fresh instance has no users, and minting a personal access token needs a
-browser session, which needs a sign-in provider such as
-[OIDC](#sign-in-oidc). Until sign-in works, the only credential
-that exists is one you put in `CAIRN_API_TOKENS` yourself. The server logs
-this WARN at startup while it has neither:
+A fresh instance has no users, and every credential belongs to one: a personal
+access token is minted in a browser session, and a `CAIRN_API_TOKENS` entry
+must name an operator who has already signed in. So the first credential
+always starts with a sign-in. The server logs this WARN at startup while it
+has no way to authenticate anybody:
 
 ```text
 no API tokens (CAIRN_API_TOKENS), no OIDC (CAIRN_OIDC_ISSUER), and no dev web login (CAIRN_DEV_LOGIN_PASSWORD) configured: all authenticated endpoints will reject every caller
 ```
 
-**1. Generate a secret and give it to the server.** In the directory that
-holds `compose.yaml` and `.env`:
+**1. Configure a sign-in provider**, [OIDC](#sign-in-oidc) or GitHub, and
+recreate the server so it reads the new values. `docker compose up -d` does
+that when `.env` changes; `docker compose restart` does not, because it keeps
+the old environment. On the binary path, export the variables in the
+environment `cairn serve` starts from and restart it instead.
+
+**2. Sign in** at `/login` in a browser. Settings → **Account** shows the
+`<issuer>|<subject>` you signed in as.
+
+**3. Mint a personal access token** in Settings → **API tokens** and use it
+as `CAIRN_TOKEN`:
 
 ```bash
-SECRET=$(openssl rand -hex 32)
-printf 'CAIRN_API_TOKENS=%s:you@example.com\n' "$SECRET" >> .env
-```
-
-The entry is `secret:actor`. Use the email address you will sign in with as
-the actor: today cairn names an OIDC user by the provider's `email` claim, so
-what you create now stays attributed to you afterwards. Append `:agent`
-(`secret:actor:agent`) for an agent-role token, which gets the three agent
-scopes and never `sharing:manage`. Several entries are separated by commas.
-
-**2. Recreate the server** so it reads the new value. `docker compose up -d`
-does that when `.env` changes; `docker compose restart` does not, because it
-keeps the old environment.
-
-```bash
-docker compose up -d
-```
-
-The WARN above is gone from `docker compose logs cairn`. On the binary
-path, export `CAIRN_API_TOKENS` in the environment `cairn serve` starts from and
-restart it instead.
-
-**3. Use it as `CAIRN_TOKEN`.** The server's secret is the client's token:
-
-```bash
-export CAIRN_TOKEN="$SECRET"
+export CAIRN_TOKEN='cairn_pat_…'
 curl -sS https://cairn.example.com/v1/whoami -H "Authorization: Bearer $CAIRN_TOKEN"
 ```
 
-```json
-{"actor_id":"you@example.com","channel":"via API","authenticated":true}
+If you use the `cairn` CLI, also set `CAIRN_URL=https://cairn.example.com`,
+since the CLI talks to the hosted service unless told otherwise. A personal
+access token works on the REST API, with the CLI and on `/mcp`.
+
+For automation that belongs in the server's own configuration, add yourself to
+`CAIRN_OPERATORS` and give yourself a static token as described next. A static
+secret never works on `/mcp`.
+
+### Static tokens for the operator
+
+`CAIRN_API_TOKENS` exists for one job: the operator automating their own
+account from the server's configuration. A credential its user cannot see or
+revoke must not be able to act as them, so every entry names **an operator's
+own user** and nobody else:
+
+```text
+# By sign-in identity, with the default agent role:
+CAIRN_API_TOKENS=<secret>:https://id.example.com|abc-123
+# By verified email, with the human role:
+CAIRN_API_TOKENS=<secret>:you@example.com:human
 ```
 
-If you use the `cairn` CLI, also set `CAIRN_URL=https://cairn.example.com`,
-since the CLI talks to the hosted service unless told otherwise. Then
-`cairn whoami` prints `✓ authorized as you@example.com · via API`.
+Several entries go in one value, separated by commas.
 
-The bootstrap secret works on the REST API under `/v1` and with the `cairn`
-CLI. It does not work on `/mcp`, which answers `401` to any static
-`CAIRN_API_TOKENS` secret: an agent connecting over MCP needs a personal access
-token or OAuth, so it waits for sign-in.
-
-**4. Replace it once sign-in works.** When OIDC is configured, sign in, mint
-personal access tokens in Settings → **API tokens**, then delete the
-`CAIRN_API_TOKENS` line from `.env` and run `docker compose up -d` again. The
-old secret answers `401` from then on.
-
-Treat the bootstrap token as the long-lived secret it is. It never expires and
-cannot be revoked from Settings; it works until you remove it from the
-environment and recreate the server. The server keeps only its SHA-256 digest in
-memory, but the plaintext sits in your `.env` and in the container's
-environment, so protect that file like the token itself.
+- `<user>` is either your sign-in identity, `<issuer>|<subject>`, exactly as
+  Settings → **Account** shows it, or your **verified** email. Either way it
+  must resolve at boot to an existing user who is an operator through
+  `CAIRN_OPERATORS`. An operator only through `CAIRN_OPERATOR_GROUP` cannot
+  hold one, because the group is read from a browser sign-in.
+- The role defaults to **agent**: artifacts, reads and annotations, never
+  sharing, expiry or delete. `:human` adds those, and like every credential it
+  still reaches only your own artifacts.
+- A token acts as its user and cannot choose another. Whatever it creates is
+  owned by the operator's user.
+- Each token shows up on its user's Settings page as **operator-provisioned**,
+  by position, never by secret. To revoke one, remove it and restart.
+- Anything else fails boot: an entry naming a non-operator, a user who has
+  never signed in, a suspended user, or any **legacy `secret:actor[:role]`
+  entry**. The legacy form is refused outright; there is no grace period.
+- **Upgrading from legacy entries:** the artifacts an old `secret:actor`
+  token owned stay with that actor's user, and no credential acts as it any
+  more. A non-email actor is never claimed by a sign-in either, so its Bin is
+  orphaned. The CHANGELOG upgrade note has the SQL that lists those
+  artifacts and moves them to your user. It needs migration `0023`'s
+  columns, so run it once that migration has applied.
+- Generate secrets with something like `openssl rand -hex 32`. Cairn keeps
+  only their SHA-256 digests in memory and never logs one.
 
 ## Secret redaction
 
@@ -623,15 +638,14 @@ curl -sS http://127.0.0.1:8080/healthz
 ok
 ```
 
-**2. Get a token.** On a fresh instance, use the secret from
-[First run: bootstrap a credential](#first-run-bootstrap-a-credential). Once
-OIDC works, sign in at `/login` in a browser and mint one in Settings →
-**API tokens** instead. Either way, it goes in `CAIRN_TOKEN`.
+**2. Get a token.** Sign in at `/login` in a browser and mint one in
+Settings → **API tokens**
+([First run](#first-run-bootstrap-a-credential)). It goes in `CAIRN_TOKEN`.
 
 **3. Create an artifact over REST.**
 
 ```bash
-export CAIRN_TOKEN='…'   # the bootstrap secret, or a cairn_pat_… token
+export CAIRN_TOKEN='…'   # a cairn_pat_… token
 
 curl -sS http://127.0.0.1:8080/v1/artifacts \
   -H "Authorization: Bearer $CAIRN_TOKEN" \
@@ -670,10 +684,9 @@ Nothing is stored for a rejected request.
 
 **6. Connect an agent over MCP.** Any MCP client speaking Streamable HTTP can
 reach `<base>/mcp`. The verification used a bare JSON-RPC exchange — what a
-real client does for you — with a personal access token. The bootstrap secret
-from step 2 gets `401` here, because `/mcp` accepts only a personal access
-token or an OAuth token, so on a fresh instance this step waits until sign-in
-works:
+real client does for you — with a personal access token. A static
+`CAIRN_API_TOKENS` secret gets `401` here, because `/mcp` accepts only a
+personal access token or an OAuth token:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8080/mcp \

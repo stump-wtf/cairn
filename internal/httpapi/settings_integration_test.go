@@ -394,9 +394,10 @@ func TestIntegrationSettingsGrantsAreOwnerScoped(t *testing.T) {
 func TestIntegrationWebPagesRefuseStaticBearer(t *testing.T) {
 	pool := newTestPool(t)
 	cfg := patConfig()
-	cfg.APITokens = []APIToken{{Secret: "static-human-1234567890", ActorID: "sam@stump.rocks"}}
+	cfg.APITokens = []APIToken{{Secret: "static-human-1234567890", User: "sam@stump.rocks", Position: 1}}
+	withTokenOperators(t, pool, &cfg)
 	st := store.New(pool, objectstore.NewMemory(), storeOpts())
-	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
+	srv := httptest.NewServer(newResolvedServer(t, st, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
 	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
