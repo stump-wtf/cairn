@@ -32,6 +32,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/id"
 	"github.com/stump-wtf/cairn/internal/redact"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // Category is an OPEN set of span categories: any non-empty string is accepted
@@ -230,12 +231,14 @@ func (in RunInput) validate() error {
 	switch {
 	case in.Provenance.Channel == "":
 		return errs.Validationf("trajectory: provenance channel is required")
-	case in.Provenance.ActorID == "":
+	case in.Provenance.ActorID == "" || in.Provenance.CreatedByUserID == "":
 		return errs.Validationf("trajectory: provenance actor is required")
 	case in.Provenance.CapturedAt.IsZero():
 		return errs.Validationf("trajectory: provenance capture time is required")
-	case in.Access.OwnerID == "":
+	case in.Access.OwnerUserID == "" && in.Access.OwnerTeamID == "":
 		return errs.Validationf("trajectory: access owner is required")
+	case !validOptionalID(in.Provenance.CreatedByUserID) || !validOptionalID(in.Access.OwnerUserID) || !validOptionalID(in.Access.OwnerTeamID):
+		return errs.Validationf("trajectory: owner and creator must be user ids")
 	case in.Access.Visibility == "":
 		return errs.Validationf("trajectory: access visibility is required")
 	case in.ExpiresAt.IsZero():
@@ -244,6 +247,12 @@ func (in RunInput) validate() error {
 		return errs.Validationf("trajectory: started_at is required")
 	}
 	return nil
+}
+
+// validOptionalID reports whether id is empty or a user id, so a malformed
+// owner or creator is refused before it reaches the uuid columns.
+func validOptionalID(id string) bool {
+	return id == "" || user.ValidID(id)
 }
 
 // Span is a node in the reconstructed ordered tree. Exactly one of Inline / Ref

@@ -105,9 +105,9 @@ func (in CreateBundleInput) validate() error {
 	switch {
 	case in.Provenance.Channel == "":
 		return errors.New("bundle: provenance channel is required")
-	case in.Provenance.ActorID == "":
+	case in.Provenance.ActorID == "" || in.Provenance.CreatedByUserID == "":
 		return errors.New("bundle: provenance actor is required")
-	case in.Access.OwnerID == "":
+	case in.Access.OwnerUserID == "" && in.Access.OwnerTeamID == "":
 		return errors.New("bundle: access owner is required")
 	case in.Access.Visibility == "":
 		return errors.New("bundle: access visibility is required")

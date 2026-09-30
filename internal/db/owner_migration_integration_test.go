@@ -1,0 +1,842 @@
+package db
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/stump-wtf/cairn/internal/annotation"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/event"
+	"github.com/stump-wtf/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/user"
+)
+
+// Tests for 0023_owner_columns.sql, the move from owner strings to user ids.
+//
+// Governing: ADR-0029, SPEC-0023 REQ "Owner Model", REQ "Migration to
+// Explicit Ownership".
+
+// ownerMigration is the migration under test, without its .sql suffix.
+const ownerMigration = "0023_owner_columns"
+
+var ownerSchemaSeq atomic.Int64
+
+// preOwnerPool opens a private schema migrated through the migration just
+// before ownerMigration, the state a deployment is in before it runs:
+// v0.3.0, with main's 0017_users, 0018_hook_request_redaction and
+// 0022_annotation_actor_kind applied.
+func preOwnerPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	dsn := os.Getenv("CAIRN_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set CAIRN_TEST_DATABASE_URL to run db integration tests")
+	}
+	ctx := context.Background()
+	schema := fmt.Sprintf("db_owner_test_%d_%d", time.Now().UnixNano(), ownerSchemaSeq.Add(1))
+	admin, err := Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if _, err := admin.Exec(ctx, fmt.Sprintf(`CREATE SCHEMA %q`, schema)); err != nil {
+		admin.Close()
+		t.Fatalf("create schema: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(context.Background(), fmt.Sprintf(`DROP SCHEMA %q CASCADE`, schema)); err != nil {
+			t.Errorf("drop schema: %v", err)
+		}
+		admin.Close()
+	})
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	prev := versionBefore(t, ownerMigration)
+	if err := migrateThrough(ctx, pool, prev); err != nil {
+		t.Fatalf("migrate through %s: %v", prev, err)
+	}
+	return pool
+}
+
+func mustExec(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), sql, args...); err != nil {
+		t.Fatalf("exec %q: %v", sql, err)
+	}
+}
+
+func mustUUID(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(context.Background(), sql, args...).Scan(&id); err != nil {
+		t.Fatalf("query %q: %v", sql, err)
+	}
+	return id
+}
+
+var legacyArtifactSeq atomic.Int64
+
+// legacyArtifact inserts an artifact in the pre-ownership schema, owned and created
+// by the given strings, and returns its internal id.
+func legacyArtifact(t *testing.T, pool *pgxpool.Pool, owner, actor string, age time.Duration) int64 {
+	t.Helper()
+	var id int64
+	n := legacyArtifactSeq.Add(1)
+	err := pool.QueryRow(context.Background(), `
+		INSERT INTO artifacts (public_id, share_type, title, media_type, actor_id, channel,
+		                       captured_at, owner_id, visibility, expires_at, created_at)
+		VALUES ($1, 'trajectory', 'legacy', 'application/json', $2, 'via API',
+		        now(), $3, 'link', now() + interval '1 day', now() - $4::interval)
+		RETURNING id`,
+		fmt.Sprintf("legacy%06d", n), actor, owner, fmt.Sprintf("%d seconds", int(age.Seconds())),
+	).Scan(&id)
+	if err != nil {
+		t.Fatalf("insert legacy artifact for %s: %v", owner, err)
+	}
+	return id
+}
+
+// binBefore lists, per owner string, the artifact ids its Bin returns: newest
+// first, as store.ListBin orders them.
+func binBefore(t *testing.T, pool *pgxpool.Pool) map[string][]int64 {
+	t.Helper()
+	rows, err := pool.Query(context.Background(),
+		`SELECT owner_id, id FROM artifacts ORDER BY owner_id, created_at DESC, id DESC`)
+	if err != nil {
+		t.Fatalf("bin before: %v", err)
+	}
+	defer rows.Close()
+	out := map[string][]int64{}
+	for rows.Next() {
+		var owner string
+		var id int64
+		if err := rows.Scan(&owner, &id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out[owner] = append(out[owner], id)
+	}
+	return out
+}
+
+// binOf lists a user's Bin after the migration, in the same order.
+func binOf(t *testing.T, pool *pgxpool.Pool, userID string) []int64 {
+	t.Helper()
+	rows, err := pool.Query(context.Background(),
+		`SELECT id FROM artifacts WHERE owner_user_id = $1 ORDER BY created_at DESC, id DESC`, userID)
+	if err != nil {
+		t.Fatalf("bin of %s: %v", userID, err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+// userRendering is the users row a legacy string now renders as.
+func userRendering(t *testing.T, pool *pgxpool.Pool, actor string) string {
+	t.Helper()
+	return mustUUID(t, pool,
+		`SELECT id::text FROM users u WHERE `+user.ActorSQL("u")+` = $1`, actor)
+}
+
+// SPEC-0023 "Existing owner signs in", fixture half: every owner's Bin is the
+// same list before and after, for each way a string resolves to a user, and
+// every string still renders as itself on the wire.
+func TestOwnerMigrationPreservesEveryBin(t *testing.T) {
+	pool := preOwnerPool(t)
+	ctx := context.Background()
+
+	// A #326 user who signed in with a verified email, and one with no usable
+	// email whose interim key was "user:<id>".
+	joe := mustUUID(t, pool, `INSERT INTO users (primary_email, email_verified, display_handle)
+		VALUES ('joe@example.com', true, 'joe') RETURNING id::text`)
+	anon := mustUUID(t, pool, `INSERT INTO users (display_handle) VALUES ('anon') RETURNING id::text`)
+	// A #326 dev-login user whose session acted as the typed name.
+	dev := mustUUID(t, pool, `INSERT INTO users (display_handle) VALUES ('devjoe') RETURNING id::text`)
+	mustExec(t, pool, `INSERT INTO sessions (token_hash, actor_id, user_id, csrf_token, expires_at)
+		VALUES (repeat('a', 64), 'devjoe', $1, 'c', now() + interval '1 day')`, dev)
+	// A pre-#326 OIDC session whose actor was its raw subject.
+	mustExec(t, pool, `INSERT INTO sessions (token_hash, actor_id, issuer, subject, csrf_token, expires_at)
+		VALUES (repeat('b', 64), 'abc-sub', 'https://id.example.com', 'abc-sub', 'c', now() + interval '1 day')`)
+
+	owners := []string{
+		"joe@example.com", "user:" + anon, "devjoe", "abc-sub",
+		"Pat@Example.com", "pat@example.com", "ci-bot",
+	}
+	for i, o := range owners {
+		for j := 0; j <= i%3; j++ {
+			legacyArtifact(t, pool, o, o, time.Duration(10*i+j)*time.Second)
+		}
+	}
+	// An artifact created by one string and owned by another.
+	mixed := legacyArtifact(t, pool, "ci-bot", "joe@example.com", time.Hour)
+
+	// Annotations and credentials by strings that own nothing.
+	mustExec(t, pool, `INSERT INTO comments (artifact_id, anchor_type, anchor_key, actor_id, body)
+		VALUES ($1, 'whole', '{}', 'commenter@example.com', 'hi')`, mixed)
+	mustExec(t, pool, `INSERT INTO reactions (artifact_id, anchor_type, anchor_key, emoji, actor_id)
+		VALUES ($1, 'whole', '{}', '👀', 'reactor')`, mixed)
+	mustExec(t, pool, `INSERT INTO personal_access_tokens (id, owner_id, name, token_hash, scope)
+		VALUES ('pat-1', 'devjoe', 'laptop', repeat('c', 64), 'artifacts:read')`)
+	mustExec(t, pool, `INSERT INTO oauth_clients (client_id, redirect_uris) VALUES ('cl', '{}')`)
+	mustExec(t, pool, `INSERT INTO oauth_grants (grant_id, client_id, actor_id, scope)
+		VALUES ('g1', 'cl', 'joe@example.com', 'artifacts:read')`)
+	mustExec(t, pool, `INSERT INTO mcp_sessions (id, owner_id, grant_id, client_id)
+		VALUES ('m1', 'joe@example.com', 'g1', 'cl')`)
+	mustExec(t, pool, `INSERT INTO oauth_auth_codes (code_hash, client_id, actor_id, redirect_uri, scope, code_challenge, expires_at)
+		VALUES (repeat('d', 64), 'cl', 'granted@example.com', 'http://x', 'artifacts:read', 'ch', now())`)
+
+	before := binBefore(t, pool)
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	for _, o := range owners {
+		uid := userRendering(t, pool, o)
+		if got, want := binOf(t, pool, uid), before[o]; fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("Bin of %s = %v after, %v before", o, got, want)
+		}
+	}
+	for owner, want := range map[string]string{"joe@example.com": joe, "user:" + anon: anon, "devjoe": dev} {
+		if got := userRendering(t, pool, owner); got != want {
+			t.Errorf("%s resolved to user %s, want the existing user %s", owner, got, want)
+		}
+	}
+	if userRendering(t, pool, "Pat@Example.com") == userRendering(t, pool, "pat@example.com") {
+		t.Error("two owner strings that were distinct owners share a user")
+	}
+
+	var creator string
+	if err := pool.QueryRow(ctx, `SELECT `+user.ActorSQL("u")+` FROM artifacts a
+		JOIN users u ON u.id = a.created_by_user_id WHERE a.id = $1`, mixed).Scan(&creator); err != nil {
+		t.Fatalf("creator: %v", err)
+	}
+	if creator != "joe@example.com" {
+		t.Errorf("creator renders as %q, want joe@example.com", creator)
+	}
+
+	// Every backfilled row points at the user its string resolved to.
+	for table, want := range map[string]string{
+		"comments": "commenter@example.com", "reactions": "reactor",
+		"personal_access_tokens": "devjoe", "oauth_grants": "joe@example.com",
+		"mcp_sessions": "joe@example.com", "oauth_auth_codes": "granted@example.com",
+	} {
+		got := mustUUID(t, pool, `SELECT user_id::text FROM `+table+` LIMIT 1`)
+		if uid := userRendering(t, pool, want); got != uid {
+			t.Errorf("%s.user_id = %s, want %s's user %s", table, got, want, uid)
+		}
+	}
+	if got := mustUUID(t, pool, `SELECT user_id::text FROM sessions WHERE token_hash = repeat('b', 64)`); got != userRendering(t, pool, "abc-sub") {
+		t.Errorf("pre-users session resolved to %s, want abc-sub's user", got)
+	}
+
+	// The raw-subject owner is recognised by its (issuer, subject) again.
+	if got := mustUUID(t, pool, `SELECT user_id::text FROM user_identities
+		WHERE issuer = 'https://id.example.com' AND subject = 'abc-sub'`); got != userRendering(t, pool, "abc-sub") {
+		t.Errorf("abc-sub identity links to %s, want its legacy user", got)
+	}
+
+	// Legacy users are unverified and hold no primary email until claimed.
+	var verified bool
+	var primary *string
+	if err := pool.QueryRow(ctx, `SELECT email_verified, primary_email FROM users WHERE actor_key = 'pat@example.com'`).
+		Scan(&verified, &primary); err != nil {
+		t.Fatalf("legacy user: %v", err)
+	}
+	if verified || primary != nil {
+		t.Errorf("legacy user verified=%v primary=%v, want unverified with no primary email", verified, primary)
+	}
+}
+
+// SPEC-0023 "Legacy owner strings are gone": no backfilled string column is
+// left, and no index or constraint names one; the per-kind reaction
+// idempotency key (SPEC-0016 EV-6) is rebuilt with user_id in actor_id's
+// place and actor_kind kept.
+func TestOwnerMigrationDropsLegacyStrings(t *testing.T) {
+	pool := preOwnerPool(t)
+	ctx := context.Background()
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	legacy := map[string][]string{
+		"artifacts": {"owner_id", "actor_id"}, "comments": {"actor_id"}, "reactions": {"actor_id"},
+		"personal_access_tokens": {"owner_id"}, "mcp_sessions": {"owner_id"},
+		"oauth_grants": {"actor_id"}, "oauth_auth_codes": {"actor_id"}, "sessions": {"actor_id"},
+	}
+	for table, cols := range legacy {
+		for _, col := range cols {
+			var n int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns
+				WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`, table, col).Scan(&n); err != nil {
+				t.Fatalf("columns: %v", err)
+			}
+			if n != 0 {
+				t.Errorf("%s.%s still exists", table, col)
+			}
+		}
+		var nullable string
+		if err := pool.QueryRow(ctx, `SELECT is_nullable FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = $1
+			  AND column_name = CASE WHEN $1 = 'artifacts' THEN 'owner_user_id' ELSE 'user_id' END`, table).Scan(&nullable); err != nil {
+			t.Fatalf("%s user column: %v", table, err)
+		}
+		if table != "artifacts" && nullable != "NO" {
+			t.Errorf("%s.user_id is nullable", table)
+		}
+	}
+	rows, err := pool.Query(ctx, `SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = current_schema()`)
+	if err != nil {
+		t.Fatalf("indexes: %v", err)
+	}
+	defer rows.Close()
+	var reactionKey string
+	for rows.Next() {
+		var name, def string
+		if err := rows.Scan(&name, &def); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if strings.Contains(def, "owner_id") || strings.Contains(def, "actor_id") {
+			t.Errorf("index %s still names a legacy string: %s", name, def)
+		}
+		if name == "reactions_idem_kind_uidx" {
+			reactionKey = def
+		}
+	}
+	if !strings.Contains(reactionKey, "UNIQUE INDEX") ||
+		!strings.Contains(reactionKey, "(artifact_id, anchor_type, anchor_key, emoji, user_id, actor_kind)") {
+		t.Errorf("reaction key = %q, want it rebuilt unique on user_id and actor_kind", reactionKey)
+	}
+}
+
+// SPEC-0023 "A failed comparison leaves the old schema": two strings that were
+// two owners but resolve to one user would merge their Bins, so the migration
+// aborts, names the first such owner, and leaves every legacy column and the
+// migration record as they were.
+func TestOwnerMigrationAbortsOnBinMismatch(t *testing.T) {
+	pool := preOwnerPool(t)
+	ctx := context.Background()
+	u := mustUUID(t, pool, `INSERT INTO users (display_handle) VALUES ('twice') RETURNING id::text`)
+	mustExec(t, pool, `INSERT INTO sessions (token_hash, actor_id, user_id, csrf_token, expires_at) VALUES
+		(repeat('a', 64), 'alpha', $1, 'c', now() + interval '1 day'),
+		(repeat('b', 64), 'bravo', $1, 'c', now() + interval '1 day')`, u)
+	legacyArtifact(t, pool, "alpha", "alpha", 0)
+	legacyArtifact(t, pool, "bravo", "bravo", 0)
+
+	err := Migrate(ctx, pool)
+	if err == nil {
+		t.Fatal("migrate succeeded, want it to abort on the merged Bins")
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || !strings.Contains(pgErr.Message, "would change the Bin of owner alpha") {
+		t.Fatalf("migrate error = %v, want one naming owner alpha", err)
+	}
+	if !strings.Contains(err.Error(), ownerMigration) {
+		t.Errorf("error %q does not name the migration", err)
+	}
+
+	var cols []string
+	rows, qerr := pool.Query(ctx, `SELECT column_name FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'artifacts'`)
+	if qerr != nil {
+		t.Fatalf("columns: %v", qerr)
+	}
+	for rows.Next() {
+		var c string
+		_ = rows.Scan(&c)
+		cols = append(cols, c)
+	}
+	rows.Close()
+	sort.Strings(cols)
+	joined := strings.Join(cols, ",")
+	if !strings.Contains(joined, "owner_id") || !strings.Contains(joined, "actor_id") || strings.Contains(joined, "owner_user_id") {
+		t.Errorf("artifacts columns after the abort = %s, want the pre-ownership schema", joined)
+	}
+	var applied bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`, ownerMigration).Scan(&applied); err != nil {
+		t.Fatalf("schema_migrations: %v", err)
+	}
+	if applied {
+		t.Error("the aborted migration was recorded as applied")
+	}
+	var users int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&users); err != nil {
+		t.Fatalf("users: %v", err)
+	}
+	if users != 1 {
+		t.Errorf("users = %d after the abort, want the 1 that existed", users)
+	}
+}
+
+// SPEC-0023 "Constraint rejects two owners": an artifact with both a user and
+// a team owner, or neither, is refused by the database itself.
+func TestOwnerConstraintRejectsTwoOwners(t *testing.T) {
+	pool := preOwnerPool(t)
+	ctx := context.Background()
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	uid := mustUUID(t, pool, `INSERT INTO users (display_handle) VALUES ('o') RETURNING id::text`)
+	insert := func(pid string, userID, teamID any) error {
+		_, err := pool.Exec(ctx, `
+			INSERT INTO artifacts (public_id, share_type, media_type, channel, captured_at,
+			                       owner_user_id, owner_team_id, visibility, expires_at)
+			VALUES ($1, 'trajectory', 'application/json', 'via API', now(), $2, $3, 'link', now() + interval '1 day')`,
+			pid, userID, teamID)
+		return err
+	}
+	for name, tc := range map[string][2]any{
+		"both":    {uid, "00000000-0000-0000-0000-000000000001"},
+		"neither": {nil, nil},
+	} {
+		err := insert("two"+name, tc[0], tc[1])
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.ConstraintName != "artifacts_one_owner" {
+			t.Errorf("%s owners: err = %v, want artifacts_one_owner violation", name, err)
+		}
+	}
+	if err := insert("oneowner", uid, nil); err != nil {
+		t.Errorf("a single user owner was refused: %v", err)
+	}
+}
+
+// SPEC-0023 "Existing owner signs in": artifacts owned by the string
+// joe@example.com before the upgrade belong to whoever later signs in with
+// that email VERIFIED, and their Bin is unchanged. A mixed-case legacy string
+// is claimed the same way; an unverified sign-in claims nothing.
+func TestOwnerMigrationLegacyRowClaimedByVerifiedSignIn(t *testing.T) {
+	pool := preOwnerPool(t)
+	ctx := context.Background()
+	legacyArtifact(t, pool, "joe@example.com", "joe@example.com", 2*time.Second)
+	legacyArtifact(t, pool, "joe@example.com", "joe@example.com", time.Second)
+	legacyArtifact(t, pool, "Kim@Example.com", "Kim@Example.com", 0)
+	before := binBefore(t, pool)
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	users := user.NewStore(pool)
+
+	squatter, err := users.Resolve(ctx, user.Identity{Issuer: "https://evil.example.com", Subject: "x", Email: "joe@example.com"})
+	if err != nil {
+		t.Fatalf("unverified sign-in: %v", err)
+	}
+	if got := binOf(t, pool, squatter.ID); len(got) != 0 {
+		t.Fatalf("an unverified email reached the legacy Bin: %v", got)
+	}
+
+	joe, err := users.Resolve(ctx, user.Identity{Issuer: "https://id.example.com", Subject: "joe", Email: "Joe@Example.com", EmailVerified: true})
+	if err != nil {
+		t.Fatalf("verified sign-in: %v", err)
+	}
+	if got, want := binOf(t, pool, joe.ID), before["joe@example.com"]; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("Bin after claim = %v, want %v", got, want)
+	}
+	if !joe.EmailVerified || joe.PrimaryEmail != "joe@example.com" || joe.Actor != "joe@example.com" {
+		t.Errorf("claimed user = %+v, want verified joe@example.com", joe)
+	}
+
+	kim, err := users.Resolve(ctx, user.Identity{Issuer: "https://id.example.com", Subject: "kim", Email: "kim@example.com", EmailVerified: true})
+	if err != nil {
+		t.Fatalf("kim sign-in: %v", err)
+	}
+	if got, want := binOf(t, pool, kim.ID), before["Kim@Example.com"]; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("mixed-case legacy Bin after claim = %v, want %v", got, want)
+	}
+}
+
+// identityUser is the user an (issuer, subject) identity is linked to, or ""
+// when it has no identity row.
+func identityUser(t *testing.T, pool *pgxpool.Pool, issuer, subject string) string {
+	t.Helper()
+	var id string
+	err := pool.QueryRow(context.Background(),
+		`SELECT user_id::text FROM user_identities WHERE issuer = $1 AND subject = $2`, issuer, subject).Scan(&id)
+	if err != nil && !strings.Contains(err.Error(), "no rows") {
+		t.Fatalf("identity %s|%s: %v", issuer, subject, err)
+	}
+	return id
+}
+
+// preUsersSession records a session minted before users existed: main's OIDC
+// callback acted as the email claim, so actor is usually an email.
+func preUsersSession(t *testing.T, pool *pgxpool.Pool, tok byte, issuer, subject, actor string) {
+	t.Helper()
+	mustExec(t, pool, `INSERT INTO sessions (token_hash, actor_id, issuer, subject, csrf_token, expires_at)
+		VALUES (repeat($1, 64), $2, $3, $4, 'c', now() - interval '1 day')`,
+		string(tok), actor, issuer, subject)
+}
+
+// Joe's decision on #384: an existing user signing in through OIDC lands on
+// their existing account and Bin. The pre-users session is the evidence of
+// which string an (issuer, subject) acted as, so the migration links that
+// identity to the string's user, and the operator's next sign-in reaches their
+// Bin even though live Pocket ID sends email_verified false. Before this
+// change only a session whose actor WAS its subject was linked, so an email
+// owner's identity came back as a fresh, empty user.
+func TestOwnerMigrationLinksPreUsersSessionEvidence(t *testing.T) {
+	pool := preOwnerPool(t)
+	ctx := context.Background()
+	const pocket = "https://id.example.com"
+
+	// The operator: main keyed their session on the email claim.
+	legacyArtifact(t, pool, "joe@example.com", "joe@example.com", 2*time.Second)
+	legacyArtifact(t, pool, "joe@example.com", "joe@example.com", time.Second)
+	preUsersSession(t, pool, 'a', pocket, "sub-joe", "joe@example.com")
+
+	// Two identities that acted as one email: ambiguous, so neither is linked.
+	legacyArtifact(t, pool, "shared@example.com", "shared@example.com", 0)
+	preUsersSession(t, pool, 'b', pocket, "sub-one", "shared@example.com")
+	preUsersSession(t, pool, 'c', pocket, "sub-two", "shared@example.com")
+
+	// A GitHub session keyed on a login: never linked.
+	legacyArtifact(t, pool, "gh@example.com", "gh@example.com", 0)
+	preUsersSession(t, pool, 'd', "https://github.com", "1234", "gh@example.com")
+
+	// #326 shipped first and kim's first sign-in after it was unverified: her
+	// identity got an email-less user keyed on her subject.
+	legacyArtifact(t, pool, "kim@example.com", "kim@example.com", 0)
+	preUsersSession(t, pool, 'e', pocket, "sub-kim", "kim@example.com")
+	stray := mustUUID(t, pool, `INSERT INTO users (display_handle) VALUES ('kim') RETURNING id::text`)
+	mustExec(t, pool, `INSERT INTO user_identities (user_id, issuer, subject, email, email_verified)
+		VALUES ($1, $2, 'sub-kim', 'kim@example.com', false)`, stray, pocket)
+	mustExec(t, pool, `INSERT INTO sessions (token_hash, actor_id, issuer, subject, user_id, csrf_token, expires_at)
+		VALUES (repeat('f', 64), 'sub-kim', $1, 'sub-kim', $2, 'c', now() + interval '1 day')`, pocket, stray)
+
+	// Sam signed in verified after #326: that identity is settled and stays.
+	sam := mustUUID(t, pool, `INSERT INTO users (primary_email, email_verified, display_handle)
+		VALUES ('sam@example.com', true, 'sam') RETURNING id::text`)
+	mustExec(t, pool, `INSERT INTO user_identities (user_id, issuer, subject, email, email_verified)
+		VALUES ($1, $2, 'sub-sam', 'sam@example.com', true)`, sam, pocket)
+	preUsersSession(t, pool, 'g', pocket, "sub-sam", "old-sam@example.com")
+	legacyArtifact(t, pool, "old-sam@example.com", "old-sam@example.com", 0)
+
+	before := binBefore(t, pool)
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	if got, want := identityUser(t, pool, pocket, "sub-joe"), userRendering(t, pool, "joe@example.com"); got != want {
+		t.Errorf("sub-joe links to %q, want joe@example.com's user %s", got, want)
+	}
+	for _, sub := range []string{"sub-one", "sub-two"} {
+		if got := identityUser(t, pool, pocket, sub); got != "" {
+			t.Errorf("ambiguous %s was linked to %s", sub, got)
+		}
+	}
+	if got := identityUser(t, pool, "https://github.com", "1234"); got != "" {
+		t.Errorf("login-keyed GitHub session was linked to %s", got)
+	}
+	if got, want := identityUser(t, pool, pocket, "sub-kim"), userRendering(t, pool, "kim@example.com"); got != want {
+		t.Errorf("sub-kim links to %q, want kim@example.com's user %s (not the stray %s)", got, want, stray)
+	}
+	if got := identityUser(t, pool, pocket, "sub-sam"); got != sam {
+		t.Errorf("settled sub-sam moved to %s, want %s", got, sam)
+	}
+
+	// The operator's next sign-in: live Pocket ID, email_verified false.
+	users := user.NewStore(pool)
+	joe, err := users.Resolve(ctx, user.Identity{Issuer: pocket, Subject: "sub-joe", Email: "joe@example.com"})
+	if err != nil {
+		t.Fatalf("sign-in: %v", err)
+	}
+	if got, want := binOf(t, pool, joe.ID), before["joe@example.com"]; len(want) == 0 || fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("operator's Bin after sign-in = %v, want %v", got, want)
+	}
+	// An ambiguous identity with an unverified email reaches nothing.
+	one, err := users.Resolve(ctx, user.Identity{Issuer: pocket, Subject: "sub-one", Email: "shared@example.com"})
+	if err != nil {
+		t.Fatalf("sub-one sign-in: %v", err)
+	}
+	if got := binOf(t, pool, one.ID); len(got) != 0 {
+		t.Fatalf("an ambiguous identity reached %v with an unverified email", got)
+	}
+}
+
+// The #384 review's probe against migrated data: the operator's first
+// sign-in after the upgrade is unverified and has no session evidence (a new
+// subject), the next one is verified. The second claims the legacy Bin.
+// Against the one-shot resolver both returned the same fresh user.
+func TestOwnerMigrationLaterVerifiedSignInClaimsLegacyBin(t *testing.T) {
+	pool := preOwnerPool(t)
+	ctx := context.Background()
+	legacyArtifact(t, pool, "joe@example.com", "joe@example.com", time.Second)
+	legacyArtifact(t, pool, "joe@example.com", "joe@example.com", 0)
+	before := binBefore(t, pool)
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	users := user.NewStore(pool)
+	id := user.Identity{Issuer: "https://id.example.com", Subject: "sub-joe", Email: "joe@example.com"}
+	first, err := users.Resolve(ctx, id)
+	if err != nil {
+		t.Fatalf("first sign-in: %v", err)
+	}
+	if got := binOf(t, pool, first.ID); len(got) != 0 {
+		t.Fatalf("an unverified sign-in reached the legacy Bin: %v", got)
+	}
+	id.EmailVerified = true
+	later, err := users.Resolve(ctx, id)
+	if err != nil {
+		t.Fatalf("later sign-in: %v", err)
+	}
+	if got, want := binOf(t, pool, later.ID), before["joe@example.com"]; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("Bin after the verified sign-in = %v, want %v", got, want)
+	}
+}
+
+// kindTally is one (anchor, emoji) group's per-kind counts, the numbers
+// annotation.Service.ReactionTallies serves.
+type kindTally struct{ count, human, agent int }
+
+// kindTalliesBefore groups the pre-ownership reactions exactly as
+// ReactionTallies does, keyed "anchor_type|anchor_key|emoji".
+func kindTalliesBefore(t *testing.T, pool *pgxpool.Pool, artID int64) map[string]kindTally {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+		SELECT anchor_type || '|' || anchor_key || '|' || emoji, count(*),
+		       count(*) FILTER (WHERE actor_kind = 'human'),
+		       count(*) FILTER (WHERE actor_kind = 'agent')
+		  FROM reactions WHERE artifact_id = $1
+		 GROUP BY anchor_type, anchor_key, emoji`, artID)
+	if err != nil {
+		t.Fatalf("tallies before: %v", err)
+	}
+	defer rows.Close()
+	out := map[string]kindTally{}
+	for rows.Next() {
+		var k string
+		var tl kindTally
+		if err := rows.Scan(&k, &tl.count, &tl.human, &tl.agent); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out[k] = tl
+	}
+	return out
+}
+
+// preOwnerMarkdown inserts a markdown artifact in the pre-ownership schema,
+// owned by owner, and returns its internal and public ids.
+func preOwnerMarkdown(t *testing.T, pool *pgxpool.Pool, owner string) (int64, string) {
+	t.Helper()
+	var id int64
+	pid := fmt.Sprintf("kind%06d", legacyArtifactSeq.Add(1))
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO artifacts (public_id, share_type, title, media_type, actor_id, channel,
+		                       captured_at, owner_id, visibility, expires_at)
+		VALUES ($1, 'markdown', 'plan', 'text/markdown', $2, 'via API', now(), $2, 'link', now() + interval '1 day')
+		RETURNING id`, pid, owner).Scan(&id); err != nil {
+		t.Fatalf("insert markdown artifact: %v", err)
+	}
+	return id, pid
+}
+
+// Joe's decision on #384 (2026-09-30): ownership stays per actor kind. On a
+// database 0022 has already re-keyed, alice's agent and alice in her browser
+// hold one 👍 each on the same anchor. After the migration they are still two
+// rows, both on the user "alice" resolved to, with actor_kind and
+// on_behalf_of as stored, and every per-kind tally is unchanged. The
+// annotation service then works on the migrated rows: a repeat react by
+// either kind is a no-op on the rebuilt key, each kind's viewer sees only its
+// own row as reacted, and each kind removes only its own row.
+//
+// Governing: ADR-0022, SPEC-0016 EV-6; ADR-0029, SPEC-0023 REQ "Migration to
+// Explicit Ownership".
+func TestOwnerMigrationKeepsPerKindReactions(t *testing.T) {
+	pool := preOwnerPool(t)
+	ctx := context.Background()
+	artID, pid := preOwnerMarkdown(t, pool, "joe@example.com")
+
+	react := func(emoji, actor, kind, obo string) {
+		mustExec(t, pool, `
+			INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, actor_id, actor_kind, on_behalf_of)
+			VALUES ($1, 'artifact', '{}', '{}', $2, $3, $4, $5)`, artID, emoji, actor, kind, obo)
+	}
+	react("👍", "alice", "human", "")
+	react("👍", "alice", "agent", "claude-code/1.0")
+	react("👍", "bob", "agent", "")
+	react("🎉", "alice", "agent", "claude-code/1.0")
+	react("👀", "alice", "", "") // stored before kinds were
+	mustExec(t, pool, `UPDATE artifacts SET reaction_count = 5 WHERE id = $1`, artID)
+	mustExec(t, pool, `
+		INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, actor_id, actor_kind, on_behalf_of, body)
+		VALUES ($1, 'artifact', '{}', '{}', 'alice', 'human', '', 'mine'),
+		       ($1, 'artifact', '{}', '{}', 'alice', 'agent', 'claude-code/1.0', 'my agent''s')`, artID)
+
+	before := kindTalliesBefore(t, pool, artID)
+	if got := before["artifact|{}|👍"]; got != (kindTally{3, 1, 2}) {
+		t.Fatalf("fixture 👍 tally = %+v, want 3 rows, 1 human, 2 agent", got)
+	}
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	alice := userRendering(t, pool, "alice")
+
+	// Rows: alice's two 👍 survive as two rows on her user, kinds and
+	// provenance as stored.
+	rows, err := pool.Query(ctx, `
+		SELECT r.emoji, r.user_id::text, r.actor_kind, r.on_behalf_of
+		  FROM reactions r WHERE r.artifact_id = $1 AND r.user_id = $2
+		 ORDER BY r.emoji, r.actor_kind`, artID, alice)
+	if err != nil {
+		t.Fatalf("reactions after: %v", err)
+	}
+	var got []string
+	for rows.Next() {
+		var emoji, uid, kind, obo string
+		if err := rows.Scan(&emoji, &uid, &kind, &obo); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, emoji+"/"+kind+"/"+obo)
+	}
+	rows.Close()
+	want := []string{"🎉/agent/claude-code/1.0", "👀//", "👍/agent/claude-code/1.0", "👍/human/"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("alice's reactions after = %q, want %q", got, want)
+	}
+	var comments []string
+	crows, err := pool.Query(ctx, `SELECT actor_kind || '/' || on_behalf_of FROM comments
+		WHERE artifact_id = $1 AND user_id = $2 ORDER BY actor_kind`, artID, alice)
+	if err != nil {
+		t.Fatalf("comments after: %v", err)
+	}
+	for crows.Next() {
+		var c string
+		_ = crows.Scan(&c)
+		comments = append(comments, c)
+	}
+	crows.Close()
+	if fmt.Sprint(comments) != fmt.Sprint([]string{"agent/claude-code/1.0", "human/"}) {
+		t.Fatalf("alice's comments after = %q, want one per kind with provenance", comments)
+	}
+
+	// Tallies, read by the service: the same numbers per (anchor, emoji).
+	svc := annotation.NewService(pool, nil)
+	humanV := annotation.Viewer{UserID: alice, Kind: event.KindHuman}
+	agentV := annotation.Viewer{UserID: alice, Kind: event.KindAgent}
+	reacted := map[event.ActorKind]map[string]bool{}
+	for _, v := range []annotation.Viewer{humanV, agentV} {
+		tallies, err := svc.ReactionTallies(ctx, pid, v)
+		if err != nil {
+			t.Fatalf("tallies after: %v", err)
+		}
+		after := map[string]kindTally{}
+		reacted[v.Kind] = map[string]bool{}
+		for _, tl := range tallies {
+			k := string(tl.AnchorType) + "|" + tl.AnchorKey + "|" + tl.Emoji
+			after[k] = kindTally{tl.Count, tl.HumanCount, tl.AgentCount}
+			reacted[v.Kind][tl.Emoji] = tl.Reacted
+		}
+		if fmt.Sprint(after) != fmt.Sprint(before) {
+			t.Fatalf("per-kind tallies after = %v, before = %v", after, before)
+		}
+	}
+	// Kind-matched viewer: the 🎉 is her agent's alone; the legacy 👀 is
+	// removable, so reacted, as either kind.
+	for kind, want := range map[event.ActorKind]map[string]bool{
+		event.KindHuman: {"👍": true, "🎉": false, "👀": true},
+		event.KindAgent: {"👍": true, "🎉": true, "👀": true},
+	} {
+		if fmt.Sprint(reacted[kind]) != fmt.Sprint(want) {
+			t.Errorf("%s viewer reacted = %v, want %v", kind, reacted[kind], want)
+		}
+	}
+
+	// ?include=reactors: both 👍 rows render as alice, with their kinds.
+	list, err := svc.ListReactions(ctx, pid)
+	if err != nil {
+		t.Fatalf("list reactions: %v", err)
+	}
+	var reactors []string
+	for _, r := range list {
+		if r.Emoji == "👍" {
+			reactors = append(reactors, r.ActorID+"/"+string(r.ActorKind))
+		}
+	}
+	if fmt.Sprint(reactors) != fmt.Sprint([]string{"alice/human", "alice/agent", "bob/agent"}) {
+		t.Errorf("👍 reactors = %q, want alice as human and as agent, then bob", reactors)
+	}
+
+	// Writes on the migrated rows: a repeat is a no-op on the rebuilt key, and
+	// each kind withdraws only its own row.
+	humanA := event.Actor{ID: "alice", UserID: alice, Channel: artifact.ChannelWeb, Kind: event.KindHuman, Auth: event.AuthSession}
+	agentA := event.Actor{ID: "alice", UserID: alice, Channel: artifact.ChannelAPI, Kind: event.KindAgent, Auth: event.AuthPAT}
+	for _, a := range []event.Actor{humanA, agentA} {
+		if _, created, err := svc.React(ctx, pid, sharetype.AnchorArtifact, nil, "👍", a); err != nil || created {
+			t.Fatalf("repeat 👍 as %s: created=%v err=%v, want a no-op on the migrated row", a.Kind, created, err)
+		}
+	}
+	if removed, err := svc.Unreact(ctx, pid, sharetype.AnchorArtifact, nil, "👍", humanA); err != nil || !removed {
+		t.Fatalf("human unreact: removed=%v err=%v", removed, err)
+	}
+	var left []string
+	lrows, err := pool.Query(ctx, `SELECT actor_kind FROM reactions
+		WHERE artifact_id = $1 AND user_id = $2 AND emoji = '👍'`, artID, alice)
+	if err != nil {
+		t.Fatalf("reactions after unreact: %v", err)
+	}
+	for lrows.Next() {
+		var k string
+		_ = lrows.Scan(&k)
+		left = append(left, k)
+	}
+	lrows.Close()
+	if fmt.Sprint(left) != "[agent]" {
+		t.Fatalf("alice's 👍 after the human withdrew = %v, want only her agent's", left)
+	}
+}
+
+// Two owner strings that resolve to one user and reacted alike would fold
+// onto one per-kind key. The migration aborts naming the owner, like a Bin
+// mismatch, and leaves the 0022 schema and the migration record as they were.
+func TestOwnerMigrationAbortsOnMergedReactions(t *testing.T) {
+	pool := preOwnerPool(t)
+	ctx := context.Background()
+	u := mustUUID(t, pool, `INSERT INTO users (display_handle) VALUES ('twice') RETURNING id::text`)
+	mustExec(t, pool, `INSERT INTO sessions (token_hash, actor_id, user_id, csrf_token, expires_at) VALUES
+		(repeat('a', 64), 'alpha', $1, 'c', now() + interval '1 day'),
+		(repeat('b', 64), 'bravo', $1, 'c', now() + interval '1 day')`, u)
+	artID, _ := preOwnerMarkdown(t, pool, "joe@example.com")
+	for _, actor := range []string{"alpha", "bravo"} {
+		mustExec(t, pool, `
+			INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, actor_id, actor_kind)
+			VALUES ($1, 'artifact', '{}', '{}', '👍', $2, 'human')`, artID, actor)
+	}
+
+	err := Migrate(ctx, pool)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || !strings.Contains(pgErr.Message, "would merge the reactions of owner alpha") {
+		t.Fatalf("migrate error = %v, want one naming owner alpha", err)
+	}
+	var applied, actorCol bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`, ownerMigration).Scan(&applied); err != nil {
+		t.Fatalf("schema_migrations: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'reactions' AND column_name = 'actor_id')`).Scan(&actorCol); err != nil {
+		t.Fatalf("columns: %v", err)
+	}
+	if applied || !actorCol {
+		t.Errorf("after the abort: recorded=%v reactions.actor_id=%v, want unrecorded with the 0022 schema", applied, actorCol)
+	}
+}

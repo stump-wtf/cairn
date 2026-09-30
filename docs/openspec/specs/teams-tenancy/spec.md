@@ -595,14 +595,20 @@ that fails against the unfixed code.
 
 The migration MUST create one user per distinct existing `owner_id` and `actor_id` string (recorded
 as an unverified legacy email), set `owner_user_id` on every artifact from `owner_id`, and create no
-team. A user's first sign-in whose verified email equals a legacy row's string MUST claim that row.
+team. A sign-in whose verified email equals a legacy row's string MUST claim that row, whether or
+not it is the identity's first sign-in. An `(issuer, subject)` that a pre-upgrade session recorded
+acting as a legacy string MUST be linked to that string's user, unless more than one OIDC identity
+acted as the same string or the session came from GitHub (keyed then on the login).
 Existing `link` artifacts MUST remain `link`; existing `private` artifacts MUST remain `private` and
 become unreadable to everyone but their owner. Every Bin listing for a user with no teams MUST
 return the same artifacts it returned before.
 
 The same migration MUST drop the legacy `owner_id` and `actor_id` string columns it backfilled from,
 and MUST rebuild every index or uniqueness key that named them (including SPEC-0016 EV-6's reaction
-key) on the matching `user_id` column. No release MAY carry both the strings and the user columns.
+key) on the matching `user_id` column. EV-6's reaction key becomes
+`(artifact_id, anchor_type, anchor_key, emoji, user_id, actor_kind)`: `actor_kind` and `on_behalf_of`
+MUST keep their stored values, so ownership stays per user and per kind. No release MAY carry both
+the strings and the user columns.
 The migration MUST run as one transaction: if the per-user Bin comparison differs, it MUST abort and
 leave the previous schema intact. Wire fields named `actor_id` keep their name and are rendered from
 the user row.

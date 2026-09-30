@@ -21,6 +21,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // Default output-inlining threshold and per-span output cap. A span output at
@@ -231,7 +232,7 @@ func (s *Service) CreateBatchRun(ctx context.Context, in RunInput) (*Run, error)
 
 	// A fresh run's stream sequence starts at 0; its id is not handed out until
 	// after commit, so no live subscriber can exist yet and none is published to.
-	if err := s.persistSpans(ctx, tx, runID, in.Access.OwnerID, 0, prepared, dispositions); err != nil {
+	if err := s.persistSpans(ctx, tx, runID, in.Access.OwnerUserID, 0, prepared, dispositions); err != nil {
 		return nil, err
 	}
 
@@ -283,7 +284,7 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 	if len(prepared) > 0 {
 		// Seed spans start the sequence at 0 like a batch; the run id has not been
 		// returned yet, so no live subscriber exists to publish to.
-		if err := s.persistSpans(ctx, tx, runID, in.Access.OwnerID, 0, prepared, dispositions); err != nil {
+		if err := s.persistSpans(ctx, tx, runID, in.Access.OwnerUserID, 0, prepared, dispositions); err != nil {
 			return nil, err
 		}
 	}
@@ -301,8 +302,8 @@ func (s *Service) OpenRun(ctx context.Context, in RunInput) (*Run, error) {
 // concurrent appends serialize and each span gets a distinct, gap-free sibling
 // seq (SPEC-0004 "Append to a closed run refused", "Concurrent appends keep seq
 // monotonic").
-func (s *Service) AppendSpans(ctx context.Context, publicID, actorID string, spans []SpanInput) ([]*Span, error) {
-	appended, _, err := s.AppendSpansWithOutcome(ctx, publicID, actorID, spans)
+func (s *Service) AppendSpans(ctx context.Context, publicID, userID string, spans []SpanInput) ([]*Span, error) {
+	appended, _, err := s.AppendSpansWithOutcome(ctx, publicID, userID, spans)
 	return appended, err
 }
 
@@ -310,7 +311,7 @@ func (s *Service) AppendSpans(ctx context.Context, publicID, actorID string, spa
 // did to this append's spans (SPEC-0017 RD-4 "Live trace append is masked, not
 // refused"): the append's response reports its own redactions, while the run
 // row accumulates every append's.
-func (s *Service) AppendSpansWithOutcome(ctx context.Context, publicID, actorID string, spans []SpanInput) ([]*Span, redact.Summary, error) {
+func (s *Service) AppendSpansWithOutcome(ctx context.Context, publicID, userID string, spans []SpanInput) ([]*Span, redact.Summary, error) {
 	if len(spans) == 0 {
 		return nil, redact.Summary{}, fmt.Errorf("trajectory: no spans to append: %w", errs.Violate("spans", errs.LocBody, errs.ReasonRequired))
 	}
@@ -318,7 +319,7 @@ func (s *Service) AppendSpansWithOutcome(ctx context.Context, publicID, actorID 
 	if err != nil {
 		return nil, redact.Summary{}, err
 	}
-	appended, err := s.appendSpans(ctx, publicID, actorID, spans, scan)
+	appended, err := s.appendSpans(ctx, publicID, userID, spans, scan)
 	if err != nil {
 		return nil, redact.Summary{}, err
 	}
@@ -327,7 +328,7 @@ func (s *Service) AppendSpansWithOutcome(ctx context.Context, publicID, actorID 
 
 // appendSpans persists already-scanned spans and folds their scan outcome into
 // the run and its artifact, in the append's transaction.
-func (s *Service) appendSpans(ctx context.Context, publicID, actorID string, spans []SpanInput, scan runScan) ([]*Span, error) {
+func (s *Service) appendSpans(ctx context.Context, publicID, userID string, spans []SpanInput, scan runScan) ([]*Span, error) {
 	outcome := scan.summary
 	dispositions, err := s.spillOutputs(ctx, spans)
 	if err != nil {
@@ -345,8 +346,8 @@ func (s *Service) appendSpans(ctx context.Context, publicID, actorID string, spa
 	if err != nil {
 		return nil, err
 	}
-	if rr.ownerID != actorID {
-		return nil, fmt.Errorf("trajectory: append by %q to run owned by %q: %w", actorID, rr.ownerID, ErrNotOwner)
+	if !rr.ownedBy(userID) {
+		return nil, fmt.Errorf("trajectory: append to run %s by a non-owner: %w", publicID, ErrNotOwner)
 	}
 	if rr.status == StatusClosed {
 		return nil, fmt.Errorf("trajectory: append to run %s: %w", publicID, ErrRunClosed)
@@ -399,7 +400,7 @@ func (s *Service) appendSpans(ctx context.Context, publicID, actorID string, spa
 	if err != nil {
 		return nil, err
 	}
-	if err := s.persistSpans(ctx, tx, rr.runID, rr.ownerID, base, prepared, dispositions); err != nil {
+	if err := s.persistSpans(ctx, tx, rr.runID, rr.ownerUserID, base, prepared, dispositions); err != nil {
 		return nil, err
 	}
 	// The appended spans' scan outcome folds into the run and into its
@@ -433,7 +434,8 @@ func (s *Service) appendSpans(ctx context.Context, publicID, actorID string, spa
 // matches a batch run) and freezing it against further spans. Only the owner may
 // close it; a closed run stays closed (SPEC-0004 "Run Model and Lifecycle",
 // "Non-owner cannot close a run"). The actor is the closer, derived from the
-// authenticated principal (SPEC-0016 EV-4).
+// authenticated principal (SPEC-0016 EV-4); ownership compares its user id
+// (SPEC-0023 REQ "Owner Model").
 func (s *Service) CloseRun(ctx context.Context, publicID string, actor event.Actor) (*Run, error) {
 	// Every adapter derives the actor from the authenticated principal, so a
 	// missing id, kind or auth method (or a kind that contradicts the method)
@@ -442,7 +444,7 @@ func (s *Service) CloseRun(ctx context.Context, publicID string, actor event.Act
 	if err := actor.Check(); err != nil {
 		return nil, errs.Validationf("trajectory: close run: %v", err)
 	}
-	actorID := actor.ID
+	userID := actor.UserID
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("trajectory: begin tx: %w", err)
@@ -453,8 +455,8 @@ func (s *Service) CloseRun(ctx context.Context, publicID string, actor event.Act
 	if err != nil {
 		return nil, err
 	}
-	if rr.ownerID != actorID {
-		return nil, fmt.Errorf("trajectory: close by %q of run owned by %q: %w", actorID, rr.ownerID, ErrNotOwner)
+	if !rr.ownedBy(userID) {
+		return nil, fmt.Errorf("trajectory: close of run %s by a non-owner: %w", publicID, ErrNotOwner)
 	}
 	if rr.status == StatusClosed {
 		return nil, fmt.Errorf("trajectory: close run %s: %w", publicID, ErrRunClosed)
@@ -481,13 +483,20 @@ func (s *Service) CloseRun(ctx context.Context, publicID string, actor event.Act
 	return s.GetRun(ctx, publicID)
 }
 
-// runRow is the locked run header used by append/close.
+// runRow is the locked run header used by append/close. ownerUserID is the
+// run artifact's owning user: a run follows its artifact (SPEC-0023 REQ
+// "Owner Model").
 type runRow struct {
-	runID      int64
-	artifactID int64
-	ownerID    string
-	status     Status
-	startedAt  time.Time
+	runID       int64
+	artifactID  int64
+	ownerUserID string
+	status      Status
+	startedAt   time.Time
+}
+
+// ownedBy reports whether userID owns the run. An empty id owns nothing.
+func (rr runRow) ownedBy(userID string) bool {
+	return userID != "" && rr.ownerUserID == userID
 }
 
 // lockRun loads and row-locks a run header by public id, returning ErrRunNotFound
@@ -496,11 +505,11 @@ type runRow struct {
 func (s *Service) lockRun(ctx context.Context, tx pgx.Tx, publicID string) (runRow, error) {
 	var rr runRow
 	err := tx.QueryRow(ctx, `
-		SELECT r.id, a.id, a.owner_id, r.status, r.started_at
+		SELECT r.id, a.id, COALESCE(a.owner_user_id::text, ''), r.status, r.started_at
 		FROM runs r
 		JOIN artifacts a ON a.id = r.artifact_id
 		WHERE a.public_id = $1 AND a.expires_at > now()
-		FOR UPDATE OF r`, publicID).Scan(&rr.runID, &rr.artifactID, &rr.ownerID, &rr.status, &rr.startedAt)
+		FOR UPDATE OF r`, publicID).Scan(&rr.runID, &rr.artifactID, &rr.ownerUserID, &rr.status, &rr.startedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return runRow{}, fmt.Errorf("trajectory: run %s: %w", publicID, ErrRunNotFound)
@@ -546,7 +555,7 @@ func (s *Service) loadSpanShape(ctx context.Context, tx pgx.Tx, runID int64) (ma
 // endpoint has a gap-free, append-monotonic resume cursor (SPEC-0004 "Live Span
 // Stream Delivery"). base is the run's current MAX(stream_seq) — 0 for a fresh
 // run, the locked current max for an append — so appends continue the sequence.
-func (s *Service) persistSpans(ctx context.Context, tx pgx.Tx, runID int64, ownerID string, baseStreamSeq int64, prepared []preparedSpan, dispositions []spilled) error {
+func (s *Service) persistSpans(ctx context.Context, tx pgx.Tx, runID int64, ownerUserID string, baseStreamSeq int64, prepared []preparedSpan, dispositions []spilled) error {
 	for i, p := range prepared {
 		d := dispositions[i]
 		if d.staged != nil {
@@ -560,7 +569,7 @@ func (s *Service) persistSpans(ctx context.Context, tx pgx.Tx, runID int64, owne
 			return err
 		}
 		if p.in.ProducedArtifactID != "" {
-			if err := s.insertProducedEdge(ctx, tx, runID, ownerID, i, p.in.SpanID, p.in.ProducedArtifactID); err != nil {
+			if err := s.insertProducedEdge(ctx, tx, runID, ownerUserID, i, p.in.SpanID, p.in.ProducedArtifactID); err != nil {
 				return err
 			}
 		}
@@ -606,16 +615,16 @@ func (s *Service) nextStreamBase(ctx context.Context, tx pgx.Tx, runID int64) (i
 // insertProducedEdge resolves the produced artifact's public id to its internal
 // insertProducedEdge resolves the produced artifact's public id to its internal
 // id and records the directed edge. The target must be readable by the run's
-// owner: until SPEC-0024's readableTargets helper exists that means owner_id
-// equality, so unknown, expired and foreign ids all produce the identical
+// owner: until SPEC-0024's readableTargets helper exists that means the same
+// owning user, so unknown, expired and foreign ids all produce the identical
 // validation_failed error (issue #422, SPEC-0023 REQ "Read Authorization on
 // Every Surface"). The id arrives already normalized from prepareSpans, so an
 // mcp://cairn/<id> handle resolves exactly as the bare id does (issue #50).
 // Governing: SPEC-0023 REQ "Read Authorization on Every Surface", ADR-0007
-func (s *Service) insertProducedEdge(ctx context.Context, tx pgx.Tx, runID int64, ownerID string, index int, spanID, pid string) error {
+func (s *Service) insertProducedEdge(ctx context.Context, tx pgx.Tx, runID int64, ownerUserID string, index int, spanID, pid string) error {
 	var artID int64
 	err := tx.QueryRow(ctx,
-		`SELECT id FROM artifacts WHERE public_id = $1 AND expires_at > now() AND owner_id = $2`, pid, ownerID,
+		`SELECT id FROM artifacts WHERE public_id = $1 AND expires_at > now() AND owner_user_id = $2`, pid, user.IDParam(ownerUserID),
 	).Scan(&artID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -658,10 +667,10 @@ func (s *Service) insertRunArtifact(ctx context.Context, tx pgx.Tx, in RunInput,
 	const insertSQL = `
 		INSERT INTO artifacts
 			(public_id, share_type, title, body_sha256, size_bytes, media_type,
-			 previewable, actor_id, on_behalf_of, channel, captured_at,
-			 owner_id, visibility, expires_at,
+			 previewable, created_by_user_id, on_behalf_of, channel, captured_at,
+			 owner_user_id, owner_team_id, visibility, expires_at,
 			 redaction_status, redaction_count, redaction_rules)
-		VALUES ($1,$2,$3,NULL,0,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		VALUES ($1,$2,$3,NULL,0,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		RETURNING id`
 
 	for attempt := 0; attempt < idMaxAttempts; attempt++ {
@@ -680,9 +689,10 @@ func (s *Service) insertRunArtifact(ctx context.Context, tx pgx.Tx, in RunInput,
 		var artID int64
 		err = sp.QueryRow(ctx, insertSQL,
 			art.PublicID, string(art.ShareType), art.Title, art.MediaType,
-			art.Previewable, art.Provenance.ActorID, art.Provenance.OnBehalfOf,
+			art.Previewable, user.IDParam(art.Provenance.CreatedByUserID), art.Provenance.OnBehalfOf,
 			string(art.Provenance.Channel), art.Provenance.CapturedAt,
-			art.Access.OwnerID, string(art.Access.Visibility), art.ExpiresAt,
+			user.IDParam(art.Access.OwnerUserID), user.IDParam(art.Access.OwnerTeamID),
+			string(art.Access.Visibility), art.ExpiresAt,
 			string(stored.Status), stored.Count, stored.Rules,
 		).Scan(&artID)
 		if err != nil {

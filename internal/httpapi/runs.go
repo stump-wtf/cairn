@@ -175,15 +175,16 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		TokenCount: req.TokenCount,
 		StartedAt:  started,
 		Provenance: artifact.Provenance{
-			ActorID:    p.ActorID,
-			OnBehalfOf: req.OnBehalfOf,
+			CreatedByUserID: p.UserID,
+			ActorID:         p.ActorID,
+			OnBehalfOf:      req.OnBehalfOf,
 			// The run already names its model; mirror it onto provenance so a
 			// trajectory reads the same as every other artifact.
 			Model:      req.Model,
 			Channel:    p.Channel,
 			CapturedAt: now,
 		},
-		Access:    artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
+		Access:    artifact.AccessPolicy{OwnerUserID: p.UserID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 		Spans:     toSpanInputs(req.Spans),
 		ActorKind: actor.Kind,
@@ -231,7 +232,7 @@ func (s *Server) handleAppendSpans(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
-	_, outcome, err := s.traj.AppendSpansWithOutcome(r.Context(), id, p.ActorID, toSpanInputs(req.Spans))
+	_, outcome, err := s.traj.AppendSpansWithOutcome(r.Context(), id, p.UserID, toSpanInputs(req.Spans))
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
@@ -279,7 +280,7 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := s.toRunResponse(run)
 	viewer, _ := s.optionalPrincipal(r)
-	if viewer != nil && viewer.ActorID != "" && viewer.ActorID == run.Access.OwnerID {
+	if viewer != nil && run.Access.OwnedByUser(viewer.UserID) {
 		resp.OwnerRedaction = ownerRedactionOf(run.Redaction)
 	}
 	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)

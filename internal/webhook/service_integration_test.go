@@ -67,6 +67,11 @@ func newHarness(t *testing.T) (*Service, *pgxpool.Pool) {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// Owners are users (SPEC-0023 REQ "Owner Model").
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, actor_key, display_handle)
+		VALUES ($1, 'joe', 'joe'), ($2, 'owner-a', 'owner-a')`, joeUser, ownerAUser); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
 
 	var obj objectstore.ObjectStore
 	if ep := os.Getenv("CAIRN_TEST_S3_ENDPOINT"); ep != "" {
@@ -139,7 +144,7 @@ func TestIntegrationCreateEndpoint(t *testing.T) {
 	if ep.RequestCap != DefaultRequestCap {
 		t.Fatalf("request cap = %d, want default %d", ep.RequestCap, DefaultRequestCap)
 	}
-	if ep.Provenance.ActorID != "joe" || ep.Access.OwnerID != "joe" {
+	if ep.Provenance.ActorID != "joe" || ep.Access.OwnerUserID != joeUser {
 		t.Fatalf("provenance/access did not round-trip: %+v / %+v", ep.Provenance, ep.Access)
 	}
 
@@ -343,8 +348,8 @@ func TestIntegrationManagementReadIsLinkScoped(t *testing.T) {
 	svc, _ := newHarness(t)
 	ctx := context.Background()
 	ep := newEndpoint(t, svc, EndpointInput{
-		Provenance: artifact.Provenance{ActorID: "owner-a", Channel: artifact.ChannelAPI, CapturedAt: time.Now()},
-		Access:     artifact.AccessPolicy{OwnerID: "owner-a", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: ownerAUser, ActorID: "owner-a", Channel: artifact.ChannelAPI, CapturedAt: time.Now()},
+		Access:     artifact.AccessPolicy{OwnerUserID: ownerAUser, Visibility: artifact.VisibilityLink},
 	})
 	if _, err := svc.Capture(ctx, ep.PublicID, CaptureInput{Method: "GET", Status: 200}); err != nil {
 		t.Fatalf("capture: %v", err)
@@ -456,4 +461,33 @@ func TestIntegrationConcurrentCapturesKeepSeqMonotonic(t *testing.T) {
 func readAllClose(rc io.ReadCloser) ([]byte, error) {
 	defer rc.Close()
 	return io.ReadAll(rc)
+}
+
+// TestIntegrationCreateEndpointRefusesMalformedOwnerIDs proves an endpoint
+// whose owner or creator is not a user id is refused as validation
+// (SPEC-0023 REQ "Owner Model"), never a CHECK-constraint 500 or a creator
+// silently stored as NULL.
+func TestIntegrationCreateEndpointRefusesMalformedOwnerIDs(t *testing.T) {
+	svc, pool := newHarness(t)
+	ctx := context.Background()
+	for name, in := range map[string]EndpointInput{
+		"owner": {Provenance: validProvenance(), ExpiresAt: future(),
+			Access: artifact.AccessPolicy{OwnerUserID: "joe", Visibility: artifact.VisibilityLink}},
+		"creator": {Access: validAccess(), ExpiresAt: future(),
+			Provenance: func() artifact.Provenance { p := validProvenance(); p.CreatedByUserID = "joe"; return p }()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.CreateEndpoint(ctx, in)
+			if errs.CodeOf(err) != errs.CodeValidation {
+				t.Fatalf("create with malformed %s: err = %v, want validation", name, err)
+			}
+		})
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM artifacts`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("%d artifacts persisted by refused creates, want 0", n)
+	}
 }

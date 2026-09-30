@@ -135,9 +135,9 @@ func TestResolveKnownIdentityKeepsItsUser(t *testing.T) {
 
 // Matching is not one-shot. An identity whose user has no verified primary
 // email is matched again by the first sign-in that presents a verified one:
-// it moves to the user that email belongs to, or to a new user holding it,
-// and is settled from then on. Against a one-shot resolver it stayed on the
-// email-less user its first sign-in created.
+// it moves to the user that email belongs to, or its own user takes the
+// email, and it is settled from then on. Against a one-shot resolver it stayed
+// on the email-less user its first sign-in created.
 func TestResolveRematchesUnsettledIdentity(t *testing.T) {
 	s, pool := newTestStore(t)
 	ctx := context.Background()
@@ -146,8 +146,8 @@ func TestResolveRematchesUnsettledIdentity(t *testing.T) {
 		t.Fatalf("unverified first sign-in got primary email %q", first.PrimaryEmail)
 	}
 	later := mustResolve(t, s, Identity{Issuer: pocketIssuer, Subject: "joe", Email: "Joe@Example.com", EmailVerified: true})
-	if later.ID == first.ID || later.PrimaryEmail != "joe@example.com" || !later.EmailVerified {
-		t.Fatalf("verified sign-in resolved to %+v, want a user holding joe@example.com verified", later)
+	if later.ID != first.ID || later.PrimaryEmail != "joe@example.com" || !later.EmailVerified {
+		t.Fatalf("verified sign-in resolved to %+v, want user %s holding joe@example.com verified", later, first.ID)
 	}
 	var linked string
 	if err := pool.QueryRow(ctx,

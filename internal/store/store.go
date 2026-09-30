@@ -92,9 +92,9 @@ type CreationEvent struct {
 	// (ADR-0022, SPEC-0016 EV-4).
 	ActorKind event.ActorKind
 	Auth      event.AuthMethod
-	// OwnerID is the artifact's owner, carried so owned subscriptions can be
-	// selected without a lookup (ADR-0029). It is never put on the wire
-	// (SPEC-0016 EV-7).
+	// OwnerID is the artifact's owning user id, carried so owned
+	// subscriptions can be selected without a lookup (ADR-0029). It is never
+	// put on the wire (SPEC-0016 EV-7).
 	OwnerID string
 }
 
@@ -236,7 +236,7 @@ func (s *Store) emitCreated(a *artifact.Artifact, kind event.ActorKind, auth eve
 		Tags:      slices.Clone(a.Tags),
 		ActorKind: kind,
 		Auth:      auth,
-		OwnerID:   a.Access.OwnerID,
+		OwnerID:   a.Access.OwnerUserID,
 	})
 }
 

@@ -30,7 +30,7 @@ func TestIntegrationListBinKeyset(t *testing.T) {
 	cursor := ""
 	pages := 0
 	for {
-		page, err := s.ListBin(ctx, "u1", cursor, 2)
+		page, err := s.ListBin(ctx, testOwner, cursor, 2)
 		if err != nil {
 			t.Fatalf("list bin: %v", err)
 		}
@@ -59,7 +59,7 @@ func TestIntegrationListBinKeyset(t *testing.T) {
 	}
 
 	// Scoping: another owner sees an empty Bin.
-	other, err := s.ListBin(ctx, "someone-else", "", 10)
+	other, err := s.ListBin(ctx, testIntruder, "", 10)
 	if err != nil {
 		t.Fatalf("list other bin: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestIntegrationDeleteAndBlobGC(t *testing.T) {
 	}
 
 	// Delete a1: the shared blob must survive (a2 still references it).
-	if err := s.DeleteArtifact(ctx, a1.PublicID, "u1"); err != nil {
+	if err := s.DeleteArtifact(ctx, a1.PublicID, testOwner); err != nil {
 		t.Fatalf("delete a1: %v", err)
 	}
 	if _, err := s.GetByPublicID(ctx, a1.PublicID); errs.CodeOf(err) != errs.CodeNotFound {
@@ -104,7 +104,7 @@ func TestIntegrationDeleteAndBlobGC(t *testing.T) {
 	}
 
 	// Delete a2: now the blob's refcount hits zero and it is GC'd.
-	if err := s.DeleteArtifact(ctx, a2.PublicID, "u1"); err != nil {
+	if err := s.DeleteArtifact(ctx, a2.PublicID, testOwner); err != nil {
 		t.Fatalf("delete a2: %v", err)
 	}
 	if blobCount() != 0 {
@@ -116,7 +116,7 @@ func TestIntegrationDeleteAndBlobGC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create a3: %v", err)
 	}
-	if err := s.DeleteArtifact(ctx, a3.PublicID, "intruder"); errs.CodeOf(err) != errs.CodeNotFound {
+	if err := s.DeleteArtifact(ctx, a3.PublicID, testIntruder); errs.CodeOf(err) != errs.CodeNotFound {
 		t.Fatalf("non-owner delete: code %q, want not_found", errs.CodeOf(err))
 	}
 	if _, err := s.GetByPublicID(ctx, a3.PublicID); err != nil {
@@ -128,8 +128,8 @@ func bundleInput(members ...MemberInput) CreateBundleInput {
 	return CreateBundleInput{
 		Title:      "bundle",
 		Members:    members,
-		Provenance: artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
-		Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: testOwner, ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
+		Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  time.Now().Add(time.Hour),
 	}
 }

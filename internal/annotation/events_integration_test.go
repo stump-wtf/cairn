@@ -111,8 +111,8 @@ func TestReactionEventsApprovalBit(t *testing.T) {
 	artID := insertArtifact(t, pool, "EVTAAAA1", sharetype.KeyMarkdown)
 	expires := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Microsecond)
 	if _, err := pool.Exec(ctx, `
-		UPDATE artifacts SET title = 'Work order', tags = ARRAY['handoff','lane:m'], owner_id = 'owner-1', expires_at = $2
-		WHERE id = $1`, artID, expires); err != nil {
+		UPDATE artifacts SET title = 'Work order', tags = ARRAY['handoff','lane:m'], owner_user_id = $3, expires_at = $2
+		WHERE id = $1`, artID, expires, testUsers["bob"]); err != nil {
 		t.Fatalf("describe artifact: %v", err)
 	}
 
@@ -128,7 +128,7 @@ func TestReactionEventsApprovalBit(t *testing.T) {
 	}
 	want := event.Subject{
 		PublicID: "EVTAAAA1", ShareType: sharetype.KeyMarkdown, Title: "Work order",
-		WebPath: "/EVTAAAA1", Tags: []string{"handoff", "lane:m"}, ExpiresAt: expires, OwnerID: "owner-1",
+		WebPath: "/EVTAAAA1", Tags: []string{"handoff", "lane:m"}, ExpiresAt: expires, OwnerID: testUsers["bob"],
 	}
 	got := ev.Subject
 	if got.PublicID != want.PublicID || got.ShareType != want.ShareType || got.Title != want.Title ||
@@ -399,11 +399,19 @@ func TestConcurrentReactionsEmitOncePerInsert(t *testing.T) {
 		mu      sync.Mutex
 		created = map[int64]bool{}
 	)
+	ids := make([]string, actors)
+	for i := range ids {
+		if err := pool.QueryRow(ctx, `INSERT INTO users (actor_key, display_handle) VALUES ($1, $1) RETURNING id::text`,
+			fmt.Sprintf("actor-%d", i)).Scan(&ids[i]); err != nil {
+			t.Fatalf("seed actor %d: %v", i, err)
+		}
+	}
 	for i := 0; i < actors*perActor; i++ {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
 			a := human(fmt.Sprintf("actor-%d", n%actors))
+			a.UserID = ids[n%actors]
 			r, isNew, err := svc.React(ctx, "EVTAAAA6", sharetype.AnchorArtifact, nil, "👍", a)
 			if err != nil {
 				t.Errorf("react: %v", err)

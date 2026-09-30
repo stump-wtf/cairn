@@ -13,11 +13,12 @@ func validArtifact() Artifact {
 		ShareType:  TypeFile,
 		BodySHA256: "abc123",
 		Provenance: Provenance{
-			ActorID:    "user_1",
-			Channel:    ChannelCLI,
-			CapturedAt: time.Now(),
+			CreatedByUserID: "u-1",
+			ActorID:         "user_1",
+			Channel:         ChannelCLI,
+			CapturedAt:      time.Now(),
 		},
-		Access:    AccessPolicy{OwnerID: "user_1", Visibility: VisibilityLink},
+		Access:    AccessPolicy{OwnerUserID: "u-1", Visibility: VisibilityLink},
 		ExpiresAt: time.Now().Add(time.Hour),
 	}
 }
@@ -36,7 +37,10 @@ func TestArtifactValidate(t *testing.T) {
 		{"missing channel", func(a *Artifact) { a.Provenance.Channel = "" }, true},
 		{"missing actor", func(a *Artifact) { a.Provenance.ActorID = "" }, true},
 		{"zero captured_at", func(a *Artifact) { a.Provenance.CapturedAt = time.Time{} }, true},
-		{"missing owner", func(a *Artifact) { a.Access.OwnerID = "" }, true},
+		{"missing creator", func(a *Artifact) { a.Provenance.CreatedByUserID = "" }, true},
+		{"missing owner", func(a *Artifact) { a.Access.OwnerUserID = "" }, true},
+		{"team owner", func(a *Artifact) { a.Access.OwnerUserID = ""; a.Access.OwnerTeamID = "t-1" }, false},
+		{"two owners", func(a *Artifact) { a.Access.OwnerTeamID = "t-1" }, true},
 		{"missing visibility", func(a *Artifact) { a.Access.Visibility = "" }, true},
 		{"zero expiry", func(a *Artifact) { a.ExpiresAt = time.Time{} }, true},
 	}

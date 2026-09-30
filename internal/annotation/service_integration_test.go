@@ -16,14 +16,23 @@ import (
 	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
-// agent is a bearer-credential actor, the kind most tests act as.
-func agent(id string) event.Actor {
-	return event.Actor{ID: id, Channel: artifact.ChannelAPI, Kind: event.KindAgent, Auth: event.AuthAPIToken}
+// agent is a bearer-credential actor, the kind most tests act as. key names
+// one of the seeded testUsers; the actor acts as that user (SPEC-0023 REQ
+// "Owner Model") and renders as key.
+func agent(key string) event.Actor {
+	return event.Actor{ID: key, UserID: testUsers[key], Channel: artifact.ChannelAPI, Kind: event.KindAgent, Auth: event.AuthAPIToken}
 }
 
-// human is a browser-session actor.
-func human(id string) event.Actor {
-	return event.Actor{ID: id, Channel: artifact.ChannelWeb, Kind: event.KindHuman, Auth: event.AuthSession}
+// human is a browser-session actor for the seeded user key.
+func human(key string) event.Actor {
+	return event.Actor{ID: key, UserID: testUsers[key], Channel: artifact.ChannelWeb, Kind: event.KindHuman, Auth: event.AuthSession}
+}
+
+// agentAs is an agent actor for a user seeded outside testUsers.
+func agentAs(userID, key string) event.Actor {
+	a := agent(key)
+	a.UserID = userID
+	return a
 }
 
 // withOBO returns a with OnBehalfOf set.
@@ -97,6 +106,14 @@ func TestServiceReactToggle(t *testing.T) {
 	if r2.ID != r1.ID {
 		t.Fatalf("duplicate react returned row %d, want existing row %d", r2.ID, r1.ID)
 	}
+	// The author is a user id; the wire actor is rendered from the user row
+	// on both the insert and the no-op path (SPEC-0023 REQ "Migration to
+	// Explicit Ownership").
+	for _, r := range []Reaction{r1, r2} {
+		if r.UserID != u1ID || r.ActorID != "u1" {
+			t.Fatalf("reaction author = %q rendered %q, want %s rendered u1", r.UserID, r.ActorID, u1ID)
+		}
+	}
 	if r, c, p := artifactCounts(t, pool, artID); r != 1 || c != 0 || p != 0 {
 		t.Fatalf("counts after duplicate react = (%d,%d,%d), want (1,0,0)", r, c, p)
 	}
@@ -128,7 +145,7 @@ func TestServiceReactToggle(t *testing.T) {
 	assertCountsMatchAggregates(t, pool, artID)
 
 	// Tallies group per (anchor, emoji) with the caller's "did I react" flag.
-	tallies, err := svc.ReactionTallies(ctx, "SVCAAAA1", Viewer{ID: "u2", Kind: event.KindAgent})
+	tallies, err := svc.ReactionTallies(ctx, "SVCAAAA1", Viewer{UserID: u2ID, Kind: event.KindAgent})
 	if err != nil {
 		t.Fatalf("tallies: %v", err)
 	}
@@ -225,12 +242,19 @@ func TestServiceReactConcurrentIdempotent(t *testing.T) {
 	}
 
 	// Distinct actors racing the same anchor all land, and the rollup matches.
+	actors := make([]string, goroutines)
+	for i := range actors {
+		if err := pool.QueryRow(ctx, `INSERT INTO users (actor_key, display_handle) VALUES ($1, $1) RETURNING id::text`,
+			fmt.Sprintf("actor-%d", i)).Scan(&actors[i]); err != nil {
+			t.Fatalf("seed actor %d: %v", i, err)
+		}
+	}
 	for i := 0; i < goroutines; i++ {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
 			actor := fmt.Sprintf("actor-%d", n)
-			if _, _, err := svc.React(ctx, "SVCAAAA2", sharetype.AnchorMarkdownBlock, ref, "👀", agent(actor)); err != nil {
+			if _, _, err := svc.React(ctx, "SVCAAAA2", sharetype.AnchorMarkdownBlock, ref, "👀", agentAs(actors[n], actor)); err != nil {
 				t.Errorf("actor %s react: %v", actor, err)
 			}
 		}(i)
@@ -288,6 +312,9 @@ func TestServiceCommentThreading(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("root1: %v", err)
+	}
+	if root1.UserID != u1ID || root1.ActorID != "u1" {
+		t.Fatalf("comment author = %q rendered %q, want %s rendered u1", root1.UserID, root1.ActorID, u1ID)
 	}
 	root2, err := svc.AddComment(ctx, "SVCAAAA4", CommentInput{
 		AnchorType: sharetype.AnchorArtifact,
@@ -355,6 +382,9 @@ func TestServiceCommentThreading(t *testing.T) {
 	gotIDs := make([]int64, len(list))
 	for i, c := range list {
 		gotIDs[i] = c.ID
+		if want := map[string]string{u1ID: "u1", u2ID: "u2"}[c.UserID]; want == "" || c.ActorID != want {
+			t.Fatalf("listed comment %d author %q rendered %q", c.ID, c.UserID, c.ActorID)
+		}
 	}
 	wantIDs := []int64{root1.ID, reply1.ID, root2.ID}
 	if len(gotIDs) != len(wantIDs) {

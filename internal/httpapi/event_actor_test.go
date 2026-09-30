@@ -29,9 +29,9 @@ func TestPrincipalEventActor(t *testing.T) {
 		p    Principal
 		want event.ActorKind
 	}{
-		{"session", Principal{ActorID: "alice", Channel: artifact.ChannelWeb, Ambient: true, Auth: event.AuthSession}, event.KindHuman},
-		{"human PAT", Principal{ActorID: "alice", Channel: artifact.ChannelAPI, IsAgent: false, Auth: event.AuthPAT}, event.KindAgent},
-		{"agent PAT", Principal{ActorID: "alice", Channel: artifact.ChannelAPI, IsAgent: true, Auth: event.AuthPAT}, event.KindAgent},
+		{"session", Principal{ActorID: "alice", UserID: unitUserID, Channel: artifact.ChannelWeb, Ambient: true, Auth: event.AuthSession}, event.KindHuman},
+		{"human PAT", Principal{ActorID: "alice", UserID: unitUserID, Channel: artifact.ChannelAPI, IsAgent: false, Auth: event.AuthPAT}, event.KindAgent},
+		{"agent PAT", Principal{ActorID: "alice", UserID: unitUserID, Channel: artifact.ChannelAPI, IsAgent: true, Auth: event.AuthPAT}, event.KindAgent},
 		{"oauth", Principal{ActorID: "alice", Channel: artifact.ChannelAPI, IsAgent: true, Auth: event.AuthOAuth}, event.KindAgent},
 		{"human api token", Principal{ActorID: "alice", Channel: artifact.ChannelAPI, Auth: event.AuthAPIToken}, event.KindAgent},
 		// A principal nobody classified is still never human.
@@ -46,8 +46,10 @@ func TestPrincipalEventActor(t *testing.T) {
 			if got.Kind != tc.want {
 				t.Errorf("Kind = %q, want %q", got.Kind, tc.want)
 			}
-			if got.ID != tc.p.ActorID || got.Channel != tc.p.Channel || got.Auth != tc.p.Auth {
-				t.Errorf("EventActor() = %+v, does not carry the principal's id/channel/auth", got)
+			// UserID is what annotation and run ownership compare
+			// (SPEC-0023 REQ "Owner Model"); ID stays the rendered actor.
+			if got.ID != tc.p.ActorID || got.UserID != tc.p.UserID || got.Channel != tc.p.Channel || got.Auth != tc.p.Auth {
+				t.Errorf("EventActor() = %+v, does not carry the principal's id/user/channel/auth", got)
 			}
 			if got.OnBehalfOf != "" {
 				t.Errorf("OnBehalfOf = %q, want empty (left for the caller)", got.OnBehalfOf)
@@ -107,7 +109,7 @@ func TestMCPEventActorIsAlwaysAgent(t *testing.T) {
 		t.Errorf("nil request: actor %+v, want an unstamped agent that Check refuses", a)
 	}
 	withAuth := func(v any) *mcp.CallToolRequest {
-		ti := &sdkauth.TokenInfo{UserID: "alice", Extra: map[string]any{}}
+		ti := &sdkauth.TokenInfo{UserID: unitUserID, Extra: map[string]any{mcpExtraActor: "alice"}}
 		if v != nil {
 			ti.Extra[mcpExtraAuth] = v
 		}
@@ -136,8 +138,8 @@ func TestMCPEventActorIsAlwaysAgent(t *testing.T) {
 			if ok := a.Check() == nil; ok != (tc.want != "") {
 				t.Errorf("Check(%+v) ok = %v, want %v", a, ok, tc.want != "")
 			}
-			if a.ID != "alice" || a.Channel != artifact.ChannelMCP {
-				t.Errorf("actor = %+v, want id alice on the mcp channel", a)
+			if a.ID != "alice" || a.UserID != unitUserID || a.Channel != artifact.ChannelMCP {
+				t.Errorf("actor = %+v, want id alice, user %s, on the mcp channel", a, unitUserID)
 			}
 		})
 	}
@@ -201,7 +203,7 @@ func TestMCPWritesRefuseUnstampedCredential(t *testing.T) {
 	s := New(nil, nil, nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ctx := context.Background()
 	req := func(stamp any) *mcp.CallToolRequest {
-		ti := &sdkauth.TokenInfo{UserID: "alice", Scopes: []string{oauth.ScopeArtifactsWrite, oauth.ScopeAnnotationsWrite}, Extra: map[string]any{}}
+		ti := &sdkauth.TokenInfo{UserID: unitUserID, Scopes: []string{oauth.ScopeArtifactsWrite, oauth.ScopeAnnotationsWrite}, Extra: map[string]any{mcpExtraActor: "alice"}}
 		if stamp != nil {
 			ti.Extra[mcpExtraAuth] = stamp
 		}

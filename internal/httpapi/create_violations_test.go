@@ -24,6 +24,11 @@ import (
 	"github.com/stump-wtf/cairn/internal/store"
 )
 
+// unitUserID is the owner and creator the no-database guard sites create as:
+// a well-formed user id, so the checks under test are reached (SPEC-0023 REQ
+// "Owner Model").
+const unitUserID = "00000000-0000-4000-8000-00000000f001"
+
 // The create path's remaining sites (#281): share type, title, checksum, the
 // multipart envelope, and bundle members.
 //
@@ -60,8 +65,8 @@ func createPathRemainingSites(t *testing.T) []guardSite {
 	// scan, not at the size check.
 	st := store.New(nil, objectstore.NewMemory(), withScanner(store.Options{MaxUploadBytes: 10}))
 	now := time.Now()
-	prov := artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelAPI, CapturedAt: now}
-	access := artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink}
+	prov := artifact.Provenance{CreatedByUserID: unitUserID, ActorID: "u1", Channel: artifact.ChannelAPI, CapturedAt: now}
+	access := artifact.AccessPolicy{OwnerUserID: unitUserID, Visibility: artifact.VisibilityLink}
 	single := func(mutate func(*store.CreateArtifactInput)) func() error {
 		return func() error {
 			in := store.CreateArtifactInput{ShareType: artifact.TypeFile, Body: strings.NewReader("x"),

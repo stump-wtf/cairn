@@ -308,6 +308,9 @@ type TokenSet struct {
 // subject the grant binds (agents inherit the human's reach, ADR-0004
 // subject-vs-actor) plus the granted scope subset.
 type Identity struct {
+	// UserID is the grant's user (SPEC-0023 REQ "Owner Model"); ActorID is
+	// that user as rendered on the wire.
+	UserID   string
 	ActorID  string
 	ClientID string
 	GrantID  string

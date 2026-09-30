@@ -29,6 +29,13 @@ import (
 // schemaSeq disambiguates test schemas created within the same nanosecond.
 var schemaSeq atomic.Int64
 
+// testOwner and testIntruder are the user ids newTestStore seeds: the owner
+// every fixture creates as (rendered "u1"), and a second user who owns nothing.
+const (
+	testOwner    = "00000000-0000-4000-8000-000000000001"
+	testIntruder = "00000000-0000-4000-8000-000000000002"
+)
+
 func newTestStore(t *testing.T, o Options) (*Store, *pgxpool.Pool) {
 	t.Helper()
 	dsn := os.Getenv("CAIRN_TEST_DATABASE_URL")
@@ -78,6 +85,13 @@ func newTestStore(t *testing.T, o Options) (*Store, *pgxpool.Pool) {
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// Owners are users (SPEC-0023 REQ "Owner Model"): seed the two every
+	// test in this package acts as.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users (id, actor_key, display_handle) VALUES ($1, 'u1', 'u1'), ($2, 'intruder', 'intruder')`,
+		testOwner, testIntruder); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
 
 	var obj objectstore.ObjectStore
 	if ep := os.Getenv("CAIRN_TEST_S3_ENDPOINT"); ep != "" {
@@ -112,8 +126,8 @@ func input(body []byte) CreateArtifactInput {
 		ShareType:  artifact.TypeFile,
 		Title:      "test",
 		Body:       bytes.NewReader(body),
-		Provenance: artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
-		Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: testOwner, ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
+		Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  time.Now().Add(time.Hour),
 	}
 }
@@ -258,8 +272,8 @@ func TestBundleOversizeMembersReportedTogether(t *testing.T) {
 	ctx := context.Background()
 
 	in := CreateBundleInput{
-		Provenance: artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
-		Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: testOwner, ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
+		Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  time.Now().Add(time.Hour),
 		Members: []MemberInput{
 			{Name: "big1", Body: bytes.NewReader(bytes.Repeat([]byte("a"), 64))},
@@ -376,5 +390,46 @@ func TestConcurrentCreate(t *testing.T) {
 	}
 	if len(ids) != n {
 		t.Fatalf("expected %d distinct public ids, got %d", n, len(ids))
+	}
+}
+
+// TestMalformedUserIDsFailClosed proves a caller id that is not a user id
+// never reaches the uuid columns as a query error (SPEC-0023 REQ "Owner
+// Model"): a create naming one is refused as validation, and a Bin read, a
+// delete or a policy change by one matches nothing rather than failing as an
+// internal error.
+func TestMalformedUserIDsFailClosed(t *testing.T) {
+	s, _ := newTestStore(t, Options{})
+	ctx := context.Background()
+
+	for name, mutate := range map[string]func(*CreateArtifactInput){
+		"owner":   func(in *CreateArtifactInput) { in.Access.OwnerUserID = "u1" },
+		"creator": func(in *CreateArtifactInput) { in.Provenance.CreatedByUserID = "u1" },
+	} {
+		in := input([]byte("malformed " + name))
+		mutate(&in)
+		if _, err := s.CreateArtifact(ctx, in); errs.CodeOf(err) != errs.CodeValidation {
+			t.Fatalf("create with malformed %s: err = %v, want validation", name, err)
+		}
+	}
+
+	art, err := s.CreateArtifact(ctx, input([]byte("owned by a real user")))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	for _, bad := range []string{"u1", "user:" + testOwner, strings.ReplaceAll(testOwner, "-", ""), "{" + testOwner + "}"} {
+		page, err := s.ListBin(ctx, bad, "", 10)
+		if err != nil || len(page.Artifacts) != 0 {
+			t.Fatalf("ListBin(%q) = %d items, %v; want empty, nil", bad, len(page.Artifacts), err)
+		}
+		if err := s.DeleteArtifact(ctx, art.PublicID, bad); errs.CodeOf(err) != errs.CodeNotFound {
+			t.Fatalf("DeleteArtifact by %q: err = %v, want not found", bad, err)
+		}
+		if _, err := s.UpdateVisibility(ctx, art.PublicID, bad, artifact.VisibilityLink); errs.CodeOf(err) != errs.CodeForbidden {
+			t.Fatalf("UpdateVisibility by %q: err = %v, want forbidden", bad, err)
+		}
+	}
+	if _, err := s.GetByPublicID(ctx, art.PublicID); err != nil {
+		t.Fatalf("artifact gone after refused deletes: %v", err)
 	}
 }

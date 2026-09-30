@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // DeleteArtifact deletes an artifact, restricted to the owning principal, and
@@ -36,8 +37,8 @@ import (
 // Governing: ADR-0008 (reference-counted GC; delayed reaper tolerates dedup
 // races), SPEC-0002 REQ "Artifact Lifecycle — Delete and Expiry", SPEC-0009 REQ
 // "Object-Storage Lifecycle Backstop" (#32).
-func (s *Store) DeleteArtifact(ctx context.Context, publicID, ownerID string) error {
-	if publicID == "" || ownerID == "" {
+func (s *Store) DeleteArtifact(ctx context.Context, publicID, ownerUserID string) error {
+	if publicID == "" || ownerUserID == "" {
 		return errs.Validationf("delete: id and owner are required")
 	}
 
@@ -53,9 +54,9 @@ func (s *Store) DeleteArtifact(ctx context.Context, publicID, ownerID string) er
 	)
 	err = tx.QueryRow(ctx,
 		`SELECT id, body_sha256 FROM artifacts
-		 WHERE public_id = $1 AND owner_id = $2
+		 WHERE public_id = $1 AND owner_user_id = $2
 		 FOR UPDATE`,
-		publicID, ownerID,
+		publicID, user.IDParam(ownerUserID),
 	).Scan(&id, &bodySHA)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

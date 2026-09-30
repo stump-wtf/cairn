@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/stump-wtf/cairn/internal/id"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // Defaults for the token model (SPEC-0007 REQ "Token Model": ~1h access,
@@ -128,8 +129,8 @@ func (s *Service) GetClient(ctx context.Context, clientID string) (*Client, erro
 // subset, and the PKCE S256 challenge (SPEC-0007: codes "single-use,
 // short-lived, and bound to the client, redirect URI, and PKCE challenge").
 // The raw code is returned exactly once; only its hash is stored.
-func (s *Service) CreateAuthCode(ctx context.Context, clientID, actorID, redirectURI string, scopes []string, challenge string) (string, error) {
-	if clientID == "" || actorID == "" || redirectURI == "" || len(scopes) == 0 {
+func (s *Service) CreateAuthCode(ctx context.Context, clientID, userID, redirectURI string, scopes []string, challenge string) (string, error) {
+	if clientID == "" || !user.ValidID(userID) || redirectURI == "" || len(scopes) == 0 {
 		return "", fmt.Errorf("code requires client, actor, redirect uri, and scopes: %w", ErrInvalidRequest)
 	}
 	if !ValidChallenge(challenge) {
@@ -142,9 +143,9 @@ func (s *Service) CreateAuthCode(ctx context.Context, clientID, actorID, redirec
 	now := s.now().UTC()
 	if _, err := s.pool.Exec(ctx, `
 		INSERT INTO oauth_auth_codes
-			(code_hash, client_id, actor_id, redirect_uri, scope, code_challenge, created_at, expires_at)
+			(code_hash, client_id, user_id, redirect_uri, scope, code_challenge, created_at, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		hashSecret(code), clientID, actorID, redirectURI, JoinScope(scopes), challenge, now, now.Add(s.codeTTL),
+		hashSecret(code), clientID, userID, redirectURI, JoinScope(scopes), challenge, now, now.Add(s.codeTTL),
 	); err != nil {
 		return "", fmt.Errorf("oauth: insert auth code: %w", err)
 	}
@@ -169,16 +170,16 @@ func (s *Service) RedeemCode(ctx context.Context, code, clientID, redirectURI, v
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
 
 	var (
-		rowClientID, rowActor, rowRedirect, rowScope, rowChallenge string
-		expiresAt                                                  time.Time
-		redeemedAt                                                 *time.Time
-		priorGrantID                                               *string
+		rowClientID, rowUser, rowRedirect, rowScope, rowChallenge string
+		expiresAt                                                 time.Time
+		redeemedAt                                                *time.Time
+		priorGrantID                                              *string
 	)
 	err = tx.QueryRow(ctx, `
-		SELECT client_id, actor_id, redirect_uri, scope, code_challenge, expires_at, redeemed_at, grant_id
+		SELECT client_id, user_id::text, redirect_uri, scope, code_challenge, expires_at, redeemed_at, grant_id
 		FROM oauth_auth_codes WHERE code_hash = $1 FOR UPDATE`,
 		hashSecret(code),
-	).Scan(&rowClientID, &rowActor, &rowRedirect, &rowScope, &rowChallenge, &expiresAt, &redeemedAt, &priorGrantID)
+	).Scan(&rowClientID, &rowUser, &rowRedirect, &rowScope, &rowChallenge, &expiresAt, &redeemedAt, &priorGrantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("unknown authorization code: %w", ErrInvalidGrant)
 	}
@@ -233,9 +234,9 @@ func (s *Service) RedeemCode(ctx context.Context, code, clientID, redirectURI, v
 	}
 	grantID := "grant-" + gid
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO oauth_grants (grant_id, client_id, actor_id, scope, created_at, last_used_at)
+		INSERT INTO oauth_grants (grant_id, client_id, user_id, scope, created_at, last_used_at)
 		VALUES ($1, $2, $3, $4, $5, $5)`,
-		grantID, clientID, rowActor, rowScope, now,
+		grantID, clientID, rowUser, rowScope, now,
 	); err != nil {
 		return nil, fmt.Errorf("oauth: insert grant: %w", err)
 	}
@@ -456,18 +457,19 @@ func (s *Service) AuthenticateAccess(ctx context.Context, token string) (*Identi
 		return nil, fmt.Errorf("no token presented: %w", ErrInvalidGrant)
 	}
 	var (
-		kind, audience, grantID, clientID, actorID, scope string
-		expiresAt                                         time.Time
-		revokedAt, grantRevoked                           *time.Time
+		kind, audience, grantID, clientID, userID, actor, scope string
+		expiresAt                                               time.Time
+		revokedAt, grantRevoked                                 *time.Time
 	)
 	err := s.pool.QueryRow(ctx, `
 		SELECT t.kind, t.audience, t.expires_at, t.revoked_at,
-		       g.grant_id, g.client_id, g.actor_id, g.scope, g.revoked_at
+		       g.grant_id, g.client_id, g.user_id::text, `+user.ActorSQL("u")+`, g.scope, g.revoked_at
 		FROM oauth_tokens t
 		JOIN oauth_grants g ON g.grant_id = t.grant_id
+		JOIN users u ON u.id = g.user_id
 		WHERE t.token_hash = $1`,
 		hashSecret(token),
-	).Scan(&kind, &audience, &expiresAt, &revokedAt, &grantID, &clientID, &actorID, &scope, &grantRevoked)
+	).Scan(&kind, &audience, &expiresAt, &revokedAt, &grantID, &clientID, &userID, &actor, &scope, &grantRevoked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("unknown access token: %w", ErrInvalidGrant)
 	}
@@ -489,7 +491,7 @@ func (s *Service) AuthenticateAccess(ctx context.Context, token string) (*Identi
 	if err != nil {
 		return nil, fmt.Errorf("oauth: stored scope invalid: %w", err)
 	}
-	return &Identity{ActorID: actorID, ClientID: clientID, GrantID: grantID, Scopes: scopes, ExpiresAt: expiresAt}, nil
+	return &Identity{UserID: userID, ActorID: actor, ClientID: clientID, GrantID: grantID, Scopes: scopes, ExpiresAt: expiresAt}, nil
 }
 
 // ActorGrant is one OAuth connection a human has approved, as the Settings
@@ -505,21 +507,22 @@ type ActorGrant struct {
 	LastUsed  *time.Time
 }
 
-// ListActorGrants returns the actor's still-active OAuth grants, newest
+// ListActorGrants returns the user's still-active OAuth grants, newest
 // first (SPEC-0023 REQ "Closing the Audited Surfaces", A20): a grant used
 // purely over REST never opens an MCP session, so without this it is
-// invisible to the one human who can revoke it.
-func (s *Service) ListActorGrants(ctx context.Context, actorID string) ([]*ActorGrant, error) {
-	if actorID == "" {
-		return nil, fmt.Errorf("oauth: actor is required: %w", ErrInvalidRequest)
+// invisible to the one human who can revoke it. Grants belong to a user id
+// (SPEC-0023 REQ "Owner Model").
+func (s *Service) ListActorGrants(ctx context.Context, userID string) ([]*ActorGrant, error) {
+	if !user.ValidID(userID) {
+		return nil, fmt.Errorf("oauth: user is required: %w", ErrInvalidRequest)
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT g.grant_id, g.client_id, c.client_name, g.scope, g.created_at, g.last_used_at
 		FROM oauth_grants g
 		JOIN oauth_clients c ON c.client_id = g.client_id
-		WHERE g.actor_id = $1 AND g.revoked_at IS NULL
+		WHERE g.user_id = $1 AND g.revoked_at IS NULL
 		ORDER BY g.created_at DESC`,
-		actorID)
+		userID)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: list grants: %w", err)
 	}
@@ -538,12 +541,12 @@ func (s *Service) ListActorGrants(ctx context.Context, actorID string) ([]*Actor
 	return out, nil
 }
 
-// RevokeActorGrant revokes the actor's OWN grant and every token in its
+// RevokeActorGrant revokes the user's OWN grant and every token in its
 // family — the same cascade the RFC 7009 endpoint runs, gated on ownership
 // so a Settings caller can only ever cut their own connections. An unknown
 // grant, or one belonging to somebody else, is the same error: the endpoint
 // never discloses which.
-func (s *Service) RevokeActorGrant(ctx context.Context, actorID, grantID string) error {
+func (s *Service) RevokeActorGrant(ctx context.Context, userID, grantID string) error {
 	if grantID == "" {
 		return fmt.Errorf("grant id is required: %w", ErrInvalidRequest)
 	}
@@ -554,8 +557,8 @@ func (s *Service) RevokeActorGrant(ctx context.Context, actorID, grantID string)
 	defer tx.Rollback(ctx) //nolint:errcheck
 	tag, err := tx.Exec(ctx, `
 		UPDATE oauth_grants SET revoked_at = COALESCE(revoked_at, $1)
-		WHERE grant_id = $2 AND actor_id = $3 AND revoked_at IS NULL`,
-		s.now().UTC(), grantID, actorID,
+		WHERE grant_id = $2 AND user_id = $3 AND revoked_at IS NULL`,
+		s.now().UTC(), grantID, user.IDParam(userID),
 	)
 	if err != nil {
 		return fmt.Errorf("oauth: revoke grant: %w", err)

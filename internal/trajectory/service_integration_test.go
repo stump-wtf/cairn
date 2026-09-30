@@ -72,6 +72,11 @@ func newHarness(t *testing.T) (*Service, *store.Store, *pgxpool.Pool, *objectsto
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// Owners are users (SPEC-0023 REQ "Owner Model").
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, actor_key, display_handle)
+		VALUES ($1, 'joe', 'joe'), ($2, 'mallory', 'mallory')`, joeUser, malloryUser); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
 
 	obj := objectstore.NewMemory()
 	// One scanner for both: the trace service masks with it, and the artifact
@@ -94,11 +99,18 @@ func bigOutput(seed byte) []byte {
 // read policy (expires_at > now()) regardless of when the suite runs.
 func future() time.Time { return time.Now().Add(30 * 24 * time.Hour) }
 
+// joeUser and malloryUser are the users newTestService seeds: the run owner
+// (rendered "joe") and a second user who owns nothing.
+const (
+	joeUser     = "00000000-0000-4000-8000-00000000000a"
+	malloryUser = "00000000-0000-4000-8000-00000000000b"
+)
+
 func prov() artifact.Provenance {
-	return artifact.Provenance{ActorID: "joe", Channel: artifact.ChannelMCP, CapturedAt: fixedStart}
+	return artifact.Provenance{CreatedByUserID: joeUser, ActorID: "joe", Channel: artifact.ChannelMCP, CapturedAt: fixedStart}
 }
 func access() artifact.AccessPolicy {
-	return artifact.AccessPolicy{OwnerID: "joe", Visibility: artifact.VisibilityLink}
+	return artifact.AccessPolicy{OwnerUserID: joeUser, Visibility: artifact.VisibilityLink}
 }
 
 // checkoutWebAudit is the design's canonical checkout-web-audit run: a human
@@ -342,7 +354,7 @@ func TestBatchRunRejectsForeignProducedArtifact(t *testing.T) {
 	ctx := context.Background()
 
 	foreignAccess := access()
-	foreignAccess.OwnerID = "someone-else"
+	foreignAccess.OwnerUserID = malloryUser
 	art, err := st.CreateArtifact(ctx, store.CreateArtifactInput{
 		ShareType:         "markdown",
 		Title:             "someone-elses.md",
@@ -392,7 +404,7 @@ func TestAppendRejectsForeignProducedArtifact(t *testing.T) {
 	ctx := context.Background()
 
 	foreignAccess := access()
-	foreignAccess.OwnerID = "someone-else"
+	foreignAccess.OwnerUserID = malloryUser
 	art, err := st.CreateArtifact(ctx, store.CreateArtifactInput{
 		ShareType:         "markdown",
 		Title:             "someone-elses.md",
@@ -412,7 +424,7 @@ func TestAppendRejectsForeignProducedArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open run: %v", err)
 	}
-	_, err = svc.AppendSpans(ctx, run.PublicID, in.Access.OwnerID, []SpanInput{{
+	_, err = svc.AppendSpans(ctx, run.PublicID, in.Access.OwnerUserID, []SpanInput{{
 		SpanID: "w1", Category: CategoryWrite, Tool: "write", Name: "wrote the report",
 		ProducedArtifactID: art.PublicID,
 		StartOffsetMS:      0, DurationMS: 10,
@@ -446,7 +458,7 @@ func TestAppendSpansNormalizesProducedHandle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open run: %v", err)
 	}
-	appended, err := svc.AppendSpans(ctx, run.PublicID, in.Access.OwnerID, []SpanInput{{
+	appended, err := svc.AppendSpans(ctx, run.PublicID, in.Access.OwnerUserID, []SpanInput{{
 		SpanID: "w1", Category: CategoryWrite, Tool: "write", Name: "wrote the report",
 		ProducedArtifactID: "mcp://cairn/" + producedID,
 		StartOffsetMS:      0, DurationMS: 10,
@@ -487,11 +499,11 @@ func TestBatchAndIncrementalConverge(t *testing.T) {
 		t.Fatalf("opened run status = %q, want open", open.Status)
 	}
 	for _, sp := range spans {
-		if _, err := svc.AppendSpans(ctx, open.PublicID, "joe", []SpanInput{sp}); err != nil {
+		if _, err := svc.AppendSpans(ctx, open.PublicID, joeUser, []SpanInput{sp}); err != nil {
 			t.Fatalf("append %s: %v", sp.SpanID, err)
 		}
 	}
-	closed, err := svc.CloseRun(ctx, open.PublicID, event.Actor{ID: "joe", Channel: artifact.ChannelMCP, Kind: event.KindAgent, Auth: event.AuthOAuth})
+	closed, err := svc.CloseRun(ctx, open.PublicID, event.Actor{ID: "joe", UserID: joeUser, Channel: artifact.ChannelMCP, Kind: event.KindAgent, Auth: event.AuthOAuth})
 	if err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -579,7 +591,7 @@ func TestAppendAfterCloseRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("batch: %v", err)
 	}
-	_, err = svc.AppendSpans(ctx, run.PublicID, "joe",
+	_, err = svc.AppendSpans(ctx, run.PublicID, joeUser,
 		[]SpanInput{{SpanID: "extra", Category: CategoryReason, StartOffsetMS: 40000, DurationMS: 100}})
 	if !errors.Is(err, ErrRunClosed) {
 		t.Fatalf("append after close err = %v, want ErrRunClosed", err)
@@ -605,7 +617,7 @@ func TestNonOwnerCannotClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	_, err = svc.CloseRun(ctx, open.PublicID, event.Actor{ID: "mallory", Channel: artifact.ChannelMCP, Kind: event.KindAgent, Auth: event.AuthOAuth})
+	_, err = svc.CloseRun(ctx, open.PublicID, event.Actor{ID: "mallory", UserID: malloryUser, Channel: artifact.ChannelMCP, Kind: event.KindAgent, Auth: event.AuthOAuth})
 	if !errors.Is(err, ErrNotOwner) {
 		t.Fatalf("close by non-owner err = %v, want ErrNotOwner", err)
 	}
@@ -629,7 +641,7 @@ func TestMalformedTreeAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	_, err = svc.AppendSpans(ctx, open.PublicID, "joe", []SpanInput{
+	_, err = svc.AppendSpans(ctx, open.PublicID, joeUser, []SpanInput{
 		{SpanID: "ok", Category: CategoryReason, StartOffsetMS: 0, DurationMS: 100},
 		{SpanID: "bad", ParentSpanID: "ghost", Category: CategoryReason, StartOffsetMS: 100, DurationMS: 100},
 	})
@@ -668,7 +680,7 @@ func TestConcurrentAppendsKeepSeqMonotonic(t *testing.T) {
 	errCh := make(chan error, n)
 	for i := 0; i < n; i++ {
 		go func(i int) {
-			_, err := svc.AppendSpans(ctx, open.PublicID, "joe", []SpanInput{
+			_, err := svc.AppendSpans(ctx, open.PublicID, joeUser, []SpanInput{
 				{SpanID: fmt.Sprintf("c%d", i), Category: CategoryReason, StartOffsetMS: i * 10, DurationMS: 5},
 			})
 			errCh <- err
@@ -702,5 +714,36 @@ func TestConcurrentAppendsKeepSeqMonotonic(t *testing.T) {
 		if s != i {
 			t.Fatalf("seq[%d] = %d, want %d (gap or collision)", i, s, i)
 		}
+	}
+}
+
+// TestOpenRunRefusesMalformedOwnerIDs proves a run whose owner or creator is
+// not a user id is refused as validation (SPEC-0023 REQ "Owner Model"), the
+// same as an ordinary artifact create: a malformed owner must not surface as
+// a CHECK-constraint 500, and a malformed creator must not be stored as a
+// silent NULL.
+func TestOpenRunRefusesMalformedOwnerIDs(t *testing.T) {
+	svc, _, pool, _ := newHarness(t)
+	ctx := context.Background()
+	for name, mutate := range map[string]func(*RunInput){
+		"owner":   func(in *RunInput) { in.Access.OwnerUserID = "joe" },
+		"creator": func(in *RunInput) { in.Provenance.CreatedByUserID = "joe" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			fix := checkoutWebAudit("")
+			fix.Spans = nil
+			mutate(&fix)
+			_, err := svc.OpenRun(ctx, fix)
+			if errs.CodeOf(err) != errs.CodeValidation {
+				t.Fatalf("open with malformed %s: err = %v, want validation", name, err)
+			}
+		})
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM artifacts`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("%d artifacts persisted by refused opens, want 0", n)
 	}
 }

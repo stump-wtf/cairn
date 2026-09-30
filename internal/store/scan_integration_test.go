@@ -300,8 +300,8 @@ func scanBundle(members ...MemberInput) CreateBundleInput {
 	return CreateBundleInput{
 		Title:      "bundle",
 		Members:    members,
-		Provenance: artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
-		Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: testOwner, ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
+		Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  time.Now().Add(time.Hour),
 	}
 }
@@ -501,8 +501,8 @@ func TestScanBinaryContent(t *testing.T) {
 	png = append(png, 0x00, 0xff, 0xfe)
 	art, err = f.s.CreateArtifact(context.Background(), CreateArtifactInput{
 		ShareType: artifact.TypeFile, Body: bytes.NewReader(png), DeclaredMediaType: "image/png",
-		Provenance: artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
-		Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: testOwner, ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Now()},
+		Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  time.Now().Add(time.Hour),
 	})
 	if err != nil {

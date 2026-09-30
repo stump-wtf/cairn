@@ -21,6 +21,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/outboundhook"
 	"github.com/stump-wtf/cairn/internal/pat"
 	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // Governing: ADR-0022 (annotation lifecycle events), SPEC-0016 EV-2 "MCP
@@ -184,6 +185,8 @@ type annotationEventServer struct {
 	srv                         *httptest.Server
 	spy                         *lifecycleSpy
 	humanPAT, agentPAT, oauthTk string
+	// aliceID is the user every one of those credentials acts as.
+	aliceID string
 }
 
 func newAnnotationEventServer(t *testing.T) annotationEventServer {
@@ -201,18 +204,24 @@ func newAnnotationEventServer(t *testing.T) annotationEventServer {
 	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
 
+	// A PAT belongs to a user (SPEC-0023 REQ "Owner Model"): alice's, the
+	// one her static tokens and the dev bearer resolve to.
+	alice, err := user.NewStore(pool).ResolveActor(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("resolve alice: %v", err)
+	}
 	patSvc := pat.NewService(pool)
 	scopes := []string{oauth.ScopeArtifactsRead, oauth.ScopeArtifactsWrite, oauth.ScopeAnnotationsWrite}
-	humanPAT, _, err := patSvc.Create(context.Background(), "alice", "cli", scopes, false)
+	humanPAT, _, err := patSvc.Create(context.Background(), alice.ID, "cli", scopes, false)
 	if err != nil {
 		t.Fatalf("create human PAT: %v", err)
 	}
-	agentPAT, _, err := patSvc.Create(context.Background(), "alice", "agent", scopes, true)
+	agentPAT, _, err := patSvc.Create(context.Background(), alice.ID, "agent", scopes, true)
 	if err != nil {
 		t.Fatalf("create agent PAT: %v", err)
 	}
 	return annotationEventServer{srv: srv, spy: spy, humanPAT: humanPAT, agentPAT: agentPAT,
-		oauthTk: mintMCPToken(t, srv, "alice", scopes)}
+		oauthTk: mintMCPToken(t, srv, "alice", scopes), aliceID: alice.ID}
 }
 
 // TestIntegrationAnnotationEventsActorKind is SPEC-0016 EV-4 on the annotation
@@ -403,7 +412,7 @@ func TestIntegrationAnnotationEventsActorKind(t *testing.T) {
 		t.Errorf("reads emitted %d events", got-n)
 	}
 	for _, ev := range spy.forSubject(id) {
-		if ev.Subject.ShareType != "markdown" || ev.Subject.WebPath != "/"+id || ev.Subject.OwnerID != "alice" {
+		if ev.Subject.ShareType != "markdown" || ev.Subject.WebPath != "/"+id || ev.Subject.OwnerID != es.aliceID {
 			t.Errorf("%s subject = %+v, want the markdown artifact at /%s owned by alice", ev.Kind, ev.Subject, id)
 		}
 	}

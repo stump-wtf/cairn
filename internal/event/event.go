@@ -115,8 +115,14 @@ func (m AuthMethod) Valid() bool {
 // Actor is who caused an event, derived from the authenticated principal and
 // never from request content. OnBehalfOf is the one asserted field: it names a
 // harness or agent for display, and consumers MUST NOT gate trust on it.
+//
+// ID is the actor as rendered on the wire (actor_id). UserID is the users row
+// the principal acts for, which the producers that own rows by user compare
+// and store (SPEC-0023 REQ "Owner Model"); like Subject.OwnerID it is never
+// encoded on the wire.
 type Actor struct {
 	ID         string
+	UserID     string
 	Channel    artifact.Channel
 	OnBehalfOf string
 	Kind       ActorKind
@@ -153,8 +159,9 @@ type Subject struct {
 	WebPath   string
 	Tags      []string
 	ExpiresAt time.Time
-	// OwnerID routes the event to the owner's subscriptions (ADR-0029). It is
-	// never encoded on the wire (SPEC-0016 EV-7).
+	// OwnerID is the owning user's id; it routes the event to the owner's
+	// subscriptions (ADR-0029). It is never encoded on the wire (SPEC-0016
+	// EV-7).
 	OwnerID string
 }
 

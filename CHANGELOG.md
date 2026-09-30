@@ -18,6 +18,27 @@ reaches 1.0.
   password login is disabled whenever OIDC or GitHub is configured, and answers
   `404` (A6). Anonymous and other readers see the creator's display handle, not
   their email (A18).
+- **Explicit ownership** (SPEC-0023 REQ "Owner Model", #327). Every owner and
+  author is a user id: artifacts carry `owner_user_id` (or, once teams exist,
+  `owner_team_id`, never both) and `created_by_user_id`; comments, reactions,
+  personal access tokens, OAuth grants, MCP sessions and web sessions carry
+  `user_id`. The free-form `owner_id` / `actor_id` strings are gone, and every
+  ownership check compares user ids. Wire fields named `actor_id` keep their
+  name and are rendered from the user row: its verified email, else the name it
+  was known by. A sign-in whose **verified** email (see `CAIRN_OIDC_TRUST_EMAIL`)
+  equals a pre-upgrade owner string claims that owner's artifacts, whether or
+  not it is the identity's first; an unverified one never does. An OIDC
+  identity that a pre-upgrade session shows acting as an owner string is
+  linked to that owner by the migration, so it lands on its own Bin at its
+  next sign-in even without a verified email. That evidence is not used when
+  two or more OIDC identities acted as the same email, or for GitHub sessions
+  (keyed then on the renameable login).
+  `CAIRN_API_TOKENS` entries and the dev logins resolve their actor to a user
+  the same way, so they keep the Bin they had. Reactions and comments stay
+  owned per actor kind: the reaction key becomes
+  `(artifact_id, anchor_type, anchor_key, emoji, user_id, actor_kind)`, and
+  `actor_kind` and `on_behalf_of` keep their stored values, so an agent's
+  reaction and its human's stay two rows and per-kind tallies are unchanged.
 - **Existing users land on their account when they sign in** (SPEC-0023).
   Matching by verified email is no longer one-shot: an identity whose user has
   no verified email yet is matched again on every sign-in that carries one, so
@@ -46,6 +67,16 @@ reaches 1.0.
   upgrade.
 - **`CAIRN_DEV_INSECURE_BEARER_AUTH` with an `https` `CAIRN_BASE_URL` now fails
   boot** (A21). It was never safe there.
+- **Back up the database before upgrading past `0023_owner_columns`.** It
+  resolves every owner and actor string to a user and drops the strings in one
+  transaction; there is no in-database way back, so rollback is a restore from
+  that backup. Before dropping anything it compares every owner's Bin; if any
+  would change, the whole migration rolls back, the old schema is left intact,
+  and `cairn serve` refuses to start with `ownership backfill would change the
+  Bin of owner <owner>` naming the first mismatch (or `would merge the
+  reactions of owner <owner>` when two owner strings that become one user
+  reacted alike). Report that error rather than editing rows by hand. It runs
+  after `0022_annotation_actor_kind`.
 
 ### Changed
 

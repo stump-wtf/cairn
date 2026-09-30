@@ -57,12 +57,12 @@ func annotationRunHookSites(t *testing.T) []guardSite {
 	}
 
 	now := time.Now()
-	alice := event.Actor{ID: "alice", Channel: artifact.ChannelAPI, Kind: event.KindAgent, Auth: event.AuthAPIToken}
+	alice := event.Actor{ID: "alice", UserID: unitUserID, Channel: artifact.ChannelAPI, Kind: event.KindAgent, Auth: event.AuthAPIToken}
 	runIn := func(spans ...trajectory.SpanInput) trajectory.RunInput {
 		return trajectory.RunInput{
 			StartedAt:  now,
-			Provenance: artifact.Provenance{ActorID: "alice", Channel: artifact.ChannelAPI, CapturedAt: now},
-			Access:     artifact.AccessPolicy{OwnerID: "alice", Visibility: artifact.VisibilityLink},
+			Provenance: artifact.Provenance{CreatedByUserID: unitUserID, ActorID: "alice", Channel: artifact.ChannelAPI, CapturedAt: now},
+			Access:     artifact.AccessPolicy{OwnerUserID: unitUserID, Visibility: artifact.VisibilityLink},
 			ExpiresAt:  now.Add(time.Hour),
 			Spans:      spans,
 		}
@@ -82,8 +82,8 @@ func annotationRunHookSites(t *testing.T) []guardSite {
 	}
 	hookIn := webhook.EndpointInput{
 		RequestCap: -1,
-		Provenance: artifact.Provenance{ActorID: "alice", Channel: artifact.ChannelAPI, CapturedAt: now},
-		Access:     artifact.AccessPolicy{OwnerID: "alice", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: unitUserID, ActorID: "alice", Channel: artifact.ChannelAPI, CapturedAt: now},
+		Access:     artifact.AccessPolicy{OwnerUserID: unitUserID, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  now.Add(time.Hour),
 	}
 
@@ -392,8 +392,8 @@ func TestViolationSpanOutputTooLarge(t *testing.T) {
 	now := time.Now()
 	_, err := svc.CreateBatchRun(context.Background(), trajectory.RunInput{
 		StartedAt:  now,
-		Provenance: artifact.Provenance{ActorID: "alice", Channel: artifact.ChannelAPI, CapturedAt: now},
-		Access:     artifact.AccessPolicy{OwnerID: "alice", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: unitUserID, ActorID: "alice", Channel: artifact.ChannelAPI, CapturedAt: now},
+		Access:     artifact.AccessPolicy{OwnerUserID: unitUserID, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  now.Add(time.Hour),
 		Spans: []trajectory.SpanInput{
 			{SpanID: "ok", Category: trajectory.CategoryExec, Output: []byte("tiny")},

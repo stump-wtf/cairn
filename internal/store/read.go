@@ -19,38 +19,21 @@ import (
 // Governing: ADR-0005 (Short Opaque Identifiers), ADR-0007 (Link Access),
 // SPEC-0002 REQ "Artifact Lifecycle — Read"
 func (s *Store) GetByPublicID(ctx context.Context, publicID string) (*artifact.Artifact, error) {
-	const q = `
-		SELECT id, public_id, share_type, title, body_sha256, size_bytes,
-		       media_type, previewable, actor_id, on_behalf_of, model, channel,
-		       captured_at, owner_id, visibility,
-		       reaction_count, comment_count, pin_count, tags, expires_at, created_at,
-		       redaction_status, redaction_count, redaction_rules
-		FROM artifacts
-		WHERE public_id = $1 AND expires_at > now()`
+	// A single read also carries the scan outcome, which only its owner is
+	// shown (SPEC-0017 RD-9).
+	q := "SELECT" + binColumns + `, a.redaction_status, a.redaction_count, a.redaction_rules` +
+		artifactFrom + ` WHERE a.public_id = $1 AND a.expires_at > now()`
 
-	var (
-		a       artifact.Artifact
-		bodySHA *string
-	)
-	err := s.pool.QueryRow(ctx, q, publicID).Scan(
-		&a.ID, &a.PublicID, &a.ShareType, &a.Title, &bodySHA, &a.Size,
-		&a.MediaType, &a.Previewable, &a.Provenance.ActorID,
-		&a.Provenance.OnBehalfOf, &a.Provenance.Model, &a.Provenance.Channel, &a.Provenance.CapturedAt,
-		&a.Access.OwnerID, &a.Access.Visibility,
-		&a.ReactionCount, &a.CommentCount, &a.PinCount, &a.Tags,
-		&a.ExpiresAt, &a.CreatedAt,
-		&a.Redaction.Status, &a.Redaction.Count, &a.Redaction.Rules,
-	)
+	a, err := scanArtifactWith(s.pool.QueryRow(ctx, q, publicID), func(a *artifact.Artifact) []any {
+		return []any{&a.Redaction.Status, &a.Redaction.Count, &a.Redaction.Rules}
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("resolve artifact %s: %w", publicID, errs.ErrNotFound)
 		}
 		return nil, fmt.Errorf("resolve artifact %s: %w", publicID, err)
 	}
-	if bodySHA != nil {
-		a.BodySHA256 = *bodySHA
-	}
-	return &a, nil
+	return a, nil
 }
 
 // BodyInfo describes a downloadable body so a reader can re-verify it against

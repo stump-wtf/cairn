@@ -99,10 +99,11 @@ func ownerRedactionOf(s redact.Summary) OwnerRedaction {
 	}
 }
 
-// isOwner reports whether actorID owns a. An empty actor (an anonymous
-// reader) never does.
-func isOwner(actorID string, a *artifact.Artifact) bool {
-	return actorID != "" && actorID == a.Access.OwnerID
+// isOwner reports whether the user userID owns a. An empty id (an anonymous
+// reader) never does; ownership compares user ids, never a rendered actor
+// (SPEC-0023 REQ "Owner Model").
+func isOwner(userID string, a *artifact.Artifact) bool {
+	return a.Access.OwnedByUser(userID)
 }
 
 // toOwnerArtifactResponse is toArtifactResponse plus the owner-only outcome.
@@ -114,8 +115,8 @@ func (s *Server) toOwnerArtifactResponse(a *artifact.Artifact) artifactResponse 
 }
 
 // toViewerArtifactResponse shows the outcome to the owner and to nobody else.
-func (s *Server) toViewerArtifactResponse(a *artifact.Artifact, actorID string) artifactResponse {
-	if isOwner(actorID, a) {
+func (s *Server) toViewerArtifactResponse(a *artifact.Artifact, userID string) artifactResponse {
+	if isOwner(userID, a) {
 		return s.toOwnerArtifactResponse(a)
 	}
 	return s.toArtifactResponse(a)

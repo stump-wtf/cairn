@@ -64,14 +64,14 @@ func TestCreationEventCarriesOwner(t *testing.T) {
 
 	in := input([]byte("owned"))
 	in.Provenance.ActorID = "actor-1"
-	in.Access.OwnerID = "owner-1"
+	in.Access.OwnerUserID = testIntruder
 	if _, err := s.CreateArtifact(ctx, in); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if _, err := s.CreateBundle(ctx, CreateBundleInput{
 		Members:    []MemberInput{{Name: "a.md", Body: strings.NewReader("x")}},
-		Provenance: artifact.Provenance{ActorID: "actor-2", Channel: artifact.ChannelMCP, CapturedAt: time.Now()},
-		Access:     artifact.AccessPolicy{OwnerID: "owner-2", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: testIntruder, ActorID: "actor-2", Channel: artifact.ChannelMCP, CapturedAt: time.Now()},
+		Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  time.Now().Add(time.Hour),
 	}); err != nil {
 		t.Fatalf("create bundle: %v", err)
@@ -81,7 +81,7 @@ func TestCreationEventCarriesOwner(t *testing.T) {
 	if len(evs) != 2 {
 		t.Fatalf("got %d creation events, want 2", len(evs))
 	}
-	for i, want := range []struct{ actor, owner string }{{"actor-1", "owner-1"}, {"actor-2", "owner-2"}} {
+	for i, want := range []struct{ actor, owner string }{{"actor-1", testIntruder}, {"actor-2", testOwner}} {
 		if evs[i].ActorID != want.actor || evs[i].OwnerID != want.owner {
 			t.Errorf("event %d actor=%q owner=%q, want %q and %q", i, evs[i].ActorID, evs[i].OwnerID, want.actor, want.owner)
 		}

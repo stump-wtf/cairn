@@ -17,8 +17,8 @@ func validCreateInput() CreateArtifactInput {
 	return CreateArtifactInput{
 		ShareType:  artifact.TypeFile,
 		Body:       strings.NewReader("x"),
-		Provenance: artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Unix(1, 0)},
-		Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: testOwner, ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Unix(1, 0)},
+		Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  time.Unix(100, 0),
 	}
 }
@@ -41,7 +41,7 @@ func TestCreateArtifactInputValidate(t *testing.T) {
 		{"title at the cap", func(in *CreateArtifactInput) { in.Title = strings.Repeat("t", artifact.MaxTitleBytes) }, ""},
 		{"missing channel", func(in *CreateArtifactInput) { in.Provenance.Channel = "" }, "internal"},
 		{"missing actor", func(in *CreateArtifactInput) { in.Provenance.ActorID = "" }, "internal"},
-		{"missing owner", func(in *CreateArtifactInput) { in.Access.OwnerID = "" }, "internal"},
+		{"missing owner", func(in *CreateArtifactInput) { in.Access.OwnerUserID = "" }, "internal"},
 		{"missing visibility", func(in *CreateArtifactInput) { in.Access.Visibility = "" }, "internal"},
 		{"zero expiry", func(in *CreateArtifactInput) { in.ExpiresAt = time.Time{} }, "internal"},
 		{"nil body", func(in *CreateArtifactInput) { in.Body = nil }, "internal"},
@@ -101,8 +101,8 @@ func TestCreateArtifactUnknownTypeListsAllowed(t *testing.T) {
 
 func validBundleInput(names ...string) CreateBundleInput {
 	in := CreateBundleInput{
-		Provenance: artifact.Provenance{ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Unix(1, 0)},
-		Access:     artifact.AccessPolicy{OwnerID: "u1", Visibility: artifact.VisibilityLink},
+		Provenance: artifact.Provenance{CreatedByUserID: testOwner, ActorID: "u1", Channel: artifact.ChannelCLI, CapturedAt: time.Unix(1, 0)},
+		Access:     artifact.AccessPolicy{OwnerUserID: testOwner, Visibility: artifact.VisibilityLink},
 		ExpiresAt:  time.Unix(100, 0),
 	}
 	for _, n := range names {
@@ -127,7 +127,7 @@ func TestCreateBundleInputValidate(t *testing.T) {
 		{"title too long", func(in *CreateBundleInput) { in.Title = strings.Repeat("t", artifact.MaxTitleBytes+1) }, "title/too_long"},
 		{"missing channel", func(in *CreateBundleInput) { in.Provenance.Channel = "" }, "internal"},
 		{"missing actor", func(in *CreateBundleInput) { in.Provenance.ActorID = "" }, "internal"},
-		{"missing owner", func(in *CreateBundleInput) { in.Access.OwnerID = "" }, "internal"},
+		{"missing owner", func(in *CreateBundleInput) { in.Access.OwnerUserID = "" }, "internal"},
 		{"missing visibility", func(in *CreateBundleInput) { in.Access.Visibility = "" }, "internal"},
 		{"zero expiry", func(in *CreateBundleInput) { in.ExpiresAt = time.Time{} }, "internal"},
 		{"nil member body", func(in *CreateBundleInput) { in.Members[0].Body = nil }, "internal"},

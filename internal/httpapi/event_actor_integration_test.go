@@ -17,6 +17,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/pat"
 	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // Governing: ADR-0022 (server-derived actor kind), SPEC-0016 EV-4 "Human PAT is
@@ -66,13 +67,18 @@ func TestIntegrationAuthenticatorActorKind(t *testing.T) {
 	srv := httptest.NewServer(New(st, nil, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
 
+	// A PAT belongs to a user (SPEC-0023 REQ "Owner Model"): alice's.
+	alice, err := user.NewStore(pool).ResolveActor(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("resolve alice: %v", err)
+	}
 	patSvc := pat.NewService(pool)
 	writeScopes := []string{oauth.ScopeArtifactsRead, oauth.ScopeArtifactsWrite, oauth.ScopeAnnotationsWrite}
-	humanPAT, _, err := patSvc.Create(context.Background(), "alice", "cli", writeScopes, false)
+	humanPAT, _, err := patSvc.Create(context.Background(), alice.ID, "cli", writeScopes, false)
 	if err != nil {
 		t.Fatalf("create human PAT: %v", err)
 	}
-	agentPAT, _, err := patSvc.Create(context.Background(), "alice", "agent", writeScopes, true)
+	agentPAT, _, err := patSvc.Create(context.Background(), alice.ID, "agent", writeScopes, true)
 	if err != nil {
 		t.Fatalf("create agent PAT: %v", err)
 	}

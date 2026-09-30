@@ -331,9 +331,9 @@ func (s *Server) renderShellFor(w http.ResponseWriter, r *http.Request, wantPref
 	if ok {
 		vm.Authenticated = true
 		vm.Actor = viewer.ActorID
-		vm.ShareDialog.IsOwner = viewer.ActorID == a.Access.OwnerID
+		vm.ShareDialog.IsOwner = a.Access.OwnedByUser(viewer.UserID)
 		// The scan outcome is the owner's alone (SPEC-0017 RD-9).
-		if isOwner(viewer.ActorID, a) {
+		if vm.ShareDialog.IsOwner {
 			vm.Redaction = redactionBadgeOf(a.Redaction)
 		}
 	}

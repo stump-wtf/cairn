@@ -175,7 +175,7 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		vm.CSRFToken = c.Value
 	}
 	if s.pat != nil {
-		toks, err := s.pat.List(r.Context(), p.ActorID)
+		toks, err := s.pat.List(r.Context(), p.UserID)
 		if err != nil {
 			s.log.WarnContext(r.Context(), "settings: list tokens failed", "error", err)
 		} else {
@@ -186,7 +186,7 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if s.mcpSessions != nil {
-		sessions, err := s.mcpSessions.List(r.Context(), p.ActorID, maxMCPSessionListLimit)
+		sessions, err := s.mcpSessions.List(r.Context(), p.UserID, maxMCPSessionListLimit)
 		if err != nil {
 			s.log.WarnContext(r.Context(), "settings: list mcp sessions failed", "error", err)
 		} else {
@@ -197,7 +197,7 @@ func (s *Server) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if s.oauth != nil {
-		grants, err := s.oauth.ListActorGrants(r.Context(), p.ActorID)
+		grants, err := s.oauth.ListActorGrants(r.Context(), p.UserID)
 		if err != nil {
 			s.log.WarnContext(r.Context(), "settings: list oauth grants failed", "error", err)
 		} else {
@@ -275,7 +275,7 @@ func (s *Server) handleListGrants(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, errs.ErrNotFound, nil)
 		return
 	}
-	grants, err := s.oauth.ListActorGrants(r.Context(), p.ActorID)
+	grants, err := s.oauth.ListActorGrants(r.Context(), p.UserID)
 	if err != nil {
 		s.writeError(w, r, err, nil)
 		return
@@ -302,7 +302,7 @@ func (s *Server) handleRevokeGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if err := s.oauth.RevokeActorGrant(r.Context(), p.ActorID, id); err != nil {
+	if err := s.oauth.RevokeActorGrant(r.Context(), p.UserID, id); err != nil {
 		// Only "no such grant of yours" is the uniform 404. A database
 		// failure is a 500 like everywhere else: reporting it as not_found
 		// would tell the human their connection is already gone when it is

@@ -139,8 +139,8 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 		Body:               body,
 		DeclaredMediaType:  r.Header.Get("Content-Type"),
 		ExpectedSHA256:     r.Header.Get(store.ChecksumHeader),
-		Provenance:         artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now},
-		Access:             artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink},
+		Provenance:         artifact.Provenance{CreatedByUserID: p.UserID, ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now},
+		Access:             artifact.AccessPolicy{OwnerUserID: p.UserID, Visibility: artifact.VisibilityLink},
 		ExpiresAt:          now.Add(ttl),
 		Tags:               tags.tags,
 		ActorKind:          creator.Kind,
@@ -293,8 +293,8 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 
 	now := s.now()
 	actor := p.EventActor()
-	prov := artifact.Provenance{ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now}
-	access := artifact.AccessPolicy{OwnerID: p.ActorID, Visibility: artifact.VisibilityLink}
+	prov := artifact.Provenance{CreatedByUserID: p.UserID, ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now}
+	access := artifact.AccessPolicy{OwnerUserID: p.UserID, Visibility: artifact.VisibilityLink}
 	expires := now.Add(ttl)
 
 	if len(files) == 1 {
@@ -363,11 +363,11 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	// A link read needs no credential, but an owner who sends one also sees
 	// the scan outcome (SPEC-0017 RD-9).
 	viewer, _ := s.optionalPrincipal(r)
-	var viewerActor string
+	var viewerID string
 	if viewer != nil {
-		viewerActor = viewer.ActorID
+		viewerID = viewer.UserID
 	}
-	resp := s.toViewerArtifactResponse(art, viewerActor)
+	resp := s.toViewerArtifactResponse(art, viewerID)
 	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
 	s.writeJSON(w, http.StatusOK, resp)
 }
@@ -476,7 +476,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if err := s.store.DeleteArtifact(r.Context(), id, p.ActorID); err != nil {
+	if err := s.store.DeleteArtifact(r.Context(), id, p.UserID); err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
 	}
@@ -503,7 +503,7 @@ func (s *Server) handleBin(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err, nil)
 		return
 	}
-	page, err := s.store.ListBin(r.Context(), p.ActorID, r.URL.Query().Get("cursor"), limit, filter.tags...)
+	page, err := s.store.ListBin(r.Context(), p.UserID, r.URL.Query().Get("cursor"), limit, filter.tags...)
 	if err != nil {
 		s.writeError(w, r, err, nil)
 		return

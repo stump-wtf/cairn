@@ -16,6 +16,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/user"
 )
 
 // CreateArtifactInput is the transport-agnostic create request. Provenance,
@@ -74,9 +75,9 @@ func (in CreateArtifactInput) validate(reg *sharetype.Registry) error {
 	switch {
 	case in.Provenance.Channel == "":
 		return errors.New("create: provenance channel is required")
-	case in.Provenance.ActorID == "":
+	case in.Provenance.ActorID == "" || in.Provenance.CreatedByUserID == "":
 		return errors.New("create: provenance actor is required")
-	case in.Access.OwnerID == "":
+	case in.Access.OwnerUserID == "" && in.Access.OwnerTeamID == "":
 		return errors.New("create: access owner is required")
 	case in.Access.Visibility == "":
 		return errors.New("create: access visibility is required")
@@ -249,13 +250,16 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 	const insertSQL = `
 		INSERT INTO artifacts
 			(public_id, share_type, title, body_sha256, size_bytes, media_type,
-			 previewable, actor_id, on_behalf_of, model, channel, captured_at,
-			 owner_id, visibility, expires_at, tags,
+			 previewable, created_by_user_id, on_behalf_of, model, channel, captured_at,
+			 owner_user_id, owner_team_id, visibility, expires_at, tags,
 			 redaction_status, redaction_count, redaction_rules)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 		RETURNING id, created_at`
 
 	tags := tagsParam(art.Tags)
+	if err := validOwnerIDs(art); err != nil {
+		return err
+	}
 	// The outcome commits with the row it describes (SPEC-0017 "Database
 	// Operation Standards"). An unset Redaction is written as "unscanned".
 	//
@@ -284,9 +288,10 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 
 		err = sp.QueryRow(ctx, insertSQL,
 			art.PublicID, art.ShareType, art.Title, bodySHA, art.Size,
-			art.MediaType, art.Previewable, art.Provenance.ActorID,
+			art.MediaType, art.Previewable, user.IDParam(art.Provenance.CreatedByUserID),
 			art.Provenance.OnBehalfOf, art.Provenance.Model, art.Provenance.Channel,
-			art.Provenance.CapturedAt, art.Access.OwnerID, art.Access.Visibility,
+			art.Provenance.CapturedAt, user.IDParam(art.Access.OwnerUserID),
+			user.IDParam(art.Access.OwnerTeamID), art.Access.Visibility,
 			art.ExpiresAt, tags, rStatus, rCount, rRules,
 		).Scan(&art.ID, &art.CreatedAt)
 		if err != nil {
@@ -302,6 +307,20 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 		return nil
 	}
 	return fmt.Errorf("create: exhausted %d id attempts: %w", idMaxAttempts, errs.ErrConflict)
+}
+
+// validOwnerIDs refuses an owner or creator that is not a user id before it
+// reaches the uuid columns, where a malformed value would otherwise fail as an
+// internal error (or, for the nullable creator, silently store NULL).
+//
+// Governing: SPEC-0023 REQ "Owner Model".
+func validOwnerIDs(art *artifact.Artifact) error {
+	for _, id := range []string{art.Provenance.CreatedByUserID, art.Access.OwnerUserID, art.Access.OwnerTeamID} {
+		if id != "" && !user.ValidID(id) {
+			return errs.Validationf("create: owner and creator must be user ids")
+		}
+	}
+	return nil
 }
 
 // tagsParam passes tags for the TEXT[] column. pgx encodes a nil slice as SQL

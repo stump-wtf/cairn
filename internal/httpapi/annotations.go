@@ -375,7 +375,7 @@ func jsonBodyViolation(err error) error {
 	return errs.Violate("body", errs.LocBody, errs.ReasonInvalidFormat, errs.WithExpect("a JSON object")).Because(err)
 }
 
-// optionalActor resolves the caller's actor id and derived kind when the read
+// optionalActor resolves the caller's user id and derived kind when the read
 // carries valid credentials, or the zero Viewer for an anonymous link read. It
 // never rejects: annotation reads are gated by the artifact's link capability,
 // not by authentication, so an absent or invalid credential simply yields the
@@ -390,7 +390,7 @@ func (s *Server) optionalActor(r *http.Request) annotation.Viewer {
 		return annotation.Viewer{}
 	}
 	a := p.EventActor()
-	return annotation.Viewer{ID: a.ID, Kind: a.Kind}
+	return annotation.Viewer{UserID: a.UserID, Kind: a.Kind}
 }
 
 func toReactionResponse(r annotation.Reaction) reactionResponse {

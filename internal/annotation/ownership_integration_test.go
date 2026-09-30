@@ -13,20 +13,20 @@ import (
 )
 
 // Per-kind ownership of reactions and comments. alice's agent (any bearer
-// credential) and alice in her browser share the actor_id "alice"; only the
-// stored actor_kind keeps their annotations apart.
+// credential) and alice in her browser act as one user, rendered "alice"; only
+// the stored actor_kind keeps their annotations apart.
 //
 // Governing: ADR-0022, SPEC-0016 EV-6 "Per-Kind Reaction and Comment
 // Ownership"; SPEC-0006 REQ "Idempotent Reactions" ("Duplicate reaction",
 // "Un-react", now per kind).
 
-// reactionRows returns the kinds and on_behalf_of values of one actor's rows
-// for (artifact, emoji), keyed by kind.
-func reactionRows(t *testing.T, pool *pgxpool.Pool, artID int64, emoji, actorID string) map[string]string {
+// reactionRows returns the kinds and on_behalf_of values of one seeded user's
+// rows for (artifact, emoji), keyed by kind.
+func reactionRows(t *testing.T, pool *pgxpool.Pool, artID int64, emoji, key string) map[string]string {
 	t.Helper()
 	rows, err := pool.Query(context.Background(), `
 		SELECT actor_kind, on_behalf_of FROM reactions
-		WHERE artifact_id = $1 AND emoji = $2 AND actor_id = $3`, artID, emoji, actorID)
+		WHERE artifact_id = $1 AND emoji = $2 AND user_id = $3`, artID, emoji, testUsers[key])
 	if err != nil {
 		t.Fatalf("read reactions: %v", err)
 	}
@@ -46,13 +46,13 @@ func reactionRows(t *testing.T, pool *pgxpool.Pool, artID int64, emoji, actorID 
 }
 
 // insertLegacyReaction writes a row the way the code before per-kind storage
-// did: no kind, no on_behalf_of.
-func insertLegacyReaction(t *testing.T, pool *pgxpool.Pool, artID int64, emoji, actorID string) int64 {
+// did: no kind, no on_behalf_of. key names a seeded user.
+func insertLegacyReaction(t *testing.T, pool *pgxpool.Pool, artID int64, emoji, key string) int64 {
 	t.Helper()
 	var id int64
 	if err := pool.QueryRow(context.Background(), `
-		INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, actor_id)
-		VALUES ($1, 'artifact', '{}', '{}', $2, $3) RETURNING id`, artID, emoji, actorID).Scan(&id); err != nil {
+		INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, user_id)
+		VALUES ($1, 'artifact', '{}', '{}', $2, $3) RETURNING id`, artID, emoji, testUsers[key]).Scan(&id); err != nil {
 		t.Fatalf("insert legacy reaction: %v", err)
 	}
 	if _, err := pool.Exec(context.Background(),
@@ -157,10 +157,10 @@ func TestAgentCannotWithdrawHumansReaction(t *testing.T) {
 	if got := reactionRows(t, pool, artID, "👍", "alice"); len(got) != 1 || !hasKey(got, "human") {
 		t.Fatalf("rows after the agent's un-react = %v, want the human row alone", got)
 	}
-	if tl := tallyFor(t, svc, "OWNAAAA2", "👍", Viewer{ID: "alice", Kind: event.KindAgent}); tl.Reacted {
+	if tl := tallyFor(t, svc, "OWNAAAA2", "👍", Viewer{UserID: testUsers["alice"], Kind: event.KindAgent}); tl.Reacted {
 		t.Fatalf("agent's tally = %+v, want reacted=false: the row is the human's", tl)
 	}
-	if tl := tallyFor(t, svc, "OWNAAAA2", "👍", Viewer{ID: "alice", Kind: event.KindHuman}); !tl.Reacted || tl.HumanCount != 1 {
+	if tl := tallyFor(t, svc, "OWNAAAA2", "👍", Viewer{UserID: testUsers["alice"], Kind: event.KindHuman}); !tl.Reacted || tl.HumanCount != 1 {
 		t.Fatalf("human's tally = %+v, want reacted with one human row", tl)
 	}
 
@@ -188,7 +188,7 @@ func TestAgentCannotWithdrawHumansReaction(t *testing.T) {
 
 // TestLegacyReactionIsNeverHuman is EV-6 "Legacy row is never an approval": a
 // row written before kinds were stored counts as neither kind, is removable
-// by its own actor_id as either kind, and by nobody else.
+// by its own user as either kind, and by nobody else.
 func TestLegacyReactionIsNeverHuman(t *testing.T) {
 	pool := newTestPool(t)
 	ctx := context.Background()
@@ -196,14 +196,14 @@ func TestLegacyReactionIsNeverHuman(t *testing.T) {
 	artID := insertArtifact(t, pool, "OWNAAAA3", sharetype.KeyMarkdown)
 
 	legacy := insertLegacyReaction(t, pool, artID, "👍", "alice")
-	tl := tallyFor(t, svc, "OWNAAAA3", "👍", Viewer{ID: "alice", Kind: event.KindHuman})
+	tl := tallyFor(t, svc, "OWNAAAA3", "👍", Viewer{UserID: testUsers["alice"], Kind: event.KindHuman})
 	if tl.Count != 1 || tl.HumanCount != 0 || tl.AgentCount != 0 {
 		t.Fatalf("legacy tally = %+v, want count 1 of neither kind", tl)
 	}
 	if !tl.Reacted {
 		t.Fatalf("legacy tally = %+v, want reacted for its own actor (she can remove it)", tl)
 	}
-	if tl := tallyFor(t, svc, "OWNAAAA3", "👍", Viewer{ID: "bob", Kind: event.KindHuman}); tl.Reacted {
+	if tl := tallyFor(t, svc, "OWNAAAA3", "👍", Viewer{UserID: testUsers["bob"], Kind: event.KindHuman}); tl.Reacted {
 		t.Fatalf("bob's tally = %+v, want reacted=false", tl)
 	}
 
@@ -264,8 +264,8 @@ func TestCommentOwnershipPerKind(t *testing.T) {
 
 	var legacyID int64
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, actor_id, body)
-		VALUES ($1, 'artifact', '{}', '{}', 'alice', 'old') RETURNING id`, artID).Scan(&legacyID); err != nil {
+		INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, user_id, body)
+		VALUES ($1, 'artifact', '{}', '{}', $2, 'old') RETURNING id`, artID, testUsers["alice"]).Scan(&legacyID); err != nil {
 		t.Fatalf("insert legacy comment: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE artifacts SET comment_count = comment_count + 1 WHERE id = $1`, artID); err != nil {
