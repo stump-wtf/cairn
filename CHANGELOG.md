@@ -92,7 +92,7 @@ reaches 1.0.
   reactions of owner <owner>` when two owner strings that become one user
   reacted alike). Report that error rather than editing rows by hand. It runs
   after `0022_annotation_actor_kind`.
-- Migration `0019_operator_profile` adds the `operator_audit` table, a
+- Migration `0024_operator_profile` adds the `operator_audit` table, a
   constant-default `sessions.operator_group` column and an index on
   `sessions.user_id`. No data is rewritten. The operator profile is off until
   you set `CAIRN_OPERATORS` or `CAIRN_OPERATOR_GROUP`.
