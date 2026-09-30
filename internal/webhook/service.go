@@ -79,7 +79,7 @@ type Options struct {
 	// Now overrides the clock, for deterministic tests.
 	Now func() time.Time
 	// Scanner masks credentials in every capture before it is stored
-	// (SPEC-0017 RD-4). cairnd always sets it. Without one, captures are
+	// (SPEC-0017 RD-4). cairn serve always sets it. Without one, captures are
 	// stored as sent, apart from header hygiene, and read "unscanned".
 	Scanner *redact.Scanner
 	// Metrics counts each scan in cairn_redactions_total; nil counts nothing.
@@ -349,11 +349,12 @@ func (s *Service) Capture(ctx context.Context, publicID string, in CaptureInput)
 	}
 
 	// Fan the durably-committed capture out to live subscribers (browsers over
-	// SSE, agents over MCP) in the same seq order the rows now carry —
-	// published only after commit so a subscriber never sees a request a
-	// rolled-back tx would erase (SPEC-0005 "One Stream, Two Transports (Live
-	// Fan-out)": "Capture MUST write the record, then fan the new seq out to
-	// live subscribers").
+	// SSE, agents over MCP). Published after commit so a subscriber never sees
+	// a request a rolled-back tx would erase (SPEC-0005 "One Stream, Two
+	// Transports (Live Fan-out)": "Capture MUST write the record, then fan the
+	// new seq out to live subscribers"); the hub reorders publishes back into
+	// seq order, so the commit→publish gap of a concurrent capture cannot
+	// invert the stream the subscribers see.
 	s.hub.publish(publicID, StreamEvent{Type: EventRequest, Seq: seq, Request: req})
 	return req, nil
 }

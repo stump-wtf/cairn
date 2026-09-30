@@ -175,7 +175,7 @@ test('an identifier that merely contains a dot is not a hostname', () => {
 
 test('loopback addresses stay publishable — the CLI docs are full of them', () => {
   const failures = ok({
-    'index.html': page('', '<code>cairnd --listen 127.0.0.1:8080</code> or localhost:3000'),
+    'index.html': page('', '<code>cairn serve</code> on 127.0.0.1:8080 or localhost:3000'),
   });
   assert.deepEqual(failures, []);
 });

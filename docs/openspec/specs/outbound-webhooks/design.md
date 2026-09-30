@@ -42,8 +42,8 @@ store construction.
 ### Bounded queue + single worker, reaper-style lifecycle
 
 **Choice**: `outboundhook.New(urls, secret, logger)` returns an emitter with a
-buffered channel (cap ~256) and `Run(ctx)` started as a goroutine by cairnd, mirroring
-the retention reaper (`cmd/cairnd/main.go:89-96`): done channel, graceful shutdown.
+buffered channel (cap ~256) and `Run(ctx)` started as a goroutine by cairn serve, mirroring
+the retention reaper (the wiring in `internal/serve`): done channel, graceful shutdown.
 Non-blocking enqueue (select/default) drops on overflow with a warning log.
 **Rationale**: matches existing operational patterns; drops instead of blocking
 aligns with "doorbell is a hint" semantics.

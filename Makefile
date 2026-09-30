@@ -1,28 +1,23 @@
-.PHONY: build test test-race test-js vet fmt fmt-check lint check tidy up down migrate ci verify-cli
+.PHONY: build test test-race test-js test-scripts vet fmt fmt-check lint tidy-check check tidy up down migrate ci release-snapshot website
 
 GO ?= go
 PKGS ?= ./...
 
-# Optional path to a built cairn binary for `make verify-cli`. Without it only
-# the import-graph gate runs, which needs no build.
-CLI_BIN ?=
+# Extra flags for `go test`, empty by default so `make test` is plain
+# `go test ./...` from a clean checkout. CI's integration job passes an explicit
+# -timeout here: go's default is 10m per test binary, and a shared runner under
+# load can push internal/httpapi past that without anything being hung.
+GOTESTFLAGS ?=
 
 build:
 	$(GO) build $(PKGS)
 
-# go test kills a package binary after 10m by default. With a database, every
-# internal/httpapi integration test migrates its own fresh schema (18
-# migrations), so that one package runs ~5 minutes on an idle runner and blew
-# through 10m on a loaded one (runs 14210 and 14241) without any test hanging.
-# The limit stays as a hang guard, with headroom for a shared runner.
-TEST_TIMEOUT ?= 30m
-
 test:
-	$(GO) test -timeout $(TEST_TIMEOUT) $(PKGS)
+	$(GO) test $(GOTESTFLAGS) $(PKGS)
 
 # Concurrency-sensitive code (streaming ingest) MUST pass under the race detector.
 test-race:
-	$(GO) test -race $(PKGS)
+	$(GO) test -race $(GOTESTFLAGS) $(PKGS)
 
 # The trajectory viewer's pure scrubber math has a plain-node unit test (no
 # DOM). Skipped silently when node is absent, so a Go-only box still passes.
@@ -52,19 +47,39 @@ fmt-check:
 	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
 
 # Uniform entry points: every repo answers to `make lint` / `make check`.
-lint: fmt-check vet
+# tidy-check is here because goreleaser runs `go mod tidy` as a release hook
+# (.goreleaser.yaml before hooks): an untidy module dirties the tree mid-release
+# and goreleaser aborts with "git is in a dirty state", so the tag ships
+# nothing. Caught on every PR instead.
+lint: tidy-check fmt-check vet
 
-# The source is private and only the CLI is distributed, so the shipped binary
-# must never contain the server. This is cheap (an import-graph allowlist) and
-# runs with the ordinary checks rather than only at release time, because the
-# way it breaks is an ordinary-looking import added months earlier.
-verify-cli:
-	@scripts/verify-cli-artifact.sh $(CLI_BIN)
+# Tests for the release scripts themselves (scripts/*.test.sh): fixtures each
+# gate must pass or fail, each for its own reason. No Go build, so it is cheap
+# enough for every run. A glob, so a new script's tests join by existing.
+test-scripts:
+	@set -e; n=0; for t in scripts/*.test.sh; do \
+		[ -e "$$t" ] || continue; echo "==> $$t"; "$$t"; n=$$((n + 1)); \
+	done; [ "$$n" -gt 0 ] || { echo "no scripts/*.test.sh found; nothing was tested"; exit 1; }
 
-check: lint test verify-cli
+# A local dry run of the whole release: the one cairn build and archive (the
+# whole program since ADR-0031), then the archive-composition check the release
+# job runs before it publishes. Needs goreleaser on PATH; publishes nothing.
+release-snapshot:
+	goreleaser release --snapshot --clean
+	scripts/verify-release-archives.sh dist
+
+check: lint test test-scripts
 
 tidy:
 	$(GO) mod tidy
+
+# Fail when `go mod tidy` would change go.mod or go.sum, restoring whatever
+# it touched so the working tree is left as the caller had it.
+tidy-check:
+	@d=$$(mktemp -d); cp go.mod go.sum $$d/; $(GO) mod tidy; \
+	s=0; cmp -s go.mod $$d/go.mod || s=1; cmp -s go.sum $$d/go.sum || s=1; \
+	cp $$d/go.mod $$d/go.sum .; rm -rf $$d; \
+	if [ $$s -ne 0 ]; then echo "go mod tidy would change go.mod/go.sum: run 'make tidy' and commit the result"; exit 1; fi
 
 # Local dependencies: Postgres + MinIO (S3-compatible object storage).
 up:
@@ -73,4 +88,14 @@ up:
 down:
 	docker compose down -v
 
-ci: fmt-check vet build test-race test-js
+ci: fmt-check vet build test-race test-js test-scripts
+
+# The docs site's own gate: its unit tests, the typecheck, and the full build.
+# The build is what runs the design-record validator (a front-matter edge to a
+# record that does not exist throws) and, from its postBuild hook, the bundle
+# scan for private hosts and credentials. Not part of `ci` or `check`, so a
+# Go-only box still passes those; the pipeline runs it as its own `website` job.
+# DOCS_URL / DOCS_BASE_URL match the public build, not the Pages one.
+website:
+	cd website && npm ci --no-audit --no-fund && npm test && npm run typecheck && \
+		DOCS_URL=https://cairn.stump.wtf DOCS_BASE_URL=/ npm run build

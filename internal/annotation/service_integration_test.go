@@ -10,9 +10,36 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 )
+
+// agent is a bearer-credential actor, the kind most tests act as. key names
+// one of the seeded testUsers; the actor acts as that user (SPEC-0023 REQ
+// "Owner Model") and renders as key.
+func agent(key string) event.Actor {
+	return event.Actor{ID: key, UserID: testUsers[key], Channel: artifact.ChannelAPI, Kind: event.KindAgent, Auth: event.AuthAPIToken}
+}
+
+// human is a browser-session actor for the seeded user key.
+func human(key string) event.Actor {
+	return event.Actor{ID: key, UserID: testUsers[key], Channel: artifact.ChannelWeb, Kind: event.KindHuman, Auth: event.AuthSession}
+}
+
+// agentAs is an agent actor for a user seeded outside testUsers.
+func agentAs(userID, key string) event.Actor {
+	a := agent(key)
+	a.UserID = userID
+	return a
+}
+
+// withOBO returns a with OnBehalfOf set.
+func withOBO(a event.Actor, obo string) event.Actor {
+	a.OnBehalfOf = obo
+	return a
+}
 
 // artifactCounts reads the denormalized rollups straight off the artifact row.
 func artifactCounts(t *testing.T, pool *pgxpool.Pool, artID int64) (reactions, comments, pins int) {
@@ -66,15 +93,18 @@ func TestServiceReactToggle(t *testing.T) {
 	artID := insertArtifact(t, pool, "SVCAAAA1", sharetype.KeyCode)
 
 	ref := json.RawMessage(`{"start":40,"end":47}`)
-	r1, created, err := svc.React(ctx, "SVCAAAA1", sharetype.AnchorCodeRange, ref, "🔥", u1ID)
+	r1, created, err := svc.React(ctx, "SVCAAAA1", sharetype.AnchorCodeRange, ref, "🔥", agent("u1"))
 	if err != nil || !created {
 		t.Fatalf("first react: created=%v err=%v", created, err)
 	}
 	// Same anchor in a different key order is the same reaction (canonical key).
 	r2, created, err := svc.React(ctx, "SVCAAAA1", sharetype.AnchorCodeRange,
-		json.RawMessage(`{ "end": 47, "start": 40 }`), "🔥", u1ID)
+		json.RawMessage(`{ "end": 47, "start": 40 }`), "🔥", agent("u1"))
 	if err != nil || created {
 		t.Fatalf("duplicate react: created=%v err=%v, want no-op", created, err)
+	}
+	if r2.ID != r1.ID {
+		t.Fatalf("duplicate react returned row %d, want existing row %d", r2.ID, r1.ID)
 	}
 	// The author is a user id; the wire actor is rendered from the user row
 	// on both the insert and the no-op path (SPEC-0023 REQ "Migration to
@@ -84,18 +114,15 @@ func TestServiceReactToggle(t *testing.T) {
 			t.Fatalf("reaction author = %q rendered %q, want %s rendered u1", r.UserID, r.ActorID, u1ID)
 		}
 	}
-	if r2.ID != r1.ID {
-		t.Fatalf("duplicate react returned row %d, want existing row %d", r2.ID, r1.ID)
-	}
 	if r, c, p := artifactCounts(t, pool, artID); r != 1 || c != 0 || p != 0 {
 		t.Fatalf("counts after duplicate react = (%d,%d,%d), want (1,0,0)", r, c, p)
 	}
 
 	// A different emoji and a different actor are distinct reactions.
-	if _, created, err = svc.React(ctx, "SVCAAAA1", sharetype.AnchorCodeRange, ref, "🎉", u1ID); err != nil || !created {
+	if _, created, err = svc.React(ctx, "SVCAAAA1", sharetype.AnchorCodeRange, ref, "🎉", agent("u1")); err != nil || !created {
 		t.Fatalf("second emoji react: created=%v err=%v", created, err)
 	}
-	if _, created, err = svc.React(ctx, "SVCAAAA1", sharetype.AnchorCodeRange, ref, "🔥", u2ID); err != nil || !created {
+	if _, created, err = svc.React(ctx, "SVCAAAA1", sharetype.AnchorCodeRange, ref, "🔥", agent("u2")); err != nil || !created {
 		t.Fatalf("second actor react: created=%v err=%v", created, err)
 	}
 	if r, _, _ := artifactCounts(t, pool, artID); r != 3 {
@@ -103,12 +130,12 @@ func TestServiceReactToggle(t *testing.T) {
 	}
 
 	// Un-react removes exactly u1's 🔥 and decrements the rollup.
-	removed, err := svc.Unreact(ctx, "SVCAAAA1", sharetype.AnchorCodeRange, ref, "🔥", u1ID)
+	removed, err := svc.Unreact(ctx, "SVCAAAA1", sharetype.AnchorCodeRange, ref, "🔥", agent("u1"))
 	if err != nil || !removed {
 		t.Fatalf("unreact: removed=%v err=%v", removed, err)
 	}
 	// Removing it again is a toggle no-op.
-	removed, err = svc.Unreact(ctx, "SVCAAAA1", sharetype.AnchorCodeRange, ref, "🔥", u1ID)
+	removed, err = svc.Unreact(ctx, "SVCAAAA1", sharetype.AnchorCodeRange, ref, "🔥", agent("u1"))
 	if err != nil || removed {
 		t.Fatalf("second unreact: removed=%v err=%v, want no-op", removed, err)
 	}
@@ -118,7 +145,7 @@ func TestServiceReactToggle(t *testing.T) {
 	assertCountsMatchAggregates(t, pool, artID)
 
 	// Tallies group per (anchor, emoji) with the caller's "did I react" flag.
-	tallies, err := svc.ReactionTallies(ctx, "SVCAAAA1", u2ID)
+	tallies, err := svc.ReactionTallies(ctx, "SVCAAAA1", Viewer{UserID: u2ID, Kind: event.KindAgent})
 	if err != nil {
 		t.Fatalf("tallies: %v", err)
 	}
@@ -143,17 +170,17 @@ func TestServiceReactToggle(t *testing.T) {
 	// Registry gate: reacting on an anchor outside the type's capability set
 	// persists nothing.
 	if _, _, err := svc.React(ctx, "SVCAAAA1", sharetype.AnchorImageRegion,
-		json.RawMessage(`{"x":0.5,"y":0.5}`), "🔥", u1ID); !errors.Is(err, ErrAnchorNotAllowed) {
+		json.RawMessage(`{"x":0.5,"y":0.5}`), "🔥", agent("u1")); !errors.Is(err, ErrAnchorNotAllowed) {
 		t.Fatalf("image_region react on code artifact = %v, want ErrAnchorNotAllowed", err)
 	}
 	// Invalid emoji persists nothing.
-	if _, _, err := svc.React(ctx, "SVCAAAA1", sharetype.AnchorCodeRange, ref, "not an emoji", u1ID); !errors.Is(err, ErrEmojiInvalid) {
+	if _, _, err := svc.React(ctx, "SVCAAAA1", sharetype.AnchorCodeRange, ref, "not an emoji", agent("u1")); !errors.Is(err, ErrEmojiInvalid) {
 		t.Fatalf("invalid emoji react = %v, want ErrEmojiInvalid", err)
 	}
 	assertCountsMatchAggregates(t, pool, artID)
 
 	// Unknown artifact is a uniform not-found.
-	if _, _, err := svc.React(ctx, "NOPENOPE", sharetype.AnchorArtifact, nil, "🔥", u1ID); !errors.Is(err, errs.ErrNotFound) {
+	if _, _, err := svc.React(ctx, "NOPENOPE", sharetype.AnchorArtifact, nil, "🔥", agent("u1")); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("react on unknown artifact = %v, want ErrNotFound", err)
 	}
 }
@@ -182,7 +209,7 @@ func TestServiceReactConcurrentIdempotent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, created, err := svc.React(ctx, "SVCAAAA2", sharetype.AnchorMarkdownBlock, ref, "🔥", u1ID)
+			_, created, err := svc.React(ctx, "SVCAAAA2", sharetype.AnchorMarkdownBlock, ref, "🔥", agent("u1"))
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -226,8 +253,8 @@ func TestServiceReactConcurrentIdempotent(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			actor := actors[n]
-			if _, _, err := svc.React(ctx, "SVCAAAA2", sharetype.AnchorMarkdownBlock, ref, "👀", actor); err != nil {
+			actor := fmt.Sprintf("actor-%d", n)
+			if _, _, err := svc.React(ctx, "SVCAAAA2", sharetype.AnchorMarkdownBlock, ref, "👀", agentAs(actors[n], actor)); err != nil {
 				t.Errorf("actor %s react: %v", actor, err)
 			}
 		}(i)
@@ -246,20 +273,20 @@ func TestServiceUnreactByID(t *testing.T) {
 	artID := insertArtifact(t, pool, "SVCAAAA3", sharetype.KeyWebhook)
 
 	r, created, err := svc.React(ctx, "SVCAAAA3", sharetype.AnchorWebhookRequest,
-		json.RawMessage(`{"request_id":"req_7Kx9"}`), "👀", u1ID)
+		json.RawMessage(`{"request_id":"req_7Kx9"}`), "👀", agent("u1"))
 	if err != nil || !created {
 		t.Fatalf("react: created=%v err=%v", created, err)
 	}
 
 	// Another actor may not remove it.
-	if err := svc.UnreactByID(ctx, "SVCAAAA3", r.ID, u2ID); !errors.Is(err, errs.ErrForbidden) {
+	if err := svc.UnreactByID(ctx, "SVCAAAA3", r.ID, agent("u2")); !errors.Is(err, errs.ErrForbidden) {
 		t.Fatalf("foreign unreact = %v, want ErrForbidden", err)
 	}
 	// The author may.
-	if err := svc.UnreactByID(ctx, "SVCAAAA3", r.ID, u1ID); err != nil {
+	if err := svc.UnreactByID(ctx, "SVCAAAA3", r.ID, agent("u1")); err != nil {
 		t.Fatalf("unreact by id: %v", err)
 	}
-	if err := svc.UnreactByID(ctx, "SVCAAAA3", r.ID, u1ID); !errors.Is(err, errs.ErrNotFound) {
+	if err := svc.UnreactByID(ctx, "SVCAAAA3", r.ID, agent("u1")); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("second unreact by id = %v, want ErrNotFound", err)
 	}
 	if r, _, _ := artifactCounts(t, pool, artID); r != 0 {
@@ -281,7 +308,7 @@ func TestServiceCommentThreading(t *testing.T) {
 	sel := json.RawMessage(`{"quote":"ship it","start":10,"end":17}`)
 	root1, err := svc.AddComment(ctx, "SVCAAAA4", CommentInput{
 		AnchorType: sharetype.AnchorTextSelection, AnchorRef: sel,
-		UserID: u1ID, Body: "root one",
+		Actor: agent("u1"), Body: "root one",
 	})
 	if err != nil {
 		t.Fatalf("root1: %v", err)
@@ -291,7 +318,7 @@ func TestServiceCommentThreading(t *testing.T) {
 	}
 	root2, err := svc.AddComment(ctx, "SVCAAAA4", CommentInput{
 		AnchorType: sharetype.AnchorArtifact,
-		UserID:     u1ID, OnBehalfOf: "agent-7", Body: "root two",
+		Actor:      withOBO(agent("u1"), "agent-7"), Body: "root two",
 	})
 	if err != nil {
 		t.Fatalf("root2: %v", err)
@@ -300,7 +327,7 @@ func TestServiceCommentThreading(t *testing.T) {
 	// A reply with no anchor inherits its root's (SPEC-0006 "a reply's anchor
 	// MUST match its root's anchor").
 	reply1, err := svc.AddComment(ctx, "SVCAAAA4", CommentInput{
-		ParentID: &root1.ID, UserID: u2ID, Body: "reply to one",
+		ParentID: &root1.ID, Actor: agent("u2"), Body: "reply to one",
 	})
 	if err != nil {
 		t.Fatalf("reply1: %v", err)
@@ -312,33 +339,33 @@ func TestServiceCommentThreading(t *testing.T) {
 	// A reply asserting a different anchor is refused.
 	if _, err := svc.AddComment(ctx, "SVCAAAA4", CommentInput{
 		AnchorType: sharetype.AnchorArtifact,
-		ParentID:   &root1.ID, UserID: u2ID, Body: "mismatched",
+		ParentID:   &root1.ID, Actor: agent("u2"), Body: "mismatched",
 	}); !errors.Is(err, ErrAnchorMismatch) {
 		t.Fatalf("mismatched reply = %v, want ErrAnchorMismatch", err)
 	}
 	// A reply to a reply exceeds the one-level thread depth.
 	if _, err := svc.AddComment(ctx, "SVCAAAA4", CommentInput{
-		ParentID: &reply1.ID, UserID: u1ID, Body: "too deep",
+		ParentID: &reply1.ID, Actor: agent("u1"), Body: "too deep",
 	}); !errors.Is(err, ErrThreadTooDeep) {
 		t.Fatalf("reply-to-reply = %v, want ErrThreadTooDeep", err)
 	}
 	// A reply to a missing parent is refused.
 	missing := int64(999999)
 	if _, err := svc.AddComment(ctx, "SVCAAAA4", CommentInput{
-		ParentID: &missing, UserID: u1ID, Body: "orphan",
+		ParentID: &missing, Actor: agent("u1"), Body: "orphan",
 	}); !errors.Is(err, ErrParentNotFound) {
 		t.Fatalf("orphan reply = %v, want ErrParentNotFound", err)
 	}
 	// Comments on a webhook artifact are structurally refused (registry data).
 	insertArtifact(t, pool, "SVCHOOK1", sharetype.KeyWebhook)
 	if _, err := svc.AddComment(ctx, "SVCHOOK1", CommentInput{
-		AnchorType: sharetype.AnchorArtifact, UserID: u1ID, Body: "nope",
+		AnchorType: sharetype.AnchorArtifact, Actor: agent("u1"), Body: "nope",
 	}); !errors.Is(err, ErrNotCommentable) {
 		t.Fatalf("webhook comment = %v, want ErrNotCommentable", err)
 	}
 	// An empty body is refused.
 	if _, err := svc.AddComment(ctx, "SVCAAAA4", CommentInput{
-		AnchorType: sharetype.AnchorArtifact, UserID: u1ID,
+		AnchorType: sharetype.AnchorArtifact, Actor: agent("u1"),
 	}); !errors.Is(err, ErrBodyInvalid) {
 		t.Fatalf("empty body = %v, want ErrBodyInvalid", err)
 	}
@@ -373,22 +400,22 @@ func TestServiceCommentThreading(t *testing.T) {
 	}
 
 	// Edits are author-only and stamp edited_at.
-	if err := svc.EditComment(ctx, "SVCAAAA4", root1.ID, u2ID, "hijack"); !errors.Is(err, errs.ErrForbidden) {
+	if err := svc.EditComment(ctx, "SVCAAAA4", root1.ID, agent("u2"), "hijack"); !errors.Is(err, errs.ErrForbidden) {
 		t.Fatalf("foreign edit = %v, want ErrForbidden", err)
 	}
-	if err := svc.EditComment(ctx, "SVCAAAA4", root1.ID, u1ID, "root one, edited"); err != nil {
+	if err := svc.EditComment(ctx, "SVCAAAA4", root1.ID, agent("u1"), "root one, edited"); err != nil {
 		t.Fatalf("edit: %v", err)
 	}
 
 	// Soft delete is author-only, tombstones the root, keeps the reply, and
 	// decrements the rollup in the same transaction.
-	if err := svc.DeleteComment(ctx, "SVCAAAA4", root1.ID, u2ID); !errors.Is(err, errs.ErrForbidden) {
+	if err := svc.DeleteComment(ctx, "SVCAAAA4", root1.ID, agent("u2")); !errors.Is(err, errs.ErrForbidden) {
 		t.Fatalf("foreign delete = %v, want ErrForbidden", err)
 	}
-	if err := svc.DeleteComment(ctx, "SVCAAAA4", root1.ID, u1ID); err != nil {
+	if err := svc.DeleteComment(ctx, "SVCAAAA4", root1.ID, agent("u1")); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if err := svc.DeleteComment(ctx, "SVCAAAA4", root1.ID, u1ID); !errors.Is(err, errs.ErrNotFound) {
+	if err := svc.DeleteComment(ctx, "SVCAAAA4", root1.ID, agent("u1")); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("double delete = %v, want ErrNotFound", err)
 	}
 
@@ -424,19 +451,19 @@ func TestServicePinCount(t *testing.T) {
 	artID := insertArtifact(t, pool, "SVCAAAA5", sharetype.KeyImage)
 
 	region := json.RawMessage(`{"x":0.42,"y":0.31}`)
-	if _, _, err := svc.React(ctx, "SVCAAAA5", sharetype.AnchorImageRegion, region, "🔥", u1ID); err != nil {
+	if _, _, err := svc.React(ctx, "SVCAAAA5", sharetype.AnchorImageRegion, region, "🔥", agent("u1")); err != nil {
 		t.Fatalf("pin react: %v", err)
 	}
 	pin, err := svc.AddComment(ctx, "SVCAAAA5", CommentInput{
 		AnchorType: sharetype.AnchorImageRegion, AnchorRef: region,
-		UserID: u2ID, Body: "nice detail",
+		Actor: agent("u2"), Body: "nice detail",
 	})
 	if err != nil {
 		t.Fatalf("pin comment: %v", err)
 	}
 	// A whole-artifact comment is not a pin.
 	if _, err := svc.AddComment(ctx, "SVCAAAA5", CommentInput{
-		AnchorType: sharetype.AnchorArtifact, UserID: u1ID, Body: "overall gorgeous",
+		AnchorType: sharetype.AnchorArtifact, Actor: agent("u1"), Body: "overall gorgeous",
 	}); err != nil {
 		t.Fatalf("artifact comment: %v", err)
 	}
@@ -445,10 +472,10 @@ func TestServicePinCount(t *testing.T) {
 		t.Fatalf("counts = (%d,%d,%d), want (1,2,2)", r, c, p)
 	}
 
-	if err := svc.DeleteComment(ctx, "SVCAAAA5", pin.ID, u2ID); err != nil {
+	if err := svc.DeleteComment(ctx, "SVCAAAA5", pin.ID, agent("u2")); err != nil {
 		t.Fatalf("delete pin comment: %v", err)
 	}
-	if removed, err := svc.Unreact(ctx, "SVCAAAA5", sharetype.AnchorImageRegion, region, "🔥", u1ID); err != nil || !removed {
+	if removed, err := svc.Unreact(ctx, "SVCAAAA5", sharetype.AnchorImageRegion, region, "🔥", agent("u1")); err != nil || !removed {
 		t.Fatalf("unreact pin: removed=%v err=%v", removed, err)
 	}
 	if r, c, p := artifactCounts(t, pool, artID); r != 0 || c != 1 || p != 0 {
@@ -470,11 +497,11 @@ func TestServiceExpiredArtifactUniformNotFound(t *testing.T) {
 		t.Fatalf("expire artifact: %v", err)
 	}
 
-	if _, _, err := svc.React(ctx, "SVCAAAA6", sharetype.AnchorArtifact, nil, "🔥", u1ID); !errors.Is(err, errs.ErrNotFound) {
+	if _, _, err := svc.React(ctx, "SVCAAAA6", sharetype.AnchorArtifact, nil, "🔥", agent("u1")); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("react on expired artifact = %v, want ErrNotFound", err)
 	}
 	if _, err := svc.AddComment(ctx, "SVCAAAA6", CommentInput{
-		AnchorType: sharetype.AnchorArtifact, UserID: u1ID, Body: "hello?",
+		AnchorType: sharetype.AnchorArtifact, Actor: agent("u1"), Body: "hello?",
 	}); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("comment on expired artifact = %v, want ErrNotFound", err)
 	}

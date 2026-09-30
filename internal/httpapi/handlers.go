@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -63,52 +64,91 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 // docs). The server remains authoritative (ADR-0007): this only interprets an
 // explicit ask, it never computes one.
 func requestedTTL(r *http.Request, cfg Config) (time.Duration, error) {
-	raw := r.Header.Get("X-Cairn-Ttl-Seconds")
+	raw := r.Header.Get(ttlHeader)
 	if raw == "" {
 		return cfg.DefaultTTL, nil
 	}
-	secs, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || secs <= 0 {
-		return 0, errs.Validationf("X-Cairn-Ttl-Seconds must be a positive integer number of seconds")
-	}
-	ttl := time.Duration(secs) * time.Second
-	if ttl > cfg.MaxRequestedTTL {
-		return 0, errs.Validationf("X-Cairn-Ttl-Seconds exceeds the maximum allowed TTL (%s)", cfg.MaxRequestedTTL)
+	ttl, inv := checkTTLSeconds(ttlHeader, errs.LocHeader, raw, cfg.MaxRequestedTTL)
+	if inv != nil {
+		return 0, inv
 	}
 	return ttl, nil
 }
 
+// ttlHeader is the create path's requested-TTL header.
+const ttlHeader = "X-Cairn-Ttl-Seconds"
+
+// ttlExpect is how a valid TTL is described in a violation's message.
+const ttlExpect = "a positive integer number of seconds"
+
+// checkTTLSeconds validates a requested TTL, given as decimal seconds, against
+// the server's cap. The create header and the policy body share it, so both
+// TTL surfaces agree on units, bounds and the violation they report.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1 (scenarios "TTL over the cap",
+// "Malformed TTL"), ADR-0007
+func checkTTLSeconds(field string, loc errs.Location, raw string, max time.Duration) (time.Duration, *errs.Invalid) {
+	secs, err := strconv.ParseInt(raw, 10, 64)
+	switch {
+	case err != nil:
+		// An integer too large for int64 is still an integer: its sign says
+		// which bound it broke, so it is exceeds_max or not_positive, never
+		// invalid_format.
+		var numErr *strconv.NumError
+		if errors.As(err, &numErr) && errors.Is(numErr.Err, strconv.ErrRange) {
+			if strings.HasPrefix(raw, "-") {
+				return 0, errs.Violate(field, loc, errs.ReasonNotPositive, errs.WithValue(raw), errs.WithExpect(ttlExpect))
+			}
+			return 0, ttlTooLong(field, loc, raw, max)
+		}
+		return 0, errs.Violate(field, loc, errs.ReasonInvalidFormat, errs.WithValue(raw), errs.WithExpect(ttlExpect))
+	case secs <= 0:
+		return 0, errs.Violate(field, loc, errs.ReasonNotPositive, errs.WithValue(raw), errs.WithExpect(ttlExpect))
+	case secs > int64(max/time.Second):
+		return 0, ttlTooLong(field, loc, raw, max)
+	}
+	return time.Duration(secs) * time.Second, nil
+}
+
+func ttlTooLong(field string, loc errs.Location, raw string, max time.Duration) *errs.Invalid {
+	return errs.Violate(field, loc, errs.ReasonExceedsMax,
+		errs.WithValue(raw), errs.WithLimit(int64(max/time.Second), errs.UnitSeconds))
+}
+
 func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Principal) {
-	shareType := artifact.ShareType(firstNonEmpty(
-		r.URL.Query().Get("type"), r.Header.Get("X-Cairn-Type"), string(artifact.TypeFile)))
 	now := s.now()
 
-	ttl, err := requestedTTL(r, s.cfg)
-	if err != nil {
-		s.writeError(w, r, err, nil)
-		return
-	}
+	// The TTL, share type, title and every tag are checked together, so one
+	// rejection names all of them (SPEC-0019 VE-4).
 	var tags tagSet
-	if err := tags.addFromRequest(r); err != nil {
-		s.writeError(w, r, err, tagErrorDetails())
+	ttl, ttlErr := requestedTTL(r, s.cfg)
+	shareType, typeErr := s.requestedShareType(r)
+	title, titleErr := requestedTitle(r)
+	downgrade, redErr := redactionDowngrade(redactionHeader, errs.LocHeader, r.Header.Get(redactionHeader))
+	if err := errs.JoinErrors(ttlErr, typeErr, titleErr, redErr, tags.addFromRequest(r)); err != nil {
+		s.writeError(w, r, err, nil)
 		return
 	}
 
 	// Guard the raw body; the store additionally enforces the limit incrementally.
 	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes+1)
+	creator := p.EventActor()
 	art, err := s.store.CreateArtifact(r.Context(), store.CreateArtifactInput{
-		ShareType:         shareType,
-		Title:             firstNonEmpty(r.URL.Query().Get("title"), r.Header.Get("X-Cairn-Title")),
-		Body:              body,
-		DeclaredMediaType: r.Header.Get("Content-Type"),
-		ExpectedSHA256:    r.Header.Get("X-Cairn-Sha256"),
-		Provenance:        artifact.Provenance{CreatedByUserID: p.UserID, ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now},
-		Access:            artifact.AccessPolicy{OwnerUserID: p.UserID, Visibility: artifact.VisibilityLink},
-		ExpiresAt:         now.Add(ttl),
-		Tags:              tags.tags,
+		ShareType:          shareType,
+		Title:              title,
+		Body:               body,
+		DeclaredMediaType:  r.Header.Get("Content-Type"),
+		ExpectedSHA256:     r.Header.Get(store.ChecksumHeader),
+		Provenance:         artifact.Provenance{CreatedByUserID: p.UserID, ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now},
+		Access:             artifact.AccessPolicy{OwnerUserID: p.UserID, Visibility: artifact.VisibilityLink},
+		ExpiresAt:          now.Add(ttl),
+		Tags:               tags.tags,
+		ActorKind:          creator.Kind,
+		Auth:               creator.Auth,
+		RedactionDowngrade: downgrade,
 	})
 	if err != nil {
-		s.writeError(w, r, mapUploadErr(err), nil)
+		s.writeError(w, r, s.mapUploadErr(err), nil)
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, s.toOwnerArtifactResponse(art))
@@ -125,24 +165,24 @@ type spooledFile struct {
 
 func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Principal, boundary string) {
 	if boundary == "" {
-		s.writeError(w, r, errs.Validationf("multipart: missing boundary"), nil)
+		s.writeError(w, r, errMissingBoundary(), nil)
 		return
 	}
-	ttl, err := requestedTTL(r, s.cfg)
-	if err != nil {
-		s.writeError(w, r, err, nil)
-		return
-	}
+	// The TTL, header and query tags are checked with the form's own tag
+	// and title fields, so one rejection names every bad tag from every source
+	// (SPEC-0019 VE-4). They are reported at the first file part, before any
+	// body is spooled.
 	var tags tagSet
-	if err := tags.addFromRequest(r); err != nil {
-		s.writeError(w, r, err, tagErrorDetails())
-		return
-	}
+	ttl, ttlErr := requestedTTL(r, s.cfg)
+	downgrade, redErr := redactionDowngrade(redactionHeader, errs.LocHeader, r.Header.Get(redactionHeader))
+	_ = tags.addFromRequest(r)
 	mr := multipart.NewReader(r.Body, boundary)
 
 	var (
-		title string
-		files []spooledFile
+		title    string
+		titleErr error
+		files    []spooledFile
+		parts    memberChecks
 	)
 	cleanup := func() {
 		for _, f := range files {
@@ -158,43 +198,70 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			break
 		}
 		if err != nil {
-			s.writeError(w, r, errs.Validationf("multipart: malformed body"), nil)
+			s.writeError(w, r, errMalformedMultipart(err), nil)
 			return
 		}
 		if part.FileName() == "" {
 			switch part.FormName() {
 			case "title":
-				b, _ := io.ReadAll(io.LimitReader(part, 4096))
-				title = string(b)
+				title, titleErr = readTitleField(part)
 			case "tag":
-				if err := tags.addFormField(part); err != nil {
-					_ = part.Close()
-					s.writeError(w, r, err, tagErrorDetails())
-					return
-				}
+				tags.addFormField(part)
 			}
 			_ = part.Close()
 			continue
 		}
-		tmp, err := os.CreateTemp("", "cairn-upload-*")
+		if err := errs.JoinErrors(ttlErr, titleErr, redErr, tags.err()); err != nil {
+			_ = part.Close()
+			s.writeError(w, r, err, nil)
+			return
+		}
+		// Past a bundle's member bound nothing more is spooled; the parts
+		// already seen are reported with the count (SPEC-0019 VE-4).
+		if parts.n == store.MaxBundleMembers {
+			_ = part.Close()
+			parts.add(part.FileName(), false, s.cfg.MaxUploadBytes)
+			s.writeError(w, r, parts.err(), nil)
+			return
+		}
+		// Once a member is bad the upload is refused whatever follows, so the
+		// rest are only measured for the rejection (VE-4), never spooled: a
+		// doomed request must not write up to MaxBundleMembers full-size parts
+		// to disk first.
+		if parts.failed() {
+			src := &partReader{r: io.LimitReader(part, s.cfg.MaxUploadBytes+1)}
+			n, copyErr := io.Copy(io.Discard, src)
+			_ = part.Close()
+			if copyErr != nil {
+				s.writeError(w, r, src.classify(copyErr), nil)
+				return
+			}
+			parts.add(part.FileName(), n > s.cfg.MaxUploadBytes, s.cfg.MaxUploadBytes)
+			continue
+		}
+		tmp, err := createSpool()
 		if err != nil {
 			s.writeError(w, r, err, nil)
 			return
 		}
 		// Copy at most MaxUploadBytes+1 so an oversize part is detected precisely.
-		n, copyErr := io.Copy(tmp, io.LimitReader(part, s.cfg.MaxUploadBytes+1))
+		src := &partReader{r: io.LimitReader(part, s.cfg.MaxUploadBytes+1)}
+		n, copyErr := io.Copy(tmp, src)
 		_ = part.Close()
 		if copyErr != nil {
 			_ = tmp.Close()
 			_ = os.Remove(tmp.Name())
-			s.writeError(w, r, copyErr, nil)
+			s.writeError(w, r, src.classify(copyErr), nil)
 			return
 		}
-		if n > s.cfg.MaxUploadBytes {
+		// An oversize part is dropped, not spooled, and the rest are still
+		// measured, so every bad member is named together (SPEC-0019 VE-4).
+		tooLarge := n > s.cfg.MaxUploadBytes
+		parts.add(part.FileName(), tooLarge, s.cfg.MaxUploadBytes)
+		if tooLarge {
 			_ = tmp.Close()
 			_ = os.Remove(tmp.Name())
-			s.writeError(w, r, errs.ErrTooLarge, nil)
-			return
+			continue
 		}
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 			_ = tmp.Close()
@@ -205,30 +272,53 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		files = append(files, spooledFile{name: part.FileName(), media: part.Header.Get("Content-Type"), file: tmp, size: n})
 	}
 
-	if len(files) == 0 {
-		s.writeError(w, r, errs.Validationf("multipart: no file parts"), nil)
+	if err := errs.JoinErrors(ttlErr, titleErr, redErr, tags.err()); err != nil {
+		s.writeError(w, r, err, nil)
 		return
+	}
+	switch {
+	case parts.n == 0:
+		s.writeError(w, r, errNoFileParts(), nil)
+		return
+	case parts.n == 1 && parts.oversize:
+		// A lone file is the artifact's body, so its oversize is the body's.
+		s.writeError(w, r, s.mapUploadErr(errs.ErrTooLarge), nil)
+		return
+	case parts.n > 1:
+		if err := parts.err(); err != nil {
+			s.writeError(w, r, err, nil)
+			return
+		}
 	}
 
 	now := s.now()
+	actor := p.EventActor()
 	prov := artifact.Provenance{CreatedByUserID: p.UserID, ActorID: p.ActorID, Model: requestModel(r), Channel: p.Channel, CapturedAt: now}
 	access := artifact.AccessPolicy{OwnerUserID: p.UserID, Visibility: artifact.VisibilityLink}
 	expires := now.Add(ttl)
 
 	if len(files) == 1 {
 		f := files[0]
+		shareType, err := s.multipartShareType(r)
+		if err != nil {
+			s.writeError(w, r, err, nil)
+			return
+		}
 		art, err := s.store.CreateArtifact(r.Context(), store.CreateArtifactInput{
-			ShareType:         artifact.ShareType(firstNonEmpty(r.URL.Query().Get("type"), string(artifact.TypeFile))),
-			Title:             firstNonEmpty(title, f.name),
-			Body:              f.file,
-			DeclaredMediaType: f.media,
-			Provenance:        prov,
-			Access:            access,
-			ExpiresAt:         expires,
-			Tags:              tags.tags,
+			ShareType:          shareType,
+			Title:              firstNonEmpty(title, f.name),
+			Body:               f.file,
+			DeclaredMediaType:  f.media,
+			Provenance:         prov,
+			Access:             access,
+			ExpiresAt:          expires,
+			Tags:               tags.tags,
+			ActorKind:          actor.Kind,
+			Auth:               actor.Auth,
+			RedactionDowngrade: downgrade,
 		})
 		if err != nil {
-			s.writeError(w, r, mapUploadErr(err), nil)
+			s.writeError(w, r, s.mapUploadErr(err), nil)
 			return
 		}
 		s.writeJSON(w, http.StatusCreated, s.toOwnerArtifactResponse(art))
@@ -240,15 +330,18 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		members = append(members, store.MemberInput{Name: f.name, Body: f.file, DeclaredMediaType: f.media})
 	}
 	art, err := s.store.CreateBundle(r.Context(), store.CreateBundleInput{
-		Title:      title,
-		Members:    members,
-		Provenance: prov,
-		Access:     access,
-		ExpiresAt:  expires,
-		Tags:       tags.tags,
+		Title:              title,
+		Members:            members,
+		Provenance:         prov,
+		Access:             access,
+		ExpiresAt:          expires,
+		Tags:               tags.tags,
+		ActorKind:          actor.Kind,
+		Auth:               actor.Auth,
+		RedactionDowngrade: downgrade,
 	})
 	if err != nil {
-		s.writeError(w, r, mapUploadErr(err), nil)
+		s.writeError(w, r, s.mapUploadErr(err), nil)
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, s.toOwnerArtifactResponse(art))
@@ -407,7 +500,7 @@ func (s *Server) handleBin(w http.ResponseWriter, r *http.Request) {
 	// create accepts.
 	var filter tagSet
 	if err := filter.addQuery(r); err != nil {
-		s.writeError(w, r, err, tagErrorDetails())
+		s.writeError(w, r, err, nil)
 		return
 	}
 	page, err := s.store.ListBin(r.Context(), p.UserID, r.URL.Query().Get("cursor"), limit, filter.tags...)
@@ -422,12 +515,17 @@ func (s *Server) handleBin(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, binResponse{Artifacts: items, NextCursor: page.NextCursor})
 }
 
-// mapUploadErr maps an http.MaxBytesReader overflow to the payload-too-large
-// domain error so it renders as 413 rather than a generic 500.
-func mapUploadErr(err error) error {
+// mapUploadErr maps a body over the upload cap — an http.MaxBytesReader
+// overflow, or the store's incremental limit — to a too_large violation naming
+// the cap, so it renders as a 413 that says what the limit is rather than a
+// generic 500 or a bare "payload too large".
+//
+// Governing: ADR-0025, SPEC-0019 VE-1 (scenario "Oversize body")
+func (s *Server) mapUploadErr(err error) error {
 	var maxErr *http.MaxBytesError
-	if errors.As(err, &maxErr) {
-		return errs.ErrTooLarge
+	if errors.As(err, &maxErr) || (errors.Is(err, errs.ErrTooLarge) && errs.ViolationsOf(err) == nil) {
+		return errs.Violate("body", errs.LocBody, errs.ReasonTooLarge,
+			errs.WithLimit(s.cfg.MaxUploadBytes, errs.UnitBytes)).Because(err)
 	}
 	return err
 }

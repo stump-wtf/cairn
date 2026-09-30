@@ -2,7 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -163,6 +163,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := s.now()
+	actor := p.EventActor()
 	started := req.StartedAt
 	if started.IsZero() {
 		started = now
@@ -186,20 +187,22 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		Access:    artifact.AccessPolicy{OwnerUserID: p.UserID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 		Spans:     toSpanInputs(req.Spans),
+		ActorKind: actor.Kind,
+		Auth:      actor.Auth,
 	}
 
+	if err := checkRunMode(req.Mode); err != nil {
+		s.writeError(w, r, err, nil)
+		return
+	}
 	var (
 		run *trajectory.Run
 		err error
 	)
-	switch req.Mode {
-	case "", "batch":
-		run, err = s.traj.CreateBatchRun(r.Context(), in)
-	case "open":
+	if req.Mode == "open" {
 		run, err = s.traj.OpenRun(r.Context(), in)
-	default:
-		s.writeError(w, r, errs.Validationf("mode must be \"batch\" or \"open\""), nil)
-		return
+	} else {
+		run, err = s.traj.CreateBatchRun(r.Context(), in)
 	}
 	if err != nil {
 		s.writeError(w, r, err, nil)
@@ -257,7 +260,7 @@ func (s *Server) handleCloseRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	run, err := s.traj.CloseRun(r.Context(), id, p.UserID)
+	run, err := s.traj.CloseRun(r.Context(), id, p.EventActor())
 	if err != nil {
 		s.writeError(w, r, err, map[string]string{"id": id})
 		return
@@ -327,13 +330,22 @@ func (s *Server) handleGetSpanOutput(w http.ResponseWriter, r *http.Request) {
 func (s *Server) decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxRunRequestBytes)
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			return errs.ErrTooLarge
-		}
-		return errs.Validationf("request body is not valid JSON")
+		return fmt.Errorf("decode request body: %w", jsonBodyViolation(err))
 	}
 	return nil
+}
+
+// checkRunMode validates run_create's ingest mode, shared by REST and MCP:
+// "" and "batch" ingest a complete run, "open" starts a live one.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-6
+func checkRunMode(mode string) error {
+	switch mode {
+	case "", "batch", "open":
+		return nil
+	}
+	return errs.Violate("mode", errs.LocBody, errs.ReasonUnknownValue, errs.WithValue(mode),
+		errs.WithLimit(`"batch" or "open"`, ""))
 }
 
 // toSpanInputs converts the wire spans to the service's SpanInput values.
