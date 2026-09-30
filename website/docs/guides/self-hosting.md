@@ -493,7 +493,7 @@ Several entries go in one value, separated by commas.
   token owned stay with that actor's user, and no credential acts as it any
   more. A non-email actor is never claimed by a sign-in either, so its Bin is
   orphaned. The CHANGELOG upgrade note has the SQL that lists those
-  artifacts and moves them to your user. It needs migration `0018`'s
+  artifacts and moves them to your user. It needs migration `0023`'s
   columns, so run it once that migration has applied.
 - Generate secrets with something like `openssl rand -hex 32`. Cairn keeps
   only their SHA-256 digests in memory and never logs one.

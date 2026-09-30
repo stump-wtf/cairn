@@ -94,13 +94,13 @@ reaches 1.0.
   to the **agent** role: add `:human` where a script changes sharing, expiry
   or deletes.
 - **A legacy token actor's Bin is orphaned unless you move it.** Migration
-  `0018` turned each old token actor into a user known by that string, and
+  `0023` turned each old token actor into a user known by that string, and
   until now the token reached that user. After upgrading no credential acts
   as it: a token names an operator's own user, and a sign-in claims a legacy
   user only by a verified email equal to its name, so a non-email actor such
   as `ci-bot` is never claimed. Its Bin (pins, permanent artifacts, anything
   not yet expired) stays in the database with nobody able to manage or delete
-  it. Nothing is deleted, so you can fix this any time after `0018` has run
+  it. Nothing is deleted, so you can fix this any time after `0023` has run
   (the queries need its columns), but expiring artifacts are still reaped on
   schedule meanwhile. List what such users own:
 
