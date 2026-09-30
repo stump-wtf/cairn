@@ -27,53 +27,131 @@ Markdown · Code · Image · File · Bundle (multi-file) · Webhook (live reques
 
 The `cairn` CLI is a single static Go binary — a pure REST client of the core `/v1`
 API, with no domain logic of its own (see [ADR-0003](docs/adrs/ADR-0003-triple-surface-parity-web-cli-mcp.md)).
-The release pipeline publishes cross-platform binaries to
-[stump-wtf/cairn](https://github.com/stump-wtf/cairn/releases) on each tag, but
-no release there carries them yet. Until one does, install straight from the
-module:
+`cairn` is now a monolithic binary: all functionality, including the `cairn serve`
+server (formerly `cairnd` binary), is in one executable (ADR-0031).
+
+### Installation
+
+**Homebrew (recommended for macOS/Linux):**
+
+```bash
+brew install stump-wtf/tap/cairn
+```
+
+This provides pre-built binaries for the latest release (`v0.3.0` and later).
+
+**Other platforms:** If Homebrew is not available, install from the Go module:
 
 ```bash
 go install github.com/stump-wtf/cairn/cmd/cairn@latest
 ```
 
 This puts a `cairn` binary in `$(go env GOPATH)/bin` (make sure that's on your
-`PATH`). Building from a checkout instead:
+`PATH`).
+
+**Building from source:**
 
 ```bash
-git clone https://github.com/stump-wtf/cairn && cd cairn
+# For releases, check GitHub releases for tagged versions
+# https://github.com/stump-wtf/cairn/releases
+
+# For development, build from the repository
+git clone https://gitea.stump.rocks/stump.wtf/cairn && cd cairn
 go build -o cairn ./cmd/cairn
 ```
 
-Authenticate with a bearer token — mint one from your Cairn server's web Settings
-page, or use one your deployment operator issued:
+### Upgrading from `cairnd` (standalone server)
+
+If you were previously running a separate `cairnd` binary, you can migrate to the
+single `cairn` binary by installing the Homebrew package or building from source:
 
 ```bash
-cairn login --token <token>       # or: echo "$TOKEN" | cairn login
-✓ authorized as sam@stump.rocks · via API
+# Install the monolithic cairn binary
+brew install stump-wtf/tap/cairn
+
+# Run the server with the same environment variables
+CAIRN_DATABASE_URL="$CAIRND_DATABASE_URL" \
+CAIRN_S3_ENDPOINT="$CAIRND_S3_ENDPOINT" \
+CAIRN_S3_BUCKET="$CAIRND_S3_BUCKET" \
+cairn serve
 ```
 
-Tokens are stored securely (the OS keychain when available, otherwise a `0600`
-file under your config directory) — never logged, never printed. Then push:
+The Docker container continues to ship a `cairnd` shim that calls `cairn serve` for
+backwards compatibility — no migration is required for containerized deployments.
+
+### Authentication and usage
+
+Authenticate with a bearer token — mint one from your Cairn server's web Settings
+page, or use one issued by your deployment operator:
 
 ```bash
+cairn login       # Interactive OAuth flow (recommended)
+# or
+cairn login --token <token>   # Use a presigned token
+# or
+echo "$TOKEN" | cairn login   # Pipe token securely
+
+# Confirm authentication
+cairn whoami
+
+# Token is stored securely (OS keychain on macOS, Linux file under
+# ~/.local/share/cairn/ or $XDG_DATA_HOME/cairn/, Windows Credential Manager).
+# Tokens are never logged or printed.
+```
+
+Then use the CLI:
+
+```bash
+# Create single artifacts
 cat notes.md | cairn              # pipe content in, get a link back
 cairn report.pdf                  # or pass a file path
+
+# Create bundles (multiple files)
 cairn add a.png b.log dump.sql    # push several files as one bundle
 
-cairn --ttl 24h --title "incident notes" incident.md   # optional flags
+# Customize with optional flags
+cairn --ttl 24h --title "incident notes" incident.md
+
+# Machine-readable output
+cat report.md | cairn --json
+
+# Disable clipboard copy (useful in scripts)
+cairn report.pdf --no-copy
 ```
 
-By default `cairn` copies the resulting link to your clipboard (best-effort,
-`--no-copy` to disable) and shows the server-assigned expiry and access policy —
-the CLI displays these, it never decides them. Piped/non-interactive output prints
-only the bare `cairn.stump.wtf/<id>` link, so it composes cleanly in scripts:
+By default, `cairn` copies the resulting link to your clipboard and prints the
+server-assigned expiry. Non-interactive output contains only the bare link for
+composition in scripts:
 
 ```bash
 url=$(cat report.md | cairn)
+echo $url    # outputs: cairn.sh/abc123
 ```
 
-See [SPEC-0008](docs/openspec/specs/cli/spec.md) for the full command surface,
-exit-code taxonomy, and `--json` mode.
+### Server deployment
+
+To run the Cairn server (web app, API, MCP server) locally:
+
+```bash
+# Configure environment variables
+export CAIRN_DATABASE_URL="postgres://user:pass@localhost:5432/cairn"
+export CAIRN_S3_ENDPOINT="https://s3.stump.rocks:9000"
+export CAIRN_S3_BUCKET="cairn"
+export CAIRN_JWT_SECRET="your-strong-secret"
+
+# Start the server
+cairn serve
+
+# On ctrl+C, the server shuts down gracefully
+```
+
+See the [server deployment guide](docs/server/deployment.md) for production
+configuration.
+
+### CLI reference
+
+For full command reference, subcommand flags, exit codes, and troubleshooting,
+see [SPEC-0008 CLI reference](docs/openspec/specs/cli/cli-reference.md).
 
 ## Self-hosting
 
