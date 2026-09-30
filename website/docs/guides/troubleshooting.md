@@ -252,11 +252,12 @@ list:
 
 To compute the signature yourself, put the captured body in a file named `body` and the
 secret in a local shell variable. `SECRET` below is only a name for this command; Cairn
-never reads it. Its value must equal the signing secret of the delivery you are checking,
-which today is the sending instance's `CAIRN_OUTBOUND_WEBHOOK_SECRET`.
+never reads it. Its value must equal the signing secret of the delivery you are checking:
+the secret of the subscription that sent it, shown once when the subscription was created
+or its secret rotated.
 
 ```bash
-SECRET='…'   # the instance's CAIRN_OUTBOUND_WEBHOOK_SECRET value
+SECRET='…'   # that subscription's signing secret
 printf 'sha256=%s\n' "$(openssl dgst -sha256 -hmac "$SECRET" -r body | cut -d' ' -f1)"
 ```
 

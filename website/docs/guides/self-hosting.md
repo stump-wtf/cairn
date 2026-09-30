@@ -41,8 +41,7 @@ variable in your shell does nothing for the CLI, and the reverse is also true.
 | `CAIRN_TOKEN` | the `cairn` CLI | The one bearer token the CLI sends, the same as `--token`. The MCP client configs in [Connect your agent](./connect-your-agent.md) expand it from your shell too, but `/mcp` accepts only a personal access token or an OAuth token there, never a `CAIRN_API_TOKENS` secret. |
 | `CAIRN_BASE_URL` | the server | The public origin the server builds short links and its OIDC redirect URI from. |
 | `CAIRN_URL` | the `cairn` CLI | The server the CLI talks to, the same as `--url`. It defaults to the hosted service, so a self-hoster sets it. |
-| `CAIRN_OUTBOUND_WEBHOOK_URLS` | the server | Where the server sends `artifact.created` events. |
-| `CAIRN_OUTBOUND_WEBHOOK_SECRET` | the server | The secret the server signs those events with. A receiver checks signatures against the same value. |
+| `CAIRN_ENCRYPTION_KEY` | the server | Encrypts each [outbound subscription](./outbound-webhooks.md)'s signing secret at rest. Receivers never see it: each one verifies against its own subscription's secret. The old instance-wide `CAIRN_OUTBOUND_WEBHOOK_URLS` and `CAIRN_OUTBOUND_WEBHOOK_SECRET` are gone, and the server ignores them. |
 | `CAIRN_API_TOKEN` (singular) | nothing | A common slip. You want `CAIRN_API_TOKENS` on the server, or `CAIRN_TOKEN` for the CLI. |
 
 The pairs connect like this: one secret in the server's `CAIRN_API_TOKENS` is
