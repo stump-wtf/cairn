@@ -25,35 +25,52 @@ Markdown · Code · Image · File · Bundle (multi-file) · Webhook (live reques
 
 ## CLI — install, login, push
 
-The `cairn` CLI is a single static Go binary — a pure REST client of the core `/v1`
-API, with no domain logic of its own (see [ADR-0003](docs/adrs/ADR-0003-triple-surface-parity-web-cli-mcp.md)).
-The release pipeline publishes cross-platform binaries to
-[stump-wtf/cairn](https://github.com/stump-wtf/cairn/releases) on each tag, but
-no release there carries them yet. Until one does, install straight from the
-module:
+`cairn` is one static Go binary. As a client it is a pure REST client of the core
+`/v1` API, with no domain logic of its own (see [ADR-0003](docs/adrs/ADR-0003-triple-surface-parity-web-cli-mcp.md)).
+Since v0.3.0 it is also the server: `cairn serve` replaces the old `cairnd`
+binary (see [ADR-0031](docs/adrs/ADR-0031-one-cairn-binary-the-server-is-cairn-serve.md)).
+
+### Install
+
+With Homebrew, on macOS or Linux:
+
+```bash
+brew install stump-wtf/tap/cairn
+```
+
+Or download an archive for your platform from
+[GitHub Releases](https://github.com/stump-wtf/cairn/releases), or install from
+the module:
 
 ```bash
 go install github.com/stump-wtf/cairn/cmd/cairn@latest
 ```
 
-This puts a `cairn` binary in `$(go env GOPATH)/bin` (make sure that's on your
-`PATH`). Building from a checkout instead:
+That puts `cairn` in `$(go env GOPATH)/bin`, so make sure that is on your `PATH`.
+To build from a checkout instead:
 
 ```bash
 git clone https://github.com/stump-wtf/cairn && cd cairn
 go build -o cairn ./cmd/cairn
 ```
 
-Authenticate with a bearer token — mint one from your Cairn server's web Settings
-page, or use one your deployment operator issued:
+### Log in
+
+Authenticate with a bearer token. Mint a personal access token from your Cairn
+server's web Settings page, or use one your deployment operator issued:
 
 ```bash
 cairn login --token <token>       # or: echo "$TOKEN" | cairn login
 ✓ authorized as sam@stump.rocks · via API
+cairn whoami                      # check who you are
 ```
 
-Tokens are stored securely (the OS keychain when available, otherwise a `0600`
-file under your config directory) — never logged, never printed. Then push:
+A bare `cairn login` prompts for the token with input hidden. Tokens are stored in
+the OS keyring when one is reachable (macOS Keychain, Secret Service on Linux),
+otherwise in a `0600` file under your config directory. They are never logged or
+printed. `cairn logout` deletes the stored copy.
+
+### Push
 
 ```bash
 cat notes.md | cairn              # pipe content in, get a link back
@@ -72,8 +89,20 @@ only the bare `cairn.stump.wtf/<id>` link, so it composes cleanly in scripts:
 url=$(cat report.md | cairn)
 ```
 
-See [SPEC-0008](docs/openspec/specs/cli/spec.md) for the full command surface,
-exit-code taxonomy, and `--json` mode.
+See the [CLI reference](docs/openspec/specs/cli/cli-reference.md) for every
+command, flag and exit code, and [SPEC-0008](docs/openspec/specs/cli/spec.md) for
+the requirements behind them.
+
+### Run the server
+
+`cairn serve` runs the web app, the `/v1` API, the SSE streams and the MCP server
+in one process. It takes no flags; its whole configuration is the `CAIRN_*`
+environment. The [self-hosting guide](https://cairn.stump.wtf/docs/guides/self-hosting/)
+lists the variables and walks through a full deployment.
+
+Upgrading from `cairnd` changes only the command name: `cairn serve` reads the same
+variables with the same meanings. The container image still starts through a
+`cairnd` shim that runs `cairn serve`, so container deployments need no change.
 
 ## Self-hosting
 
@@ -94,8 +123,9 @@ workflow: decisions → specs → tracked issues.
 ## Status
 
 Cairn is running and released. https://cairn.stump.wtf is a live instance, and
-releases ship as the container image `ghcr.io/stump-wtf/cairn`, currently the
-`v0.1.x` line. The ADRs and specs in `docs/` are the design record the code follows.
+releases ship as the `cairn` binary (Homebrew and GitHub Releases) and the
+container image `ghcr.io/stump-wtf/cairn`, currently the `v0.3.x` line. The ADRs
+and specs in `docs/` are the design record the code follows.
 
 ## Reporting bugs
 
