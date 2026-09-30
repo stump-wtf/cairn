@@ -10,7 +10,7 @@ requires: [SPEC-0004]
 ## Overview
 
 Cairn's public website is a Docusaurus 3 application under `website/` that builds to a
-static bundle. It is **not** part of the `cairnd` binary and shares nothing with the
+static bundle. It is **not** part of the `cairn serve` binary and shares nothing with the
 in-product app shell of SPEC-0001 except a design language: where SPEC-0001 renders
 artifacts for signed-in humans, this capability renders prose and the decision record
 for anonymous readers.

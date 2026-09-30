@@ -21,6 +21,12 @@ type stagedBlob struct {
 	size       int64
 	mediaType  string
 	stagingKey string
+	// head is the body's first sniffBytes, for the SPEC-0017 RD-6 text or
+	// binary decision. body is the whole body when it is at most the keep
+	// limit the caller asked for, so the ingest scan reads a small body from
+	// memory instead of back from staging; nil otherwise.
+	head []byte
+	body []byte
 }
 
 // streamBlob streams r into a staging object while computing its SHA-256
@@ -36,6 +42,13 @@ type stagedBlob struct {
 // SPEC-0002 REQ "Streaming Upload with Checksum Verification",
 // SPEC-0002 REQ "Concurrency Safety for Streaming Uploads"
 func streamBlob(ctx context.Context, obj objectstore.ObjectStore, r io.Reader, maxBytes int64, declaredMedia string) (stagedBlob, error) {
+	return streamBlobKeep(ctx, obj, r, maxBytes, declaredMedia, 0)
+}
+
+// streamBlobKeep is streamBlob that also keeps a body of at most keep bytes
+// in memory (stagedBlob.body) for the ingest scan: SPEC-0017 scans bodies of
+// 1 MiB and under from memory. A longer body keeps nothing.
+func streamBlobKeep(ctx context.Context, obj objectstore.ObjectStore, r io.Reader, maxBytes int64, declaredMedia string, keep int64) (stagedBlob, error) {
 	key, err := newStagingKey()
 	if err != nil {
 		return stagedBlob{}, err
@@ -44,7 +57,8 @@ func streamBlob(ctx context.Context, obj objectstore.ObjectStore, r io.Reader, m
 	h := sha256.New()
 	lim := &limitedReader{r: r, max: maxBytes}
 	sniff := &sniffReader{r: lim}
-	tee := io.TeeReader(sniff, h)
+	kept := &keepWriter{max: keep}
+	tee := io.TeeReader(sniff, io.MultiWriter(h, kept))
 
 	if err := obj.Put(ctx, key, tee, -1, declaredMedia); err != nil {
 		// Abort the in-flight write; leave nothing but GC-collectable debris.
@@ -61,7 +75,41 @@ func streamBlob(ctx context.Context, obj objectstore.ObjectStore, r io.Reader, m
 		size:       lim.read,
 		mediaType:  media,
 		stagingKey: key,
+		head:       sniff.head,
+		body:       kept.bytes(),
 	}, nil
+}
+
+// keepWriter keeps what is written to it while it totals at most max bytes,
+// and drops it all the moment it grows past max.
+type keepWriter struct {
+	max  int64
+	buf  []byte
+	over bool
+}
+
+func (k *keepWriter) Write(p []byte) (int, error) {
+	if k.over || k.max <= 0 {
+		return len(p), nil
+	}
+	if int64(len(k.buf))+int64(len(p)) > k.max {
+		k.over, k.buf = true, nil
+		return len(p), nil
+	}
+	k.buf = append(k.buf, p...)
+	return len(p), nil
+}
+
+// bytes is the kept body, nil when nothing was kept. An empty body that was
+// kept is a non-nil empty slice, so "kept and empty" and "not kept" differ.
+func (k *keepWriter) bytes() []byte {
+	if k.over || k.max <= 0 {
+		return nil
+	}
+	if k.buf == nil {
+		return []byte{}
+	}
+	return k.buf
 }
 
 // limitedReader enforces a byte cap incrementally, returning errs.ErrTooLarge
@@ -91,6 +139,10 @@ func (l *limitedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// sniffBytes is how much of a body's head is captured: the media sniff reads
+// the first 512 bytes of it, and the SPEC-0017 RD-6 text check all 8 KiB.
+const sniffBytes = 8 << 10
+
 // sniffReader captures the leading bytes of a stream so the media type can be
 // detected without buffering the whole body.
 type sniffReader struct {
@@ -100,8 +152,8 @@ type sniffReader struct {
 
 func (s *sniffReader) Read(p []byte) (int, error) {
 	n, err := s.r.Read(p)
-	if n > 0 && len(s.head) < 512 {
-		need := 512 - len(s.head)
+	if n > 0 && len(s.head) < sniffBytes {
+		need := sniffBytes - len(s.head)
 		if need > n {
 			need = n
 		}

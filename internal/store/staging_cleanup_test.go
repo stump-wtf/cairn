@@ -19,7 +19,7 @@ func memStore(t *testing.T) (*Store, *objectstore.Memory) {
 	t.Helper()
 	_, pool := newTestStore(t, Options{}) // skips without CAIRN_TEST_DATABASE_URL
 	mem := objectstore.NewMemory()
-	return New(pool, mem, Options{}), mem
+	return New(pool, mem, withScanner(t, Options{})), mem
 }
 
 // assertNoStagingLeak fails if any staging/<rand> object survived. After a

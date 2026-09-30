@@ -8,6 +8,15 @@ related: [ADR-0012, ADR-0014]
 
 # ADR-0020: The Single-Binary Runtime — Docs Served From the Cairnd Process
 
+> **Amended 09/29/2026 by ADR-0031.** The decision below that the `cairn` CLI
+> "stays a separate binary" and that this ADR "deliberately does *not* merge
+> the CLI" is **superseded**: the server now lives behind `cairn serve` in one
+> binary, and the `cairnd`/`cairn` split described here (including the
+> `cairnd` archive and the import-graph CLI gate) is folded away. The docs
+> embedding itself — this ADR's core decision — stands, served by `cairn
+> serve`. Where this file says `cairnd`, read "the cairn server
+> (`cairn serve`)".
+
 ## Context and Problem Statement
 
 Cairn's runtime is two artifacts that must be kept in step: the `cairnd` server

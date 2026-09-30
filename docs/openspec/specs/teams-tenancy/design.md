@@ -193,7 +193,7 @@ erDiagram
 ```mermaid
 sequenceDiagram
   participant M as Team member's agent
-  participant C as cairnd
+  participant C as cairn serve (the server)
   participant DB as Postgres
   participant OH as outboundhook
   participant SB as Team's Switchboard webhook

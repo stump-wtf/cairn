@@ -410,7 +410,7 @@ rebinding. Redirects MUST NOT be followed; a 3xx is a failed delivery. Each atte
 after 5 seconds. Delivery MUST NOT block artifact creation.
 
 `CAIRN_OUTBOUND_ALLOW_HTTP` is a risky option (signed payloads and capability URLs in cleartext),
-so it is off by default and loud when on: `cairnd` MUST log a WARN at startup naming it, and the
+so it is off by default and loud when on: `cairn serve` MUST log a WARN at startup naming it, and the
 self-hosting guide MUST call it out in a warning admonition.
 
 #### Scenario: Rebinding target
@@ -438,7 +438,7 @@ signing and retry requirements apply to subscription deliveries unchanged.
 
 - **GIVEN** a deployment upgraded with `CAIRN_OUTBOUND_WEBHOOK_URLS` still set
 - **WHEN** any user, the operator included, creates an artifact tagged `handoff`
-- **THEN** no request is made to that URL, and cairnd starts and runs normally
+- **THEN** no request is made to that URL, and cairn serve starts and runs normally
 
 #### Scenario: No code reads the variables
 
@@ -465,12 +465,12 @@ position and the new form, and the CHANGELOG MUST say so.
 #### Scenario: Token naming a non-operator
 
 - **WHEN** `CAIRN_API_TOKENS` contains an entry naming a user who is not an operator
-- **THEN** cairnd refuses to start and logs "CAIRN_API_TOKENS entry 2: user is not an operator"
+- **THEN** cairn serve refuses to start and logs "CAIRN_API_TOKENS entry 2: user is not an operator"
 
 #### Scenario: Legacy entry refused
 
 - **WHEN** `CAIRN_API_TOKENS` contains a free-form `secret:ci-bot` entry
-- **THEN** cairnd refuses to start and names that entry's position and the `secret:<user>[:agent|:human]`
+- **THEN** cairn serve refuses to start and names that entry's position and the `secret:<user>[:agent|:human]`
   form, never the secret
 
 #### Scenario: Token cannot impersonate
@@ -605,7 +605,10 @@ return the same artifacts it returned before.
 
 The same migration MUST drop the legacy `owner_id` and `actor_id` string columns it backfilled from,
 and MUST rebuild every index or uniqueness key that named them (including SPEC-0016 EV-6's reaction
-key) on the matching `user_id` column. No release MAY carry both the strings and the user columns.
+key) on the matching `user_id` column. EV-6's reaction key becomes
+`(artifact_id, anchor_type, anchor_key, emoji, user_id, actor_kind)`: `actor_kind` and `on_behalf_of`
+MUST keep their stored values, so ownership stays per user and per kind. No release MAY carry both
+the strings and the user columns.
 The migration MUST run as one transaction: if the per-user Bin comparison differs, it MUST abort and
 leave the previous schema intact. Wire fields named `actor_id` keep their name and are rendered from
 the user row.
@@ -625,7 +628,7 @@ the user row.
 #### Scenario: A failed comparison leaves the old schema
 
 - **WHEN** the backfill would change any user's Bin listing
-- **THEN** the migration aborts, nothing is dropped, and `cairnd` refuses to start with an error
+- **THEN** the migration aborts, nothing is dropped, and `cairn serve` refuses to start with an error
   naming the first mismatched owner
 
 ### Requirement: Re-Identifying Existing Private Artifacts

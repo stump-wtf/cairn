@@ -12,6 +12,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/operator"
 	"github.com/stump-wtf/cairn/internal/user"
 )
@@ -214,8 +215,8 @@ func resolveAPITokens(ctx context.Context, users *user.Store, ops *operator.Serv
 }
 
 // ResolveAPITokens resolves the configured CAIRN_API_TOKENS entries to their
-// operators' users and installs them on the bearer surface. cairnd calls it
-// once at boot, before serving, and fails to start on its error; until it
+// operators' users and installs them on the bearer surface. cairn serve calls
+// it once at boot, before serving, and fails to start on its error; until it
 // succeeds no static token authenticates. It is a no-op when no tokens are
 // configured.
 func (s *Server) ResolveAPITokens(ctx context.Context) error {
@@ -327,6 +328,7 @@ func (a *TokenAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 		Channel: artifact.ChannelAPI,
 		IsAgent: grant.IsAgent,
 		Scopes:  scopes,
+		Auth:    event.AuthAPIToken,
 	}
 	if a.users != nil {
 		u, err := a.users.Get(r.Context(), grant.UserID)

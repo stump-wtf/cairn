@@ -13,6 +13,9 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
+	"github.com/stump-wtf/cairn/internal/metrics"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/user"
 )
 
@@ -35,32 +38,62 @@ type CreateArtifactInput struct {
 	// the adapter passes them through from the request as-is; CreateArtifact
 	// normalizes them.
 	Tags []string
+	// RedactionDowngrade is the writer's per-request downgrade of a
+	// reject-mode share type to mask (X-Cairn-Redaction: mask, or MCP
+	// redaction: "mask"). It never disables the scan. SPEC-0017 RD-5.
+	RedactionDowngrade bool
+	// ActorKind and Auth classify the creator's credential. The adapter derives
+	// them from the authenticated principal, never from the request, and they
+	// travel only on the creation event (ADR-0022, SPEC-0016 EV-4).
+	ActorKind event.ActorKind
+	Auth      event.AuthMethod
 }
 
-func (in CreateArtifactInput) validate() error {
+// ChecksumHeader is the REST create header that carries ExpectedSHA256. No
+// other surface sends a checksum, so a mismatch is reported on it.
+const ChecksumHeader = "X-Cairn-Sha256"
+
+// ChecksumMismatch is the violation for a body whose SHA-256 is not the one the
+// caller declared. Neither digest is echoed: both are digests of the raw,
+// unscanned body, and the mismatch is logged instead (SPEC-0017 RD-9).
+// errors.Is(err, errs.ErrChecksumMismatch) still holds.
+//
+// Governing: ADR-0023, ADR-0025, SPEC-0019 VE-2; SPEC-0017 RD-9, RD-10
+func ChecksumMismatch() *errs.Invalid {
+	return errs.Violate(ChecksumHeader, errs.LocHeader, errs.ReasonChecksum).Because(errs.ErrChecksumMismatch)
+}
+
+// validate checks the input before any body streams. What a caller controls
+// (the share type and the title) is reported as violations, together
+// (SPEC-0019 VE-4). The rest is server-derived, so a gap there is a bug in the
+// adapter, never the caller's fault: it is an internal error, not a client
+// violation.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-4; SPEC-0002 REQ "Artifact Aggregate
+// and Invariants"
+func (in CreateArtifactInput) validate(reg *sharetype.Registry) error {
 	switch {
-	case in.ShareType == "":
-		return errs.Validationf("create: missing share type")
-	case in.ShareType == artifact.TypeBundle:
-		// A bundle is a members-only type built via CreateBundle (NULL body +
-		// bundle_members). Accepting it on the single-body path would mint a
-		// malformed bundle (a body blob, no members), so reject a client-supplied
-		// bundle type here. SPEC-0002 REQ "Bundles with N Members".
-		return errs.Validationf("create: bundle artifacts must be created via the bundle (multipart) path")
 	case in.Provenance.Channel == "":
-		return errs.Validationf("create: provenance channel is required")
+		return errors.New("create: provenance channel is required")
 	case in.Provenance.ActorID == "" || in.Provenance.CreatedByUserID == "":
-		return errs.Validationf("create: provenance actor is required")
+		return errors.New("create: provenance actor is required")
 	case in.Access.OwnerUserID == "" && in.Access.OwnerTeamID == "":
-		return errs.Validationf("create: access owner is required")
+		return errors.New("create: access owner is required")
 	case in.Access.Visibility == "":
-		return errs.Validationf("create: access visibility is required")
+		return errors.New("create: access visibility is required")
 	case in.ExpiresAt.IsZero():
-		return errs.Validationf("create: expiry is required")
+		return errors.New("create: expiry is required")
 	case in.Body == nil:
-		return errs.Validationf("create: nil body")
+		return errors.New("create: nil body")
 	}
-	return nil
+	// A client-supplied bundle type is refused (not_allowed): a bundle is a
+	// members-only type built via CreateBundle (NULL body + bundle_members), and
+	// accepting it here would mint a malformed bundle (a body blob, no
+	// members). SPEC-0002 REQ "Bundles with N Members".
+	return errs.JoinErrors(
+		reg.CheckCreateType(in.ShareType, "type", errs.LocBody),
+		artifact.CheckTitle(in.Title, "title", errs.LocBody),
+	)
 }
 
 // CreateArtifact streams the body to storage with checksum verification and
@@ -70,9 +103,10 @@ func (in CreateArtifactInput) validate() error {
 // Governing: ADR-0008 (Storage & Content Model),
 // SPEC-0002 REQ "Artifact Lifecycle — Create",
 // SPEC-0002 REQ "Streaming Upload with Checksum Verification",
-// SPEC-0002 REQ "Database Operation Standards"
+// SPEC-0002 REQ "Database Operation Standards",
+// ADR-0023, SPEC-0017 RD-1 (the title and body are scanned first; scan.go)
 func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*artifact.Artifact, error) {
-	if err := in.validate(); err != nil {
+	if err := in.validate(s.registry); err != nil {
 		return nil, err
 	}
 	// Normalized before the body streams, so a bad tag costs nothing;
@@ -83,13 +117,12 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	if err != nil {
 		return nil, err
 	}
-
 	// 1. Stream the body to a staging object: compute SHA-256 incrementally
 	//    and enforce the size limit as bytes arrive. The object is NOT promoted
 	//    to its content-addressed key yet — that happens in CommitBlob under the
 	//    blob-row lock so the promotion is serialized against the reaper (§2 of
 	//    the SPEC-0009 retention design).
-	staged, err := StageBlob(ctx, s.obj, in.Body, s.maxBytes, in.DeclaredMediaType)
+	staged, err := stageBlobKeep(ctx, s.obj, in.Body, s.maxBytes, in.DeclaredMediaType, scanInMemoryBytes)
 	if err != nil {
 		return nil, fmt.Errorf("create: stream body: %w", err)
 	}
@@ -100,10 +133,33 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	// Governing: SPEC-0002 REQ "Content Addressing and Blobs".
 	defer staged.Discard(ctx, s.obj)
 
-	// 2. Verify a client-declared checksum, if one was provided.
+	// 2. Verify a client-declared checksum, if one was provided. Neither digest
+	//    goes into the error: it is logged, and both are digests of the raw,
+	//    unscanned body, which for a body that is only a credential is a
+	//    fingerprint of that credential.
+	//
+	// Governing: ADR-0023, ADR-0025, SPEC-0019 VE-2; SPEC-0017 RD-9, RD-10
 	if in.ExpectedSHA256 != "" && !strings.EqualFold(in.ExpectedSHA256, staged.SHA256) {
-		return nil, fmt.Errorf("create: expected %s got %s: %w",
-			in.ExpectedSHA256, staged.SHA256, errs.ErrChecksumMismatch)
+		return nil, fmt.Errorf("create: declared checksum does not match the received body: %w",
+			ChecksumMismatch())
+	}
+
+	// 2b. Scan the title, then the verified bytes, before anything is promoted
+	//     or committed. Both use the body's mode, which needs its media type.
+	//     A mask repoints staged at the masked copy, so the SHA-256, size and
+	//     dedup key below are the stored bytes'; a rejection returns here, and
+	//     the deferred Discard removes the staging object.
+	//
+	// Governing: ADR-0023, SPEC-0017 RD-1, RD-4, RD-5, RD-6, RD-7, RD-10
+	var scans scanReport
+	mode := s.artifactRedactionMode(in.ShareType, staged.MediaType, in.RedactionDowngrade)
+	title, titleScan, err := s.scanTitle(ctx, metrics.SurfaceArtifact, in.Title, mode, &scans)
+	if err != nil {
+		return nil, fmt.Errorf("create: %w", err)
+	}
+	bodyScan, err := s.scanBody(ctx, metrics.SurfaceArtifact, bodyField, staged, mode, &scans)
+	if err != nil {
+		return nil, fmt.Errorf("create: %w", err)
 	}
 
 	// Decide previewability at ingest from the share type + sniffed/declared
@@ -118,7 +174,7 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 
 	art := &artifact.Artifact{
 		ShareType:   effectiveType,
-		Title:       in.Title,
+		Title:       title,
 		BodySHA256:  staged.SHA256,
 		Size:        staged.Size,
 		MediaType:   staged.MediaType,
@@ -127,6 +183,8 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 		Access:      in.Access,
 		Tags:        tags,
 		ExpiresAt:   in.ExpiresAt,
+		// Written with the row, in the same transaction (SPEC-0017 RD-9).
+		Redaction: bodyScan.Merge(titleScan),
 	}
 
 	// 3. Persist metadata atomically: lock/register the blob row and promote its
@@ -151,7 +209,8 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("create: commit: %w", err)
 	}
-	s.emitCreated(art)
+	s.emitCreated(art, in.ActorKind, in.Auth)
+	s.warnUnscanned(art.PublicID, &scans)
 	return art, nil
 }
 

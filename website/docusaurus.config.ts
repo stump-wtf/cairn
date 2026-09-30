@@ -9,6 +9,7 @@ import {
   assertRecordSemantics,
   assertRenderedSemantics,
 } from './scripts/check-a11y.mjs';
+import {resolveSiteLocation} from './scripts/site-location.mjs';
 
 import {generateRecord} from './plugins/record/generate.ts';
 import remarkRecord from './plugins/record/remark-record.ts';
@@ -24,6 +25,9 @@ import cairnLinkGuardPlugin from './plugins/link-guard/index.ts';
 const siteDir = __dirname;
 
 const DOCS_ROUTE_BASE = '/docs';
+
+// Governing: SPEC-0010 REQ "Build and Deployment" — see the `url` comment below.
+const siteLocation = resolveSiteLocation(process.env);
 
 /**
  * Governing: ADR-0014, SPEC-0010 REQ "Design Token Source of Truth"
@@ -135,36 +139,27 @@ const config: Config = {
    * Governing: ADR-0014, SPEC-0010 REQ "Build and Deployment" — "The public base
    * URL MUST be configured in exactly one place."
    *
-   * That place is here. `url` still said `https://joestump.github.io` long after
-   * the site stopped being published to GitHub Pages: since the stump.wtf
-   * convergence it deploys to Gitea Pages (Garage) through
-   * stumpcloud/garage-pages-deploy, which lands a repo at
-   * `https://<owner>.pages.stump.rocks/<repo>/` with the owner SLUGIFIED — dots
-   * become dashes, so `stump.wtf` is served as `stump-wtf`. Every absolute URL
-   * the build bakes — canonical links, og:url, the sitemap — was therefore
-   * advertising a host that does not serve this site.
+   * That place is scripts/site-location.mjs, which resolves both values from
+   * DOCS_URL and DOCS_BASE_URL. Every absolute URL the build bakes (canonical
+   * links, og:url, the sitemap) comes from this pair, so the defaults are the
+   * PUBLIC face: https://cairn.stump.wtf, rooted at `/`. A build nobody
+   * configured, local or CI, advertises a host every reader can reach.
    *
-   * DOCS_URL is the deploy-time override, exported by stump.wtf/ci's
-   * static-site.yaml from its `site_url` input. Read with `||` and not `??`,
-   * because that workflow exports an empty string when the input is unset and
-   * an empty string is a valid-looking but wrong `url`.
+   * Two targets set them explicitly:
    *
-   * baseUrl stays `/cairn/`: the bundle is served from a path under the owner's
-   * Pages host, not from a domain root. The two move together on the day this
-   * site gets a vhost of its own.
-   */
-  url: process.env.DOCS_URL || 'https://stump-wtf.pages.stump.rocks',
-
-  /*
-   * baseUrl is env-driven for the same reason `url` is: this record has a
-   * SECOND deployment target. The canonical Pages bundle serves from
-   * https://stump-wtf.pages.stump.rocks/cairn/ (DOCS_BASE_URL unset — the
-   * /cairn/ default below), and the cairn-docs container serves the same
-   * record as the PRODUCT DOMAIN'S PUBLIC FACE: homepage at
-   * https://cairn.stump.wtf/ and docs at https://cairn.stump.wtf/docs/intro/
-   * (DOCS_URL=https://cairn.stump.wtf DOCS_BASE_URL=/, set by the docs-image
-   * job in pipeline.yaml). cloud01's edge Caddy routes `/`, `/docs/*` and the
-   * bundle's static namespaces to the container; everything else is the app.
+   *   - the cairn-docs container, the product domain's public face: homepage
+   *     at https://cairn.stump.wtf/ and docs at https://cairn.stump.wtf/docs/intro/
+   *     (DOCS_URL=https://cairn.stump.wtf DOCS_BASE_URL=/, set by the
+   *     docs-image job in pipeline.yaml). cloud01's edge Caddy routes `/`,
+   *     `/docs/*` and the bundle's static namespaces to the container;
+   *     everything else is the app.
+   *   - the Gitea Pages bundle, served from `/cairn/` on the owner's Pages
+   *     host. Its job exports DOCS_URL only (stump.wtf/ci's static-site.yaml
+   *     `site_url`), so a Pages-shaped DOCS_URL makes baseUrl default to
+   *     `/cairn/`. That bundle keeps advertising its own host: a canonical
+   *     link is `url` + the baseUrl-prefixed path, and the theme re-renders it
+   *     on hydration, so pointing it at the public origin would need the
+   *     /cairn/ prefix stripped in the theme, not here.
    *
    * NEVER set DOCS_BASE_URL to '/docs/'. It fails in two stages, both
    * verified the hard way: with routeBasePath 'docs' the build dies on dozens
@@ -173,13 +168,10 @@ const config: Config = {
    * bundle escorted past that renders the homepage HTML and then HYDRATES
    * into the 404 page whenever it is served at `/` — the client router
    * treats any path outside baseUrl as not found. A root baseUrl has neither
-   * failure mode, which is why the app target uses it.
-   *
-   * Same `||`-not-`??` rule as DOCS_URL above: CI env plumbing can hand this
-   * through as an empty string, and an empty baseUrl is a valid-looking wrong
-   * answer.
+   * failure mode, which is why the public target uses it.
    */
-  baseUrl: process.env.DOCS_BASE_URL || '/cairn/',
+  url: siteLocation.url,
+  baseUrl: siteLocation.baseUrl,
 
   /*
    * `true`, because Garage serves this bundle, and Garage resolves a directory

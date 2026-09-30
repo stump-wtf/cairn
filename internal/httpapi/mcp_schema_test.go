@@ -1,13 +1,17 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/stump-wtf/cairn/internal/errs"
 )
 
 // TestCollapseNullableUnions covers the transform itself: a `["null", X]`
@@ -185,6 +189,223 @@ func findUnionType(s *jsonschema.Schema, path string) string {
 	}
 	for i, sub := range s.AnyOf {
 		if where := findUnionType(sub, path+".anyOf["+strconv.Itoa(i)+"]"); where != "" {
+			return where
+		}
+	}
+	return ""
+}
+
+// successOutputPayload is a minimal complete artifact_create success value as
+// JSON: every key the success branch requires, correctly typed. It pins that
+// widening the schema for tool errors did not loosen the success shape.
+func successOutputPayload() map[string]any {
+	return map[string]any{
+		"id": "a1b2c3d4e5f6", "url": "https://cairn.stump.wtf/a/a1b2c3d4e5f6",
+		"mcp": "mcp://cairn/a1b2c3d4e5f6", "share_type": "markdown",
+		"size": 42, "media_type": "text/markdown", "previewable": true,
+		"badge": "new", "visibility": "link",
+		"provenance": map[string]any{
+			"actor": "u1", "channel": "via MCP", "captured_at": "2026-09-29T11:00:00Z",
+		},
+		"reaction_count": 0, "comment_count": 0, "pin_count": 0,
+		"created_at": "2026-09-29T11:00:00Z", "expires_at": "2026-10-06T11:00:00Z",
+		"expires_in": "in 6d", "expires_in_seconds": 604800,
+	}
+}
+
+// toolErrorPayload is the VE-7 structured content mcpToolErrorMiddleware
+// attaches to a failed call, built like the real one: the tag-rule violation
+// the acceptance test drives.
+func toolErrorPayload() mcpToolErrorContent {
+	return mcpToolErrorContent{
+		Code: errs.CodeValidation,
+		Violations: []errs.Violation{
+			errs.NewViolation("tags[0]", errs.LocBody, errs.ReasonUppercase,
+				errs.WithLimit(5, "chars"), errs.WithValue("Handoff")),
+		},
+	}
+}
+
+// jsonRoundTrip passes v through one encode/decode cycle, which is both what
+// the wire does to it and what jsonschema-go's Validate needs (it cannot
+// walk a Go struct directly).
+func jsonRoundTrip(t *testing.T, v any) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal %T: %v", v, err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode %s: %v", raw, err)
+	}
+	return out
+}
+
+// TestAddToolWidensOutputSchemaForToolErrors is the regression for the TS-SDK
+// break: a typed tool's published outputSchema must admit both the success
+// shape and the VE-7 error content, because the TypeScript SDK validates
+// every result carrying structuredContent — error results included — against
+// the schema from tools/list, and throws McpError(InvalidParams) on a
+// mismatch, losing the violations it was sent to deliver. The widening must
+// stay exact: a payload matching neither branch still fails.
+func TestAddToolWidensOutputSchemaForToolErrors(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	tool := &mcp.Tool{Name: "probe", Description: "probe"}
+	addTool(srv, tool, func(context.Context, *mcp.CallToolRequest, mcpCreateInput) (*mcp.CallToolResult, mcpCreateOutput, error) {
+		return nil, mcpCreateOutput{}, nil
+	})
+
+	schema, ok := tool.OutputSchema.(*jsonschema.Schema)
+	if !ok {
+		t.Fatalf("OutputSchema is %T, want *jsonschema.Schema", tool.OutputSchema)
+	}
+	if schema.Type != "object" {
+		t.Fatalf("root Type = %q, want object — the outputSchema shape clients require", schema.Type)
+	}
+	if len(schema.AnyOf) != 2 {
+		t.Fatalf("root has %d anyOf branches, want success + tool error", len(schema.AnyOf))
+	}
+
+	resolved, err := schema.Resolve(&jsonschema.ResolveOptions{})
+	if err != nil {
+		t.Fatalf("resolve widened schema: %v", err)
+	}
+	if err := resolved.Validate(successOutputPayload()); err != nil {
+		t.Errorf("success payload rejected by the widened schema: %v", err)
+	}
+	if err := resolved.Validate(jsonRoundTrip(t, toolErrorPayload())); err != nil {
+		t.Errorf("VE-7 error content rejected by the tool's own outputSchema — a TS-SDK client would throw instead of showing the violation: %v", err)
+	}
+	if err := resolved.Validate(map[string]any{"nope": 1}); err == nil {
+		t.Error("payload matching neither branch validated; the widening must stay exact")
+	}
+}
+
+// TestAddToolKeepsUntypedOutputSchemaNil pins the a2ui tools' shape: an Out of
+// `any` publishes no outputSchema (the SDK infers none), so the middleware's
+// error content on those tools has no schema to fail and no client validator
+// to trip.
+func TestAddToolKeepsUntypedOutputSchemaNil(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	tool := &mcp.Tool{Name: "probe", Description: "probe"}
+	addTool(srv, tool, func(context.Context, *mcp.CallToolRequest, mcpA2UIActionInput) (*mcp.CallToolResult, any, error) {
+		return nil, nil, nil
+	})
+	if tool.OutputSchema != nil {
+		t.Fatalf("Out=any tool published an outputSchema of %T, want none", tool.OutputSchema)
+	}
+}
+
+// TestWidenedSchemaAdmitsNilSuccessFields is the regression for what CI
+// caught on the widening's first attempt: the SDK validates the marshalled
+// SUCCESS output against the published schema server-side, and a nil Go
+// slice or map marshals as null — run_create with no spans sends
+// "spans": null, statsView with no timings "time_by_category_ms": null. So
+// the success branch must keep the inferred null unions; only the error
+// branch (non-empty by construction) is collapsed. Built from the real Out
+// value, exactly as the wire will carry it.
+func TestWidenedSchemaAdmitsNilSuccessFields(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	tool := &mcp.Tool{Name: "probe", Description: "probe"}
+	addTool(srv, tool, func(context.Context, *mcp.CallToolRequest, mcpRunCreateInput) (*mcp.CallToolResult, mcpRunOutput, error) {
+		return nil, mcpRunOutput{}, nil
+	})
+
+	schema, ok := tool.OutputSchema.(*jsonschema.Schema)
+	if !ok {
+		t.Fatalf("OutputSchema is %T, want *jsonschema.Schema", tool.OutputSchema)
+	}
+	resolved, err := schema.Resolve(&jsonschema.ResolveOptions{})
+	if err != nil {
+		t.Fatalf("resolve widened schema: %v", err)
+	}
+
+	spans, err := json.Marshal(schema.AnyOf[0].Properties["spans"])
+	if err != nil {
+		t.Fatalf("marshal spans subschema: %v", err)
+	}
+	if !bytes.Contains(spans, []byte(`"null"`)) || !bytes.Contains(spans, []byte(`"array"`)) {
+		t.Fatalf("spans subschema %s does not admit the null union the SDK infers for a nil slice", spans)
+	}
+
+	// A run_create success the way the CI failure produced it: mode "open"
+	// sends no spans, so the run's Spans is a nil slice and marshals as
+	// "spans": null on the wire — and must still validate server-side.
+	// time_by_category_ms is always a non-nil map (categoryMap makes one),
+	// so it stays populated, as the real output does.
+	out := jsonRoundTrip(t, mcpRunOutput{
+		ID: "r1b2c3d4e5f6", URL: "https://cairn.stump.wtf/run/r1b2c3d4e5f6",
+		MCP: "mcp://cairn/run/r1b2c3d4e5f6", Status: "open",
+		Provenance: provenanceView{Actor: "u1", Channel: "via MCP", CapturedAt: time.Now()},
+		StartedAt:  time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour),
+		Stats: statsView{SpanCount: 0, TimeByCategoryMS: map[string]int64{}},
+	})
+	if err := resolved.Validate(out); err != nil {
+		t.Errorf("nil-field success output rejected by the widened schema — every such call would fail server-side: %v", err)
+	}
+}
+
+// TestWidenedOutputSchemasHaveNoBooleanSchemas pins every typed tool's
+// widened output schema to schema objects, never a bare `true` — what
+// jsonschema-go emits for an `any`-typed field (a violation's limit, an
+// anchor_ref, a run span). Strict clients have dropped whole tools over
+// exactly that (all ten vanished from Claude Code once, over five input
+// fields); the published output side must not reintroduce it.
+func TestWidenedOutputSchemasHaveNoBooleanSchemas(t *testing.T) {
+	for _, tc := range []struct {
+		tool   string
+		schema func(*jsonschema.ForOptions) (*jsonschema.Schema, error)
+	}{
+		{"artifact_read", jsonschema.For[mcpReadOutput]},
+		{"artifact_create", jsonschema.For[mcpCreateOutput]},
+		{"bundle_create", jsonschema.For[mcpBundleCreateOutput]},
+		{"artifact_comment", jsonschema.For[mcpCommentOutput]},
+		{"artifact_react", jsonschema.For[mcpReactOutput]},
+		{"run_create", jsonschema.For[mcpRunOutput]},
+		{"run_append_spans", jsonschema.For[mcpRunOutput]},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			inferred, err := tc.schema(nil)
+			if err != nil {
+				t.Fatalf("infer: %v", err)
+			}
+			widened := widenForToolErrors(tc.tool, collapseNullableUnions(inferred))
+			if where := findBooleanSchema(widened, "$"); where != "" {
+				t.Errorf("%s output schema carries a bare `true` schema at %s; strict clients drop tools over those", tc.tool, where)
+			}
+		})
+	}
+}
+
+// findBooleanSchema returns a JSON-pointer-ish path to the first schema
+// marshalling as `true` (the empty, always-valid schema), or "" if there is
+// none.
+func findBooleanSchema(s *jsonschema.Schema, path string) string {
+	if s == nil {
+		return ""
+	}
+	if raw, err := s.MarshalJSON(); err == nil && bytes.Equal(bytes.TrimSpace(raw), []byte("true")) {
+		return path
+	}
+	for name, sub := range s.Properties {
+		if where := findBooleanSchema(sub, path+".properties."+name); where != "" {
+			return where
+		}
+	}
+	for name, sub := range s.Defs {
+		if where := findBooleanSchema(sub, path+".$defs."+name); where != "" {
+			return where
+		}
+	}
+	if where := findBooleanSchema(s.Items, path+".items"); where != "" {
+		return where
+	}
+	if where := findBooleanSchema(s.AdditionalProperties, path+".additionalProperties"); where != "" {
+		return where
+	}
+	for i, sub := range s.AnyOf {
+		if where := findBooleanSchema(sub, path+".anyOf["+strconv.Itoa(i)+"]"); where != "" {
 			return where
 		}
 	}

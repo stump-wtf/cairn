@@ -1445,8 +1445,17 @@ func (s *Server) mcpA2UIAction(ctx context.Context, req *mcp.CallToolRequest, in
 	case a2uiActionOpenMember:
 		bundleID, _ := in.Context["bundle"].(string)
 		memberName, _ := in.Context["member"].(string)
-		if bundleID == "" || memberName == "" {
-			return nil, nil, fmt.Errorf("validation_failed: open_member requires context.bundle and context.member")
+		// Governing: ADR-0025, SPEC-0019 VE-4, VE-7 (both missing keys are
+		// named at once, as structured violations)
+		var missing []*errs.Invalid
+		if bundleID == "" {
+			missing = append(missing, errs.Violate("context.bundle", errs.LocBody, errs.ReasonRequired))
+		}
+		if memberName == "" {
+			missing = append(missing, errs.Violate("context.member", errs.LocBody, errs.ReasonRequired))
+		}
+		if len(missing) > 0 {
+			return nil, nil, s.mcpToolErr(ctx, "a2ui_action", errs.Join(missing...))
 		}
 		out, err := s.renderMemberA2UI(ctx, bundleID, memberName)
 		if err != nil {
@@ -1465,7 +1474,8 @@ func (s *Server) mcpA2UIAction(ctx context.Context, req *mcp.CallToolRequest, in
 			&mcp.TextContent{Text: fmt.Sprintf("Opened bundle member %q from %s.", memberName, bundleID)},
 		}}, nil, nil
 	default:
-		return nil, nil, fmt.Errorf("validation_failed: unknown a2ui action %q", in.Name)
+		return nil, nil, s.mcpToolErr(ctx, "a2ui_action", errs.Violate("name", errs.LocBody, errs.ReasonUnknownValue,
+			errs.WithValue(in.Name), errs.WithLimit(strconv.Quote(a2uiActionOpenMember), "")))
 	}
 }
 

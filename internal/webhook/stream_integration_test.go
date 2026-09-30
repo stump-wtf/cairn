@@ -245,3 +245,76 @@ func TestIntegrationSubscriberTeardownDoesNotBlockCapture(t *testing.T) {
 		t.Fatalf("capture after teardown: %v", err)
 	}
 }
+
+// TestIntegrationConcurrentCapturesFanOutInSeqOrder proves the end-to-end
+// ordering contract through the real Capture path: concurrent captures
+// serialize their row writes under the endpoint's row lock but publish after
+// commit, so their publishes can interleave inverted — the hub must still
+// deliver every event, strictly ascending, exactly once (SPEC-0005 "Human
+// and agent see the same order", "Concurrent captures keep seq monotonic").
+// This is the service-level twin of internal/httpapi's
+// TestIntegrationHookStreamConcurrentCapturesFanOutToManySubscribers, which
+// reddened CI merge trains when a late lower-seq publish was dropped.
+func TestIntegrationConcurrentCapturesFanOutInSeqOrder(t *testing.T) {
+	svc, _ := newHarness(t)
+	ctx := context.Background()
+	const nCaptures = 25
+	ep := newEndpoint(t, svc, EndpointInput{RequestCap: nCaptures})
+
+	sub := svc.Subscribe(ep.PublicID)
+	defer sub.Close()
+
+	var (
+		mu  sync.Mutex
+		got []int64
+	)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for len(got) < nCaptures {
+			select {
+			case ev := <-sub.Events():
+				mu.Lock()
+				got = append(got, ev.Seq)
+				mu.Unlock()
+			case <-sub.Lagged():
+				t.Error("subscriber lagged out mid-test")
+				return
+			case <-time.After(10 * time.Second):
+				t.Errorf("timed out with %d/%d events", len(got), nCaptures)
+				return
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	for i := 0; i < nCaptures; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if _, err := svc.Capture(ctx, ep.PublicID, CaptureInput{
+				Method: "GET", Path: fmt.Sprintf("/o%d", i), Status: 200,
+			}); err != nil {
+				t.Errorf("concurrent capture %d: %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("subscriber drain goroutine did not finish")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != nCaptures {
+		t.Fatalf("subscriber received %d/%d events", len(got), nCaptures)
+	}
+	for i, seq := range got {
+		if seq != int64(i+1) {
+			t.Fatalf("event %d has seq %d, want %d (fan-out out of seq order)", i, seq, i+1)
+		}
+	}
+}

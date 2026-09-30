@@ -64,9 +64,11 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("migrate: %v", err)
 	}
 	// Authors are users (SPEC-0023 REQ "Owner Model").
-	if _, err := pool.Exec(ctx, `INSERT INTO users (id, actor_key, display_handle)
-		VALUES ($1, 'u1', 'u1'), ($2, 'u2', 'u2')`, u1ID, u2ID); err != nil {
-		t.Fatalf("seed users: %v", err)
+	for key, id := range testUsers {
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, actor_key, display_handle)
+			VALUES ($1, $2, $2)`, id, key); err != nil {
+			t.Fatalf("seed user %s: %v", key, err)
+		}
 	}
 	return pool
 }
@@ -76,6 +78,16 @@ const (
 	u1ID = "00000000-0000-4000-8000-0000000000d1"
 	u2ID = "00000000-0000-4000-8000-0000000000d2"
 )
+
+// testUsers maps each actor key the tests act as to the user newTestPool
+// seeds for it, which renders on the wire as that key.
+var testUsers = map[string]string{
+	"u1":    u1ID,
+	"u2":    u2ID,
+	"alice": "00000000-0000-4000-8000-0000000000a1",
+	"bob":   "00000000-0000-4000-8000-0000000000b1",
+	"carol": "00000000-0000-4000-8000-0000000000c1",
+}
 
 // insertArtifact seeds a minimal artifact row of the given share type and
 // returns its internal id.
@@ -93,14 +105,15 @@ func insertArtifact(t *testing.T, pool *pgxpool.Pool, publicID string, shareType
 }
 
 // insertReaction persists a validated anchor as a reaction row using the
-// idempotent upsert the unique constraint supports (parameterized per
-// SPEC-0006 REQ "Database Operation Standards").
+// idempotent upsert the per-kind unique index supports (parameterized per
+// SPEC-0006 REQ "Database Operation Standards"). The row carries no kind, as
+// a row written before kinds were stored does.
 func insertReaction(t *testing.T, pool *pgxpool.Pool, a Anchor, emoji, userID string) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
 		INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, user_id)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (artifact_id, anchor_type, anchor_key, emoji, user_id) DO NOTHING`,
+		ON CONFLICT (artifact_id, anchor_type, anchor_key, emoji, user_id, actor_kind) DO NOTHING`,
 		a.ArtifactID, string(a.Type), a.Ref, a.Key, emoji, userID)
 	if err != nil {
 		t.Fatalf("insert reaction: %v", err)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/pat"
 )
 
@@ -212,5 +213,6 @@ func (a *PATAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 		Channel: artifact.ChannelAPI,
 		IsAgent: tok.IsAgent,
 		Scopes:  scopes,
+		Auth:    event.AuthPAT,
 	}, nil
 }

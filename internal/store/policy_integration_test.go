@@ -126,7 +126,7 @@ func TestUpdateTTLExtendAndShorten(t *testing.T) {
 // resolve as the same uniform not-found an unknown id gets (expiry is hard
 // non-existence at read time — read.go).
 func TestUpdateTTLShortenToExpiredThenUniformNotFound(t *testing.T) {
-	s, _ := newTestStore(t, Options{})
+	s, pool := newTestStore(t, Options{})
 	ctx := context.Background()
 
 	art, err := s.CreateArtifact(ctx, input([]byte("shorten to expired")))
@@ -134,12 +134,32 @@ func TestUpdateTTLShortenToExpiredThenUniformNotFound(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	// A whisker in the future so UpdateTTL's own future-check accepts it, but
-	// it will have elapsed by the time we read it back. On a slow runner the
-	// commit alone can outlast the whisker, so UpdateTTL's own read-back may
-	// already see the artifact expired: that uniform not-found is the property
-	// under test too, so it is accepted rather than failed (CI run 14260).
-	if _, err := s.UpdateTTL(ctx, art.PublicID, testOwner, time.Now().Add(50*time.Millisecond)); err != nil && errs.CodeOf(err) != errs.CodeNotFound {
-		t.Fatalf("shorten near-immediately: %v", err)
+	// it will have elapsed by the time we read it back.
+	//
+	// UpdateTTL commits and then re-reads the artifact through GetByPublicID,
+	// which filters on expires_at > now(). When the begin/lock/update/commit
+	// round trip outlasts the window — a loaded CI runner with slow fsync —
+	// that re-read already finds the artifact expired and UpdateTTL returns
+	// not_found for an update it did commit. That is the outcome under test
+	// arriving early, not a failure, so accept it once the window has passed,
+	// and prove the UPDATE landed by reading expires_at directly below.
+	//
+	// @joestump 2026-09-27 - #230: this was the "cannot resolve an artifact it
+	// just committed" flake. Shrinking the window to 1ms reproduces it every
+	// run with the old assertion.
+	expiry := time.Now().Add(50 * time.Millisecond)
+	if _, err := s.UpdateTTL(ctx, art.PublicID, testOwner, expiry); err != nil {
+		if errs.CodeOf(err) != errs.CodeNotFound || !time.Now().After(expiry) {
+			t.Fatalf("shorten near-immediately: %v", err)
+		}
+	}
+	var stored time.Time
+	if err := pool.QueryRow(ctx, `SELECT expires_at FROM artifacts WHERE public_id = $1`, art.PublicID).Scan(&stored); err != nil {
+		t.Fatalf("read stored expiry: %v", err)
+	}
+	// Postgres keeps microseconds; Go's clock carries nanoseconds.
+	if d := stored.Sub(expiry); d < -time.Microsecond || d > time.Microsecond {
+		t.Fatalf("stored expires_at = %v, want %v: the shortened TTL was not committed", stored, expiry)
 	}
 	time.Sleep(150 * time.Millisecond)
 

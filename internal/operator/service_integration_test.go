@@ -19,6 +19,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/oauth"
 	"github.com/stump-wtf/cairn/internal/objectstore"
 	"github.com/stump-wtf/cairn/internal/pat"
+	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/session"
 	"github.com/stump-wtf/cairn/internal/store"
 	"github.com/stump-wtf/cairn/internal/user"
@@ -325,7 +326,13 @@ func TestSetSuspendedRefusals(t *testing.T) {
 func TestDirectoryCountsWithoutContent(t *testing.T) {
 	f := newFixture(t)
 	u := f.signIn(t, "u-subject", "u@example.com")
-	st := store.New(f.pool, objectstore.NewMemory(), store.Options{})
+	// Every store scans before it stores (ADR-0023): one without a scanner
+	// refuses every create.
+	scanner, err := redact.New(redact.Config{})
+	if err != nil {
+		t.Fatalf("scanner: %v", err)
+	}
+	st := store.New(f.pool, objectstore.NewMemory(), store.Options{Scanner: scanner})
 	var ids []string
 	for i, body := range []string{"# secret plan", "second secret body"} {
 		a, err := st.CreateArtifact(f.ctx, store.CreateArtifactInput{
