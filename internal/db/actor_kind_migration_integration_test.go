@@ -199,7 +199,9 @@ func TestActorKindMigrationOverExistingRows(t *testing.T) {
 		t.Fatalf("old reaction key constraints before migration = %v, want exactly one", before)
 	}
 
-	if err := Migrate(ctx, pool); err != nil {
+	// Through this migration only: 0023_owner_columns then moves actor_id to
+	// user_id, and these assertions are about the schema 0022 leaves.
+	if err := migrateThrough(ctx, pool, actorKindMigration); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -307,7 +309,7 @@ func TestActorKindMigrationResumes(t *testing.T) {
 		t.Fatalf("seeded leftover index = %q valid=%v, want an invalid index", def, valid)
 	}
 
-	if err := Migrate(ctx, pool); err != nil {
+	if err := migrateThrough(ctx, pool, actorKindMigration); err != nil {
 		t.Fatalf("migrate after partial run: %v", err)
 	}
 	def, valid, unique := kindIndexDef(t, pool)

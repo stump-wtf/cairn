@@ -17,15 +17,20 @@ import (
 	"github.com/stump-wtf/cairn/internal/user"
 )
 
-// Tests for 0018_owner_columns.sql, the move from owner strings to user ids.
+// Tests for 0023_owner_columns.sql, the move from owner strings to user ids.
 //
 // Governing: ADR-0029, SPEC-0023 REQ "Owner Model", REQ "Migration to
 // Explicit Ownership".
 
+// ownerMigration is the migration under test, without its .sql suffix.
+const ownerMigration = "0023_owner_columns"
+
 var ownerSchemaSeq atomic.Int64
 
-// preOwnerPool opens a private schema migrated through 0017, the state a
-// deployment is in before this story's migration runs.
+// preOwnerPool opens a private schema migrated through the migration just
+// before ownerMigration, the state a deployment is in before it runs:
+// v0.3.0, with main's 0017_users, 0018_hook_request_redaction and
+// 0022_annotation_actor_kind applied.
 func preOwnerPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("CAIRN_TEST_DATABASE_URL")
@@ -58,8 +63,9 @@ func preOwnerPool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("open pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	if err := migrateThrough(ctx, pool, "0017_users"); err != nil {
-		t.Fatalf("migrate through 0017: %v", err)
+	prev := versionBefore(t, ownerMigration)
+	if err := migrateThrough(ctx, pool, prev); err != nil {
+		t.Fatalf("migrate through %s: %v", prev, err)
 	}
 	return pool
 }
@@ -82,7 +88,7 @@ func mustUUID(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) string 
 
 var legacyArtifactSeq atomic.Int64
 
-// legacyArtifact inserts an artifact in the 0017 schema, owned and created
+// legacyArtifact inserts an artifact in the pre-ownership schema, owned and created
 // by the given strings, and returns its internal id.
 func legacyArtifact(t *testing.T, pool *pgxpool.Pool, owner, actor string, age time.Duration) int64 {
 	t.Helper()
@@ -261,8 +267,9 @@ func TestOwnerMigrationPreservesEveryBin(t *testing.T) {
 }
 
 // SPEC-0023 "Legacy owner strings are gone": no backfilled string column is
-// left, and no index or constraint names one; the reaction idempotency key
-// (SPEC-0016 EV-6) is rebuilt on user_id.
+// left, and no index or constraint names one; the per-kind reaction
+// idempotency key (SPEC-0016 EV-6) is rebuilt with user_id in actor_id's
+// place and actor_kind kept.
 func TestOwnerMigrationDropsLegacyStrings(t *testing.T) {
 	pool := preOwnerPool(t)
 	ctx := context.Background()
@@ -309,12 +316,13 @@ func TestOwnerMigrationDropsLegacyStrings(t *testing.T) {
 		if strings.Contains(def, "owner_id") || strings.Contains(def, "actor_id") {
 			t.Errorf("index %s still names a legacy string: %s", name, def)
 		}
-		if name == "reactions_idem_key" {
+		if name == "reactions_idem_kind_uidx" {
 			reactionKey = def
 		}
 	}
-	if !strings.Contains(reactionKey, "(artifact_id, anchor_type, anchor_key, emoji, user_id)") {
-		t.Errorf("reaction key = %q, want it rebuilt on user_id", reactionKey)
+	if !strings.Contains(reactionKey, "UNIQUE INDEX") ||
+		!strings.Contains(reactionKey, "(artifact_id, anchor_type, anchor_key, emoji, user_id, actor_kind)") {
+		t.Errorf("reaction key = %q, want it rebuilt unique on user_id and actor_kind", reactionKey)
 	}
 }
 
@@ -340,7 +348,7 @@ func TestOwnerMigrationAbortsOnBinMismatch(t *testing.T) {
 	if !errors.As(err, &pgErr) || !strings.Contains(pgErr.Message, "would change the Bin of owner alpha") {
 		t.Fatalf("migrate error = %v, want one naming owner alpha", err)
 	}
-	if !strings.Contains(err.Error(), "0018_owner_columns") {
+	if !strings.Contains(err.Error(), ownerMigration) {
 		t.Errorf("error %q does not name the migration", err)
 	}
 
@@ -359,10 +367,10 @@ func TestOwnerMigrationAbortsOnBinMismatch(t *testing.T) {
 	sort.Strings(cols)
 	joined := strings.Join(cols, ",")
 	if !strings.Contains(joined, "owner_id") || !strings.Contains(joined, "actor_id") || strings.Contains(joined, "owner_user_id") {
-		t.Errorf("artifacts columns after the abort = %s, want the 0017 schema", joined)
+		t.Errorf("artifacts columns after the abort = %s, want the pre-ownership schema", joined)
 	}
 	var applied bool
-	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = '0018_owner_columns')`).Scan(&applied); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`, ownerMigration).Scan(&applied); err != nil {
 		t.Fatalf("schema_migrations: %v", err)
 	}
 	if applied {

@@ -34,7 +34,11 @@ reaches 1.0.
   two or more OIDC identities acted as the same email, or for GitHub sessions
   (keyed then on the renameable login).
   `CAIRN_API_TOKENS` entries and the dev logins resolve their actor to a user
-  the same way, so they keep the Bin they had.
+  the same way, so they keep the Bin they had. Reactions and comments stay
+  owned per actor kind: the reaction key becomes
+  `(artifact_id, anchor_type, anchor_key, emoji, user_id, actor_kind)`, and
+  `actor_kind` and `on_behalf_of` keep their stored values, so an agent's
+  reaction and its human's stay two rows and per-kind tallies are unchanged.
 - **Existing users land on their account when they sign in** (SPEC-0023).
   Matching by verified email is no longer one-shot: an identity whose user has
   no verified email yet is matched again on every sign-in that carries one, so
@@ -63,14 +67,16 @@ reaches 1.0.
   upgrade.
 - **`CAIRN_DEV_INSECURE_BEARER_AUTH` with an `https` `CAIRN_BASE_URL` now fails
   boot** (A21). It was never safe there.
-- **Back up the database before upgrading past `0018_owner_columns`.** It
+- **Back up the database before upgrading past `0023_owner_columns`.** It
   resolves every owner and actor string to a user and drops the strings in one
   transaction; there is no in-database way back, so rollback is a restore from
   that backup. Before dropping anything it compares every owner's Bin; if any
   would change, the whole migration rolls back, the old schema is left intact,
   and `cairn serve` refuses to start with `ownership backfill would change the
-  Bin of owner <owner>` naming the first mismatch. Report that error rather
-  than editing rows by hand.
+  Bin of owner <owner>` naming the first mismatch (or `would merge the
+  reactions of owner <owner>` when two owner strings that become one user
+  reacted alike). Report that error rather than editing rows by hand. It runs
+  after `0022_annotation_actor_kind`.
 
 ### Changed
 
