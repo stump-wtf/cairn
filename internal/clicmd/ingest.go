@@ -31,7 +31,11 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 	if err != nil {
 		return err
 	}
-	tags, err := parseTagFlags(flags.tags)
+	tags, err := parseTagFlags(flags.tags, streams.ErrOut)
+	if err != nil {
+		return err
+	}
+	redaction, err := parseRedactFlag(flags.redact, cmd.Flags().Changed("redact"))
 	if err != nil {
 		return err
 	}
@@ -116,13 +120,15 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 		MediaType:  mediaType,
 		TTLSeconds: ttlSeconds,
 		Tags:       tags,
+		Redaction:  redaction,
 	})
 	if sp != nil {
 		sp.Stop()
 	}
 	if err != nil {
-		return err
+		return withSent(err, sentRequest{ttl: flags.ttl, tags: tags, files: args, redact: redaction})
 	}
+	warnRedacted(streams.ErrOut, art)
 
 	if flags.jsonOut {
 		return writeJSON(streams.Out, art)

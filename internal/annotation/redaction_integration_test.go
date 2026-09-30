@@ -104,7 +104,7 @@ func TestUnwiredCommentRecordsUnscanned(t *testing.T) {
 	svc := NewService(pool, sharetype.Default())
 	insertArtifact(t, pool, "REDACTC1", sharetype.KeyCode)
 
-	c, err := svc.AddComment(ctx, "REDACTC1", CommentInput{AnchorType: sharetype.AnchorArtifact, UserID: u1ID, Body: "looks fine"})
+	c, err := svc.AddComment(ctx, "REDACTC1", CommentInput{AnchorType: sharetype.AnchorArtifact, Actor: agent("u1"), Body: "looks fine"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestCommentStoresOnlyMaskedText(t *testing.T) {
 	tok := plantedToken(1)
 
 	c, err := svc.AddComment(ctx, "REDACTC2", CommentInput{
-		AnchorType: sharetype.AnchorArtifact, UserID: u1ID,
+		AnchorType: sharetype.AnchorArtifact, Actor: agent("u1"),
 		Body: "rotate this, it leaked: " + tok + " (sorry)",
 	})
 	if err != nil {
@@ -167,7 +167,7 @@ func TestCleanCommentRecordsClean(t *testing.T) {
 	svc := NewService(pool, sharetype.Default(), WithRedaction(testScanner(t), nil))
 	insertArtifact(t, pool, "REDACTC3", sharetype.KeyMarkdown)
 
-	c, err := svc.AddComment(context.Background(), "REDACTC3", CommentInput{AnchorType: sharetype.AnchorArtifact, UserID: u1ID, Body: "LGTM"})
+	c, err := svc.AddComment(context.Background(), "REDACTC3", CommentInput{AnchorType: sharetype.AnchorArtifact, Actor: agent("u1"), Body: "LGTM"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,11 +185,11 @@ func TestEditedCommentIsMasked(t *testing.T) {
 	insertArtifact(t, pool, "REDACTC4", sharetype.KeyMarkdown)
 	tok := plantedToken(2)
 
-	c, err := svc.AddComment(ctx, "REDACTC4", CommentInput{AnchorType: sharetype.AnchorArtifact, UserID: u1ID, Body: "first draft"})
+	c, err := svc.AddComment(ctx, "REDACTC4", CommentInput{AnchorType: sharetype.AnchorArtifact, Actor: agent("u1"), Body: "first draft"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.EditComment(ctx, "REDACTC4", c.ID, u1ID, "use "+tok); err != nil {
+	if err := svc.EditComment(ctx, "REDACTC4", c.ID, agent("u1"), "use "+tok); err != nil {
 		t.Fatal(err)
 	}
 	var body string
@@ -219,7 +219,7 @@ func TestCommentScanFailureFailsClosed(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := svc.AddComment(ctx, "REDACTC5", CommentInput{AnchorType: sharetype.AnchorArtifact, UserID: u1ID, Body: "key " + tok})
+	_, err := svc.AddComment(ctx, "REDACTC5", CommentInput{AnchorType: sharetype.AnchorArtifact, Actor: agent("u1"), Body: "key " + tok})
 	if !errors.Is(err, redact.ErrScanFailed) {
 		t.Fatalf("err = %v; want ErrScanFailed", err)
 	}

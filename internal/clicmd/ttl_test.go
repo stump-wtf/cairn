@@ -65,6 +65,30 @@ func TestParseTTLFlagRejectsNonPositive(t *testing.T) {
 	}
 }
 
+// TestFormatTTLSecondsRoundTrips: a limit renders in the largest whole unit,
+// in syntax --ttl reads back as the same number of seconds (SPEC-0019 VE-8).
+func TestFormatTTLSecondsRoundTrips(t *testing.T) {
+	cases := map[int64]string{
+		2592000: "30d",
+		86400:   "1d",
+		90000:   "25h",
+		5400:    "90m",
+		3600:    "1h",
+		61:      "61s",
+		1:       "1s",
+	}
+	for secs, want := range cases {
+		got := formatTTLSeconds(secs)
+		if got != want {
+			t.Errorf("formatTTLSeconds(%d) = %q, want %q", secs, got, want)
+		}
+		back, err := parseTTLFlag(got)
+		if err != nil || back != secs {
+			t.Errorf("parseTTLFlag(%q) = %d, %v; want %d", got, back, err, secs)
+		}
+	}
+}
+
 func TestFormatAccess(t *testing.T) {
 	cases := map[string]string{
 		"link":    "you + anyone with link",

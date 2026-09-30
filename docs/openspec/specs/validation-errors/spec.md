@@ -173,10 +173,20 @@ A failing MCP tool call caused by validation MUST return:
 
 It MUST NOT return the bare string `validation_failed: the request was invalid`.
 
+Every typed tool's published `outputSchema` MUST admit both its success shape
+and this error shape, so a client that validates structured content — the
+TypeScript SDK does, on error results too — shows the violations instead of
+failing the schema check and discarding them.
+
 #### Scenario: Agent learns the tag rule
 
 - **WHEN** an agent calls `artifact_create` with the tag `Handoff`
 - **THEN** the tool error's structured content contains a violation with field `tags[0]`, reason `uppercase`, and value `"Handoff"`
+
+#### Scenario: A schema-validating client shows the violation
+
+- **WHEN** a client that validates `structuredContent` against the tool's published `outputSchema` receives the failing `artifact_create` result
+- **THEN** the error content validates against the schema published at `tools/list`, and the violation is shown rather than thrown away
 
 ### Requirement: VE-8 CLI Rendering
 

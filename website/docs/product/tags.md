@@ -49,6 +49,11 @@ cat prompt.md | cairn --tag handoff --tag lane:auto,size:m
 cairn add prompt.md context.log --tag handoff --tag repo:stump.wtf/cairn
 ```
 
+The CLI is the one client that fixes case for you: it lower-cases a `--tag` value that
+contains an uppercase letter, and warns on stderr (`cairn: warning: tag "size:M" sent as
+"size:m"`). It changes nothing else, and the server still rejects uppercase from every
+other client. See [Errors](./errors.md#uppercase).
+
 **REST:** on `POST /v1/artifacts`, send `X-Cairn-Tags: handoff,lane:auto`, repeated
 `?tag=` parameters, or both. Each value may be a comma-separated list. A multipart
 create also accepts repeated `tag` form fields.
@@ -84,6 +89,14 @@ looks like. Then tag it:
 | `source:<harness>/<run>` | The run that produced the handoff. Optional. |
 | `reply:cairn-comment` · `reply:signal` | How the executing agent reports back. `cairn-comment` means comment on this artifact. Optional. |
 
+:::note[`reply:cairn-comment` notifies nobody yet]
+
+The reply is left as a comment on the handoff, and nothing notifies the author that it
+exists. Cairn's only outbound event today is `artifact.created`; comments and reactions
+emit none. Whoever sent the handoff has to open the artifact to see the reply.
+
+:::
+
 Cairn checks only the rules above, not this vocabulary. A misspelled lane is accepted
 here and then misroutes downstream.
 
@@ -116,7 +129,7 @@ The `artifact.created` event for a tagged bundle created over MCP looks like thi
     "url": "https://cairn.example/7Kq2mZ",
     "channel": "via MCP",
     "model": "claude-opus-5",
-    "actor_id": "joestump",
+    "actor_id": "you@example.com",
     "expires_at": "2026-09-18T08:00:00Z",
     "on_behalf_of": "claude-code/2.1.0",
     "tags": [
@@ -134,6 +147,26 @@ The `artifact.created` event for a tagged bundle created over MCP looks like thi
 
 A routing rule matches on `handoff` and the `lane:` tag in `data.tags`. The worker
 that claims the todo reads the artifact at `data.url` and follows it, semi-trusted.
+
+### What `actor_id` holds
+
+`actor_id` is the principal Cairn authenticated, never a field of the request that
+creates the artifact. Its shape depends on the credential:
+
+| Credential | `actor_id` |
+|---|---|
+| Web sign-in through your identity provider (OIDC) | The email your identity provider asserts, or its subject id when it sends no email, e.g. `you@example.com` |
+| Web sign-in with GitHub, on a server that enables it | Your primary verified GitHub email, lowercased, e.g. `you@example.com`. Never your GitHub username |
+| An MCP client you authorized through OAuth | The sign-in you approved it from, as in the sign-in rows of this table |
+| Personal access token | The token's owner: the sign-in that created it, e.g. `you@example.com` |
+| Static token from `CAIRN_API_TOKENS` | The `actor` field of its `secret:actor[:role]` entry, with surrounding spaces trimmed |
+| A development-only login: `CAIRN_DEV_LOGIN_PASSWORD` or `CAIRN_DEV_INSECURE_BEARER_AUTH` | Whatever name was typed at the login form, or the raw bearer token itself, unverified. Never enable either in production |
+
+This matters for routing. A Switchboard rule that trusts handoffs by `actor_id` has to
+list the value Cairn records, so a rule written for a forge login such as `octocat`
+drops every handoff you create while signed in as `you@example.com`, even when you
+signed in with that GitHub account. Read the real value off a stored event before you
+write the rule.
 
 See [SPEC-0002](../specs/artifact-core-and-share-types/index.md) for the tag
 requirement and [SPEC-0012](../specs/outbound-webhooks/index.md) for the event

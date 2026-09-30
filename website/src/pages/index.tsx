@@ -57,7 +57,7 @@ function Hero(): ReactNode {
               URL, deliberately, twice over: /bin is an app route, not a page
               of this site, so a Docusaurus <Link to="/bin"> is a broken link
               to the build checker on every target; and this bundle also ships
-              to Pages (stump-wtf.pages.stump.rocks/cairn/), where a relative
+              to Pages (under /cairn/ on the owner's Pages host), where a relative
               /bin would 404 — the absolute URL lands on the app from both.
               /bin is auth-gated, so for a signed-out visitor this IS the
               sign-in flow (303 → /auth/login?next=/bin). The former

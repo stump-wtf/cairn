@@ -144,11 +144,22 @@ func (s *Service) scanSpans(ctx context.Context, spans []SpanInput) ([]SpanInput
 // the per-span cap. It runs before the scan, whether or not a scanner is wired:
 // an output over the cap is a 413, and scanning it first would turn that into
 // a 422. The masked form is not held to the cap again (see spillOutputs).
+//
+// Every oversize span is named, as spans[n].output too_large, so a caller with
+// several hears about all of them at once; nothing is scanned or staged for a
+// refused write. The output is never echoed.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-3, VE-4
 func (s *Service) checkOutputCaps(spans []SpanInput) error {
-	for _, sp := range spans {
+	var over []*errs.Invalid
+	for i, sp := range spans {
 		if int64(len(sp.Output)) > s.maxOutputBytes {
-			return fmt.Errorf("trajectory: span %q output: %w", sp.SpanID, errs.ErrTooLarge)
+			over = append(over, errs.Violate(spanField(i, "output"), errs.LocBody, errs.ReasonTooLarge,
+				errs.WithLimit(s.maxOutputBytes, errs.UnitBytes)))
 		}
+	}
+	if inv := errs.Join(over...); inv != nil {
+		return fmt.Errorf("trajectory: %d span outputs over the cap: %w", len(over), inv)
 	}
 	return nil
 }

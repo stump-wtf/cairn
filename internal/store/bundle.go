@@ -11,6 +11,8 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
+	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/redact"
 )
 
@@ -32,35 +34,100 @@ type CreateBundleInput struct {
 	// Tags are client-asserted routing strings on the bundle as a whole
 	// (ADR-0018); members carry none of their own.
 	Tags []string
+	// RedactionDowngrade masks where the bundle type would reject; see
+	// CreateArtifactInput.RedactionDowngrade. SPEC-0017 RD-5.
+	RedactionDowngrade bool
+	// ActorKind and Auth classify the creator's credential. The adapter derives
+	// them from the authenticated principal, never from the request, and they
+	// travel only on the creation event (ADR-0022, SPEC-0016 EV-4).
+	ActorKind event.ActorKind
+	Auth      event.AuthMethod
 }
 
+// MaxBundleMembers bounds a bundle's member count. Every member is spooled
+// and staged before the bundle commits, so without a bound the count, not the
+// per-member upload cap, would decide what one request can hold.
+const MaxBundleMembers = 256
+
+// membersField is the caller-facing name of a bundle's member list.
+const membersField = "members"
+
+// MemberField names one member's sub-field ("name" or "content") the way every
+// surface reports it: members[i].name.
+func MemberField(i int, part string) string {
+	return fmt.Sprintf("%s[%d].%s", membersField, i, part)
+}
+
+// MemberNames checks bundle member names in member order: each must be
+// non-empty and unique within the bundle. The multipart create and
+// CreateBundle share it, so both report a bad name identically.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-4; SPEC-0002 REQ "Bundles with N
+// Members"
+type MemberNames struct {
+	seen map[string]struct{}
+}
+
+// Check reports member i's name as a violation at loc, or nil when it is valid.
+func (m *MemberNames) Check(i int, name string, loc errs.Location) *errs.Invalid {
+	if name == "" {
+		return errs.Violate(MemberField(i, "name"), loc, errs.ReasonRequired)
+	}
+	if _, dup := m.seen[name]; dup {
+		return errs.Violate(MemberField(i, "name"), loc, errs.ReasonDuplicate, errs.WithValue(name))
+	}
+	if m.seen == nil {
+		m.seen = map[string]struct{}{}
+	}
+	m.seen[name] = struct{}{}
+	return nil
+}
+
+// MemberTooLarge is the violation for member i's content over the upload cap.
+// The content is never echoed (SPEC-0019 VE-3).
+func MemberTooLarge(i int, loc errs.Location, limit int64) *errs.Invalid {
+	return errs.Violate(MemberField(i, "content"), loc, errs.ReasonTooLarge, errs.WithLimit(limit, errs.UnitBytes))
+}
+
+// TooManyMembers is the violation for a bundle of more than MaxBundleMembers.
+func TooManyMembers(loc errs.Location) *errs.Invalid {
+	return errs.Violate(membersField, loc, errs.ReasonTooMany, errs.WithLimit(MaxBundleMembers, errs.UnitCount))
+}
+
+// validate checks the input before any member streams. The member list and the
+// title are the caller's, and every bad name is reported, not only the first
+// (SPEC-0019 VE-4). Provenance, access and expiry are server-derived, so a gap
+// there is an internal error rather than a client violation.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-4; SPEC-0002 REQ "Bundles with N
+// Members"
 func (in CreateBundleInput) validate() error {
 	switch {
-	case len(in.Members) == 0:
-		return errs.Validationf("bundle: at least one member is required")
 	case in.Provenance.Channel == "":
-		return errs.Validationf("bundle: provenance channel is required")
+		return errors.New("bundle: provenance channel is required")
 	case in.Provenance.ActorID == "" || in.Provenance.CreatedByUserID == "":
-		return errs.Validationf("bundle: provenance actor is required")
+		return errors.New("bundle: provenance actor is required")
 	case in.Access.OwnerUserID == "" && in.Access.OwnerTeamID == "":
-		return errs.Validationf("bundle: access owner is required")
+		return errors.New("bundle: access owner is required")
 	case in.Access.Visibility == "":
-		return errs.Validationf("bundle: access visibility is required")
+		return errors.New("bundle: access visibility is required")
 	case in.ExpiresAt.IsZero():
-		return errs.Validationf("bundle: expiry is required")
+		return errors.New("bundle: expiry is required")
+	case len(in.Members) == 0:
+		return errs.Violate(membersField, errs.LocBody, errs.ReasonRequired)
+	case len(in.Members) > MaxBundleMembers:
+		return TooManyMembers(errs.LocBody)
 	}
-	seen := map[string]struct{}{}
+	bad := []*errs.Invalid{artifact.CheckTitle(in.Title, "title", errs.LocBody)}
+	var names MemberNames
 	for i, m := range in.Members {
-		if m.Name == "" {
-			return errs.Validationf("bundle: member %d has an empty name", i)
-		}
 		if m.Body == nil {
-			return errs.Validationf("bundle: member %q has a nil body", m.Name)
+			return fmt.Errorf("bundle: member %d has a nil body", i)
 		}
-		if _, dup := seen[m.Name]; dup {
-			return errs.Validationf("bundle: duplicate member name %q", m.Name)
-		}
-		seen[m.Name] = struct{}{}
+		bad = append(bad, names.Check(i, m.Name, errs.LocBody))
+	}
+	if inv := errs.Join(bad...); inv != nil {
+		return inv
 	}
 	return nil
 }
@@ -95,6 +162,15 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	if err != nil {
 		return nil, err
 	}
+	// The title is scanned before any member streams.
+	//
+	// Governing: ADR-0023, SPEC-0017 RD-4, RD-5
+	var scans scanReport
+	mode := s.redactionMode(artifact.TypeBundle, in.RedactionDowngrade)
+	title, outcome, err := s.scanTitle(ctx, metrics.SurfaceBundle, in.Title, mode, &scans)
+	if err != nil {
+		return nil, fmt.Errorf("bundle: %w", err)
+	}
 
 	// Stream every member to a staging object first. Each member's staging object
 	// is transient on EVERY path (committed OR rolled back); reclaim each
@@ -110,19 +186,55 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 		}
 	}()
 
-	var totalSize int64
+	// A member over the upload cap does not stop the others streaming, so every
+	// oversize member is named in one rejection (SPEC-0019 VE-4). The cap is
+	// enforced as each streams, so a skipped member costs at most one byte past
+	// it. Each member is scanned as soon as it is staged, and every one is
+	// scanned before any is promoted. A rejected member does not stop the
+	// others, so one rejection names every member that holds a secret; any
+	// rejection aborts the whole bundle. A failed scan stops at once, closed.
+	//
+	// Governing: ADR-0023, ADR-0025, SPEC-0019 VE-4, SPEC-0017 RD-1, RD-4
+	// (scenario "Bundle rejection names the member"), RD-6, RD-7
+	var (
+		totalSize int64
+		rejected  []*errs.Invalid
+		tooLarge  []*errs.Invalid
+	)
 	for i, m := range in.Members {
-		sb, err := StageBlob(ctx, s.obj, m.Body, s.maxBytes, m.DeclaredMediaType)
+		sb, err := stageBlobKeep(ctx, s.obj, m.Body, s.maxBytes, m.DeclaredMediaType, scanInMemoryBytes)
+		if errors.Is(err, errs.ErrTooLarge) {
+			tooLarge = append(tooLarge, MemberTooLarge(i, errs.LocBody, s.maxBytes))
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("bundle: stream member %q: %w", m.Name, err)
 		}
 		staged = append(staged, stagedMember{ordinal: i, name: m.Name, blob: sb})
+		scan, err := s.scanBody(ctx, metrics.SurfaceBundle, memberContentField(i), sb, mode, &scans)
+		if err != nil {
+			var inv *errs.Invalid
+			if !errors.As(err, &inv) {
+				return nil, fmt.Errorf("bundle: member %d: %w", i, err)
+			}
+			rejected = append(rejected, inv)
+			continue
+		}
+		staged[len(staged)-1].redaction = scan
+		outcome = outcome.Merge(scan)
 		totalSize += sb.Size
+	}
+	if inv := errs.Join(tooLarge...); inv != nil {
+		return nil, fmt.Errorf("bundle: stream members: %w", inv)
+	}
+	if inv := errs.Join(rejected...); inv != nil {
+		return nil, fmt.Errorf("bundle: %w", inv)
 	}
 
 	art := &artifact.Artifact{
 		ShareType:   artifact.TypeBundle,
-		Title:       in.Title,
+		Title:       title,
+		Redaction:   outcome,
 		Size:        totalSize,
 		MediaType:   "application/vnd.cairn.bundle",
 		Previewable: s.registry.Resolve(artifact.TypeBundle).PreviewableMedia(""),
@@ -158,7 +270,8 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("bundle: commit: %w", err)
 	}
-	s.emitCreated(art)
+	s.emitCreated(art, in.ActorKind, in.Auth)
+	s.warnUnscanned(art.PublicID, &scans)
 	return art, nil
 }
 

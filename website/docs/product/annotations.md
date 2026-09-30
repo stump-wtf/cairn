@@ -21,6 +21,10 @@ request, a trace turn / tool call / span, or the whole artifact.
 Threaded comments, anchored to a text selection (they land in the right margin /
 panel), a code line, an image-region pin, or the whole artifact.
 
+A comment is scanned for credentials when it is posted or edited, and a detected value
+is stored as `[REDACTED]` (see
+[Secret redaction](../guides/self-hosting.md#secret-redaction)).
+
 ## Anchors by type
 
 | Share type | Reaction anchors | Comment anchors |
