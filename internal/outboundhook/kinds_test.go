@@ -34,6 +34,11 @@ import (
 // wire, so no encoded body may contain it.
 const ownerMarker = "owner-never-on-the-wire"
 
+// userMarker is the actor's user id in every fixture. Like the owner it is
+// internal: the wire's actor_id is the rendered actor (SPEC-0023 REQ
+// "Migration to Explicit Ownership"), so no encoded body may contain it.
+const userMarker = "user-never-on-the-wire"
+
 func kindSubject() event.Subject {
 	return event.Subject{
 		PublicID:  "7Kq2mZ",
@@ -47,12 +52,12 @@ func kindSubject() event.Subject {
 }
 
 func humanActor() event.Actor {
-	return event.Actor{ID: "alice@example.com", Channel: artifact.ChannelWeb, Kind: event.KindHuman, Auth: event.AuthSession}
+	return event.Actor{ID: "alice@example.com", UserID: userMarker, Channel: artifact.ChannelWeb, Kind: event.KindHuman, Auth: event.AuthSession}
 }
 
 func agentActor() event.Actor {
 	return event.Actor{
-		ID: "alice@example.com", Channel: artifact.ChannelMCP, OnBehalfOf: "claude-code/2.1.0",
+		ID: "alice@example.com", UserID: userMarker, Channel: artifact.ChannelMCP, OnBehalfOf: "claude-code/2.1.0",
 		Kind: event.KindAgent, Auth: event.AuthOAuth,
 	}
 }
@@ -292,6 +297,9 @@ func TestSubjectFieldsResolveForEveryKind(t *testing.T) {
 		}
 		if bytes.Contains(raw, []byte(ownerMarker)) {
 			t.Fatalf("%s body carries the subject owner: %s", ev.Kind, raw)
+		}
+		if bytes.Contains(raw, []byte(userMarker)) {
+			t.Fatalf("%s body carries the actor's user id: %s", ev.Kind, raw)
 		}
 		var body struct {
 			Kind string         `json:"kind"`
