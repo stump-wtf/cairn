@@ -14,6 +14,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/stump-wtf/cairn/internal/annotation"
+	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/event"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/user"
 )
 
@@ -598,5 +602,241 @@ func TestOwnerMigrationLaterVerifiedSignInClaimsLegacyBin(t *testing.T) {
 	}
 	if got, want := binOf(t, pool, later.ID), before["joe@example.com"]; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("Bin after the verified sign-in = %v, want %v", got, want)
+	}
+}
+
+// kindTally is one (anchor, emoji) group's per-kind counts, the numbers
+// annotation.Service.ReactionTallies serves.
+type kindTally struct{ count, human, agent int }
+
+// kindTalliesBefore groups the pre-ownership reactions exactly as
+// ReactionTallies does, keyed "anchor_type|anchor_key|emoji".
+func kindTalliesBefore(t *testing.T, pool *pgxpool.Pool, artID int64) map[string]kindTally {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+		SELECT anchor_type || '|' || anchor_key || '|' || emoji, count(*),
+		       count(*) FILTER (WHERE actor_kind = 'human'),
+		       count(*) FILTER (WHERE actor_kind = 'agent')
+		  FROM reactions WHERE artifact_id = $1
+		 GROUP BY anchor_type, anchor_key, emoji`, artID)
+	if err != nil {
+		t.Fatalf("tallies before: %v", err)
+	}
+	defer rows.Close()
+	out := map[string]kindTally{}
+	for rows.Next() {
+		var k string
+		var tl kindTally
+		if err := rows.Scan(&k, &tl.count, &tl.human, &tl.agent); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out[k] = tl
+	}
+	return out
+}
+
+// preOwnerMarkdown inserts a markdown artifact in the pre-ownership schema,
+// owned by owner, and returns its internal and public ids.
+func preOwnerMarkdown(t *testing.T, pool *pgxpool.Pool, owner string) (int64, string) {
+	t.Helper()
+	var id int64
+	pid := fmt.Sprintf("kind%06d", legacyArtifactSeq.Add(1))
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO artifacts (public_id, share_type, title, media_type, actor_id, channel,
+		                       captured_at, owner_id, visibility, expires_at)
+		VALUES ($1, 'markdown', 'plan', 'text/markdown', $2, 'via API', now(), $2, 'link', now() + interval '1 day')
+		RETURNING id`, pid, owner).Scan(&id); err != nil {
+		t.Fatalf("insert markdown artifact: %v", err)
+	}
+	return id, pid
+}
+
+// Joe's decision on #384 (2026-09-30): ownership stays per actor kind. On a
+// database 0022 has already re-keyed, alice's agent and alice in her browser
+// hold one 👍 each on the same anchor. After the migration they are still two
+// rows, both on the user "alice" resolved to, with actor_kind and
+// on_behalf_of as stored, and every per-kind tally is unchanged. The
+// annotation service then works on the migrated rows: a repeat react by
+// either kind is a no-op on the rebuilt key, each kind's viewer sees only its
+// own row as reacted, and each kind removes only its own row.
+//
+// Governing: ADR-0022, SPEC-0016 EV-6; ADR-0029, SPEC-0023 REQ "Migration to
+// Explicit Ownership".
+func TestOwnerMigrationKeepsPerKindReactions(t *testing.T) {
+	pool := preOwnerPool(t)
+	ctx := context.Background()
+	artID, pid := preOwnerMarkdown(t, pool, "joe@example.com")
+
+	react := func(emoji, actor, kind, obo string) {
+		mustExec(t, pool, `
+			INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, actor_id, actor_kind, on_behalf_of)
+			VALUES ($1, 'artifact', '{}', '{}', $2, $3, $4, $5)`, artID, emoji, actor, kind, obo)
+	}
+	react("👍", "alice", "human", "")
+	react("👍", "alice", "agent", "claude-code/1.0")
+	react("👍", "bob", "agent", "")
+	react("🎉", "alice", "agent", "claude-code/1.0")
+	react("👀", "alice", "", "") // stored before kinds were
+	mustExec(t, pool, `UPDATE artifacts SET reaction_count = 5 WHERE id = $1`, artID)
+	mustExec(t, pool, `
+		INSERT INTO comments (artifact_id, anchor_type, anchor_ref, anchor_key, actor_id, actor_kind, on_behalf_of, body)
+		VALUES ($1, 'artifact', '{}', '{}', 'alice', 'human', '', 'mine'),
+		       ($1, 'artifact', '{}', '{}', 'alice', 'agent', 'claude-code/1.0', 'my agent''s')`, artID)
+
+	before := kindTalliesBefore(t, pool, artID)
+	if got := before["artifact|{}|👍"]; got != (kindTally{3, 1, 2}) {
+		t.Fatalf("fixture 👍 tally = %+v, want 3 rows, 1 human, 2 agent", got)
+	}
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	alice := userRendering(t, pool, "alice")
+
+	// Rows: alice's two 👍 survive as two rows on her user, kinds and
+	// provenance as stored.
+	rows, err := pool.Query(ctx, `
+		SELECT r.emoji, r.user_id::text, r.actor_kind, r.on_behalf_of
+		  FROM reactions r WHERE r.artifact_id = $1 AND r.user_id = $2
+		 ORDER BY r.emoji, r.actor_kind`, artID, alice)
+	if err != nil {
+		t.Fatalf("reactions after: %v", err)
+	}
+	var got []string
+	for rows.Next() {
+		var emoji, uid, kind, obo string
+		if err := rows.Scan(&emoji, &uid, &kind, &obo); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, emoji+"/"+kind+"/"+obo)
+	}
+	rows.Close()
+	want := []string{"🎉/agent/claude-code/1.0", "👀//", "👍/agent/claude-code/1.0", "👍/human/"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("alice's reactions after = %q, want %q", got, want)
+	}
+	var comments []string
+	crows, err := pool.Query(ctx, `SELECT actor_kind || '/' || on_behalf_of FROM comments
+		WHERE artifact_id = $1 AND user_id = $2 ORDER BY actor_kind`, artID, alice)
+	if err != nil {
+		t.Fatalf("comments after: %v", err)
+	}
+	for crows.Next() {
+		var c string
+		_ = crows.Scan(&c)
+		comments = append(comments, c)
+	}
+	crows.Close()
+	if fmt.Sprint(comments) != fmt.Sprint([]string{"agent/claude-code/1.0", "human/"}) {
+		t.Fatalf("alice's comments after = %q, want one per kind with provenance", comments)
+	}
+
+	// Tallies, read by the service: the same numbers per (anchor, emoji).
+	svc := annotation.NewService(pool, nil)
+	humanV := annotation.Viewer{UserID: alice, Kind: event.KindHuman}
+	agentV := annotation.Viewer{UserID: alice, Kind: event.KindAgent}
+	reacted := map[event.ActorKind]map[string]bool{}
+	for _, v := range []annotation.Viewer{humanV, agentV} {
+		tallies, err := svc.ReactionTallies(ctx, pid, v)
+		if err != nil {
+			t.Fatalf("tallies after: %v", err)
+		}
+		after := map[string]kindTally{}
+		reacted[v.Kind] = map[string]bool{}
+		for _, tl := range tallies {
+			k := string(tl.AnchorType) + "|" + tl.AnchorKey + "|" + tl.Emoji
+			after[k] = kindTally{tl.Count, tl.HumanCount, tl.AgentCount}
+			reacted[v.Kind][tl.Emoji] = tl.Reacted
+		}
+		if fmt.Sprint(after) != fmt.Sprint(before) {
+			t.Fatalf("per-kind tallies after = %v, before = %v", after, before)
+		}
+	}
+	// Kind-matched viewer: the 🎉 is her agent's alone; the legacy 👀 is
+	// removable, so reacted, as either kind.
+	for kind, want := range map[event.ActorKind]map[string]bool{
+		event.KindHuman: {"👍": true, "🎉": false, "👀": true},
+		event.KindAgent: {"👍": true, "🎉": true, "👀": true},
+	} {
+		if fmt.Sprint(reacted[kind]) != fmt.Sprint(want) {
+			t.Errorf("%s viewer reacted = %v, want %v", kind, reacted[kind], want)
+		}
+	}
+
+	// ?include=reactors: both 👍 rows render as alice, with their kinds.
+	list, err := svc.ListReactions(ctx, pid)
+	if err != nil {
+		t.Fatalf("list reactions: %v", err)
+	}
+	var reactors []string
+	for _, r := range list {
+		if r.Emoji == "👍" {
+			reactors = append(reactors, r.ActorID+"/"+string(r.ActorKind))
+		}
+	}
+	if fmt.Sprint(reactors) != fmt.Sprint([]string{"alice/human", "alice/agent", "bob/agent"}) {
+		t.Errorf("👍 reactors = %q, want alice as human and as agent, then bob", reactors)
+	}
+
+	// Writes on the migrated rows: a repeat is a no-op on the rebuilt key, and
+	// each kind withdraws only its own row.
+	humanA := event.Actor{ID: "alice", UserID: alice, Channel: artifact.ChannelWeb, Kind: event.KindHuman, Auth: event.AuthSession}
+	agentA := event.Actor{ID: "alice", UserID: alice, Channel: artifact.ChannelAPI, Kind: event.KindAgent, Auth: event.AuthPAT}
+	for _, a := range []event.Actor{humanA, agentA} {
+		if _, created, err := svc.React(ctx, pid, sharetype.AnchorArtifact, nil, "👍", a); err != nil || created {
+			t.Fatalf("repeat 👍 as %s: created=%v err=%v, want a no-op on the migrated row", a.Kind, created, err)
+		}
+	}
+	if removed, err := svc.Unreact(ctx, pid, sharetype.AnchorArtifact, nil, "👍", humanA); err != nil || !removed {
+		t.Fatalf("human unreact: removed=%v err=%v", removed, err)
+	}
+	var left []string
+	lrows, err := pool.Query(ctx, `SELECT actor_kind FROM reactions
+		WHERE artifact_id = $1 AND user_id = $2 AND emoji = '👍'`, artID, alice)
+	if err != nil {
+		t.Fatalf("reactions after unreact: %v", err)
+	}
+	for lrows.Next() {
+		var k string
+		_ = lrows.Scan(&k)
+		left = append(left, k)
+	}
+	lrows.Close()
+	if fmt.Sprint(left) != "[agent]" {
+		t.Fatalf("alice's 👍 after the human withdrew = %v, want only her agent's", left)
+	}
+}
+
+// Two owner strings that resolve to one user and reacted alike would fold
+// onto one per-kind key. The migration aborts naming the owner, like a Bin
+// mismatch, and leaves the 0022 schema and the migration record as they were.
+func TestOwnerMigrationAbortsOnMergedReactions(t *testing.T) {
+	pool := preOwnerPool(t)
+	ctx := context.Background()
+	u := mustUUID(t, pool, `INSERT INTO users (display_handle) VALUES ('twice') RETURNING id::text`)
+	mustExec(t, pool, `INSERT INTO sessions (token_hash, actor_id, user_id, csrf_token, expires_at) VALUES
+		(repeat('a', 64), 'alpha', $1, 'c', now() + interval '1 day'),
+		(repeat('b', 64), 'bravo', $1, 'c', now() + interval '1 day')`, u)
+	artID, _ := preOwnerMarkdown(t, pool, "joe@example.com")
+	for _, actor := range []string{"alpha", "bravo"} {
+		mustExec(t, pool, `
+			INSERT INTO reactions (artifact_id, anchor_type, anchor_ref, anchor_key, emoji, actor_id, actor_kind)
+			VALUES ($1, 'artifact', '{}', '{}', '👍', $2, 'human')`, artID, actor)
+	}
+
+	err := Migrate(ctx, pool)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || !strings.Contains(pgErr.Message, "would merge the reactions of owner alpha") {
+		t.Fatalf("migrate error = %v, want one naming owner alpha", err)
+	}
+	var applied, actorCol bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`, ownerMigration).Scan(&applied); err != nil {
+		t.Fatalf("schema_migrations: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'reactions' AND column_name = 'actor_id')`).Scan(&actorCol); err != nil {
+		t.Fatalf("columns: %v", err)
+	}
+	if applied || !actorCol {
+		t.Errorf("after the abort: recorded=%v reactions.actor_id=%v, want unrecorded with the 0022 schema", applied, actorCol)
 	}
 }
