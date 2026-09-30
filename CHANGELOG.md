@@ -39,6 +39,21 @@ reaches 1.0.
   `(artifact_id, anchor_type, anchor_key, emoji, user_id, actor_kind)`, and
   `actor_kind` and `on_behalf_of` keep their stored values, so an agent's
   reaction and its human's stay two rows and per-kind tallies are unchanged.
+- **Operator profile** (SPEC-0023 REQ "Operator and User Profiles" and
+  "Operator Surfaces Bound Tenant Data and Never Read It", #330). The operator
+  is named by `CAIRN_OPERATORS` (comma-separated `<issuer>|<subject>`) or
+  `CAIRN_OPERATOR_GROUP` (an OIDC group); with neither set there is no
+  operator and every operator route answers `404`. The operator gets a console
+  at `/operator` and `GET /v1/operator/directory` (users with artifact counts
+  and bytes, never content) and can suspend a user with
+  `POST /v1/operator/suspensions`. Suspension offboards in one transaction:
+  sessions, personal access tokens, OAuth grants with their access and refresh
+  tokens, and unredeemed authorization codes stop authenticating on the next
+  request, and a suspended user cannot sign in. Each action writes an
+  `operator_audit` row, with a required reason, in the same transaction; the
+  affected user reads it in Settings. Operator routes need a browser session,
+  and operator status never widens what the operator may read (audit A12,
+  A13).
 - **Existing users land on their account when they sign in** (SPEC-0023).
   Matching by verified email is no longer one-shot: an identity whose user has
   no verified email yet is matched again on every sign-in that carries one, so
@@ -77,6 +92,10 @@ reaches 1.0.
   reactions of owner <owner>` when two owner strings that become one user
   reacted alike). Report that error rather than editing rows by hand. It runs
   after `0022_annotation_actor_kind`.
+- Migration `0024_operator_profile` adds the `operator_audit` table, a
+  constant-default `sessions.operator_group` column and an index on
+  `sessions.user_id`. No data is rewritten. The operator profile is off until
+  you set `CAIRN_OPERATORS` or `CAIRN_OPERATOR_GROUP`.
 
 ### Changed
 

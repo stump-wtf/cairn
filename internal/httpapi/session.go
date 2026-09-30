@@ -11,6 +11,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/event"
+	"github.com/stump-wtf/cairn/internal/operator"
 	"github.com/stump-wtf/cairn/internal/session"
 )
 
@@ -73,6 +74,8 @@ func (v DevPasswordVerifier) Verify(actorID, secret string) bool {
 type SessionAuthenticator struct {
 	sessions session.Store
 	bearer   Authenticator
+	// operators is the configured operator profile; nil means none.
+	operators *operator.Set
 }
 
 // Authenticate implements Authenticator. Order matters: an explicit bearer token
@@ -102,13 +105,21 @@ func (a *SessionAuthenticator) Authenticate(r *http.Request) (*Principal, error)
 	// "sharing:manage is human-only"; no agent token or DevActorAuthenticator
 	// principal ever carries it), it is simply no longer withheld from the web
 	// session now that the UI that exercises it exists.
+	//
+	// Operator status is decided here, per request, from the session's
+	// recorded provenance and group against the current configuration, so a
+	// change to CAIRN_OPERATORS or CAIRN_OPERATOR_GROUP takes effect on the
+	// next request (SPEC-0023 REQ "Operator and User Profiles").
 	return &Principal{
-		ActorID: sess.ActorID,
-		UserID:  sess.UserID,
-		Channel: artifact.ChannelWeb,
-		Scopes:  map[string]bool{scopeArtifactsWrite: true, scopeAnnotationsWrite: true, scopeSharingManage: true},
-		Ambient: true,
-		Auth:    event.AuthSession,
+		ActorID:  sess.ActorID,
+		UserID:   sess.UserID,
+		Channel:  artifact.ChannelWeb,
+		Scopes:   map[string]bool{scopeArtifactsWrite: true, scopeAnnotationsWrite: true, scopeSharingManage: true},
+		Ambient:  true,
+		Auth:     event.AuthSession,
+		Issuer:   sess.Issuer,
+		Subject:  sess.Subject,
+		Operator: a.operators.IsOperator(sess.Issuer, sess.Subject, sess.OperatorGroup),
 	}, nil
 }
 
@@ -194,14 +205,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := s.users.ResolveActor(r.Context(), actor)
+	if err == nil && u.SuspendedAt != nil {
+		err = errUserSuspended
+	}
 	if err != nil {
-		s.log.ErrorContext(r.Context(), "web: resolve dev user failed", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		s.refuseSignIn(w, r, "web", err)
 		return
 	}
 	// Dev-password sessions carry no provider provenance: empty issuer and
-	// subject (SPEC-0012 records provenance only for real IdP logins).
-	sess, err := s.sessions.Create(r.Context(), "", "", u.Actor, u.ID, s.cfg.SessionTTL)
+	// subject (SPEC-0012 records provenance only for real IdP logins), so a
+	// dev-login session is never an operator's.
+	sess, err := s.sessions.Create(r.Context(), "", "", u.Actor, u.ID, "", s.cfg.SessionTTL)
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "web: create session failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

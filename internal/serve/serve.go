@@ -30,6 +30,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/httpapi"
 	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/objectstore"
+	"github.com/stump-wtf/cairn/internal/operator"
 	"github.com/stump-wtf/cairn/internal/outboundhook"
 	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/store"
@@ -247,6 +248,19 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 	} else if len(apiTokens) == 0 && cfg.DevLoginPassword == "" && !cfg.OIDCConfigured() {
 		logger.Warn("no API tokens (CAIRN_API_TOKENS), no OIDC (CAIRN_OIDC_ISSUER), and no dev web login (CAIRN_DEV_LOGIN_PASSWORD) configured: all authenticated endpoints will reject every caller")
 	}
+	// The operator profile (SPEC-0023 REQ "Operator and User Profiles"). A
+	// malformed CAIRN_OPERATORS entry fails boot rather than silently
+	// dropping an operator. The identities themselves are not logged.
+	operators, err := operator.Parse(cfg.OperatorsRaw, cfg.OperatorGroup)
+	if err != nil {
+		return err
+	}
+	if operators.Enabled() {
+		logger.Info("operator profile enabled", "operators", operators.Len(), "operator_group_set", operators.Group() != "")
+		if operators.Group() != "" && !cfg.OIDCConfigured() {
+			logger.Warn("CAIRN_OPERATOR_GROUP is set but OIDC is not configured: the group is read from the OIDC groups claim, so no session can match it")
+		}
+	}
 	if cfg.OIDCConfigured() && cfg.DevLoginPassword != "" {
 		logger.Warn("CAIRN_OIDC_ISSUER and CAIRN_DEV_LOGIN_PASSWORD are both set: OIDC wins — the dev-password login is disabled while OIDC is configured (ADR-0013)")
 	}
@@ -270,6 +284,7 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 		GitHubClientSecret:    cfg.GitHubClientSecret,
 		APITokens:             apiTokens,
 		DevInsecureBearerAuth: cfg.DevInsecureBearerAuth,
+		Operators:             operators,
 		AccessTokenTTL:        cfg.OAuthAccessTokenTTL,
 		RefreshTokenTTL:       cfg.OAuthRefreshTokenTTL,
 		OAuthRatePerSecond:    cfg.OAuthRatePerSecond,

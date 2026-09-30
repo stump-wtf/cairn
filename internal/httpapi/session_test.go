@@ -88,7 +88,7 @@ func TestSessionAuthenticatorBearerWins(t *testing.T) {
 // a missing/invalid cookie is unauthorized.
 func TestSessionAuthenticatorCookie(t *testing.T) {
 	store := session.NewMemoryStore()
-	sess, err := store.Create(context.Background(), "", "", "joe", "", time.Hour)
+	sess, err := store.Create(context.Background(), "", "", "joe", "", "", time.Hour)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}

@@ -13,7 +13,7 @@ func TestMemoryStoreLifecycle(t *testing.T) {
 	st := NewMemoryStore()
 	ctx := context.Background()
 
-	sess, err := st.Create(ctx, "", "", "joe", "", time.Hour)
+	sess, err := st.Create(ctx, "", "", "joe", "", "", time.Hour)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestMemoryStoreExpiry(t *testing.T) {
 	st.now = func() time.Time { return base }
 	ctx := context.Background()
 
-	sess, err := st.Create(ctx, "", "", "joe", "", time.Minute)
+	sess, err := st.Create(ctx, "", "", "joe", "", "", time.Minute)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestMemoryStoreUnknownAndEmpty(t *testing.T) {
 	if err := st.Delete(ctx, ""); err != nil {
 		t.Fatalf("delete empty = %v, want nil (idempotent)", err)
 	}
-	if _, err := st.Create(ctx, "", "", "", "", time.Hour); err == nil {
+	if _, err := st.Create(ctx, "", "", "", "", "", time.Hour); err == nil {
 		t.Fatal("create with empty actor must fail")
 	}
 }
@@ -94,7 +94,7 @@ func TestTokensAreDistinct(t *testing.T) {
 	ctx := context.Background()
 	seen := make(map[string]bool)
 	for i := 0; i < 100; i++ {
-		s, err := st.Create(ctx, "", "", "joe", "", time.Hour)
+		s, err := st.Create(ctx, "", "", "joe", "", "", time.Hour)
 		if err != nil {
 			t.Fatalf("create: %v", err)
 		}

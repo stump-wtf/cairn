@@ -166,9 +166,11 @@ func (s *Service) Revoke(ctx context.Context, userID, tokenID string) error {
 // token, touching last_used_at atomically in the same statement so every
 // successful authentication updates it with no extra round trip (issue #74
 // acceptance: "Update last_used_at on use"). Any failure — unknown or
-// revoked secret — is errs.ErrUnauthorized; the lookup is a single hashed,
-// parameterized query, so cost does not vary with which token matched
-// (SPEC-0007 REQ "Database Operation Standards").
+// revoked secret, or a suspended owner — is errs.ErrUnauthorized; the lookup
+// is a single hashed, parameterized query, so cost does not vary with which
+// token matched (SPEC-0007 REQ "Database Operation Standards"). Suspension
+// revokes a user's tokens as well; the owner check refuses one that raced
+// that revocation (SPEC-0023 "Suspending a user offboards them").
 func (s *Service) Authenticate(ctx context.Context, secret string) (*Token, error) {
 	if secret == "" {
 		return nil, errs.ErrUnauthorized
@@ -179,6 +181,7 @@ func (s *Service) Authenticate(ctx context.Context, secret string) (*Token, erro
 			UPDATE personal_access_tokens
 			SET last_used_at = $1
 			WHERE token_hash = $2 AND revoked_at IS NULL
+			  AND user_id IN (SELECT id FROM users WHERE suspended_at IS NULL)
 			RETURNING *)
 		SELECT `+tokenColumns+` FROM t JOIN users u ON u.id = t.user_id`,
 		now, hashSecret(secret),
