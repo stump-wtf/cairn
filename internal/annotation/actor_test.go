@@ -12,8 +12,8 @@ import (
 
 // TestWritesRequireDerivedActor pins the fail-closed half of SPEC-0016 EV-4 at
 // the service boundary: every annotation write refuses an actor with no id, no
-// derived kind, no auth method, or a kind that contradicts its auth method,
-// before it opens a transaction. The service here has no pool, so a write that
+// user, no derived kind, no auth method, or a kind that contradicts its auth
+// method, before it opens a transaction. The service here has no pool, so a write that
 // got past the check would panic rather than pass.
 //
 // Governing: ADR-0022 (server-derived actor kind), SPEC-0016 EV-3, EV-4.
@@ -60,6 +60,11 @@ func TestWritesRequireDerivedActor(t *testing.T) {
 		"invented auth":      {ID: "u1", Kind: event.KindAgent, Auth: event.AuthMethod("cookie")},
 		"human with a PAT":   {ID: "u1", Kind: event.KindHuman, Auth: event.AuthPAT},
 		"agent with session": {ID: "u1", Kind: event.KindAgent, Auth: event.AuthSession},
+		// SPEC-0023 REQ "Owner Model": annotations are stored under a user,
+		// so an actor with no user id, or one that is not a uuid, owns
+		// nothing and may not write.
+		"no user":        {ID: "u1", Kind: event.KindAgent, Auth: event.AuthPAT},
+		"malformed user": {ID: "u1", UserID: "u1", Kind: event.KindHuman, Auth: event.AuthSession},
 	}
 	for name, a := range bad {
 		t.Run(name, func(t *testing.T) {

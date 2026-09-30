@@ -29,9 +29,9 @@ func TestPrincipalEventActor(t *testing.T) {
 		p    Principal
 		want event.ActorKind
 	}{
-		{"session", Principal{ActorID: "alice", Channel: artifact.ChannelWeb, Ambient: true, Auth: event.AuthSession}, event.KindHuman},
-		{"human PAT", Principal{ActorID: "alice", Channel: artifact.ChannelAPI, IsAgent: false, Auth: event.AuthPAT}, event.KindAgent},
-		{"agent PAT", Principal{ActorID: "alice", Channel: artifact.ChannelAPI, IsAgent: true, Auth: event.AuthPAT}, event.KindAgent},
+		{"session", Principal{ActorID: "alice", UserID: unitUserID, Channel: artifact.ChannelWeb, Ambient: true, Auth: event.AuthSession}, event.KindHuman},
+		{"human PAT", Principal{ActorID: "alice", UserID: unitUserID, Channel: artifact.ChannelAPI, IsAgent: false, Auth: event.AuthPAT}, event.KindAgent},
+		{"agent PAT", Principal{ActorID: "alice", UserID: unitUserID, Channel: artifact.ChannelAPI, IsAgent: true, Auth: event.AuthPAT}, event.KindAgent},
 		{"oauth", Principal{ActorID: "alice", Channel: artifact.ChannelAPI, IsAgent: true, Auth: event.AuthOAuth}, event.KindAgent},
 		{"human api token", Principal{ActorID: "alice", Channel: artifact.ChannelAPI, Auth: event.AuthAPIToken}, event.KindAgent},
 		// A principal nobody classified is still never human.
@@ -46,8 +46,10 @@ func TestPrincipalEventActor(t *testing.T) {
 			if got.Kind != tc.want {
 				t.Errorf("Kind = %q, want %q", got.Kind, tc.want)
 			}
-			if got.ID != tc.p.ActorID || got.Channel != tc.p.Channel || got.Auth != tc.p.Auth {
-				t.Errorf("EventActor() = %+v, does not carry the principal's id/channel/auth", got)
+			// UserID is what annotation and run ownership compare
+			// (SPEC-0023 REQ "Owner Model"); ID stays the rendered actor.
+			if got.ID != tc.p.ActorID || got.UserID != tc.p.UserID || got.Channel != tc.p.Channel || got.Auth != tc.p.Auth {
+				t.Errorf("EventActor() = %+v, does not carry the principal's id/user/channel/auth", got)
 			}
 			if got.OnBehalfOf != "" {
 				t.Errorf("OnBehalfOf = %q, want empty (left for the caller)", got.OnBehalfOf)
