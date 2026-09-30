@@ -15,6 +15,8 @@ REST errors come back as JSON:
 
 MCP tools report the same pair as their error text, for example
 `not_found: not found or expired`. If you ask someone for help, include the `request_id`.
+A rejected request also lists what was wrong with it; [Errors](../product/errors.md) is
+the full reference.
 
 ## A read came back truncated
 
@@ -72,11 +74,12 @@ On your own instance, check first that each setting is on the right side: the se
 
 ## The request was rejected
 
-`400 validation_failed` means something in the request itself was wrong. The usual
-suspects:
+`400 validation_failed` means something in the request itself was wrong. The response's
+`violations` list says which field, why, and the limit it broke; each `reason` is
+explained in [Errors](../product/errors.md#reasons). The usual suspects:
 
 - **A TTL over 30 days.** A longer `X-Cairn-Ttl-Seconds` or `--ttl` is rejected, not
-  shortened.
+  shortened. See [`--ttl` is over the maximum](#--ttl-is-over-the-maximum).
 - **The wrong create tool.** `artifact_create` won't make a bundle or a trace. Use
   `bundle_create` or `run_create`.
 - **An empty body.** `artifact_create` needs a non-empty `body`.
@@ -87,17 +90,143 @@ suspects:
   parents before their children.
 - **A tag that breaks the rules.** Tags are lowercase `a-z`, `0-9`, and `. _ : / # -`,
   1 to 64 bytes each, with at most 32 per artifact. Cairn rejects a bad tag rather than
-  fixing it, so lowercase run ids and timestamps yourself.
+  fixing it, so lowercase run ids and timestamps yourself. (The CLI lower-cases
+  `--tag` for you; see [Uppercase tags](#uppercase-tags).)
 
 The MCP create tools also reject any field they don't define, such as `visibility` or
 `ttl`.
 
-`413 payload too large` means an upload is over the size limit (64 MiB per body by
-default), a webhook capture is over 5 MiB, or an MCP call is too big. For a large trace,
-page the spans or post it over REST.
+### `secret_detected`: a credential was found
+
+Cairn scans what you store for credentials. Code artifacts and bundles are refused when
+one turns up; everything else is masked (see
+[Secret redaction](./self-hosting.md#secret-redaction)). A refusal is a
+`400 validation_failed` with one violation per finding. Each names the field, the rule,
+and, where known, the line and column. None names the value:
+
+```json
+{"error": {"code": "validation_failed", "message": "…", "violations": [
+  {"field": "members[2].content", "location": "body", "reason": "secret_detected",
+   "rule": "github-pat", "line": 42, "column": 10,
+   "message": "a credential was detected (rule github-pat, line 42); remove it or resend with --redact=mask"}
+], "request_id": "…"}}
+```
+
+The field is `body` or `title` for a single artifact, and `members[n].content` for a
+bundle member, counted from zero. Nothing from a refused create is stored.
+
+- **Remove the credential** and send again. If it was real, rotate it too: it has already
+  left the machine it came from.
+- **Or store it masked.** The value becomes `[REDACTED]` and the rest is kept. With the
+  CLI, pass `--redact=mask`, for example `cairn add patch.diff --redact=mask`. Over REST,
+  send `X-Cairn-Redaction: mask`. Over MCP, pass `redaction: "mask"` to `artifact_create`
+  or `bundle_create`.
+- **`mask` is the only accepted value.** Scanning can't be turned off, so
+  `X-Cairn-Redaction: off` is itself `validation_failed`, with reason `unknown_value`.
+- **Refused although the content masks.** Rarely, Cairn finds a value it can't replace
+  cleanly. It refuses the write rather than store it, and `--redact=mask` doesn't help.
+  Remove the value and send again.
+- **The value is a harmless fixture.** Cairn can't tell a test value from a real one. The
+  operator can exempt known fixture values in the
+  [allowlist](./self-hosting.md#operator-allowlist); no request can.
+
+### `too_large_to_scan`: a field is over the scan cap
+
+Each text field is scanned up to a cap, 16 MiB by default. A larger text field is refused
+with reason `too_large_to_scan`, and `limit` gives the cap in bytes:
+
+```json
+{"field": "body", "location": "body", "reason": "too_large_to_scan", "limit": 16777216, "unit": "bytes", "message": "…"}
+```
+
+Split the content into smaller artifacts, or ask the operator whether the cap
+(`CAIRN_REDACTION_MAX_SCAN_BYTES`) can be raised. Binary bodies such as images and
+archives aren't scanned, so the cap doesn't apply to them. A webhook capture is never
+refused for being over the scan cap: the field is replaced with a notice and listed in
+the capture's `redaction_withheld`.
+
+### `--ttl` is over the maximum
+
+```text
+cairn: --ttl 60d exceeds the server's maximum of 30d
+```
+
+An artifact can live for at most 30 days. Cairn rejects a longer request rather than
+quietly shortening it, so you never believe a share lasts longer than it does. Over
+REST the same failure is a violation on `X-Cairn-Ttl-Seconds` with reason
+`exceeds_max`, `limit` `2592000` and unit `seconds`.
+
+Ask for 30 days or less: `--ttl 30d`, or `X-Cairn-Ttl-Seconds: 2592000`.
+The maximum isn't a server setting, so a self-hosted instance has the same 30-day cap.
+Only the default expiry, `CAIRN_DEFAULT_TTL` (7 days), is configurable. MCP create
+tools take no TTL at all, and always get the default.
+
+A TTL that isn't a number of seconds, such as `X-Cairn-Ttl-Seconds: 7d`, is
+`invalid_format`, and zero or a negative number is `not_positive`. The CLI converts
+`30m`, `24h` and `7d` to seconds for you.
+
+### Uppercase tags
+
+```json
+{"field": "tag", "location": "header", "reason": "uppercase", "value": "Size:M",
+ "message": "\"Size:M\" must be lowercase"}
+```
+
+The server rejects any tag with a capital letter, on every surface. It doesn't fold the
+case for you, because a routing rule downstream matches tags byte for byte, and a tag
+that silently changed would route somewhere you didn't expect. Send `size:m`.
+
+Every bad tag on a request is reported, not only the first, so a create carrying
+`Size:M` and `lane m` gets two violations and a message that starts `2 problems:`.
+Over MCP the field is the argument's index, `tags[0]`, rather than `tag`.
+
+### The CLI changed my tag
+
+```text
+cairn: warning: tag "size:M" sent as "size:m"
+```
+
+The CLI is the one place tag case is fixed for you. Before it sends a request, `cairn`
+lower-cases each `--tag` value that contains an uppercase ASCII letter, and prints this
+warning to stderr for each tag it changed. The warning goes to stderr, so `--json`
+output on stdout stays clean. The create goes ahead with the lower-cased tag.
+
+It changes only the case. Any other character that tags don't allow, such as the space
+in `--tag "lane m"`, is sent as you typed it, and the server's `invalid_charset`
+violation is printed instead. REST and MCP callers get no folding: an uppercase tag
+from them is rejected.
+
+### Payload too large
+
+`413 payload_too_large` means an upload is over the size limit (64 MiB per body by
+default), a webhook capture is over 5 MiB, or an MCP call is too big. Its violation has
+reason `too_large`. On an upload, `limit` is the cap in bytes; the other 413s don't
+state their cap yet. For a large trace, page the spans or post it over REST.
+
+### Rate limited
 
 `429 rate limit exceeded` comes from a webhook ingress URL, which limits requests per
 sending address and per endpoint. Back off and try again.
+
+## A checksum differs after upload
+
+You hashed your file, uploaded it, and the `checksum` in the response (or the
+`X-Cairn-Checksum` header on a read) is different. Look for `redacted: true` in the
+create response. It means Cairn found a credential and masked it: the stored body has
+`[REDACTED]` where the value was, and the stored SHA-256 is the hash of those masked
+bytes, not of your file.
+
+- **A declared checksum still works.** If you send `X-Cairn-Sha256` with your file's hash,
+  Cairn checks it against the bytes it received, before masking. The upload is accepted,
+  and the response carries the masked body's hash.
+- **Downloads match the masked hash.** Hash what you download from Cairn, not your local
+  copy.
+- **Deduplication uses the masked bytes.** Two uploads that differ only in the masked
+  value are stored once.
+
+The owner can see what was masked: the artifact's metadata shows status `masked`, a count,
+and the rule IDs, never the values.
+
 
 ## Webhook signature mismatches
 

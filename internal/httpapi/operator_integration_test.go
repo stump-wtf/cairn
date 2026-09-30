@@ -30,7 +30,7 @@ const (
 )
 
 // operatorServer stands up the adapter with OIDC wired against idp and the
-// operator profile parsed from operators and group, exactly as cairnd does.
+// operator profile parsed from operators and group, exactly as cairn serve does.
 // The dev bearer shortcut is on so a test can seed artifacts as an owner and
 // prove a bearer caller is refused the operator surface.
 func operatorServer(t *testing.T, idp *fakeIdP, operators, group string) *httptest.Server {

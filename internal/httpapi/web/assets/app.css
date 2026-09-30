@@ -223,6 +223,28 @@ code { font-family: var(--mono); }
 .comment-when { color: var(--t7); font: 400 10.5px var(--mono); }
 .comment-body { margin: 0; color: var(--t2); font: 400 13px var(--sans); line-height: 1.55; word-break: break-word; }
 .comment-body.tombstone { color: var(--t7); font-style: italic; }
+/* Rendered comment bodies (#411): goldmark output is block-level, so the
+   wrapper is a div and inner elements get comment-scale spacing mirroring
+   the .md-prose tokens at the comment's smaller size. */
+.comment-body > :first-child { margin-top: 0; }
+.comment-body > :last-child { margin-bottom: 0; }
+.comment-body p { margin: 6px 0; }
+.comment-body ul, .comment-body ol { margin: 6px 0; padding-left: 22px; }
+.comment-body li { margin: 2px 0; }
+.comment-body a { color: var(--green-3); text-decoration: underline; text-underline-offset: 2px; }
+.comment-body blockquote { margin: 6px 0; padding: 2px 12px; border-left: 3px solid var(--purple); background: var(--well); color: var(--t3); }
+.comment-body code { font-size: .95em; background: var(--well); border: 1px solid var(--border-3); border-radius: var(--radius-chip); padding: 0 4px; }
+.comment-body pre { margin: 8px 0; padding: 10px 12px; background: var(--well-2); border: 1px solid var(--border-2); border-radius: var(--radius-card); overflow-x: auto; }
+.comment-body pre code { background: none; border: none; padding: 0; }
+.comment-body h1, .comment-body h2, .comment-body h3,
+.comment-body h4, .comment-body h5, .comment-body h6 { margin: 8px 0 4px; color: var(--t1); font: 600 13px/1.4 var(--sans); }
+.comment-body h1 { font-size: 15px; }
+.comment-body h2 { font-size: 14px; }
+.comment-body strong { color: var(--t0); font-weight: 600; }
+.comment-body hr { border: none; border-top: 1px solid var(--border-2); margin: 8px 0; }
+.comment-body img { max-width: 100%; height: auto; }
+.comment-body table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 6px 0; }
+.comment-body th, .comment-body td { border: 1px solid var(--border-2); padding: 2px 6px; }
 .comments-empty { margin: 0; color: var(--t7); font: 400 12px var(--sans); }
 
 /* ---- Footer ---- */

@@ -59,7 +59,7 @@ func withTokenOperators(t *testing.T, pool *pgxpool.Pool, cfg *Config) {
 	cfg.Operators = set
 }
 
-// newResolvedServer builds the adapter over st exactly as cairnd does:
+// newResolvedServer builds the adapter over st exactly as cairn serve does:
 // construct, then resolve CAIRN_API_TOKENS, failing the test on a boot error.
 func newResolvedServer(t *testing.T, st *store.Store, cfg Config, logger *slog.Logger) *Server {
 	t.Helper()

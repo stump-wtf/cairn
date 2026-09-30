@@ -34,7 +34,11 @@ reaches 1.0.
   two or more OIDC identities acted as the same email, or for GitHub sessions
   (keyed then on the renameable login).
   The dev logins resolve their actor to a user the same way, so they keep the
-  Bin they had.
+  Bin they had. Reactions and comments stay owned per actor kind: the reaction
+  key becomes `(artifact_id, anchor_type, anchor_key, emoji, user_id,
+  actor_kind)`, and `actor_kind` and `on_behalf_of` keep their stored values,
+  so an agent's reaction and its human's stay two rows and per-kind tallies
+  are unchanged.
 - **Operator profile** (SPEC-0023 REQ "Operator and User Profiles" and
   "Operator Surfaces Bound Tenant Data and Never Read It", #330). The operator
   is named by `CAIRN_OPERATORS` (comma-separated `<issuer>|<subject>`) or
@@ -78,7 +82,12 @@ reaches 1.0.
   Targets must be `https` and resolve to public addresses, re-checked on
   every dial so a rebinding name is never dialled; redirects are failed
   deliveries. `CAIRN_OUTBOUND_ALLOW_HTTP=true` admits `http://` targets and
-  logs a WARN at startup.
+  logs a WARN at startup. A subscription receives every event kind about its
+  owner's artifacts that its event-type filter admits (no filter admits all):
+  `artifact.created`, and the `comment.created`, `reaction.*` and
+  `run.closed` events below. Once the delivery queue is more than half full,
+  events other than `artifact.created` are dropped and counted first
+  (SPEC-0016 EV-7, EV-8).
 - **Existing users land on their account when they sign in** (SPEC-0023).
   Matching by verified email is no longer one-shot: an identity whose user has
   no verified email yet is matched again on every sign-in that carries one, so
@@ -115,10 +124,10 @@ reaches 1.0.
   one empty table.
 
 - **Legacy `CAIRN_API_TOKENS` entries now fail boot.** Every free-form
-  `secret:actor[:role]` entry is refused, with no grace period, and `cairnd`
-  exits with `CAIRN_API_TOKENS entry N: legacy secret:actor entries are no
-  longer accepted; …`, naming the entry's position and the new form, never the
-  secret. Before upgrading, rewrite each entry as
+  `secret:actor[:role]` entry is refused, with no grace period, and
+  `cairn serve` exits with `CAIRN_API_TOKENS entry N: legacy secret:actor
+  entries are no longer accepted; …`, naming the entry's position and the new
+  form, never the secret. Before upgrading, rewrite each entry as
   `secret:<user>[:agent|:human]` naming an operator (Settings → Account shows
   your `<issuer>|<subject>`), make sure that operator has signed in once and
   is in `CAIRN_OPERATORS`, and move every other consumer to a personal access
@@ -126,13 +135,13 @@ reaches 1.0.
   to the **agent** role: add `:human` where a script changes sharing, expiry
   or deletes.
 - **A legacy token actor's Bin is orphaned unless you move it.** Migration
-  `0018` turned each old token actor into a user known by that string, and
+  `0023` turned each old token actor into a user known by that string, and
   until now the token reached that user. After upgrading no credential acts
   as it: a token names an operator's own user, and a sign-in claims a legacy
   user only by a verified email equal to its name, so a non-email actor such
   as `ci-bot` is never claimed. Its Bin (pins, permanent artifacts, anything
   not yet expired) stays in the database with nobody able to manage or delete
-  it. Nothing is deleted, so you can fix this any time after `0018` has run
+  it. Nothing is deleted, so you can fix this any time after `0023` has run
   (the queries need its columns), but expiring artifacts are still reaped on
   schedule meanwhile. List what such users own:
 
@@ -175,18 +184,71 @@ reaches 1.0.
   upgrade.
 - **`CAIRN_DEV_INSECURE_BEARER_AUTH` with an `https` `CAIRN_BASE_URL` now fails
   boot** (A21). It was never safe there.
-- **Back up the database before upgrading past `0018_owner_columns`.** It
+- **Back up the database before upgrading past `0023_owner_columns`.** It
   resolves every owner and actor string to a user and drops the strings in one
   transaction; there is no in-database way back, so rollback is a restore from
   that backup. Before dropping anything it compares every owner's Bin; if any
   would change, the whole migration rolls back, the old schema is left intact,
-  and `cairnd` refuses to start with `ownership backfill would change the Bin
-  of owner <owner>` naming the first mismatch. Report that error rather than
-  editing rows by hand.
-- Migration `0019_operator_profile` adds the `operator_audit` table, a
+  and `cairn serve` refuses to start with `ownership backfill would change the
+  Bin of owner <owner>` naming the first mismatch (or `would merge the
+  reactions of owner <owner>` when two owner strings that become one user
+  reacted alike). Report that error rather than editing rows by hand. It runs
+  after `0022_annotation_actor_kind`.
+- Migration `0024_operator_profile` adds the `operator_audit` table, a
   constant-default `sessions.operator_group` column and an index on
   `sessions.user_id`. No data is rewritten. The operator profile is off until
   you set `CAIRN_OPERATORS` or `CAIRN_OPERATOR_GROUP`.
+
+### Changed
+
+- **Outbound webhooks**: the `artifact.created` body appends two keys to `data`:
+  `actor_kind` (`human` or `agent`) and `auth` (`session`, `oauth`, `pat` or
+  `api_token`), both derived from the creator's credential. No other byte
+  changes. The encoder now handles every SPEC-0016 event kind, delivered only
+  to owned subscriptions (above). (ADR-0022, SPEC-0016, #305)
+- **Traces announce themselves.** Opening a run, or uploading one whole, now
+  emits `artifact.created` with `share_type: "trajectory"`, like every other
+  artifact, so subscriptions start receiving trace creations. A consumer that routes on `share_type` or tags needs no change;
+  one that assumed every event was a single-body artifact or a bundle should
+  ignore `trajectory`. Closing a run (`POST /v1/runs/{id}/close`), and a batch
+  run born closed, also emit `run.closed` with its status, span count, start,
+  end and duration; like the other new kinds it goes to owned subscriptions
+  only. (ADR-0022, SPEC-0016 EV-2, EV-3, SPEC-0023, #313)
+- **Annotations announce themselves.** A new comment emits `comment.created`,
+  a new reaction `reaction.added` (a duplicate click emits nothing), and each
+  removed reaction `reaction.removed`, whichever surface made the change.
+  Reaction events carry `approval_class` (the emoji is in the approval class)
+  and `approval` (in the class **and** stored by a browser session). An
+  agent's 👍 is stored and announced, but never as an approval, and no
+  request field can change that. The class is set by the new
+  `CAIRN_APPROVAL_REACTIONS` (comma-separated, default 👍 ✅ ✔️; skin tones
+  and VS-16 are ignored when matching), and a malformed entry fails startup.
+  Like `run.closed`, these kinds go to owned subscriptions only. (ADR-0022,
+  SPEC-0016 EV-2, EV-5, #311)
+- **Reactions and comments are owned per actor kind.** Each row stores the
+  server-derived `actor_kind` (`human` for a browser session, `agent` for every
+  bearer credential), and reaction idempotency is keyed per
+  `(actor_id, actor_kind)`. An agent reacting with your credentials no longer
+  shares, occupies or can withdraw your own reaction: un-react, delete-by-id
+  (403 on the other kind's row) and comment edit/delete all match the kind.
+  Reactions gain `on_behalf_of`, set exactly as on comments (the REST body
+  field, or the MCP client's name). Reaction and comment responses carry
+  `actor_kind`; reaction tallies add `human_count` and `agent_count`, and
+  `reacted` now means "a row you, as this kind, can remove". Rows written
+  before the upgrade read back `actor_kind: ""`, are never counted as human,
+  and only their own actor removes them. Migration 0022 builds the new unique
+  index concurrently and runs outside a transaction; it is safe to rerun.
+  `GET /v1/artifacts/{id}/reactions?include=reactors` also returns the rows
+  behind each tally, each with `actor_id`, `actor_kind` and `on_behalf_of`.
+  (ADR-0022, SPEC-0016 EV-6, #159)
+
+  **Upgrade note: a binary rollback breaks reactions.** Migration 0022 drops
+  the old five-column reaction key, and a binary from before this change
+  upserts on exactly that key. Once 0022 has applied, an older cairnd returns
+  500 on every reaction write (Postgres 42P10, no matching unique constraint)
+  until you roll forward again; the same holds for an old process still
+  serving while the new one migrates. The old key cannot be recreated once a
+  human and an agent row share an actor. Roll forward, not back.
 
 ## [0.1.1] - Unreleased
 
@@ -196,12 +258,14 @@ Changes since `v0.1.0`, staged for the next patch release.
 
 - **GitHub OAuth login** — a provider interface for web authentication with a
   GitHub provider as the first implementation, and login-method provenance
-  recorded on sessions. (ADR-0017, #259)
+  recorded on sessions. (ADR-0019, SPEC-0013, #259)
 
 ### Fixed
 
 - CI checks out the PR head SHA rather than the branch ref, so required checks
   gate the exact commit under review. (#245)
+- CI's integration job probes Postgres over TCP, so the tests stop racing the
+  database's first-boot initialisation. (#353)
 - Self-hosting guide: corrected env secrets and the `CAIRN_API_TOKENS` compose
   passthrough. (#239)
 - Docs build: unlinked two repository-host references that broke the build, and
@@ -209,8 +273,25 @@ Changes since `v0.1.0`, staged for the next patch release.
 
 ### Added (records)
 
-- ADR-0020 + SPEC-0013 — single-binary runtime with embedded docs; ADR-0021 +
-  SPEC-0014 — Prometheus metrics led by storage and expiry. (#251, #254, #255)
+- ADR-0019 + SPEC-0013 — GitHub login for the web app shell; ADR-0020 +
+  SPEC-0015 — single-binary runtime with embedded docs; ADR-0021 + SPEC-0014 —
+  Prometheus metrics led by storage and expiry. (#251, #254, #255, #257)
+- The Operation Stumply design records, accepted: ADR-0022 + SPEC-0016
+  (annotation and trace lifecycle events), ADR-0023 + SPEC-0017 (secret
+  redaction at ingest), ADR-0024 (enrollment modes; GitHub sign-in fails
+  closed), ADR-0025 + SPEC-0019 (actionable validation errors), ADR-0026 +
+  SPEC-0020 (opt-in permanent retention), ADR-0027 + SPEC-0021 (structured
+  receipts), ADR-0028 + SPEC-0022 (search and export by tag), ADR-0029 +
+  SPEC-0023 (teams and tenancy). Design only; none of it is implemented in this
+  release. (#360)
+
+### Removed
+
+- The repo-root production deploy path: `DEPLOY.md`, `docker-compose.prod.yml`
+  and `deploy/Caddyfile`. The prod compose never forwarded `CAIRN_API_TOKENS`,
+  `CAIRN_OIDC_*` or `CAIRN_GITHUB_*`, so it rejected every authenticated
+  caller. The self-hosting guide is now the one documented deploy path, and
+  `.env.example` lists the sign-in variables. (#362)
 
 ## [0.1.0] - 2026-09-12
 

@@ -1,4 +1,4 @@
-package main
+package serve
 
 import (
 	"bytes"
@@ -33,10 +33,10 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("CAIRN_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("set CAIRN_TEST_DATABASE_URL to run cairnd integration tests")
+		t.Skip("set CAIRN_TEST_DATABASE_URL to run cairn serve integration tests")
 	}
 	ctx := context.Background()
-	schema := fmt.Sprintf("cairnd_test_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("serve_test_%d", time.Now().UnixNano())
 	admin, err := db.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
@@ -68,10 +68,10 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 }
 
 // TestLeftoverVariableDeliversNothing is scenario "A leftover variable
-// delivers nothing", through the same wiring run() uses: with the removed
-// variables still set and pointing at a live receiver, cairnd's config loads,
-// its emitter runs, and an artifact tagged handoff — the operator's and
-// another user's — makes no request to that URL. The positive control is the
+// delivers nothing", through the same wiring Run uses: with the removed
+// variables still set and pointing at a live receiver, cairn serve's config
+// loads, its emitter runs, and an artifact tagged handoff — the operator's
+// and another user's — makes no request to that URL. The positive control is the
 // operator's own subscription: its health shows exactly one attempt, so the
 // events did flow through the delivery pipeline, to the owner's subscription
 // only.
@@ -110,8 +110,8 @@ func TestLeftoverVariableDeliversNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The operator's replacement subscription. Created through a policy that
-	// admits the loopback receiver; cairnd's own policy (the emitter's) then
-	// refuses to dial it, which still records the attempt.
+	// admits the loopback receiver; cairn serve's own policy (the emitter's)
+	// then refuses to dial it, which still records the attempt.
 	sealer, _ := subscription.ParseKey(key)
 	creator := subscription.NewService(pool, subscription.Options{
 		Sealer: sealer,
@@ -130,7 +130,13 @@ func TestLeftoverVariableDeliversNothing(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); emitter.Run(runCtx) }()
 	defer func() { cancel(); <-done }()
-	st := store.New(pool, objectstore.NewMemory(), newStoreOptions(cfg, emitter))
+	// The store as Run builds it, scanner included: a store without one
+	// refuses every create (ADR-0023).
+	scanner, err := newRedactionScanner(cfg, quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := store.New(pool, objectstore.NewMemory(), withRedaction(newStoreOptions(cfg, emitter), cfg, scanner, nil, quietLogger()))
 
 	for _, u := range []*user.User{operatorUser, otherUser} {
 		if _, err := st.CreateArtifact(ctx, store.CreateArtifactInput{

@@ -34,6 +34,8 @@ type CreateBundleOptions struct {
 	// Tags are client-asserted routing strings on the bundle (ADR-0018), sent
 	// as the same comma-separated X-Cairn-Tags header a single create uses.
 	Tags []string
+	// Redaction is the writer's downgrade; see CreateArtifactOptions.Redaction.
+	Redaction string
 }
 
 // CreateBundle POSTs all files as a single multipart/form-data request to
@@ -81,6 +83,9 @@ func (c *Client) CreateBundle(ctx context.Context, files []BundleFile, opts Crea
 	}
 	if len(opts.Tags) > 0 {
 		req.Header.Set("X-Cairn-Tags", strings.Join(opts.Tags, ","))
+	}
+	if opts.Redaction != "" {
+		req.Header.Set(RedactionHeader, opts.Redaction)
 	}
 	resp, err := c.send(req)
 	if err != nil {

@@ -118,13 +118,19 @@ type Config struct {
 	// runs normally.
 	EncryptionKeyRaw string
 	// OutboundAllowHTTP is CAIRN_OUTBOUND_ALLOW_HTTP: admit http://
-	// subscription targets. Risky and off by default; cairnd WARNs at startup
-	// when it is on (REQ "Subscription Target Safety").
+	// subscription targets. Risky and off by default; cairn serve WARNs at
+	// startup when it is on (REQ "Subscription Target Safety").
 	OutboundAllowHTTP bool
 	// SubscriptionsPerUser and SubscriptionsPerTeam are the per-owner
 	// ceilings (CAIRN_SUBSCRIPTIONS_PER_USER / _PER_TEAM, default 5 / 10).
 	SubscriptionsPerUser int
 	SubscriptionsPerTeam int
+
+	// ApprovalReactions is CAIRN_APPROVAL_REACTIONS split on commas: the emoji
+	// whose reaction is an approval (ADR-0022, SPEC-0016 EV-5). Empty means the
+	// default class, 👍 ✅ ✔️. cmd/cairnd normalizes and validates it with
+	// annotation.NewApprovalClass at startup, so a bad entry fails the process.
+	ApprovalReactions []string
 
 	// OAuth 2.1 authorization-server tuning (SPEC-0007, ADR-0004):
 	// access-token lifetime (~1h default), rotating refresh-token lifetime
@@ -213,6 +219,12 @@ func Load() (*Config, error) {
 		GitHubClientSecret: os.Getenv("CAIRN_GITHUB_CLIENT_SECRET"),
 
 		EncryptionKeyRaw: os.Getenv("CAIRN_ENCRYPTION_KEY"),
+	}
+	// Governing: SPEC-0016 EV-5 "Approval Class and the Approval Bit".
+	for _, raw := range strings.Split(os.Getenv("CAIRN_APPROVAL_REACTIONS"), ",") {
+		if e := strings.TrimSpace(raw); e != "" {
+			c.ApprovalReactions = append(c.ApprovalReactions, e)
+		}
 	}
 
 	var err error

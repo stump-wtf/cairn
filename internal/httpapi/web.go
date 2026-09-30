@@ -17,6 +17,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/markdown"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 )
 
@@ -354,7 +355,7 @@ func (s *Server) renderShellFor(w http.ResponseWriter, r *http.Request, wantPref
 
 // optionalPrincipal resolves the caller's principal when the request carries
 // valid credentials (a session cookie or a bearer token), or reports false for
-// an anonymous link read. Like optionalUserID it never rejects: the shell is a
+// an anonymous link read. Like optionalActor it never rejects: the shell is a
 // link-capability read, so an unauthenticated viewer still sees the artifact.
 func (s *Server) optionalPrincipal(r *http.Request) (*Principal, bool) {
 	if s.auth == nil {
@@ -492,10 +493,15 @@ type commentLine struct {
 	ID         int64
 	Actor      string
 	OnBehalfOf string
-	Body       string
-	When       string
-	IsReply    bool
-	Deleted    bool
+	// BodyHTML is the comment body rendered through the internal/markdown
+	// goldmark pipeline (no html.WithUnsafe + the bluemonday sanitizer, the
+	// same two-layer stance as artifact bodies), so the comment-item partial
+	// shows formatted HTML instead of literal markdown source (#411). The
+	// template emits it verbatim; deleted comments never reach it.
+	BodyHTML template.HTML
+	When     string
+	IsReply  bool
+	Deleted  bool
 	// AnchorContext is a short human cue for a non-whole-artifact anchor — e.g.
 	// `on span s2` or `on "…quote…"` — shown as a purple prefix on the comment
 	// card (design t7a "anchor context"). Empty for a whole-artifact comment.
@@ -625,7 +631,7 @@ func toCommentLines(cs []annotation.Comment) []commentLine {
 			ID:            c.ID,
 			Actor:         c.ActorID,
 			OnBehalfOf:    c.OnBehalfOf,
-			Body:          c.Body,
+			BodyHTML:      markdown.RenderHTML(c.Body),
 			When:          humanizeSince(c.CreatedAt),
 			IsReply:       c.ParentID != nil,
 			Deleted:       c.Deleted,

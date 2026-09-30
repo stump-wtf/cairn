@@ -29,8 +29,9 @@ process, one database, one bucket.
 
 ## Which variable is which
 
-Several names look alike but belong to different programs. The server,
-`cairnd`, reads its settings from its own environment. The `cairn` CLI reads
+Several names look alike but belong to different programs. The server — the
+same `cairn` binary, run as `cairn serve` — reads its settings from its own
+environment. The `cairn` CLI reads
 different names, from the shell of whoever is running it. Setting a server
 variable in your shell does nothing for the CLI, and the reverse is also true.
 
@@ -51,8 +52,10 @@ is the exception: it rejects `CAIRN_API_TOKENS` secrets with `401`.
 
 ## Configuration
 
-Everything comes from the environment; `cairnd` takes no flags. Every variable
-is read from the `CAIRN_` namespace and nothing is ever loaded from a file.
+Everything comes from the environment; `cairn serve` takes no flags. Every variable
+is read from the `CAIRN_` namespace. The one file cairn ever reads is the
+optional redaction allowlist that `CAIRN_REDACTION_ALLOWLIST_FILE` names (see
+[Secret redaction](#secret-redaction)).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -76,6 +79,7 @@ is read from the `CAIRN_` namespace and nothing is ever loaded from a file.
 | `CAIRN_ENCRYPTION_KEY` | *(empty)* | 32 random bytes, base64 (`openssl rand -base64 32`), that encrypt [outbound subscription](#outbound-subscriptions) secrets at rest. **Unset, nobody can create a subscription**; everything else runs. A malformed value fails boot. Never logged. Wired through the compose file above. |
 | `CAIRN_SUBSCRIPTIONS_PER_USER` / `CAIRN_SUBSCRIPTIONS_PER_TEAM` | `5` / `10` | Most outbound subscriptions one user, or one team, may own (1 to 1000). |
 | `CAIRN_OUTBOUND_ALLOW_HTTP` | `false` | **Risky.** Admit plain `http://` subscription targets. Cairn logs a WARN at startup while it's on ([why](#outbound-subscriptions)). Deliberately **not** wired through the compose file above. |
+| `CAIRN_APPROVAL_REACTIONS` | 👍,✅,✔️ | Comma-separated emoji whose reaction counts as an approval on reaction events. Skin tones and VS-16 are ignored when matching. Only a browser-session reaction is ever an approval. A malformed entry fails startup. |
 | `CAIRN_DEFAULT_TTL` | `168h` | Default artifact expiry (Go duration; 7 days). |
 | `CAIRN_MAX_UPLOAD_BYTES` | `67108864` | Max upload size, enforced incrementally — an oversize upload is rejected mid-stream with 413, not after buffering. |
 | `CAIRN_PREVIEW_MAX_BYTES` | `5242880` | Bodies above this skip the rich viewer and use the generic file path. |
@@ -88,6 +92,10 @@ is read from the `CAIRN_` namespace and nothing is ever loaded from a file.
 | `CAIRN_HOOK_ENDPOINT_RATE_PER_SECOND` / `CAIRN_HOOK_ENDPOINT_RATE_BURST` | `10` / `50` | Per-endpoint limit on the same route. |
 | `CAIRN_REAP_INTERVAL` / `CAIRN_REAP_BATCH` / `CAIRN_REAP_OBJECT_GRACE` | `1h` / `500` / `1h` | Background expiry-reaper tuning. |
 | `CAIRN_STAGING_LIFECYCLE_TTL` | `168h` | S3 lifecycle expiration applied to the `staging/` prefix only, so crashed-upload debris is reaped. Never applied to committed blobs. |
+| `CAIRN_REDACTION_REJECT_TYPES` | `code,bundle` | Share types whose creates are refused, not masked, when a credential is found. See [Secret redaction](#secret-redaction). |
+| `CAIRN_REDACTION_MAX_SCAN_BYTES` | `16777216` | Per-field credential-scan cap in bytes (16 MiB). |
+| `CAIRN_REDACTION_OVERSIZE` | `reject` | What happens to a text field over the scan cap: `reject` or `store_unscanned`. **Leave it at `reject`.** |
+| `CAIRN_REDACTION_ALLOWLIST_FILE` | *(empty)* | Path to the operator's value-only allowlist TOML. Empty means no allowlist. |
 
 Three settings are easy to get wrong:
 
@@ -104,7 +112,7 @@ Three settings are easy to get wrong:
   development seams.** The dev password is disabled the moment any real
   provider is configured, OIDC (`CAIRN_OIDC_ISSUER`) or GitHub
   (`CAIRN_GITHUB_CLIENT_ID`), and its route then answers `404`. The insecure
-  bearer shortcut defaults off, and `cairnd` refuses to start with it on
+  bearer shortcut defaults off, and `cairn serve` refuses to start with it on
   while `CAIRN_BASE_URL` is `https`. Leave both alone on a real deployment.
 - **Your IdP must mark emails verified, or you must trust it.** A sign-in is
   keyed on the provider's `(issuer, subject)`. Its email only identifies a
@@ -162,7 +170,9 @@ services:
     volumes: [miniodata:/data]
     restart: unless-stopped
 
-  cairnd:
+  # The image's entrypoint runs the server (`cairn serve`); no command
+  # override is needed.
+  cairn:
     image: ghcr.io/stump-wtf/cairn:latest
     depends_on:
       postgres: {condition: service_healthy}
@@ -184,11 +194,12 @@ services:
       CAIRN_OPERATORS: ${CAIRN_OPERATORS:-}
       CAIRN_OPERATOR_GROUP: ${CAIRN_OPERATOR_GROUP:-}
       CAIRN_ENCRYPTION_KEY: ${CAIRN_ENCRYPTION_KEY:-}
+      CAIRN_APPROVAL_REACTIONS: ${CAIRN_APPROVAL_REACTIONS:-}
     restart: unless-stopped
 
   caddy:
     image: caddy:2-alpine
-    depends_on: [cairnd]
+    depends_on: [cairn]
     ports: ["80:80", "443:443"]
     environment:
       CAIRN_DOMAIN: ${CAIRN_DOMAIN}
@@ -211,7 +222,7 @@ and next to it a three-line `Caddyfile`:
 
 {$CAIRN_DOMAIN} {
 	encode gzip
-	reverse_proxy cairnd:8080 {
+	reverse_proxy cairn:8080 {
 		header_up X-Forwarded-For {remote_host}
 	}
 }
@@ -248,11 +259,11 @@ quay.io. Any S3-compatible store works; substitute Garage or MinIO from your
 preferred registry freely.
 </details>
 
-`docker compose logs cairnd` on a healthy start looks like this:
+`docker compose logs cairn` on a healthy start looks like this:
 
 ```json
 {"time":"…","level":"INFO","msg":"retention reaper started","interval":"1h0m0s","batch":500}
-{"time":"…","level":"INFO","msg":"cairnd listening","addr":":8080"}
+{"time":"…","level":"INFO","msg":"cairn serve listening","addr":":8080"}
 ```
 
 Migrations run on first boot before that line — there is no migrate step to
@@ -270,7 +281,7 @@ sign-in: see [First run: bootstrap a credential](#first-run-bootstrap-a-credenti
 
 ```bash
 git clone https://github.com/stump-wtf/cairn && cd cairn
-go build -o cairnd ./cmd/cairnd
+go build -o cairn ./cmd/cairn
 
 export CAIRN_DATABASE_URL='host=localhost port=5432 user=cairn password=secret dbname=cairn sslmode=disable'
 export CAIRN_BASE_URL='https://cairn.example.com'
@@ -278,7 +289,7 @@ export CAIRN_S3_ENDPOINT='s3.example.com'
 export CAIRN_S3_ACCESS_KEY='…'
 export CAIRN_S3_SECRET_KEY='…'
 export CAIRN_S3_USE_SSL=true
-./cairnd
+./cairn serve
 ```
 
 Go 1.26.5 or newer (see `go.mod`). `sslmode=disable` above assumes the
@@ -297,10 +308,13 @@ healthy-start logs are the same two lines as the Docker path.
 | `CAIRN_API_TOKENS entry N: user is not an operator` | The Nth token names a real user who is not listed in `CAIRN_OPERATORS`. Give them a personal access token instead. |
 | `CAIRN_API_TOKENS entry N: no user; …` | Nobody with that identity or verified email has signed in yet. Sign in once, then restart. |
 | `config CAIRN_ENCRYPTION_KEY: …` | The key isn't base64, or doesn't decode to 32 bytes. Generate one with `openssl rand -base64 32`. The error never repeats the value. |
+| `config CAIRN_REDACTION_…: …` | A redaction variable has a value cairn does not accept, such as a `CAIRN_REDACTION_OVERSIZE` other than `reject` or `store_unscanned`, or a scan cap that is not a positive integer. |
+| `ingest redaction: redaction allowlist <path>: …` | The allowlist file is missing, does not parse, or has an entry cairn refuses. The message names the entry. See [the allowlist format](#operator-allowlist). |
 
-All of them say which one failed in the log line — `db:`, `s3:`,
-`CAIRN_API_TOKENS entry N` — and fail closed rather than starting
-half-configured. A token error names the entry's position, never its secret.
+All of them say which one failed in the log line — `db:`, `s3:`, `config`,
+`ingest redaction:`, `CAIRN_API_TOKENS entry N` — and fail closed rather than
+starting half-configured. A token error names the entry's position, never its
+secret.
 
 ### Behind a reverse proxy
 
@@ -459,7 +473,7 @@ no API tokens (CAIRN_API_TOKENS), no OIDC (CAIRN_OIDC_ISSUER), and no dev web lo
 recreate the server so it reads the new values. `docker compose up -d` does
 that when `.env` changes; `docker compose restart` does not, because it keeps
 the old environment. On the binary path, export the variables in the
-environment `cairnd` starts from and restart it instead.
+environment `cairn serve` starts from and restart it instead.
 
 **2. Sign in** at `/login` in a browser. Settings → **Account** shows the
 `<issuer>|<subject>` you signed in as.
@@ -515,10 +529,134 @@ Several entries go in one value, separated by commas.
   token owned stay with that actor's user, and no credential acts as it any
   more. A non-email actor is never claimed by a sign-in either, so its Bin is
   orphaned. The CHANGELOG upgrade note has the SQL that lists those
-  artifacts and moves them to your user. It needs migration `0018`'s
+  artifacts and moves them to your user. It needs migration `0023`'s
   columns, so run it once that migration has applied.
 - Generate secrets with something like `openssl rand -hex 32`. Cairn keeps
   only their SHA-256 digests in memory and never logs one.
+
+## Secret redaction
+
+Cairn scans every text it stores for credentials before it stores it:
+artifact bodies and titles, bundle members, comments, trace runs and spans, and
+webhook captures. A hit is either **masked**, which replaces only the secret
+value with the literal `[REDACTED]` and stores the rest, or **rejected**, which
+refuses the write with an error that names the field, the rule, and the line,
+never the value. The engine is the gitleaks v8 library with its default ruleset
+plus cairn's own rules for the shapes agents leak most: `Authorization`
+headers, API-key headers, passwords in URLs, secret-named assignments and flags,
+and `curl -u`. See [ADR-0023](../decisions/ADR-0023.md) and
+[SPEC-0017](../specs/ingest-redaction/index.md).
+
+**There is deliberately no off switch.** No variable, request header, or tool
+argument turns scanning off, and `cairn serve` refuses to start if the scanner cannot
+be built. A writer can only downgrade a rejecting type to masking for one
+request (`X-Cairn-Redaction: mask`, `--redact=mask`, or `redaction: "mask"` over
+MCP). Any other value is refused: the API answers `validation_failed`, and the
+CLI stops with a usage error before it sends anything.
+
+### What is masked and what is rejected
+
+| Content | Fields scanned | Default |
+|---|---|---|
+| `markdown`, and a `file` whose body sniffs as text | body, title | mask |
+| `code` | body, title | **reject** |
+| `bundle` | each text member, title | **reject** |
+| Trace run (batch create and append) | run title, prompt, span name, args, output | mask |
+| Comment (create and edit) | body | mask |
+| Webhook capture | query, headers, body | mask |
+
+A `file` upload whose media type names a programming language is stored as
+code, so it rejects like code. Masking changes the stored bytes, so the stored
+SHA-256 is of the masked body and the create response says `redacted: true`
+(see [Troubleshooting](./troubleshooting.md#a-checksum-differs-after-upload)).
+The owner sees the outcome on each artifact: a status (`clean`, `masked`,
+`not_scanned_binary`, `not_scanned_oversize`, or `unscanned` for content stored
+before scanning existed), a count, and the rule IDs. Never the value.
+
+### Variables
+
+| Variable | Default | Accepted values |
+|---|---|---|
+| `CAIRN_REDACTION_REJECT_TYPES` | `code,bundle` | Comma-separated share types, case-insensitive, whitespace trimmed. Only artifact and bundle creates consult it: traces, comments, and webhook captures always mask. Names are not checked against the known share types, so a misspelt type silently masks. Empty or unset means the default. |
+| `CAIRN_REDACTION_MAX_SCAN_BYTES` | `16777216` (16 MiB) | A positive integer number of bytes, applied to each scanned field. An artifact or bundle body over 1 MiB is scanned in overlapping windows read back from staging, never buffered whole. Zero, a negative number, or a non-integer stops startup. |
+| `CAIRN_REDACTION_OVERSIZE` | `reject` | `reject` refuses a text field over the cap with `too_large_to_scan`. `store_unscanned` stores it unscanned with status `not_scanned_oversize`. Anything else, including a different case, stops startup. |
+| `CAIRN_REDACTION_ALLOWLIST_FILE` | *(empty)* | A path to an operator allowlist TOML, described below. Empty means no allowlist. A file that is missing or does not parse stops startup. |
+
+The compose file above passes none of these through, so the defaults apply.
+To change one, add it to the `cairn` service's `environment`. For an
+allowlist, also mount the file read-only into the container and point the
+variable at the path inside it.
+
+Webhook captures are never refused, because the sender is an anonymous third
+party. Under `reject`, a capture field over the cap is replaced with a notice
+and named in the capture's `redaction_withheld` list instead.
+
+:::warning[`CAIRN_REDACTION_OVERSIZE=store_unscanned` stores credentials]
+With `store_unscanned`, any text field over `CAIRN_REDACTION_MAX_SCAN_BYTES` is
+stored **exactly as sent, with no credential scan**, and everyone the link
+reaches can read whatever secret it holds. Cairn logs a WARN naming
+`CAIRN_REDACTION_OVERSIZE` at startup, and another WARN, with the artifact's id
+and the field's size, each time it stores a field unscanned. Leave it at
+`reject`. If large text needs sharing, raise the cap instead: a bigger cap costs
+scan time, while `store_unscanned` costs the scan.
+:::
+
+### Operator allowlist
+
+`CAIRN_REDACTION_ALLOWLIST_FILE` exempts values, never places. The file is
+operator configuration read once at startup; no user, token, or request can set
+or change it. It accepts only these three top-level keys, each optional:
+
+```toml
+# Values matching one of these regexes are not masked or rejected. Each regex is
+# matched against the detected value, and every alternative must be anchored
+# with ^ and $.
+regexes = [
+  '''^cairn-docs-fixture-[0-9]{4}$''',
+]
+
+# A detected value containing any of these words, ignoring case, is exempt.
+stopwords = [
+  "cairn-demo-placeholder",
+]
+
+# Rule IDs to switch off entirely.
+disabledRules = []
+```
+
+Cairn refuses to start, naming the file and the entry, when:
+
+- a regex does not compile, is not anchored, or matches the empty string.
+  Anchored means every alternative starts with `^` and ends with `$`, so
+  `^a$|^b$` is accepted and `^a|.+$` is refused. A flag such as `(?i)` is
+  allowed; `(?m)` is refused, because it makes `^` and `$` match at every line;
+- a stopword or a `disabledRules` entry is empty;
+- a `disabledRules` entry is not a known rule ID;
+- the file has `paths`, `commits`, or any other key. Path allowlists are
+  refused because an uploader chooses their own file names, and an upload has
+  no commits to match.
+
+**List only inert fixture values**: the placeholder strings your own tests,
+docs, and demos use, which authenticate nowhere. Never list a real credential,
+even a revoked one, and never a pattern that could match one. A stopword
+exempts every detected value that *contains* it, so keep stopwords long and
+specific. Prefer an anchored regex for one exact value, and prefer either to
+`disabledRules`, which blinds cairn to a whole shape of secret.
+
+### What scanning does not catch
+
+Scanning is defence in depth, not a guarantee. These pass through:
+
+- **Secrets in shapes no rule recognises**, such as a bare random string with no
+  label, prefix, or header around it.
+- **Archives.** Zip, tar, gzip, and the like are never unpacked.
+- **Images and other binary bodies.** A body whose leading bytes match a known
+  binary signature is stored unscanned with status `not_scanned_binary`. A body
+  declared as an image that is really text is scanned.
+- **Anything over the cap** when `CAIRN_REDACTION_OVERSIZE=store_unscanned`.
+
+Treat a shared link as readable by anyone it reaches, and rotate any credential
+that was ever pasted into one.
 
 ## Verify the whole loop
 

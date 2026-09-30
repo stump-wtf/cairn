@@ -33,6 +33,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/user"
 )
@@ -59,19 +60,18 @@ const (
 var DisabledReason = "disabled after " + strconv.Itoa(DisableAfter) + " consecutive failed deliveries"
 
 // EventTypes is the closed vocabulary an event-type filter may name: the
-// SPEC-0016 EV-1 registry. Only artifact.created is emitted today; the
-// annotation, trace and retention kinds are delivered through this same
-// filter once their emitters land (#305, #311, #313). When internal/event
-// lands, this list is replaced by event.RegisteredKinds().
-var EventTypes = []string{
-	"artifact.created",
-	"comment.created",
-	"reaction.added",
-	"reaction.removed",
-	"run.closed",
-	"artifact.retained",
-	"artifact.released",
-	"artifact.deleted",
+// SPEC-0016 EV-1 registry, read from internal/event so a filter can never
+// name a kind the emitter does not know, nor miss one it adds (EV-7
+// "Misspelt kind in a filter is refused"). An empty filter admits every kind.
+var EventTypes = registeredKinds()
+
+func registeredKinds() []string {
+	kinds := event.RegisteredKinds()
+	out := make([]string, len(kinds))
+	for i, k := range kinds {
+		out[i] = string(k)
+	}
+	return out
 }
 
 // ErrUnavailable is returned by Create and Rotate when the server has no

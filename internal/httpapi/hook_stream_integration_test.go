@@ -184,6 +184,17 @@ func TestIntegrationHookStreamConcurrentCapturesFanOutToManySubscribers(t *testi
 		if len(seqs) != nCaptures {
 			t.Fatalf("subscriber %d saw %d/%d distinct captures", i, len(seqs), nCaptures)
 		}
+		// The fan-out must also be IN ORDER: concurrent captures commit under
+		// the endpoint's row lock, and the hub reorders the post-commit
+		// publishes back into seq order, so every subscriber sees 1..N
+		// strictly ascending — a late lower-seq event would otherwise be
+		// dropped by the tail's de-dup skip (the CI flake this guards).
+		for j, seq := range seqs {
+			if seq != int64(j+1) {
+				t.Fatalf("subscriber %d received seq %d at position %d, want %d (fan-out out of seq order)",
+					i, seq, j, j+1)
+			}
+		}
 	}
 }
 

@@ -27,9 +27,10 @@ import (
 )
 
 // Governing: ADR-0017 (Outbound Webhooks), SPEC-0012 REQ "Event Emission on
-// Artifact Creation" + "Signed Delivery" + "Event Payload"; SPEC-0023 REQ
-// "Owned Outbound Subscriptions", REQ "Events Go Only to the Artifact's
-// Workspace", REQ "Subscription Target Safety"
+// Artifact Creation" + "Signed Delivery" + "Event Payload"; ADR-0022,
+// SPEC-0016 EV-3, EV-4, EV-7, EV-8; SPEC-0023 REQ "Owned Outbound
+// Subscriptions", REQ "Events Go Only to the Artifact's Workspace", REQ
+// "Subscription Target Safety"
 
 // testSubsKey seals subscription secrets in the integration suite.
 var testSubsKey = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x2a}, 32))
@@ -53,9 +54,10 @@ func newTestSubscriptions(pool *pgxpool.Pool, policy *subscription.Policy, withK
 	return subscription.NewService(pool, opts)
 }
 
-// wireSubscriptions gives a test server what cairnd gives it: one
-// subscription core shared by the /v1 surface and a running emitter the store
-// hands every creation to.
+// wireSubscriptions gives a test server what cairn serve gives it: one
+// subscription core shared by the /v1 surface, and a running emitter the store
+// hands every creation to and the annotation and trace services every other
+// event (unless the test brought its own).
 func wireSubscriptions(t *testing.T, pool *pgxpool.Pool, cfg *Config, opts *store.Options) {
 	t.Helper()
 	if cfg.Subscriptions == nil {
@@ -75,6 +77,9 @@ func wireSubscriptions(t *testing.T, pool *pgxpool.Pool, cfg *Config, opts *stor
 	go func() { defer close(done); em.Run(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
 	opts.Emitter = em
+	if cfg.Events == nil {
+		cfg.Events = em
+	}
 }
 
 // testSubs is a test server's subscription core and the pool it runs on.
@@ -177,7 +182,7 @@ func TestIntegrationArtifactCreateEmitsSignedWebhook(t *testing.T) {
 	recv := newHookReceiver(t)
 	srv, subs := subsTestServer(t, Config{BaseURL: "https://cairn.test", DevInsecureBearerAuth: true}, store.Options{}, nil)
 	_, secret := subscribe(t, subs, "joestump", recv.srv.URL, subscription.CreateInput{})
-	id := createArtifact(t, srv.URL, "text", "joestump", "hello webhook world")
+	id := createArtifact(t, srv.URL, "file", "joestump", "hello webhook world")
 
 	ev := recv.wait(t)
 	var body struct {
@@ -189,6 +194,8 @@ func TestIntegrationArtifactCreateEmitsSignedWebhook(t *testing.T) {
 			ShareType string `json:"share_type"`
 			URL       string `json:"url"`
 			ActorID   string `json:"actor_id"`
+			ActorKind string `json:"actor_kind"`
+			Auth      string `json:"auth"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(ev.body, &body); err != nil {
@@ -196,6 +203,14 @@ func TestIntegrationArtifactCreateEmitsSignedWebhook(t *testing.T) {
 	}
 	if body.Source != "cairn" || body.Kind != "artifact.created" || body.EventID == "" {
 		t.Fatalf("bad envelope: %+v", body)
+	}
+	if got := ev.hdr.Get("X-Cairn-Event"); got != body.Kind {
+		t.Fatalf("X-Cairn-Event = %q, body kind %q", got, body.Kind)
+	}
+	// The test server authenticates with the dev bearer: server-derived agent
+	// and api_token reach the wire end to end (SPEC-0016 EV-3, EV-4).
+	if body.Data.ActorKind != "agent" || body.Data.Auth != "api_token" {
+		t.Fatalf("actor_kind = %q, auth = %q, want agent and api_token", body.Data.ActorKind, body.Data.Auth)
 	}
 	if body.Data.ID != id || body.Data.ShareType == "" {
 		t.Fatalf("event data mismatch: %+v (created %s)", body.Data, id)
@@ -215,7 +230,7 @@ func TestIntegrationNoSubscriptionDeliversNothing(t *testing.T) {
 	recv := newHookReceiver(t)
 	srv, subs := subsTestServer(t, Config{DevInsecureBearerAuth: true}, store.Options{}, nil)
 	subscribe(t, subs, "someone-else", recv.srv.URL, subscription.CreateInput{})
-	if id := createArtifact(t, srv.URL, "text", "joestump", "no subscription"); id == "" {
+	if id := createArtifact(t, srv.URL, "file", "joestump", "no subscription"); id == "" {
 		t.Fatal("creation failed")
 	}
 	time.Sleep(200 * time.Millisecond)
@@ -233,8 +248,8 @@ func TestIntegrationEventsGoOnlyToTheOwner(t *testing.T) {
 	subscribe(t, subs, "u@example.com", uRecv.srv.URL, subscription.CreateInput{})
 	subscribe(t, subs, "v@example.com", vRecv.srv.URL, subscription.CreateInput{})
 
-	uID := createArtifact(t, srv.URL, "text", "u@example.com", "u's artifact")
-	vID := createArtifact(t, srv.URL, "text", "v@example.com", "v's artifact")
+	uID := createArtifact(t, srv.URL, "file", "u@example.com", "u's artifact")
+	vID := createArtifact(t, srv.URL, "file", "v@example.com", "v's artifact")
 	for _, c := range []struct {
 		recv *hookReceiver
 		want string
@@ -266,7 +281,7 @@ func TestIntegrationRebindingTargetFails(t *testing.T) {
 	subID, _ := subscribe(t, subs, "u@example.com", "https://rebind.example.com/hook", subscription.CreateInput{})
 
 	res.set(netip.MustParseAddr("10.0.0.7"))
-	createArtifact(t, srv.URL, "text", "u@example.com", "after the rebind")
+	createArtifact(t, srv.URL, "file", "u@example.com", "after the rebind")
 	sub := waitHealth(t, subs, "u@example.com", subID)
 	if sub.ConsecutiveFailures != 1 || sub.LastError != subscription.ReasonBlockedAddress || sub.LastStatus != nil {
 		t.Fatalf("health = %d failures, %q, status %v; want one blocked_address failure with no response",
@@ -284,7 +299,7 @@ func TestIntegrationRedirectIsFailedDelivery(t *testing.T) {
 	srv, subs := subsTestServer(t, Config{DevInsecureBearerAuth: true}, store.Options{}, nil)
 	subID, _ := subscribe(t, subs, "u@example.com", redirector.URL, subscription.CreateInput{})
 
-	createArtifact(t, srv.URL, "text", "u@example.com", "redirected")
+	createArtifact(t, srv.URL, "file", "u@example.com", "redirected")
 	sub := waitHealth(t, subs, "u@example.com", subID)
 	if sub.ConsecutiveFailures != 1 || sub.LastError != subscription.ReasonRedirect || sub.LastStatus == nil || *sub.LastStatus != http.StatusFound {
 		t.Fatalf("health = %+v; want one failed delivery with status 302", sub)

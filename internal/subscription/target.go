@@ -51,8 +51,8 @@ type Policy struct {
 	// Resolver resolves target hosts; nil uses net.DefaultResolver.
 	Resolver Resolver
 	// PermitAddr, when set, replaces the non-public address check. It exists
-	// for tests that deliver to a loopback httptest server; cairnd never sets
-	// it (cmd/cairnd asserts so).
+	// for tests that deliver to a loopback httptest server; cairn serve never
+	// sets it (internal/serve asserts so).
 	PermitAddr func(netip.Addr) bool
 
 	// dial replaces the network dial in tests that count dials.

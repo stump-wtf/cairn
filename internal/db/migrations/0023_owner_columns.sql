@@ -8,6 +8,16 @@
 -- in the same transaction. No release carries both (design review
 -- 2026-09-22).
 --
+-- It runs after 0022_annotation_actor_kind, which made annotation ownership
+-- per actor KIND (ADR-0022, SPEC-0016 EV-6): comments and reactions store the
+-- server-derived actor_kind, reactions also on_behalf_of, and the reaction
+-- idempotency key is (artifact_id, anchor_type, anchor_key, emoji, actor_id,
+-- actor_kind), so an agent's reaction and its human's are separate rows. Here
+-- user_id takes actor_id's place in that key and nothing else changes:
+-- actor_kind and on_behalf_of are kept as stored, rows stored before kinds
+-- were ('') stay legacy, and ownership is per (user, kind) (Joe's decision on
+-- #384, 2026-09-30).
+--
 -- One user per distinct string, resolved in this order (first match wins):
 --
 --   1. "user:<uuid>" naming an existing user: the interim key #326 gave a
@@ -35,9 +45,11 @@
 -- string is dropped, every owner's Bin is compared before and after: the
 -- artifacts owned by the string must be exactly the artifacts owned by its
 -- user. Any difference raises, the transaction rolls back, the old schema is
--- untouched, and cairnd refuses to start with the first mismatched owner in
--- the error. Take a database backup before upgrading: after a successful run
--- the strings are gone, and rollback is a restore.
+-- untouched, and cairn serve refuses to start with the first mismatched owner
+-- in the error. Reactions that two strings resolving to one user would fold
+-- onto one per-kind key abort the same way. Take a database backup before
+-- upgrading: after a successful run the strings are gone, and rollback is a
+-- restore.
 --
 -- No extension is created here: test schemas are dropped CASCADE and would
 -- take a schema-local extension with them. gen_random_uuid() is core in
@@ -210,11 +222,35 @@ BEGIN
 END
 $$;
 
+-- Two strings that resolve to one user would fold their reactions onto one
+-- per-kind key below. The Bin comparison cannot see that, so it is checked
+-- here the same way: the first such owner is named and nothing changes. Each
+-- string holds at most one row per key already (0022), so a group of two is
+-- always two strings.
+DO $$
+DECLARE
+    merged text;
+BEGIN
+    SELECT min(r.actor_id) INTO merged
+      FROM reactions r
+      JOIN legacy_owner_map m ON m.owner = r.actor_id
+     GROUP BY r.artifact_id, r.anchor_type, r.anchor_key, r.emoji, m.user_id, r.actor_kind
+    HAVING count(*) > 1
+     ORDER BY 1
+     LIMIT 1;
+    IF merged IS NOT NULL THEN
+        RAISE EXCEPTION 'ownership backfill would merge the reactions of owner %', merged
+            USING HINT = 'nothing was changed; the previous schema is intact';
+    END IF;
+END
+$$;
+
 ALTER TABLE artifacts DROP COLUMN owner_id, DROP COLUMN actor_id;
 
 -- Comments and reactions: the author is a user. NO ACTION on delete: a user
 -- with annotations on someone else's artifact is not silently erased from
--- that thread or its counts.
+-- that thread or its counts. actor_kind, and reactions' on_behalf_of, stay
+-- as 0022 stored them.
 ALTER TABLE comments ADD COLUMN user_id uuid REFERENCES users(id);
 UPDATE comments c SET user_id = m.user_id FROM legacy_owner_map m WHERE m.owner = c.actor_id;
 ALTER TABLE comments ALTER COLUMN user_id SET NOT NULL;
@@ -224,11 +260,14 @@ CREATE INDEX comments_user_id_idx ON comments (user_id);
 ALTER TABLE reactions ADD COLUMN user_id uuid REFERENCES users(id);
 UPDATE reactions r SET user_id = m.user_id FROM legacy_owner_map m WHERE m.owner = r.actor_id;
 ALTER TABLE reactions ALTER COLUMN user_id SET NOT NULL;
--- Dropping actor_id drops the idempotency key that named it (SPEC-0016 EV-6);
--- it is rebuilt on user_id.
+-- Dropping actor_id drops 0022's per-kind idempotency key, which named it.
+-- It is rebuilt under the same name with user_id in actor_id's place and
+-- actor_kind kept, so a user's agent and the user in a browser still hold
+-- separate rows (ADR-0022, SPEC-0016 EV-6; SPEC-0023 REQ "Migration to
+-- Explicit Ownership"). React's ON CONFLICT names exactly these columns.
 ALTER TABLE reactions DROP COLUMN actor_id;
-ALTER TABLE reactions
-    ADD CONSTRAINT reactions_idem_key UNIQUE (artifact_id, anchor_type, anchor_key, emoji, user_id);
+CREATE UNIQUE INDEX reactions_idem_kind_uidx
+    ON reactions (artifact_id, anchor_type, anchor_key, emoji, user_id, actor_kind);
 CREATE INDEX reactions_user_id_idx ON reactions (user_id);
 
 -- Credentials belong to a user and go with them.

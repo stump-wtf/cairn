@@ -10,6 +10,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/operator"
 	"github.com/stump-wtf/cairn/internal/session"
 )
@@ -115,6 +116,7 @@ func (a *SessionAuthenticator) Authenticate(r *http.Request) (*Principal, error)
 		Channel:  artifact.ChannelWeb,
 		Scopes:   map[string]bool{scopeArtifactsWrite: true, scopeAnnotationsWrite: true, scopeSharingManage: true},
 		Ambient:  true,
+		Auth:     event.AuthSession,
 		Issuer:   sess.Issuer,
 		Subject:  sess.Subject,
 		Operator: a.operators.IsOperator(sess.Issuer, sess.Subject, sess.OperatorGroup),

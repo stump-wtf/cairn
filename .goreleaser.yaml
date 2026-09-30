@@ -1,11 +1,16 @@
-# GoReleaser configuration for Cairn — the cairn CLI binary.
+# GoReleaser configuration for Cairn — one binary, `cairn` (ADR-0031).
 # https://goreleaser.com
 #
-# Builds and attaches cross-platform `cairn` CLI binaries to each GitHub
-# release (SPEC-0008: the CLI is the human's terminal surface). The `cairnd`
-# server is deployed separately as a container image (see deploy.yml), so only
-# the CLI is built here. The pure-REST client has no CGO deps, so static
-# CGO_ENABLED=0 builds are safe on every target.
+# One build, one archive, one release:
+#
+#   * `cairn` — the whole program: the CLI surface AND the server (`cairn
+#     serve`), for linux, darwin and windows on amd64 and arm64. Archive:
+#     cairn_<ver>_<os>_<arch>.
+#
+# The archive carries its one binary and LICENSE, and
+# scripts/verify-release-archives.sh fails the release job if it ever holds
+# anything else. Pure Go with no CGO deps, so a static CGO_ENABLED=0 build is
+# safe on every target.
 
 version: 2
 
@@ -16,6 +21,12 @@ before:
     - go mod tidy
 
 builds:
+  # Reproducible on purpose: Harness's manifest pins the archive by URL and
+  # SHA-256 (cairn#361), and the release job re-runs against an existing tag
+  # with replace_existing_artifacts, so a rebuild that produced different
+  # bytes would silently invalidate every pin. -trimpath drops the builder's
+  # paths, and mod_timestamp fixes the file mtime the archive records; the
+  # archive pins the tar headers the same way (see archives below).
   - id: cairn
     main: ./cmd/cairn
     binary: cairn
@@ -28,39 +39,19 @@ builds:
     goarch:
       - amd64
       - arm64
+    flags:
+      - -trimpath
     ldflags:
       - -s -w
       - -X github.com/stump-wtf/cairn/internal/clicmd.Version={{.Version}}
       - -X github.com/stump-wtf/cairn/internal/clicmd.Commit={{.Commit}}
       - -X github.com/stump-wtf/cairn/internal/clicmd.Date={{.Date}}
-    hooks:
-      # The cairn archive ships the cairn CLI and nothing else. goreleaser
-      # aborts the release if a post hook fails, so this is the last place the
-      # check can still stop a bad artifact rather than merely report on it.
-      #
-      # This gate was written under a premise that no longer holds: that cairn's
-      # source was private and a release carrying the server would be the whole
-      # exposure in one artifact. Both cairn and switchboard are MIT and open
-      # now, so a binary containing the server discloses nothing.
-      #
-      # It stays anyway, because secrecy was never what it actually enforced. A
-      # cairn archive containing cairnd is a packaging defect on its own terms:
-      # it doubles the download, ships a server under a CLI's name to someone
-      # who asked for a CLI, and can only happen because a CLI package picked up
-      # an import edge into a server package. That edge is the real quarry, and
-      # it is just as wrong in an open repo as a closed one. Deleting a working
-      # check because its stated justification changed is how the regression it
-      # was catching ships quietly.
-      #
-      # Note the -s -w above: the symbol table is stripped, so a `go tool nm`
-      # check here would report "no server symbols" for a binary containing the
-      # whole server. The script uses the import graph plus `strings` with a
-      # positive control for exactly that reason.
-      post:
-        - scripts/verify-cli-artifact.sh "{{ .Path }}"
+    mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
-  - id: default
+  - id: cairn
+    ids:
+      - cairn
     formats:
       - tar.gz
     format_overrides:
@@ -79,7 +70,17 @@ archives:
     # its grant rather than leave the recipient guessing. Cairn is MIT, and this
     # is the whole grant — not a subset of one, and not scoped to the client.
     files:
-      - LICENSE
+      - src: LICENSE
+        info:
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+    builds_info:
+      owner: root
+      group: root
+      mode: 0755
+      mtime: "{{ .CommitDate }}"
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
@@ -98,15 +99,28 @@ changelog:
       - '^ci:'
       - Merge pull request
       - Merge branch
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([^)]*\))?:.*$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\([^)]*\))?:.*$'
+      order: 1
+    - title: Security
+      regexp: '^.*?sec(\([^)]*\))?:.*$'
+      order: 2
+    - title: Other
+      order: 999
 
 release:
-  # Binaries publish to stump-wtf/cairn-cli. goreleaser targeting a repo other
+  # Binaries publish to stump-wtf/cairn. goreleaser targeting a repo other
   # than the one it builds from is the point: archives become downloadable
-  # without depending on where the source lives.
+  # without depending on where the source lives (ADR-0031 retired the old
+  # stump-wtf/cairn-cli destination).
   #
-  # ONE TAG, TWO WRITERS, TWO DESTINATIONS:
-  #   * this config, run by the Gitea pipeline -> binaries to cairn-cli, then
-  #     the Homebrew tap bump
+  # ONE TAG, TWO WRITERS, NO SHARED NAMES:
+  #   * this config, run by the Gitea pipeline -> the cairn archives to
+  #     stump-wtf/cairn, then the Homebrew tap bump
   #   * .github/workflows/release.yml           -> the ghcr.io image, nothing else
   #
   # That split replaced a real collision. release.yml used to run goreleaser
@@ -114,19 +128,31 @@ release:
   # fired both runners writing identical asset names — with
   # replace_existing_artifacts below turning the collision into a silent
   # overwrite rather than an error. Whichever finished last won, and nothing
-  # reported a problem.
+  # reported a problem. The writers still do not share asset names: only this
+  # one writes release assets at all.
   github:
     owner: stump-wtf
-    name: cairn-cli
+    name: cairn
   draft: false
   prerelease: auto
   name_template: "v{{.Version}}"
+  # One kind of archive sits on every release: cairn_<version>_<os>_<arch>,
+  # the whole program (CLI and, since ADR-0031, the server via `cairn serve`).
+  header: |
+    ## What am I downloading?
+
+    - **`cairn_<version>_<os>_<arch>`**: the **cairn binary** — everything in
+      one. Use it as the CLI from a terminal or script, or run the server with
+      `cairn serve`. Most self-hosters use the container image instead:
+      `ghcr.io/stump-wtf/cairn:{{ .Version }}`.
+
+    Each archive holds its one binary plus `LICENSE`. `checksums.txt` covers it.
   # goreleaser owns the release notes, generated from the changelog block above.
   #
   # This previously carried a different justification: that release.yml created
   # the release first with the matching CHANGELOG.md section as its body, and
   # goreleaser only attached archives to it. That flow was never possible —
-  # release.yml runs against stump-wtf/cairn while this config targets
+  # release.yml runs against stump-wtf/cairn while this config targeted
   # stump-wtf/cairn-cli, so the two were never addressing the same release — and
   # release.yml no longer creates one at all.
   #

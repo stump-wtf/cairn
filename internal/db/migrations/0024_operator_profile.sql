@@ -17,7 +17,9 @@
 -- target_team has no foreign key yet: teams do not exist until #328, which
 -- adds it (as #327 left artifacts.owner_team_id).
 --
--- users.suspended_at already exists (0017).
+-- users.suspended_at already exists (0017). Numbered after
+-- 0023_owner_columns so a fresh database applies it in the same order as one
+-- upgraded from v0.3.0, which has already applied 0022.
 --
 -- Forward-safe against live data: one new table, one column with a constant
 -- default (no rewrite), and one index on the small sessions table.

@@ -23,7 +23,7 @@ const (
 )
 
 // MaxReasonRunes caps an audit reason. The reason is required (the CHECK in
-// 0019) and shown to the affected user, so it is prose, not a document.
+// 0024) and shown to the affected user, so it is prose, not a document.
 const MaxReasonRunes = 1000
 
 // MaxDirectoryPage caps one directory page.

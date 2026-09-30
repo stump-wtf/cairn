@@ -7,6 +7,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/user"
 )
 
@@ -77,6 +78,31 @@ type Principal struct {
 	// It gates the operator routes and nothing else; it never widens what the
 	// principal may read or own.
 	Operator bool
+	// Auth records which authenticator resolved the principal. Each one sets
+	// it; nothing in the request can (SPEC-0016 EV-4).
+	Auth event.AuthMethod
+}
+
+// EventActor is the principal as an event actor. The kind is human if and only
+// if the principal authenticated with an ambient browser session: every bearer
+// credential — OAuth, a PAT whatever its is_agent flag, a CAIRN_API_TOKENS
+// entry, the dev shortcut — is an agent, because any agent sharing the human's
+// shell can read a token on disk, while a CSRF-guarded session cookie cannot be
+// replayed cross-site. Human needs both the ambient flag and the session auth
+// stamp, so a principal an authenticator built without Auth is never human,
+// and every producer then refuses its empty Auth (event.Actor.Check).
+// OnBehalfOf is left for the caller, which knows whether the surface has one.
+// UserID carries the principal's user, which annotation and run ownership
+// compare; ID stays the rendered actor the wire shows.
+//
+// Governing: ADR-0022 (server-derived actor kind), SPEC-0016 EV-4 "Server-Derived
+// Actor Kind"; SPEC-0023 REQ "Owner Model".
+func (p *Principal) EventActor() event.Actor {
+	kind := event.KindAgent
+	if p.Ambient && p.Auth == event.AuthSession {
+		kind = event.KindHuman
+	}
+	return event.Actor{ID: p.ActorID, UserID: p.UserID, Channel: p.Channel, Kind: kind, Auth: p.Auth}
 }
 
 // HasScope reports whether the principal holds scope.
@@ -163,6 +189,7 @@ func (a DevActorAuthenticator) Authenticate(r *http.Request) (*Principal, error)
 		ActorID: token,
 		Channel: artifact.ChannelAPI,
 		Scopes:  agentScopes(),
+		Auth:    event.AuthAPIToken,
 	}
 	if err := resolveActorUser(r.Context(), a.users, p); err != nil {
 		return nil, errs.ErrUnauthorized

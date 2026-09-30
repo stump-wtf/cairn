@@ -52,6 +52,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/event"
 	publicid "github.com/stump-wtf/cairn/internal/id"
 	"github.com/stump-wtf/cairn/internal/mcpsession"
 	"github.com/stump-wtf/cairn/internal/oauth"
@@ -137,6 +138,9 @@ const (
 	// mcpExtraActor carries the caller's user as rendered on the wire;
 	// TokenInfo.UserID carries the user id every ownership check uses.
 	mcpExtraActor = "actor"
+	// mcpExtraAuth records which credential the verifier accepted — a PAT or
+	// an OAuth access token — for the event actor's `auth` (SPEC-0016 EV-4).
+	mcpExtraAuth = "auth"
 
 	// patTokenInfoTTL is the validity window reported for a PAT-authenticated
 	// MCP request. PATs never expire, but the bearer middleware reads a zero
@@ -177,6 +181,7 @@ func (s *Server) mcpTokenVerifier() sdkauth.TokenVerifier {
 					mcpExtraActor:    t.Actor,
 					mcpExtraGrantID:  "",
 					mcpExtraClientID: "",
+					mcpExtraAuth:     string(event.AuthPAT),
 				},
 			}, nil
 		}
@@ -192,6 +197,7 @@ func (s *Server) mcpTokenVerifier() sdkauth.TokenVerifier {
 				mcpExtraActor:    ident.ActorID,
 				mcpExtraGrantID:  ident.GrantID,
 				mcpExtraClientID: ident.ClientID,
+				mcpExtraAuth:     string(event.AuthOAuth),
 			},
 		}, nil
 	}
@@ -246,6 +252,9 @@ func (s *Server) newMCPServer() *mcp.Server {
 	// rely on. The published-schema fix in mcp_schema.go removes the usual
 	// cause; this stays for clients holding an older, flattened schema.
 	srv.AddReceivingMiddleware(s.mcpArrayUnwrapMiddleware())
+	// mcpToolErrorMiddleware gives a validation failure its structured
+	// violations (SPEC-0019 VE-7); see its doc for why it is middleware.
+	srv.AddReceivingMiddleware(s.mcpToolErrorMiddleware())
 
 	addTool(srv, &mcp.Tool{
 		Name:        "artifact_read",
@@ -277,7 +286,7 @@ func (s *Server) newMCPServer() *mcp.Server {
 			"defaults to file, sniffed/declared media type selects the viewer) owned by the authorizing " +
 			"human, with the default link-visibility policy and default TTL. Bundles (N named members) " +
 			"are not creatable here — use bundle_create. Traces (a run header + span tree) are not " +
-			"creatable here — use run_create. Requires artifacts:write." + handoffTagsDoc,
+			"creatable here — use run_create. Requires artifacts:write." + redactionToolDoc + handoffTagsDoc,
 	}, s.mcpCreateArtifact)
 
 	addTool(srv, &mcp.Tool{
@@ -295,7 +304,7 @@ func (s *Server) newMCPServer() *mcp.Server {
 		Description: "Create a bundle of N named members (each a body plus an optional media type) " +
 			"owned by the authorizing human, with the default link-visibility policy and default TTL " +
 			"— the same multi-file create store.CreateBundle performs for the web/CLI. Returns the " +
-			"bundle's id, URLs, and member list. Requires artifacts:write." + handoffTagsDoc,
+			"bundle's id, URLs, and member list. Requires artifacts:write." + redactionToolDoc + handoffTagsDoc,
 	}, s.mcpCreateBundle)
 
 	if s.traj != nil {
@@ -502,6 +511,30 @@ func mcpUserID(extra *mcp.RequestExtra) string {
 		return ""
 	}
 	return extra.TokenInfo.UserID
+}
+
+// mcpEventActor is the event actor for an MCP tool call. Every MCP caller holds
+// a bearer credential, so the kind is always agent; no tool argument reaches it.
+// The auth method is exactly the one mcpTokenVerifier recorded, a PAT or an
+// OAuth access token. Anything else (no stamp, or a value the verifier never
+// writes) leaves Auth empty rather than guessing, so every producer refuses the
+// actor (event.Actor.Check) instead of mislabelling a future credential type.
+//
+// Governing: ADR-0022, SPEC-0016 EV-4 "Server-Derived Actor Kind".
+func mcpEventActor(req *mcp.CallToolRequest) event.Actor {
+	a := event.Actor{Channel: artifact.ChannelMCP, Kind: event.KindAgent}
+	if req == nil {
+		return a
+	}
+	a.ID, a.UserID = mcpActor(req.Extra), mcpUserID(req.Extra)
+	a.OnBehalfOf = mcpModelActor(req.Session)
+	if req.Extra != nil {
+		switch m := event.AuthMethod(mcpExtraString(req.Extra.TokenInfo, mcpExtraAuth)); m {
+		case event.AuthPAT, event.AuthOAuth:
+			a.Auth = m
+		}
+	}
+	return a
 }
 
 // mcpModelActor derives the provenance OnBehalfOf value from the connected
@@ -762,6 +795,14 @@ func (s *Server) mcpScopeErr(ctx context.Context, tool, scope string) error {
 // structurally at info (client-caused) or error (server-caused) level
 // (SPEC-0007 REQ "Error Handling Standards": distinguishable typed errors,
 // no silent swallowing, no secrets in logs).
+//
+// A validation_failed or payload_too_large error also carries the violations
+// REST would render for it (violationsFor, so an unmigrated site gives the
+// generic violation); mcpToolErrorMiddleware turns those into the VE-7 tool
+// result. The error's own text stays "<code>: <message>", which is what a
+// resource read (a JSON-RPC error, with no structured content) still shows.
+//
+// Governing: ADR-0025, SPEC-0019 VE-7, ADR-0003 (parity)
 func (s *Server) mcpToolErr(ctx context.Context, tool string, err error) error {
 	code := errs.CodeOf(err)
 	attrs := []any{"tool", tool, "code", code, "error", err}
@@ -774,7 +815,61 @@ func (s *Server) mcpToolErr(ctx context.Context, tool string, err error) error {
 	} else {
 		s.log.InfoContext(ctx, "mcp: tool call rejected", attrs...)
 	}
-	return fmt.Errorf("%s: %s", code, messageFor(code))
+	te := &mcpToolError{code: code}
+	if code == errs.CodeValidation || code == errs.CodePayloadTooLarge {
+		te.violations, te.summary = violationsFor(code, err)
+	}
+	return te
+}
+
+// mcpToolError is the error mcpToolErr returns. Its text is the uniform
+// "<code>: <message>" every surface has always shown; the violations ride
+// alongside, never parsed out of a string.
+type mcpToolError struct {
+	code       errs.Code
+	violations []errs.Violation
+	summary    string
+}
+
+func (e *mcpToolError) Error() string { return fmt.Sprintf("%s: %s", e.code, messageFor(e.code)) }
+
+// mcpToolErrorContent is a failed tool call's structured content (VE-7): the
+// same code and violations the REST envelope carries.
+type mcpToolErrorContent struct {
+	Code       errs.Code        `json:"code"`
+	Violations []errs.Violation `json:"violations"`
+}
+
+// mcpToolErrorMiddleware is receiving middleware that gives a tools/call
+// failed by validation its VE-7 shape: the text content is the top-level
+// message REST would send, and the structured content is {code, violations}.
+//
+// It has to run after the tool, not in it: the SDK's typed-handler wrapper
+// overwrites a returned result's StructuredContent with the marshalled Out
+// value, so a handler cannot hand back error content of its own. A returned
+// error is instead packed with SetError, which keeps it for GetError. Every
+// other failure passes through untouched.
+//
+// Governing: ADR-0025, SPEC-0019 VE-7
+func (s *Server) mcpToolErrorMiddleware() mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if method != "tools/call" || err != nil {
+				return result, err
+			}
+			res, ok := result.(*mcp.CallToolResult)
+			if !ok || res == nil || !res.IsError {
+				return result, err
+			}
+			var te *mcpToolError
+			if errors.As(res.GetError(), &te) && len(te.violations) > 0 {
+				res.Content = []mcp.Content{&mcp.TextContent{Text: te.summary}}
+				res.StructuredContent = mcpToolErrorContent{Code: te.code, Violations: te.violations}
+			}
+			return result, err
+		}
+	}
 }
 
 // normalizeMCPHandle resolves a bare public id or an mcp://cairn/<id> agent
@@ -829,7 +924,7 @@ func (s *Server) mcpReadArtifact(ctx context.Context, req *mcp.CallToolRequest, 
 	}
 	id := normalizeMCPHandle(in.ID)
 	if id == "" {
-		return nil, mcpReadOutput{}, fmt.Errorf("validation_failed: id is required")
+		return nil, mcpReadOutput{}, s.mcpToolErr(ctx, "artifact_read", errs.Violate("id", errs.LocBody, errs.ReasonRequired))
 	}
 	art, err := s.store.GetByPublicID(ctx, id)
 	if err != nil {
@@ -985,6 +1080,8 @@ type mcpCreateInput struct {
 	// Tags are client-asserted routing strings (ADR-0018); the handoff
 	// convention lives in handoffTagsDoc, published in the tool description.
 	Tags []string `json:"tags,omitempty" jsonschema:"Optional routing tags, e.g. [\"handoff\", \"lane:auto\", \"size:m\"]. Lowercase strings you assert, not provenance. See the tool description for the handoff convention and the bounds."`
+	// Redaction is the writer's downgrade (SPEC-0017 RD-5).
+	Redaction string `json:"redaction,omitempty" jsonschema:"Optional; the only value is \"mask\". The body and title are scanned for credentials. A markdown or file artifact stores a detected value as [REDACTED]; a code artifact, or a file whose media type names a language, refuses the create by default. \"mask\" stores it as [REDACTED] instead. Any other value is refused with validation_failed: scanning cannot be turned off. The output's redacted and redactions {count, rules} report what was masked."`
 }
 
 type mcpCreateOutput struct {
@@ -1005,16 +1102,34 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
 		return nil, mcpCreateOutput{}, s.mcpScopeErr(ctx, "artifact_create", oauth.ScopeArtifactsWrite)
 	}
-	actorID, userID := mcpActor(req.Extra), mcpUserID(req.Extra)
-	if actorID == "" || userID == "" {
+	creator := mcpEventActor(req)
+	actorID, userID := creator.ID, creator.UserID
+	// No subject or user, or a credential the verifier never stamped: refuse
+	// rather than create an artifact nobody owns or whose creation event
+	// carries no auth (SPEC-0023 REQ "Owner Model", SPEC-0016 EV-4).
+	if creator.Check() != nil || userID == "" {
 		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", errs.ErrUnauthorized)
 	}
+	// Governing: ADR-0025, SPEC-0019 VE-7 (these adapter checks carry
+	// violations too, so every validation failure here is structured)
 	if in.Body == "" {
-		return nil, mcpCreateOutput{}, fmt.Errorf("validation_failed: body must not be empty")
+		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", errs.Violate("body", errs.LocBody, errs.ReasonRequired))
 	}
 	shareType := artifact.ShareType(firstNonEmpty(in.ShareType, string(artifact.TypeFile)))
-	if shareType == artifact.TypeBundle || shareType == artifact.TypeTrajectory {
-		return nil, mcpCreateOutput{}, fmt.Errorf("validation_failed: share_type must not be %q; use bundle_create for bundles or run_create for traces", shareType)
+	if shareType == artifact.TypeBundle {
+		// Same wording the REST single-body create reports via
+		// sharetype.Registry.CheckCreateType, so the two surfaces stay in
+		// parity (VE-1).
+		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", errs.Violate("share_type", errs.LocBody, errs.ReasonNotAllowed,
+			errs.WithValue(string(shareType)), errs.WithExpect("a bundle is created by sending several files in one multipart upload")))
+	}
+	if shareType == artifact.TypeTrajectory {
+		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", errs.Violate("share_type", errs.LocBody, errs.ReasonNotAllowed,
+			errs.WithValue(string(shareType)), errs.WithExpect("use run_create for traces")))
+	}
+	downgrade, err := redactionDowngrade("redaction", errs.LocBody, in.Redaction)
+	if err != nil {
+		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", err)
 	}
 	mediaType := in.MediaType
 	if mediaType == "" {
@@ -1034,12 +1149,16 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 			Channel:         artifact.ChannelMCP,
 			CapturedAt:      now,
 		},
-		Access:    artifact.AccessPolicy{OwnerUserID: userID, Visibility: artifact.VisibilityLink},
-		ExpiresAt: now.Add(s.cfg.DefaultTTL),
-		Tags:      in.Tags,
+		Access:             artifact.AccessPolicy{OwnerUserID: userID, Visibility: artifact.VisibilityLink},
+		ExpiresAt:          now.Add(s.cfg.DefaultTTL),
+		Tags:               in.Tags,
+		ActorKind:          creator.Kind,
+		Auth:               creator.Auth,
+		RedactionDowngrade: downgrade,
 	})
 	if err != nil {
-		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", err)
+		// mapUploadErr names the upload cap on a too-large body, as REST does.
+		return nil, mcpCreateOutput{}, s.mcpToolErr(ctx, "artifact_create", s.mapUploadErr(err))
 	}
 	return nil, mcpCreateOutput{artifactResponse: s.toOwnerArtifactResponse(art)}, nil
 }
@@ -1074,6 +1193,8 @@ type mcpBundleCreateInput struct {
 	// Tags are client-asserted routing strings on the bundle as a whole
 	// (ADR-0018); see mcpCreateInput.Tags.
 	Tags []string `json:"tags,omitempty" jsonschema:"Optional routing tags, e.g. [\"handoff\", \"lane:auto\", \"size:m\"]. Lowercase strings you assert, not provenance. See the tool description for the handoff convention and the bounds."`
+	// Redaction is the writer's downgrade (SPEC-0017 RD-5).
+	Redaction string `json:"redaction,omitempty" jsonschema:"Optional; the only value is \"mask\". Every member and the title are scanned for credentials, and by default a detected value refuses the whole bundle, naming the member (members[n].content) and line. \"mask\" stores each detected value as [REDACTED] instead. Any other value is refused with validation_failed: scanning cannot be turned off. The output's redacted and redactions {count, rules} report what was masked."`
 }
 
 type mcpBundleCreateOutput struct {
@@ -1098,9 +1219,14 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
 		return nil, mcpBundleCreateOutput{}, s.mcpScopeErr(ctx, "bundle_create", oauth.ScopeArtifactsWrite)
 	}
-	actorID, userID := mcpActor(req.Extra), mcpUserID(req.Extra)
-	if actorID == "" || userID == "" {
+	creator := mcpEventActor(req)
+	actorID, userID := creator.ID, creator.UserID
+	if creator.Check() != nil || userID == "" {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", errs.ErrUnauthorized)
+	}
+	downgrade, err := redactionDowngrade("redaction", errs.LocBody, in.Redaction)
+	if err != nil {
+		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", err)
 	}
 	members := make([]store.MemberInput, 0, len(in.Members))
 	for _, m := range in.Members {
@@ -1122,9 +1248,12 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 			Channel:         artifact.ChannelMCP,
 			CapturedAt:      now,
 		},
-		Access:    artifact.AccessPolicy{OwnerUserID: userID, Visibility: artifact.VisibilityLink},
-		ExpiresAt: now.Add(s.cfg.DefaultTTL),
-		Tags:      in.Tags,
+		Access:             artifact.AccessPolicy{OwnerUserID: userID, Visibility: artifact.VisibilityLink},
+		ExpiresAt:          now.Add(s.cfg.DefaultTTL),
+		Tags:               in.Tags,
+		ActorKind:          creator.Kind,
+		Auth:               creator.Auth,
+		RedactionDowngrade: downgrade,
 	})
 	if err != nil {
 		return nil, mcpBundleCreateOutput{}, s.mcpToolErr(ctx, "bundle_create", err)
@@ -1277,17 +1406,26 @@ type mcpRunSpanInput struct {
 // SpanInput values, re-marshaling each span's Args back to the
 // json.RawMessage the core trajectory service expects (the inverse of
 // [mcpAnchorInput.anchorRefJSON], same reasoning).
-func toRunSpanInputs(tool string, spans []mcpRunSpanInput) ([]trajectory.SpanInput, error) {
+//
+// Every span whose args cannot be encoded is named as spans[n].args in one
+// error: the batch is reported cumulatively, like the trajectory service's
+// own span checks.
+//
+// Governing: ADR-0025, SPEC-0019 VE-1, VE-4
+func toRunSpanInputs(spans []mcpRunSpanInput) ([]trajectory.SpanInput, error) {
 	if len(spans) == 0 {
 		return nil, nil
 	}
 	out := make([]trajectory.SpanInput, 0, len(spans))
-	for _, sp := range spans {
+	var bad []*errs.Invalid
+	for i, sp := range spans {
 		var args json.RawMessage
 		if sp.Args != nil {
 			b, err := json.Marshal(sp.Args)
 			if err != nil {
-				return nil, fmt.Errorf("validation_failed: %s: span %q args is not valid JSON", tool, sp.SpanID)
+				bad = append(bad, errs.Violate(fmt.Sprintf("spans[%d].args", i), errs.LocBody, errs.ReasonInvalidFormat,
+					errs.WithExpect("a JSON object")))
+				continue
 			}
 			args = b
 		}
@@ -1307,6 +1445,9 @@ func toRunSpanInputs(tool string, spans []mcpRunSpanInput) ([]trajectory.SpanInp
 			DurationMS:         sp.DurationMS,
 			ProducedArtifactID: sp.ProducedArtifactID,
 		})
+	}
+	if len(bad) > 0 {
+		return nil, errs.Join(bad...)
 	}
 	return out, nil
 }
@@ -1407,13 +1548,14 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 	if !mcpScopes(req.Extra)[oauth.ScopeArtifactsWrite] {
 		return nil, mcpRunOutput{}, s.mcpScopeErr(ctx, "run_create", oauth.ScopeArtifactsWrite)
 	}
-	actorID, userID := mcpActor(req.Extra), mcpUserID(req.Extra)
-	if actorID == "" || userID == "" {
+	creator := mcpEventActor(req)
+	actorID, userID := creator.ID, creator.UserID
+	if creator.Check() != nil || userID == "" {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", errs.ErrUnauthorized)
 	}
-	spans, err := toRunSpanInputs("run_create", in.Spans)
+	spans, err := toRunSpanInputs(in.Spans)
 	if err != nil {
-		return nil, mcpRunOutput{}, err
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", err)
 	}
 	now := s.now()
 	started := in.StartedAt
@@ -1437,6 +1579,8 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 		Access:    artifact.AccessPolicy{OwnerUserID: userID, Visibility: artifact.VisibilityLink},
 		ExpiresAt: now.Add(s.cfg.DefaultTTL),
 		Spans:     spans,
+		ActorKind: creator.Kind,
+		Auth:      creator.Auth,
 	}
 	var run *trajectory.Run
 	switch in.Mode {
@@ -1445,7 +1589,7 @@ func (s *Server) mcpCreateRun(ctx context.Context, req *mcp.CallToolRequest, in 
 	case "open":
 		run, err = s.traj.OpenRun(ctx, rin)
 	default:
-		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", errs.Validationf("mode must be \"batch\" or \"open\""))
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", checkRunMode(in.Mode))
 	}
 	if err != nil {
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_create", err)
@@ -1483,9 +1627,9 @@ func (s *Server) mcpAppendRunSpans(ctx context.Context, req *mcp.CallToolRequest
 		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_append_spans", errs.ErrUnauthorized)
 	}
 	id := normalizeMCPHandle(in.ID)
-	spans, err := toRunSpanInputs("run_append_spans", in.Spans)
+	spans, err := toRunSpanInputs(in.Spans)
 	if err != nil {
-		return nil, mcpRunOutput{}, err
+		return nil, mcpRunOutput{}, s.mcpToolErr(ctx, "run_append_spans", err)
 	}
 	_, outcome, err := s.traj.AppendSpansWithOutcome(ctx, id, userID, spans)
 	if err != nil {
@@ -1555,7 +1699,8 @@ func (a mcpAnchorInput) anchorRefJSON() (json.RawMessage, error) {
 	}
 	b, err := json.Marshal(a.AnchorRef)
 	if err != nil {
-		return nil, fmt.Errorf("validation_failed: anchor_ref is not valid JSON")
+		// Governing: ADR-0025, SPEC-0019 VE-1
+		return nil, errs.Violate("anchor_ref", errs.LocBody, errs.ReasonInvalidFormat, errs.WithExpect("a JSON object"))
 	}
 	return b, nil
 }
@@ -1580,6 +1725,7 @@ type mcpCommentOutput struct {
 	AnchorKey  string         `json:"anchor_key"`
 	ParentID   *int64         `json:"parent_id,omitempty"`
 	ActorID    string         `json:"actor_id"`
+	ActorKind  string         `json:"actor_kind"`
 	OnBehalfOf string         `json:"on_behalf_of,omitempty"`
 	Body       string         `json:"body"`
 	CreatedAt  time.Time      `json:"created_at"`
@@ -1594,7 +1740,7 @@ func toMCPCommentOutput(c annotation.Comment) mcpCommentOutput {
 	r := toCommentResponse(c)
 	return mcpCommentOutput{
 		ID: r.ID, AnchorType: r.AnchorType, AnchorRef: anchorRefObject(r.AnchorRef), AnchorKey: r.AnchorKey,
-		ParentID: r.ParentID, ActorID: r.ActorID, OnBehalfOf: r.OnBehalfOf, Body: r.Body,
+		ParentID: r.ParentID, ActorID: r.ActorID, ActorKind: r.ActorKind, OnBehalfOf: r.OnBehalfOf, Body: r.Body,
 		CreatedAt: r.CreatedAt, EditedAt: r.EditedAt, Deleted: r.Deleted,
 	}
 }
@@ -1607,21 +1753,23 @@ func (s *Server) mcpComment(ctx context.Context, req *mcp.CallToolRequest, in mc
 	if !mcpScopes(req.Extra)[oauth.ScopeAnnotationsWrite] {
 		return nil, mcpCommentOutput{}, s.mcpScopeErr(ctx, "artifact_comment", oauth.ScopeAnnotationsWrite)
 	}
-	actorID, userID := mcpActor(req.Extra), mcpUserID(req.Extra)
-	if actorID == "" || userID == "" {
+	// No subject or user, or a credential the verifier never stamped: refuse
+	// as unauthorized, like the create tools, rather than let the annotation
+	// service report a caller's valid request as invalid (EV-4).
+	author := mcpEventActor(req)
+	if author.Check() != nil || author.UserID == "" {
 		return nil, mcpCommentOutput{}, s.mcpToolErr(ctx, "artifact_comment", errs.ErrUnauthorized)
 	}
 	id := normalizeMCPHandle(in.ID)
 	ref, err := in.anchorRefJSON()
 	if err != nil {
-		return nil, mcpCommentOutput{}, err
+		return nil, mcpCommentOutput{}, s.mcpToolErr(ctx, "artifact_comment", err)
 	}
 	comment, err := s.annot.AddComment(ctx, id, annotation.CommentInput{
 		AnchorType: sharetype.Anchor(in.AnchorType),
 		AnchorRef:  ref,
 		ParentID:   in.ParentID,
-		UserID:     userID,
-		OnBehalfOf: mcpModelActor(req.Session),
+		Actor:      author,
 		Body:       in.Body,
 	})
 	if err != nil {
@@ -1647,6 +1795,8 @@ type mcpReactOutput struct {
 	AnchorRef  map[string]any `json:"anchor_ref,omitempty"`
 	Emoji      string         `json:"emoji"`
 	ActorID    string         `json:"actor_id"`
+	ActorKind  string         `json:"actor_kind"`
+	OnBehalfOf string         `json:"on_behalf_of,omitempty"`
 	CreatedAt  time.Time      `json:"created_at"`
 }
 
@@ -1654,30 +1804,30 @@ func toMCPReactOutput(r annotation.Reaction) mcpReactOutput {
 	v := toReactionResponse(r)
 	return mcpReactOutput{
 		ID: v.ID, AnchorType: v.AnchorType, AnchorRef: anchorRefObject(v.AnchorRef), Emoji: v.Emoji,
-		ActorID: v.ActorID, CreatedAt: v.CreatedAt,
+		ActorID: v.ActorID, ActorKind: v.ActorKind, OnBehalfOf: v.OnBehalfOf, CreatedAt: v.CreatedAt,
 	}
 }
 
 // mcpReact is the artifact_react tool handler (SPEC-0007 REQ "Comment &
 // React"): it records an idempotent reaction via the same annotation core the
-// REST adapter calls, with provenance stamping the model actor + channel
-// `via MCP`. React carries no on_behalf_of field on the wire today (REST
-// parity: [reactionRequest] has none either), so the model actor is recorded
-// implicitly by the channel alone.
+// REST adapter calls, with provenance stamping the human principal as actor,
+// the connected client's identification as on_behalf_of, and channel
+// `via MCP` — exactly as artifact_comment does (SPEC-0016 EV-6, SPEC-0009 REQ
+// "Actor Captures Human and On-Behalf-Of Model"). The kind is always agent.
 func (s *Server) mcpReact(ctx context.Context, req *mcp.CallToolRequest, in mcpReactInput) (*mcp.CallToolResult, mcpReactOutput, error) {
 	if !mcpScopes(req.Extra)[oauth.ScopeAnnotationsWrite] {
 		return nil, mcpReactOutput{}, s.mcpScopeErr(ctx, "artifact_react", oauth.ScopeAnnotationsWrite)
 	}
-	actorID, userID := mcpActor(req.Extra), mcpUserID(req.Extra)
-	if actorID == "" || userID == "" {
+	reactor := mcpEventActor(req)
+	if reactor.Check() != nil || reactor.UserID == "" {
 		return nil, mcpReactOutput{}, s.mcpToolErr(ctx, "artifact_react", errs.ErrUnauthorized)
 	}
 	id := normalizeMCPHandle(in.ID)
 	ref, err := in.anchorRefJSON()
 	if err != nil {
-		return nil, mcpReactOutput{}, err
+		return nil, mcpReactOutput{}, s.mcpToolErr(ctx, "artifact_react", err)
 	}
-	reaction, _, err := s.annot.React(ctx, id, sharetype.Anchor(in.AnchorType), ref, in.Emoji, userID)
+	reaction, _, err := s.annot.React(ctx, id, sharetype.Anchor(in.AnchorType), ref, in.Emoji, reactor)
 	if err != nil {
 		return nil, mcpReactOutput{}, s.mcpToolErr(ctx, "artifact_react", err)
 	}

@@ -1,4 +1,4 @@
-package main
+package serve
 
 import (
 	"bytes"
@@ -77,13 +77,13 @@ func TestStoreOptionsCarriesLimits(t *testing.T) {
 }
 
 // TestProductionPolicyNeverAdmitsPrivateAddresses: the address permit on
-// subscription.Policy exists for tests; the policy cairnd builds leaves it
+// subscription.Policy exists for tests; the policy cairn serve builds leaves it
 // unset, so loopback, private and link-local targets stay refused.
 func TestProductionPolicyNeverAdmitsPrivateAddresses(t *testing.T) {
 	for _, allow := range []bool{false, true} {
 		p := newSubscriptionPolicy(&config.Config{OutboundAllowHTTP: allow})
 		if p.PermitAddr != nil || p.Resolver != nil {
-			t.Fatal("cairnd's subscription policy overrides the address check or the resolver")
+			t.Fatal("cairn serve's subscription policy overrides the address check or the resolver")
 		}
 		if p.AllowHTTP != allow {
 			t.Fatalf("AllowHTTP = %v, want %v", p.AllowHTTP, allow)

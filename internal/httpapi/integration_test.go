@@ -59,7 +59,7 @@ func subsTestServer(t *testing.T, cfg Config, opts store.Options, policy *subscr
 		cfg.Subscriptions = newTestSubscriptions(pool, policy, true)
 	}
 	wireSubscriptions(t, pool, &cfg, &opts)
-	st := store.New(pool, objectstore.NewMemory(), opts)
+	st := store.New(pool, objectstore.NewMemory(), withScanner(opts))
 	srv := httptest.NewServer(newResolvedServer(t, st, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
 	return srv, &testSubs{Service: cfg.Subscriptions, pool: pool}

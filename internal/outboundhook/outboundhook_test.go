@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/cairn/internal/artifact"
+	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/store"
 	"github.com/stump-wtf/cairn/internal/subscription"
 )
@@ -106,6 +107,8 @@ func testEvent() store.CreationEvent {
 		ActorID:     "joestump",
 		Channel:     "api",
 		ExpiresAt:   time.Now().Add(24 * time.Hour).UTC(),
+		ActorKind:   event.KindAgent,
+		Auth:        event.AuthAPIToken,
 		OwnerUserID: userU,
 	}
 }
@@ -501,9 +504,10 @@ func TestQueueFullDropsWithoutBlocking(t *testing.T) {
 	}
 }
 
-// compile-time: Emitter satisfies the store hook, and the service is a
-// Subscriptions.
+// compile-time: Emitter satisfies the store hook and the lifecycle emitter,
+// and the service is a Subscriptions.
 var (
 	_ store.CreationEmitter = (*Emitter)(nil)
+	_ event.Emitter         = (*Emitter)(nil)
 	_ Subscriptions         = (*subscription.Service)(nil)
 )
