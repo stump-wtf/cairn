@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,9 +19,9 @@ import (
 	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/oauth"
 	"github.com/stump-wtf/cairn/internal/objectstore"
-	"github.com/stump-wtf/cairn/internal/outboundhook"
 	"github.com/stump-wtf/cairn/internal/pat"
 	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/subscription"
 	"github.com/stump-wtf/cairn/internal/user"
 )
 
@@ -29,7 +30,8 @@ import (
 // "Client cannot assert the kind", EV-5 "Agent thumbs-up is not an approval",
 // "Human thumbs-up with skin tone is an approval", "Withdrawn approval is
 // announced", EV-6 "Agent cannot occupy the human's row", "Agent cannot
-// withdraw the human's approval", EV-7 "No env target receives the new kinds".
+// withdraw the human's approval", EV-7 "Another owner's subscription is not
+// notified".
 
 // lifecycleSpy records every lifecycle event handed to Config.Events.
 type lifecycleSpy struct {
@@ -415,7 +417,7 @@ func TestIntegrationAnnotationEventsActorKind(t *testing.T) {
 		t.Errorf("reads emitted %d events", got-n)
 	}
 	for _, ev := range spy.forSubject(id) {
-		if ev.Subject.ShareType != "markdown" || ev.Subject.WebPath != "/"+id || ev.Subject.OwnerID != es.aliceID {
+		if ev.Subject.ShareType != "markdown" || ev.Subject.WebPath != "/"+id || ev.Subject.OwnerUserID != es.aliceID {
 			t.Errorf("%s subject = %+v, want the markdown artifact at /%s owned by alice", ev.Kind, ev.Subject, id)
 		}
 	}
@@ -488,27 +490,24 @@ func TestIntegrationAgentAndHumanApprovalRows(t *testing.T) {
 	}
 }
 
-// TestIntegrationAnnotationEventsReachTheEncoder wires the real outbound
-// emitter the way cmd/cairnd does and proves the annotation events pass the
-// ADR-0017 encoder: each is encoded and then held back from the env target
-// (EV-7), which the per-kind drop counter records. A refused encode would
-// increment nothing, and the env target receives only the creation.
-func TestIntegrationAnnotationEventsReachTheEncoder(t *testing.T) {
-	recv := newHookReceiver(t)
-	em := outboundhook.New([]string{recv.srv.URL}, "", "https://cairn.test",
-		slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); em.Run(ctx) }()
-	t.Cleanup(func() { cancel(); <-done })
-
+// TestIntegrationAnnotationEventsReachTheOwnersSubscription wires the real
+// outbound emitter the way cairn serve does and proves the annotation events
+// pass the ADR-0017 encoder and reach the owned subscription of the
+// artifact's owner (SPEC-0016 EV-7): joe's subscription receives the
+// creation, the comment, both reactions and the withdrawal, each signed with
+// its own secret and headed with its own kind. bob reacts from his browser
+// and has a subscription of his own, which receives nothing about joe's
+// artifact (EV-7 "Another owner's subscription is not notified").
+func TestIntegrationAnnotationEventsReachTheOwnersSubscription(t *testing.T) {
+	joeRecv, bobRecv := newHookReceiver(t), newHookReceiver(t)
 	cfg := mcpConfig()
 	cfg.DevInsecureBearerAuth = true
-	cfg.Events = em
-	srv := testServer(t, cfg, store.Options{MaxUploadBytes: 1 << 20, Emitter: em})
+	srv, subs := subsTestServer(t, cfg, store.Options{MaxUploadBytes: 1 << 20}, nil)
+	_, joeSecret := subscribe(t, subs, "joe", joeRecv.srv.URL, subscription.CreateInput{})
+	subscribe(t, subs, "bob", bobRecv.srv.URL, subscription.CreateInput{})
+
 	id := createArtifact(t, srv.URL, "markdown", "joe", "# wired")
 	base := srv.URL + "/v1/artifacts/" + id
-
 	wantStatus(t, do(t, http.MethodPost, base+"/comments", "joe",
 		strings.NewReader(`{"anchor_type":"artifact","body":"`+strings.Repeat("é", 3000)+`"}`), "application/json"),
 		http.StatusCreated, "comment")
@@ -522,25 +521,36 @@ func TestIntegrationAnnotationEventsReachTheEncoder(t *testing.T) {
 	wantStatus(t, browser(http.MethodPost, base+"/reactions", `{"anchor_type":"artifact","emoji":"👍🏽"}`),
 		http.StatusCreated, "human react")
 
-	for k, want := range map[event.Kind]uint64{
-		event.CommentCreated:  1,
-		event.ReactionAdded:   2,
-		event.ReactionRemoved: 1,
-	} {
-		if n := em.Dropped(k); n != want {
-			t.Errorf("encoded-and-held %s = %d, want %d (fewer means the encoder refused one)", k, n, want)
+	got := map[string]int{}
+	for _, ev := range joeRecv.waitN(t, 5) {
+		verifySignature(t, ev, joeSecret)
+		var body struct {
+			Kind string `json:"kind"`
+			Data struct {
+				ID string `json:"id"`
+			} `json:"data"`
 		}
+		if err := json.Unmarshal(ev.body, &body); err != nil {
+			t.Fatal(err)
+		}
+		if h := ev.hdr.Get("X-Cairn-Event"); h != body.Kind || body.Data.ID != id {
+			t.Fatalf("delivery headed %q carries kind %q about %q, want its own kind about %s", h, body.Kind, body.Data.ID, id)
+		}
+		got[body.Kind]++
 	}
-	ev := recv.wait(t)
-	if got := ev.hdr.Get("X-Cairn-Event"); got != string(event.ArtifactCreated) {
-		t.Fatalf("env target received %q, want only artifact.created", got)
+	want := map[string]int{
+		string(event.ArtifactCreated): 1, string(event.CommentCreated): 1,
+		string(event.ReactionAdded): 2, string(event.ReactionRemoved): 1,
 	}
-	// Give a wrongly-enqueued annotation event time to arrive, then check the
-	// target saw the creation alone.
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("joe's subscription received %v, want %v", got, want)
+	}
+	// Give a wrongly routed event time to arrive, then check nothing did.
 	time.Sleep(200 * time.Millisecond)
-	recv.mu.Lock()
-	defer recv.mu.Unlock()
-	if len(recv.seen) != 1 {
-		t.Fatalf("env target received %d deliveries, want 1 (the creation)", len(recv.seen))
+	if n := joeRecv.count(); n != 5 {
+		t.Fatalf("joe's subscription received %d deliveries, want 5", n)
+	}
+	if n := bobRecv.count(); n != 0 {
+		t.Fatalf("bob's subscription received %d deliveries about joe's artifact", n)
 	}
 }

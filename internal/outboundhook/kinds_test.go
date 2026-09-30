@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/event"
+	"github.com/stump-wtf/cairn/internal/subscription"
 )
 
 // Governing: ADR-0022, SPEC-0016 EV-1 "Event Kind Registry", EV-3 "Payload
@@ -30,9 +32,10 @@ import (
 // Delivery with Creation Priority", "Error Handling Standards", "Concurrency
 // Safety"; ADR-0017, SPEC-0012 REQ "Event Payload".
 
-// ownerMarker is the subject owner in every fixture. EV-7 forbids it on the
-// wire, so no encoded body may contain it.
-const ownerMarker = "owner-never-on-the-wire"
+// ownerMarker is the subject's owning user in every fixture: a well-formed
+// user id, so events route to its subscriptions, and one no other fixture
+// uses. EV-7 forbids it on the wire, so no encoded body may contain it.
+const ownerMarker = "0e0e0e0e-0e0e-4e0e-8e0e-0e0e0e0e0e0e"
 
 // userMarker is the actor's user id in every fixture. Like the owner it is
 // internal: the wire's actor_id is the rendered actor (SPEC-0023 REQ
@@ -41,13 +44,13 @@ const userMarker = "user-never-on-the-wire"
 
 func kindSubject() event.Subject {
 	return event.Subject{
-		PublicID:  "7Kq2mZ",
-		ShareType: "markdown",
-		Title:     "Work order: rotate the runner image",
-		WebPath:   "/7Kq2mZ",
-		Tags:      []string{"handoff", "lane:m"},
-		ExpiresAt: time.Date(2026, 9, 18, 8, 0, 0, 0, time.UTC),
-		OwnerID:   ownerMarker,
+		PublicID:    "7Kq2mZ",
+		ShareType:   "markdown",
+		Title:       "Work order: rotate the runner image",
+		WebPath:     "/7Kq2mZ",
+		Tags:        []string{"handoff", "lane:m"},
+		ExpiresAt:   time.Date(2026, 9, 18, 8, 0, 0, 0, time.UTC),
+		OwnerUserID: ownerMarker,
 	}
 }
 
@@ -171,8 +174,9 @@ func TestUnknownKindNeverEmitted(t *testing.T) {
 			}
 
 			var logs bytes.Buffer
-			const target = "https://sink.example/capability-secret"
-			e := New([]string{target}, "s3cr3t", "https://cairn.example", slog.New(slog.NewJSONHandler(&logs, nil)))
+			subs := &fakeSubs{}
+			subs.add(subscription.Owner{UserID: ownerMarker}, "sub-k", "https://sink.example/capability-secret", "s3cr3t")
+			e := New(subs, nil, "https://cairn.example", slog.New(slog.NewJSONHandler(&logs, nil)))
 			e.Emit(ev)
 			if n := len(e.ch); n != 0 {
 				t.Fatalf("unknown kind %q enqueued %d events", k, n)
@@ -431,81 +435,128 @@ func TestReactionApprovalAlwaysPresent(t *testing.T) {
 	}
 }
 
-// capture is a target that records every request it receives.
-type capture struct {
+// kindSink is a target that records every request it receives.
+type kindSink struct {
 	mu   sync.Mutex
-	reqs []captured
+	reqs []sinkReq
 	n    atomic.Int32
 }
 
-type captured struct {
+type sinkReq struct {
 	hdr  http.Header
 	body []byte
 }
 
-func (c *capture) handler(w http.ResponseWriter, r *http.Request) {
+func (c *kindSink) handler(w http.ResponseWriter, r *http.Request) {
 	b, _ := io.ReadAll(r.Body)
 	c.mu.Lock()
-	c.reqs = append(c.reqs, captured{hdr: r.Header.Clone(), body: b})
+	c.reqs = append(c.reqs, sinkReq{hdr: r.Header.Clone(), body: b})
 	c.mu.Unlock()
 	c.n.Add(1)
 	w.WriteHeader(http.StatusAccepted)
 }
 
 // snapshot copies the recorded requests under the lock.
-func (c *capture) snapshot() []captured {
+func (c *kindSink) snapshot() []sinkReq {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]captured(nil), c.reqs...)
+	return append([]sinkReq(nil), c.reqs...)
 }
 
-// TestNoEnvTargetReceivesNewKinds: SPEC-0016 EV-7. Every kind ADR-0022 adds is
-// encoded, counted and dropped, never delivered to an env target. The creation
-// emitted last is the positive control: it is delivered, so the worker ran
-// past every earlier event before the assertion.
-func TestNoEnvTargetReceivesNewKinds(t *testing.T) {
-	var sink capture
-	srv := httptest.NewServer(http.HandlerFunc(sink.handler))
-	defer srv.Close()
+// kinds returns the X-Cairn-Event of every request, in arrival order.
+func (c *kindSink) kinds() []string {
+	var out []string
+	for _, r := range c.snapshot() {
+		out = append(out, r.hdr.Get("X-Cairn-Event"))
+	}
+	return out
+}
 
-	e := newEmitter(t, "s3cr3t", srv.URL)
-	for _, ev := range kindEvents() {
+// kindEmitter is an emitter whose only subscription belongs to the fixtures'
+// owner, delivers to url and signs with secret. No worker runs until the
+// test starts one.
+func kindEmitter(t *testing.T, secret, url string) *Emitter {
+	t.Helper()
+	subs := &fakeSubs{}
+	subs.add(subscription.Owner{UserID: ownerMarker}, "sub-k", url, secret)
+	return newEmitter(t, subs)
+}
+
+// TestOwnedSubscriptionsReceiveEveryKind: SPEC-0016 EV-7 with owned
+// subscriptions in place. Every registered kind about the owner's artifact is
+// delivered to the owner's unfiltered subscription; a subscription filtered to
+// artifact.created and reaction.added gets exactly those; and another owner's
+// subscription, the actor's own included, gets nothing (SPEC-0023 REQ "Events
+// Go Only to the Artifact's Workspace").
+func TestOwnedSubscriptionsReceiveEveryKind(t *testing.T) {
+	var all, filtered, actors kindSink
+	subs := &fakeSubs{}
+	for _, c := range []struct {
+		sink  *kindSink
+		owner string
+		id    string
+	}{{&all, ownerMarker, "sub-all"}, {&filtered, ownerMarker, "sub-filtered"}, {&actors, userMarker, "sub-actor"}} {
+		srv := httptest.NewServer(http.HandlerFunc(c.sink.handler))
+		t.Cleanup(srv.Close)
+		subs.add(subscription.Owner{UserID: c.owner}, c.id, srv.URL, "secret-"+c.id)
+	}
+	subs.subs[1].kinds = []string{string(event.ArtifactCreated), string(event.ReactionAdded)}
+
+	e := newEmitter(t, subs)
+	run(t, e)
+	evs := allKindEvents()
+	for _, ev := range evs {
 		e.Emit(ev)
 	}
-	e.Emit(creationEvent())
-	runUntil(t, e, &sink.n, 1)
+	waitFor(t, "every kind at the unfiltered subscription", func() bool { return int(all.n.Load()) == len(evs) })
+	waitFor(t, "the filtered subscription's kinds", func() bool { return filtered.n.Load() == 2 })
 
-	reqs := sink.snapshot()
-	if len(reqs) != 1 {
-		t.Fatalf("env target received %d requests, want only the creation", len(reqs))
+	var want []string
+	for _, k := range event.RegisteredKinds() {
+		want = append(want, string(k))
 	}
-	if got := reqs[0].hdr.Get("X-Cairn-Event"); got != string(event.ArtifactCreated) {
-		t.Fatalf("env target received %q", got)
+	got := all.kinds()
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("unfiltered subscription received %q, want every registered kind %q", got, want)
 	}
-	for _, ev := range kindEvents() {
-		if got := e.Dropped(ev.Kind); got != 1 {
-			t.Errorf("Dropped(%q) = %d, want 1", ev.Kind, got)
+	got = filtered.kinds()
+	slices.Sort(got)
+	if !slices.Equal(got, []string{string(event.ArtifactCreated), string(event.ReactionAdded)}) {
+		t.Fatalf("filtered subscription received %q, want artifact.created and reaction.added", got)
+	}
+	// Every event was looked up for the artifact's owner, never the actor.
+	if n := actors.n.Load(); n != 0 {
+		t.Fatalf("the actor's own subscription received %d events about another owner's artifact", n)
+	}
+	subs.mu.Lock()
+	defer subs.mu.Unlock()
+	for _, o := range subs.lookups {
+		if o != (subscription.Owner{UserID: ownerMarker}) {
+			t.Fatalf("targets looked up for %+v, want only the subject's owner", o)
 		}
 	}
-	if got := e.Dropped(event.ArtifactCreated); got != 0 {
-		t.Errorf("Dropped(artifact.created) = %d, want 0", got)
+	for _, k := range event.RegisteredKinds() {
+		if d := e.Dropped(k); d != 0 {
+			t.Errorf("Dropped(%s) = %d, want 0", k, d)
+		}
 	}
 }
 
 // TestHeaderMatchesKindForEveryKind: SPEC-0016 EV-8 "Header matches kind".
 // Each kind is sealed and handed to the real delivery path: X-Cairn-Event
 // equals the body's kind, X-Cairn-Event-Id its event_id, and the signature
-// verifies over the raw body. Delivery is driven directly because EV-7 keeps
-// the new kinds out of the queue until owned subscriptions exist.
+// verifies over the raw body with the subscription's own secret.
 func TestHeaderMatchesKindForEveryKind(t *testing.T) {
 	const secret = "s3cr3t"
 	for name, ev := range allKindEvents() {
 		t.Run(name, func(t *testing.T) {
-			var sink capture
+			var sink kindSink
 			srv := httptest.NewServer(http.HandlerFunc(sink.handler))
 			defer srv.Close()
 
-			e := newEmitter(t, secret, srv.URL)
+			e := kindEmitter(t, secret, srv.URL)
 			env, err := e.seal(ev)
 			if err != nil {
 				t.Fatal(err)
@@ -541,7 +592,7 @@ func TestHeaderMatchesKindForEveryKind(t *testing.T) {
 // TestQueueFullCountsDroppedCreations: a creation that meets a full queue is
 // counted under its kind, so the dropped series covers every undelivered event.
 func TestQueueFullCountsDroppedCreations(t *testing.T) {
-	e := newEmitter(t, "", "http://127.0.0.1:0/not-running")
+	e := kindEmitter(t, "", "http://127.0.0.1:0/not-running")
 	for i := 0; i < queueCap+50; i++ {
 		e.Emit(creationEvent())
 	}
@@ -550,10 +601,35 @@ func TestQueueFullCountsDroppedCreations(t *testing.T) {
 	}
 }
 
+// TestReactionBurstDoesNotStarveCreation: SPEC-0016 EV-8. Past half the
+// queue, new non-creation events are dropped and counted before they are
+// enqueued, and artifact.created still is.
+func TestReactionBurstDoesNotStarveCreation(t *testing.T) {
+	e := kindEmitter(t, "", "http://127.0.0.1:0/not-running")
+	reaction := kindEvents()["reaction_added"]
+	for i := 0; i < queueCap; i++ {
+		e.Emit(reaction)
+	}
+	if got, want := len(e.ch), priorityDepth+1; got != want {
+		t.Fatalf("reactions enqueued = %d, want %d (half the queue, then drops)", got, want)
+	}
+	if got, want := e.Dropped(event.ReactionAdded), uint64(queueCap-priorityDepth-1); got != want {
+		t.Fatalf("Dropped(reaction.added) = %d, want %d", got, want)
+	}
+	e.Emit(creationEvent())
+	if got := len(e.ch); got != priorityDepth+2 {
+		t.Fatalf("creation after the burst: queue = %d, want it enqueued (%d)", got, priorityDepth+2)
+	}
+	if got := e.Dropped(event.ArtifactCreated); got != 0 {
+		t.Fatalf("Dropped(artifact.created) = %d, want 0", got)
+	}
+}
+
 // TestConcurrentEmitCountsExactly: the drop accounting is race-free under
 // concurrent producers (SPEC-0016 "Concurrency Safety"; run with -race).
+// Every event is either enqueued or counted as dropped, per kind.
 func TestConcurrentEmitCountsExactly(t *testing.T) {
-	e := newEmitter(t, "", "http://127.0.0.1:0/not-running")
+	e := kindEmitter(t, "", "http://127.0.0.1:0/not-running")
 	const workers, per = 50, 20
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
@@ -567,12 +643,19 @@ func TestConcurrentEmitCountsExactly(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if got := e.Dropped(event.ReactionAdded); got != workers*per {
-		t.Fatalf("Dropped(reaction.added) = %d, want %d", got, workers*per)
+	enqueued := map[event.Kind]uint64{}
+	for len(e.ch) > 0 {
+		enqueued[(<-e.ch).kind]++
 	}
-	enqueued := uint64(len(e.ch))
-	if got := enqueued + e.Dropped(event.ArtifactCreated); got != workers*per {
-		t.Fatalf("creations enqueued+dropped = %d, want %d", got, workers*per)
+	for _, k := range []event.Kind{event.ReactionAdded, event.ArtifactCreated} {
+		if got := enqueued[k] + e.Dropped(k); got != workers*per {
+			t.Errorf("%s enqueued+dropped = %d, want %d", k, got, workers*per)
+		}
+	}
+	// No reaction is enqueued once the queue is past half full; concurrent
+	// producers can each pass the check once before it fills.
+	if got := enqueued[event.ReactionAdded]; got > priorityDepth+workers {
+		t.Errorf("reactions enqueued = %d, want at most %d", got, priorityDepth+workers)
 	}
 }
 

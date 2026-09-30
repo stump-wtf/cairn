@@ -54,15 +54,24 @@ func mcpConfig() Config {
 // (registerClient/doLogin/approveConsent/exchangeCode) drive.
 func mcpTestServer(t *testing.T, cfg Config, opts store.Options) (*httptest.Server, *store.Store) {
 	t.Helper()
+	srv, st, _ := mcpSubsTestServer(t, cfg, opts)
+	return srv, st
+}
+
+// mcpSubsTestServer is mcpTestServer that also returns the subscription core
+// the server and its emitter share.
+func mcpSubsTestServer(t *testing.T, cfg Config, opts store.Options) (*httptest.Server, *store.Store, *testSubs) {
+	t.Helper()
 	if cfg.Redaction == nil {
 		cfg.Redaction = sharedTestScanner(t)
 	}
 	pool := newTestPool(t)
 	withTokenOperators(t, pool, &cfg)
+	wireSubscriptions(t, pool, &cfg, &opts)
 	st := store.New(pool, objectstore.NewMemory(), withScanner(opts))
 	srv := httptest.NewServer(newResolvedServer(t, st, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler())
 	t.Cleanup(srv.Close)
-	return srv, st
+	return srv, st, &testSubs{Service: cfg.Subscriptions, pool: pool}
 }
 
 // mintMCPToken runs the full register -> login -> consent -> code exchange

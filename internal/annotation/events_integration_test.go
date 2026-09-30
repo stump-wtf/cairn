@@ -128,12 +128,12 @@ func TestReactionEventsApprovalBit(t *testing.T) {
 	}
 	want := event.Subject{
 		PublicID: "EVTAAAA1", ShareType: sharetype.KeyMarkdown, Title: "Work order",
-		WebPath: "/EVTAAAA1", Tags: []string{"handoff", "lane:m"}, ExpiresAt: expires, OwnerID: testUsers["bob"],
+		WebPath: "/EVTAAAA1", Tags: []string{"handoff", "lane:m"}, ExpiresAt: expires, OwnerUserID: testUsers["bob"],
 	}
 	got := ev.Subject
 	if got.PublicID != want.PublicID || got.ShareType != want.ShareType || got.Title != want.Title ||
 		got.WebPath != want.WebPath || fmt.Sprint(got.Tags) != fmt.Sprint(want.Tags) ||
-		!got.ExpiresAt.Equal(want.ExpiresAt) || got.OwnerID != want.OwnerID {
+		!got.ExpiresAt.Equal(want.ExpiresAt) || got.OwnerUserID != want.OwnerUserID || got.OwnerTeamID != "" {
 		t.Errorf("subject = %+v, want %+v", got, want)
 	}
 

@@ -65,6 +65,29 @@ reaches 1.0.
   default, so the operator could impersonate anyone. A token therefore no
   longer keeps the Bin its old `secret:actor` entry had: see the upgrade note
   on orphaned legacy Bins.
+- **Owned outbound subscriptions** (SPEC-0023 REQ "Owned Outbound
+  Subscriptions", "Events Go Only to the Artifact's Workspace" and
+  "Subscription Target Safety", #185, audit A4). Outbound events now go only
+  to `outbound_subscriptions` owned by the artifact's owner, managed in
+  Settings → Outbound subscriptions or over `/v1/subscriptions` by a human
+  principal (agent tokens and personal access tokens are refused). Before
+  this, every user's `artifact.created` event, with its title, link and
+  creator, went to the operator's instance-wide targets. Each subscription
+  has its own signing secret, either supplied by its creator (at least 32
+  bytes, such as a Switchboard `cairn` webhook's `signing_secret`) or minted
+  by Cairn, shown once and stored encrypted under the new
+  `CAIRN_ENCRYPTION_KEY`. Filters on event type, share type and tag; health
+  with auto-disable after 20 consecutive failed deliveries; ceilings of 5 per
+  user and 10 per team (`CAIRN_SUBSCRIPTIONS_PER_USER` / `_PER_TEAM`).
+  Targets must be `https` and resolve to public addresses, re-checked on
+  every dial so a rebinding name is never dialled; redirects are failed
+  deliveries. `CAIRN_OUTBOUND_ALLOW_HTTP=true` admits `http://` targets and
+  logs a WARN at startup. A subscription receives every event kind about its
+  owner's artifacts that its event-type filter admits (no filter admits all):
+  `artifact.created`, and the `comment.created`, `reaction.*` and
+  `run.closed` events below. Once the delivery queue is more than half full,
+  events other than `artifact.created` are dropped and counted first
+  (SPEC-0016 EV-7, EV-8).
 - **Existing users land on their account when they sign in** (SPEC-0023).
   Matching by verified email is no longer one-shot: an identity whose user has
   no verified email yet is matched again on every sign-in that carries one, so
@@ -80,7 +103,25 @@ reaches 1.0.
   the owner of any email they type. GitHub is unaffected: it always uses the
   primary verified email.
 
+### Removed
+
+- **`CAIRN_OUTBOUND_WEBHOOK_URLS` and `CAIRN_OUTBOUND_WEBHOOK_SECRET`** (#185).
+  Cairn no longer reads either variable: owned subscriptions are the only
+  outbound delivery path. There is no deprecation window and no import.
+
 ### Upgrade notes
+
+- **The instance-wide outbound targets are gone.** A deployment with
+  `CAIRN_OUTBOUND_WEBHOOK_URLS` still set starts normally and delivers
+  nothing to those URLs. To keep an existing receiver, such as your
+  Switchboard handoff webhook: set `CAIRN_ENCRYPTION_KEY` (`openssl rand
+  -base64 32`; back it up with the database), restart, sign in, and add a
+  subscription in Settings → Outbound subscriptions with the receiver's URL,
+  pasting the value you had in `CAIRN_OUTBOUND_WEBHOOK_SECRET` as its signing
+  secret. The receiver needs no change. It then gets your artifacts' events
+  only; other users add their own. Remove both old variables from your
+  environment and compose file. Migration `0035_outbound_subscriptions` adds
+  one empty table.
 
 - **Legacy `CAIRN_API_TOKENS` entries now fail boot.** Every free-form
   `secret:actor[:role]` entry is refused, with no grace period, and
@@ -163,19 +204,16 @@ reaches 1.0.
 - **Outbound webhooks**: the `artifact.created` body appends two keys to `data`:
   `actor_kind` (`human` or `agent`) and `auth` (`session`, `oauth`, `pat` or
   `api_token`), both derived from the creator's credential. No other byte
-  changes. The encoder now handles every SPEC-0016 event kind; kinds other than
-  `artifact.created` are counted and never sent to `CAIRN_OUTBOUND_WEBHOOK_URLS`.
-  (ADR-0022, SPEC-0016, #305)
+  changes. The encoder now handles every SPEC-0016 event kind, delivered only
+  to owned subscriptions (above). (ADR-0022, SPEC-0016, #305)
 - **Traces announce themselves.** Opening a run, or uploading one whole, now
   emits `artifact.created` with `share_type: "trajectory"`, like every other
-  artifact, so `CAIRN_OUTBOUND_WEBHOOK_URLS` targets start receiving trace
-  creations. A consumer that routes on `share_type` or tags needs no change;
+  artifact, so subscriptions start receiving trace creations. A consumer that routes on `share_type` or tags needs no change;
   one that assumed every event was a single-body artifact or a bundle should
   ignore `trajectory`. Closing a run (`POST /v1/runs/{id}/close`), and a batch
   run born closed, also emit `run.closed` with its status, span count, start,
-  end and duration; like the other new kinds it is counted and not sent to env
-  targets until owned subscriptions land. (ADR-0022, SPEC-0016 EV-2, EV-3,
-  SPEC-0023, #313)
+  end and duration; like the other new kinds it goes to owned subscriptions
+  only. (ADR-0022, SPEC-0016 EV-2, EV-3, SPEC-0023, #313)
 - **Annotations announce themselves.** A new comment emits `comment.created`,
   a new reaction `reaction.added` (a duplicate click emits nothing), and each
   removed reaction `reaction.removed`, whichever surface made the change.
@@ -185,8 +223,8 @@ reaches 1.0.
   request field can change that. The class is set by the new
   `CAIRN_APPROVAL_REACTIONS` (comma-separated, default 👍 ✅ ✔️; skin tones
   and VS-16 are ignored when matching), and a malformed entry fails startup.
-  Like `run.closed`, these kinds are counted and not sent to env targets
-  until owned subscriptions land. (ADR-0022, SPEC-0016 EV-2, EV-5, #311)
+  Like `run.closed`, these kinds go to owned subscriptions only. (ADR-0022,
+  SPEC-0016 EV-2, EV-5, #311)
 - **Reactions and comments are owned per actor kind.** Each row stores the
   server-derived `actor_kind` (`human` for a browser session, `agent` for every
   bearer credential), and reaction idempotency is keyed per

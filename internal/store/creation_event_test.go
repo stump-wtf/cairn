@@ -23,7 +23,7 @@ func TestCreationEventMapsToArtifactCreated(t *testing.T) {
 		PublicID: "7Kq2mZ", ShareType: artifact.TypeBundle, Title: "handoff", WebPath: "/b/7Kq2mZ",
 		ActorID: "actor-1", Model: "claude-opus-5", Channel: string(artifact.ChannelMCP),
 		ExpiresAt: exp, OnBehalfOf: "claude-code/2.1.0", Tags: []string{"handoff", "lane:m"},
-		ActorKind: event.KindAgent, Auth: event.AuthOAuth, OwnerID: "owner-1",
+		ActorKind: event.KindAgent, Auth: event.AuthOAuth, OwnerUserID: "owner-1",
 	}
 	ev := c.Event()
 
@@ -32,7 +32,7 @@ func TestCreationEventMapsToArtifactCreated(t *testing.T) {
 	}
 	s := ev.Subject
 	if s.PublicID != "7Kq2mZ" || s.ShareType != artifact.TypeBundle || s.Title != "handoff" ||
-		s.WebPath != "/b/7Kq2mZ" || !s.ExpiresAt.Equal(exp) || s.OwnerID != "owner-1" ||
+		s.WebPath != "/b/7Kq2mZ" || !s.ExpiresAt.Equal(exp) || s.OwnerUserID != "owner-1" ||
 		!slices.Equal(s.Tags, []string{"handoff", "lane:m"}) {
 		t.Fatalf("subject = %+v", s)
 	}
@@ -82,10 +82,10 @@ func TestCreationEventCarriesOwner(t *testing.T) {
 		t.Fatalf("got %d creation events, want 2", len(evs))
 	}
 	for i, want := range []struct{ actor, owner string }{{"actor-1", testIntruder}, {"actor-2", testOwner}} {
-		if evs[i].ActorID != want.actor || evs[i].OwnerID != want.owner {
-			t.Errorf("event %d actor=%q owner=%q, want %q and %q", i, evs[i].ActorID, evs[i].OwnerID, want.actor, want.owner)
+		if evs[i].ActorID != want.actor || evs[i].OwnerUserID != want.owner {
+			t.Errorf("event %d actor=%q owner=%q, want %q and %q", i, evs[i].ActorID, evs[i].OwnerUserID, want.actor, want.owner)
 		}
-		if got := evs[i].Event().Subject.OwnerID; got != want.owner {
+		if got := evs[i].Event().Subject.OwnerUserID; got != want.owner {
 			t.Errorf("event %d subject owner = %q, want %q", i, got, want.owner)
 		}
 	}

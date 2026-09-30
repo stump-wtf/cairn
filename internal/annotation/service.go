@@ -808,22 +808,25 @@ type resolvedArtifact struct {
 	title     string
 	tags      []string
 	expiresAt time.Time
-	ownerID   string
+	// ownerUserID and ownerTeamID are the owning workspace (one is set).
+	ownerUserID string
+	ownerTeamID string
 }
 
 // subject describes the artifact as the subject of a lifecycle event, exactly
 // as its artifact.created did (SPEC-0016 EV-3 "Subject fields resolve the
-// artifact for every kind"). OwnerID routes it and never reaches the wire
+// artifact for every kind"). The owner routes it and never reaches the wire
 // (EV-7).
 func (a resolvedArtifact) subject(reg *sharetype.Registry) event.Subject {
 	return event.Subject{
-		PublicID:  a.publicID,
-		ShareType: a.shareType,
-		Title:     a.title,
-		WebPath:   store.WebPath(reg, a.shareType, a.publicID),
-		Tags:      a.tags,
-		ExpiresAt: a.expiresAt,
-		OwnerID:   a.ownerID,
+		PublicID:    a.publicID,
+		ShareType:   a.shareType,
+		Title:       a.title,
+		WebPath:     store.WebPath(reg, a.shareType, a.publicID),
+		Tags:        a.tags,
+		ExpiresAt:   a.expiresAt,
+		OwnerUserID: a.ownerUserID,
+		OwnerTeamID: a.ownerTeamID,
 	}
 }
 
@@ -870,9 +873,11 @@ type queryRower interface {
 func resolveArtifact(ctx context.Context, q queryRower, publicID string) (resolvedArtifact, error) {
 	var art resolvedArtifact
 	err := q.QueryRow(ctx, `
-		SELECT id, share_type, public_id, title, tags, expires_at, COALESCE(owner_user_id::text, '')
+		SELECT id, share_type, public_id, title, tags, expires_at,
+		       COALESCE(owner_user_id::text, ''), COALESCE(owner_team_id::text, '')
 		FROM artifacts WHERE public_id = $1 AND expires_at > now()`,
-		publicID).Scan(&art.id, &art.shareType, &art.publicID, &art.title, &art.tags, &art.expiresAt, &art.ownerID)
+		publicID).Scan(&art.id, &art.shareType, &art.publicID, &art.title, &art.tags, &art.expiresAt,
+		&art.ownerUserID, &art.ownerTeamID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return art, fmt.Errorf("annotation: resolve artifact %s: %w", publicID, errs.ErrNotFound)
 	}

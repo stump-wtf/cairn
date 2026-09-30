@@ -252,18 +252,24 @@ list:
 
 To compute the signature yourself, put the captured body in a file named `body` and the
 secret in a local shell variable. `SECRET` below is only a name for this command; Cairn
-never reads it. Its value must equal the signing secret of the delivery you are checking,
-which today is the sending instance's `CAIRN_OUTBOUND_WEBHOOK_SECRET`.
+never reads it. Its value must equal the signing secret of the delivery you are checking:
+the secret of the subscription that sent it, shown once when the subscription was created
+or its secret rotated.
 
 ```bash
-SECRET='…'   # the instance's CAIRN_OUTBOUND_WEBHOOK_SECRET value
+SECRET='…'   # that subscription's signing secret
 printf 'sha256=%s\n' "$(openssl dgst -sha256 -hmac "$SECRET" -r body | cut -d' ' -f1)"
 ```
 
 ## Outbound events never arrive
 
-- The instance may not have outbound webhooks configured. On the hosted service, that's up
-  to the operator.
+- You may have no outbound subscription, or its filters don't admit the event. Check
+  Settings → **Outbound subscriptions**. Only your own artifacts reach your
+  subscriptions: an artifact someone else created isn't yours to be told about.
+- The subscription may be paused, or disabled after 20 failed deliveries in a row.
+  Settings shows why; fix the receiver and **Resume** it.
+- The target redirected (a `3xx` is a failed delivery), or it resolves to a private or
+  loopback address, which Cairn never dials. Settings shows the last result.
 - The target returned a `4xx` other than `429`. Cairn doesn't retry those.
 - Cairn restarted while the event was queued. Queued events aren't saved, and there's no
   way to redeliver one.

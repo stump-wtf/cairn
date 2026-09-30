@@ -41,8 +41,7 @@ variable in your shell does nothing for the CLI, and the reverse is also true.
 | `CAIRN_TOKEN` | the `cairn` CLI | The one bearer token the CLI sends, the same as `--token`. The MCP client configs in [Connect your agent](./connect-your-agent.md) expand it from your shell too, but `/mcp` accepts only a personal access token or an OAuth token there, never a `CAIRN_API_TOKENS` secret. |
 | `CAIRN_BASE_URL` | the server | The public origin the server builds short links and its OIDC redirect URI from. |
 | `CAIRN_URL` | the `cairn` CLI | The server the CLI talks to, the same as `--url`. It defaults to the hosted service, so a self-hoster sets it. |
-| `CAIRN_OUTBOUND_WEBHOOK_URLS` | the server | Where the server sends `artifact.created` events. |
-| `CAIRN_OUTBOUND_WEBHOOK_SECRET` | the server | The secret the server signs those events with. A receiver checks signatures against the same value. |
+| `CAIRN_ENCRYPTION_KEY` | the server | Encrypts each [outbound subscription](./outbound-webhooks.md)'s signing secret at rest. Receivers never see it: each one verifies against its own subscription's secret. The old instance-wide `CAIRN_OUTBOUND_WEBHOOK_URLS` and `CAIRN_OUTBOUND_WEBHOOK_SECRET` are gone, and the server ignores them. |
 | `CAIRN_API_TOKEN` (singular) | nothing | A common slip. You want `CAIRN_API_TOKENS` on the server, or `CAIRN_TOKEN` for the CLI. |
 
 The pairs connect like this: one secret in the server's `CAIRN_API_TOKENS` is
@@ -76,8 +75,9 @@ optional redaction allowlist that `CAIRN_REDACTION_ALLOWLIST_FILE` names (see
 | `CAIRN_OIDC_TRUST_EMAIL` | `false` | Declares your OIDC provider **authoritative for emails**: its `email` claim counts as verified even when the ID token's `email_verified` is absent or `false`. A verified email links a sign-in to the user who owns it, including the Bin an existing user had before users existed. Set it only for a provider you run whose users **cannot set their own email** (Pocket ID with LDAP-synced users, say). Never set it for a provider that lets people type any email: that would let them sign in as someone else. GitHub sign-ins always use GitHub's primary verified email and ignore this setting. |
 | `CAIRN_DEV_LOGIN_PASSWORD` | *(empty)* | Shared-secret web login accepted for any actor id. Honored **only while `CAIRN_OIDC_ISSUER` is unset** — a deployment that configures OIDC can never fall back to it. Empty disables interactive login entirely. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_DEV_INSECURE_BEARER_AUTH` | `false` | Makes the API trust any bearer token as its own actor id with no verification. A local-development shortcut that must never be enabled in production. Development seam: deliberately **not** wired through the compose file above. |
-| `CAIRN_OUTBOUND_WEBHOOK_URLS` | *(empty)* | Comma-separated URLs that receive a signed `artifact.created` event. Empty = the feature is inert. These URLs are bearer capabilities; never log or share them. |
-| `CAIRN_OUTBOUND_WEBHOOK_SECRET` | *(empty)* | When set, every delivery carries `X-Cairn-Signature: sha256=<hex>` over the raw body. |
+| `CAIRN_ENCRYPTION_KEY` | *(empty)* | 32 random bytes, base64 (`openssl rand -base64 32`), that encrypt [outbound subscription](#outbound-subscriptions) secrets at rest. **Unset, nobody can create a subscription**; everything else runs. A malformed value fails boot. Never logged. Wired through the compose file above. |
+| `CAIRN_SUBSCRIPTIONS_PER_USER` / `CAIRN_SUBSCRIPTIONS_PER_TEAM` | `5` / `10` | Most outbound subscriptions one user, or one team, may own (1 to 1000). |
+| `CAIRN_OUTBOUND_ALLOW_HTTP` | `false` | **Risky.** Admit plain `http://` subscription targets. Cairn logs a WARN at startup while it's on ([why](#outbound-subscriptions)). Deliberately **not** wired through the compose file above. |
 | `CAIRN_APPROVAL_REACTIONS` | 👍,✅,✔️ | Comma-separated emoji whose reaction counts as an approval on reaction events. Skin tones and VS-16 are ignored when matching. Only a browser-session reaction is ever an approval. A malformed entry fails startup. |
 | `CAIRN_DEFAULT_TTL` | `168h` | Default artifact expiry (Go duration; 7 days). |
 | `CAIRN_MAX_UPLOAD_BYTES` | `67108864` | Max upload size, enforced incrementally — an oversize upload is rejected mid-stream with 413, not after buffering. |
@@ -192,8 +192,7 @@ services:
       CAIRN_API_TOKENS: ${CAIRN_API_TOKENS:-}
       CAIRN_OPERATORS: ${CAIRN_OPERATORS:-}
       CAIRN_OPERATOR_GROUP: ${CAIRN_OPERATOR_GROUP:-}
-      CAIRN_OUTBOUND_WEBHOOK_URLS: ${CAIRN_OUTBOUND_WEBHOOK_URLS:-}
-      CAIRN_OUTBOUND_WEBHOOK_SECRET: ${CAIRN_OUTBOUND_WEBHOOK_SECRET:-}
+      CAIRN_ENCRYPTION_KEY: ${CAIRN_ENCRYPTION_KEY:-}
       CAIRN_APPROVAL_REACTIONS: ${CAIRN_APPROVAL_REACTIONS:-}
     restart: unless-stopped
 
@@ -237,6 +236,7 @@ CAIRN_ACME_EMAIL=you@example.com
 POSTGRES_PASSWORD=$(openssl rand -hex 24)
 CAIRN_S3_ACCESS_KEY=$(openssl rand -hex 16)
 CAIRN_S3_SECRET_KEY=$(openssl rand -hex 24)
+CAIRN_ENCRYPTION_KEY=$(openssl rand -base64 32)
 EOF
 docker compose up -d
 ```
@@ -306,6 +306,7 @@ healthy-start logs are the same two lines as the Docker path.
 | `CAIRN_API_TOKENS entry N: legacy secret:actor entries are no longer accepted …` | The Nth token is in the old free-form shape. Rewrite it as `secret:<user>[:agent\|:human]` ([details](#static-tokens-for-the-operator)). |
 | `CAIRN_API_TOKENS entry N: user is not an operator` | The Nth token names a real user who is not listed in `CAIRN_OPERATORS`. Give them a personal access token instead. |
 | `CAIRN_API_TOKENS entry N: no user; …` | Nobody with that identity or verified email has signed in yet. Sign in once, then restart. |
+| `config CAIRN_ENCRYPTION_KEY: …` | The key isn't base64, or doesn't decode to 32 bytes. Generate one with `openssl rand -base64 32`. The error never repeats the value. |
 | `config CAIRN_REDACTION_…: …` | A redaction variable has a value cairn does not accept, such as a `CAIRN_REDACTION_OVERSIZE` other than `reject` or `store_unscanned`, or a scan cap that is not a positive integer. |
 | `ingest redaction: redaction allowlist <path>: …` | The allowlist file is missing, does not parse, or has an entry cairn refuses. The message names the entry. See [the allowlist format](#operator-allowlist). |
 
@@ -403,6 +404,40 @@ The console removes the easy path, not the possibility. Whoever controls the
 Postgres database and the object store can read every artifact, comment and
 captured request in them, whatever the product shows. Treat access to those
 the way you treat the data itself, and tell your users.
+:::
+
+## Outbound subscriptions
+
+Outbound events go to **subscriptions**, which each user owns and manages in Settings →
+**Outbound subscriptions** or over `/v1/subscriptions`
+([guide](./outbound-webhooks.md)). An event about an artifact goes only to its owner's
+subscriptions. There is no instance-wide target list: the operator's own receiver is
+just the operator's subscription.
+
+- **Set `CAIRN_ENCRYPTION_KEY`.** Each subscription's signing secret is stored
+  encrypted under it. Without it nobody can add a subscription, and cairnd logs
+  `outbound subscriptions unavailable` at startup. Back the key up with the database: a
+  changed or lost key leaves every existing secret unreadable, and those subscriptions
+  stop delivering (cairnd logs an error per event; it never sends unsigned) until each
+  owner rotates their secret.
+- **Targets must be public `https`.** Loopback, private (RFC 1918), link-local and
+  unique-local addresses are refused when a subscription is added, and every address the
+  host resolves to is checked again before each delivery, so a name re-pointed at your
+  internal network is never dialled. Redirects aren't followed. Each attempt times out
+  after five seconds, and delivery never holds up artifact creation.
+- **Failing targets switch themselves off.** After 20 consecutive failed deliveries a
+  subscription is disabled and says so in its owner's Settings; resuming it resets the
+  count.
+- **Ceilings.** A user may own `CAIRN_SUBSCRIPTIONS_PER_USER` subscriptions (5 by
+  default).
+
+:::warning `CAIRN_OUTBOUND_ALLOW_HTTP` sends signed events in cleartext
+With `CAIRN_OUTBOUND_ALLOW_HTTP=true`, subscriptions may name plain `http://` targets.
+Every event then crosses the network unencrypted, including the artifact's link, which
+opens the artifact for whoever reads it, and anyone on the path can read and replay
+the signed body. cairnd logs a WARN naming the variable at every startup while it is on.
+Leave it off on any instance reachable from the internet; it exists for a lab network
+you control end to end. It does not relax the address rules above.
 :::
 
 ## Tokens for agents
@@ -717,6 +752,6 @@ bodies round-trip through the bucket, and agents can work.
   work in
 - [Create your first share](./first-share.md) and
   [connect your agent](./connect-your-agent.md) — the everyday surfaces
-- [Outbound webhooks](./outbound-webhooks.md) — point `artifact.created`
-  events at a Switchboard or anything else listening
+- [Outbound webhooks](./outbound-webhooks.md) — subscribe a Switchboard, or
+  anything else listening, to your `artifact.created` events
 - [Troubleshooting](./troubleshooting.md)

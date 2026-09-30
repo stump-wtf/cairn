@@ -20,9 +20,9 @@ import (
 
 var updateGolden = flag.Bool("update", false, "rewrite the testdata/*.golden.json payload files")
 
-// goldenEmitter builds an emitter for encode-only use: no targets, no worker.
+// goldenEmitter builds an emitter for encode-only use: no subscriptions, no worker.
 func goldenEmitter() *Emitter {
-	return New(nil, "", "https://cairn.example", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return New(nil, nil, "https://cairn.example", slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 // restEvent is a creation over REST/CLI with a personal access token: no
@@ -44,7 +44,7 @@ func restEvent() store.CreationEvent {
 		ActorKind: event.KindAgent,
 		Auth:      event.AuthPAT,
 		// Routing only: never on the wire, so the golden cannot contain it.
-		OwnerID: "owner-never-on-the-wire",
+		OwnerUserID: ownerMarker,
 	}
 }
 

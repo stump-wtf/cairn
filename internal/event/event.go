@@ -118,7 +118,7 @@ func (m AuthMethod) Valid() bool {
 //
 // ID is the actor as rendered on the wire (actor_id). UserID is the users row
 // the principal acts for, which the producers that own rows by user compare
-// and store (SPEC-0023 REQ "Owner Model"); like Subject.OwnerID it is never
+// and store (SPEC-0023 REQ "Owner Model"); like the subject owner it is never
 // encoded on the wire.
 type Actor struct {
 	ID         string
@@ -159,10 +159,13 @@ type Subject struct {
 	WebPath   string
 	Tags      []string
 	ExpiresAt time.Time
-	// OwnerID is the owning user's id; it routes the event to the owner's
-	// subscriptions (ADR-0029). It is never encoded on the wire (SPEC-0016
+	// OwnerUserID and OwnerTeamID name the workspace that owns the artifact,
+	// exactly one of them set; they route the event to that workspace's
+	// subscriptions (ADR-0029, SPEC-0023 REQ "Events Go Only to the
+	// Artifact's Workspace"). Neither is ever encoded on the wire (SPEC-0016
 	// EV-7).
-	OwnerID string
+	OwnerUserID string
+	OwnerTeamID string
 }
 
 // Comment is the comment.* payload.

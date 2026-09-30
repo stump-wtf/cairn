@@ -9,7 +9,6 @@ package config
 
 import (
 	"fmt"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -109,12 +108,23 @@ type Config struct {
 	GitHubClientID     string
 	GitHubClientSecret string
 
-	// Outbound webhooks (ADR-0017, SPEC-0012): comma-separated target URLs
-	// that receive a signed `artifact.created` event after every durable
-	// artifact creation, and an optional HMAC secret for the
-	// X-Cairn-Signature header. Empty URL list = the feature is inert.
-	OutboundWebhookURLs   []string
-	OutboundWebhookSecret string
+	// Owned outbound subscriptions (ADR-0029 section 6, SPEC-0023 REQ "Owned
+	// Outbound Subscriptions"). Delivery targets are rows each user or team
+	// owns; there is no instance-wide target list.
+	//
+	// EncryptionKeyRaw is CAIRN_ENCRYPTION_KEY, 32 base64 bytes that seal
+	// subscription secrets at rest (parsed by subscription.ParseKey; never
+	// logged). Unset, subscriptions cannot be created and everything else
+	// runs normally.
+	EncryptionKeyRaw string
+	// OutboundAllowHTTP is CAIRN_OUTBOUND_ALLOW_HTTP: admit http://
+	// subscription targets. Risky and off by default; cairn serve WARNs at
+	// startup when it is on (REQ "Subscription Target Safety").
+	OutboundAllowHTTP bool
+	// SubscriptionsPerUser and SubscriptionsPerTeam are the per-owner
+	// ceilings (CAIRN_SUBSCRIPTIONS_PER_USER / _PER_TEAM, default 5 / 10).
+	SubscriptionsPerUser int
+	SubscriptionsPerTeam int
 
 	// ApprovalReactions is CAIRN_APPROVAL_REACTIONS split on commas: the emoji
 	// whose reaction is an approval (ADR-0022, SPEC-0016 EV-5). Empty means the
@@ -208,16 +218,7 @@ func Load() (*Config, error) {
 		GitHubClientID:     os.Getenv("CAIRN_GITHUB_CLIENT_ID"),
 		GitHubClientSecret: os.Getenv("CAIRN_GITHUB_CLIENT_SECRET"),
 
-		OutboundWebhookSecret: os.Getenv("CAIRN_OUTBOUND_WEBHOOK_SECRET"),
-	}
-	// Governing: SPEC-0012 REQ "Delivery Targets from Configuration".
-	for _, raw := range strings.Split(os.Getenv("CAIRN_OUTBOUND_WEBHOOK_URLS"), ",") {
-		if u := strings.TrimSpace(raw); u != "" {
-			c.OutboundWebhookURLs = append(c.OutboundWebhookURLs, u)
-		}
-	}
-	if err := validateWebhookURLs(c.OutboundWebhookURLs); err != nil {
-		return nil, err
+		EncryptionKeyRaw: os.Getenv("CAIRN_ENCRYPTION_KEY"),
 	}
 	// Governing: SPEC-0016 EV-5 "Approval Class and the Approval Bit".
 	for _, raw := range strings.Split(os.Getenv("CAIRN_APPROVAL_REACTIONS"), ",") {
@@ -227,6 +228,22 @@ func Load() (*Config, error) {
 	}
 
 	var err error
+	// Governing: SPEC-0023 REQ "Owned Outbound Subscriptions", REQ
+	// "Subscription Target Safety".
+	if c.OutboundAllowHTTP, err = envBool("CAIRN_OUTBOUND_ALLOW_HTTP", false); err != nil {
+		return nil, err
+	}
+	var perUser, perTeam int64
+	if perUser, err = envInt64("CAIRN_SUBSCRIPTIONS_PER_USER", 5); err != nil {
+		return nil, err
+	}
+	if perTeam, err = envInt64("CAIRN_SUBSCRIPTIONS_PER_TEAM", 10); err != nil {
+		return nil, err
+	}
+	if perUser < 1 || perUser > 1000 || perTeam < 1 || perTeam > 1000 {
+		return nil, fmt.Errorf("config CAIRN_SUBSCRIPTIONS_PER_USER / CAIRN_SUBSCRIPTIONS_PER_TEAM: must be between 1 and 1000")
+	}
+	c.SubscriptionsPerUser, c.SubscriptionsPerTeam = int(perUser), int(perTeam)
 	if c.DevInsecureBearerAuth, err = envBool("CAIRN_DEV_INSECURE_BEARER_AUTH", false); err != nil {
 		return nil, err
 	}
@@ -407,30 +424,4 @@ func envDuration(key string, def time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("config %s: %w", key, err)
 	}
 	return d, nil
-}
-
-// validateWebhookURLs enforces the SPEC-0012 Security Requirements rule that
-// outbound webhook targets must be https:// unless they are loopback hosts,
-// where plaintext is tolerated for local development. A malformed URL fails
-// startup rather than silently becoming a delivery that can never succeed.
-//
-// @joestump-agent 09/06/2026 - Added during review of #175: the spec required
-// TLS for non-localhost targets but nothing enforced it.
-func validateWebhookURLs(urls []string) error {
-	for _, raw := range urls {
-		u, err := url.Parse(raw)
-		if err != nil {
-			return fmt.Errorf("config CAIRN_OUTBOUND_WEBHOOK_URLS: %q: %w", raw, err)
-		}
-		switch u.Scheme {
-		case "https":
-		case "http":
-			if u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1" {
-				return fmt.Errorf("config CAIRN_OUTBOUND_WEBHOOK_URLS: %q: non-localhost targets require https (SPEC-0012)", raw)
-			}
-		default:
-			return fmt.Errorf("config CAIRN_OUTBOUND_WEBHOOK_URLS: %q: scheme must be http(s)", raw)
-		}
-	}
-	return nil
 }

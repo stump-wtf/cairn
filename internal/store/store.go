@@ -92,10 +92,12 @@ type CreationEvent struct {
 	// (ADR-0022, SPEC-0016 EV-4).
 	ActorKind event.ActorKind
 	Auth      event.AuthMethod
-	// OwnerID is the artifact's owning user id, carried so owned
-	// subscriptions can be selected without a lookup (ADR-0029). It is never
-	// put on the wire (SPEC-0016 EV-7).
-	OwnerID string
+	// OwnerUserID and OwnerTeamID name the workspace that owns the artifact
+	// (exactly one is set). They select the owned subscriptions the event is
+	// delivered to and are never put on the wire (SPEC-0023 REQ "Events Go
+	// Only to the Artifact's Workspace", SPEC-0016 EV-7).
+	OwnerUserID string
+	OwnerTeamID string
 }
 
 // Event is the artifact.created lifecycle event this creation announces. It is
@@ -109,13 +111,14 @@ func (c CreationEvent) Event() event.Event {
 	return event.Event{
 		Kind: event.ArtifactCreated,
 		Subject: event.Subject{
-			PublicID:  c.PublicID,
-			ShareType: c.ShareType,
-			Title:     c.Title,
-			WebPath:   c.WebPath,
-			Tags:      c.Tags,
-			ExpiresAt: c.ExpiresAt,
-			OwnerID:   c.OwnerID,
+			PublicID:    c.PublicID,
+			ShareType:   c.ShareType,
+			Title:       c.Title,
+			WebPath:     c.WebPath,
+			Tags:        c.Tags,
+			ExpiresAt:   c.ExpiresAt,
+			OwnerUserID: c.OwnerUserID,
+			OwnerTeamID: c.OwnerTeamID,
 		},
 		Actor: event.Actor{
 			ID:         c.ActorID,
@@ -153,8 +156,9 @@ type Options struct {
 	NewID func() (string, error)
 	// Emitter, when non-nil, receives a CreationEvent after every durable
 	// artifact creation (single-body and bundle), covering every surface
-	// (REST/web/CLI/MCP) at this single choke point. Nil = inert
-	// (SPEC-0012 REQ "Delivery Targets from Configuration").
+	// (REST/web/CLI/MCP) at this single choke point. Nil = inert. Delivery
+	// targets are the artifact owner's subscriptions (SPEC-0023 REQ "Owned
+	// Outbound Subscriptions").
 	Emitter CreationEmitter
 	// Scanner is the ingest secret scanner (ADR-0023, SPEC-0017). Every
 	// artifact and bundle create scans its title and bodies with it before
@@ -233,10 +237,11 @@ func (s *Store) emitCreated(a *artifact.Artifact, kind event.ActorKind, auth eve
 		OnBehalfOf: a.Provenance.OnBehalfOf,
 		// Cloned so the emitter never shares a backing array with the
 		// artifact the create call hands back to its caller.
-		Tags:      slices.Clone(a.Tags),
-		ActorKind: kind,
-		Auth:      auth,
-		OwnerID:   a.Access.OwnerUserID,
+		Tags:        slices.Clone(a.Tags),
+		ActorKind:   kind,
+		Auth:        auth,
+		OwnerUserID: a.Access.OwnerUserID,
+		OwnerTeamID: a.Access.OwnerTeamID,
 	})
 }
 
