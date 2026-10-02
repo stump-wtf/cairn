@@ -83,6 +83,12 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: ghcr.io/stump-wtf/cairn:scan-${{ github.run_id }}
+          # The runtime stage's `apk upgrade` layer must never come from a
+          # cache (local or registry): a cached layer pins whatever package
+          # snapshot was current when it was first built, so the Trivy gate
+          # below scans stale packages. Keep the Go build cached; keep the
+          # apk layer live.
+          no-cache-filter: runtime
 
       - name: Trivy image scan (fails closed on CRITICAL/HIGH)
         uses: docker://aquasec/trivy:latest
@@ -100,3 +106,4 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          no-cache-filter: runtime
