@@ -501,6 +501,12 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: gitea.stump.rocks/stump.wtf/cairn:scan-${{ gitea.run_id }}
+          # The runtime stage's `apk upgrade` layer must never come from the
+          # cache: a cached layer pins whatever package snapshot was current
+          # when it was first built, so the Trivy gate below scans (and the
+          # push publishes) stale packages. Keep the Go build cached; keep the
+          # apk layer live.
+          no-cache-filter: runtime
           cache-from: type=registry,ref=gitea.stump.rocks/stump.wtf/cairn:buildcache
 
       - if: ${{ env.REG != '' }}
@@ -519,6 +525,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          no-cache-filter: runtime
           cache-from: type=registry,ref=gitea.stump.rocks/stump.wtf/cairn:buildcache
           cache-to: type=registry,ref=gitea.stump.rocks/stump.wtf/cairn:buildcache,mode=max
 
