@@ -76,7 +76,7 @@ jobs:
       # locally so Trivy has something to inspect; the multi-arch push below
       # only happens if this gate passes.
       - name: Build amd64 image for the Trivy scan
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
@@ -88,7 +88,7 @@ jobs:
           # snapshot was current when it was first built, so the Trivy gate
           # below scans stale packages. Keep the Go build cached; keep the
           # apk layer live.
-          no-cache-filter: runtime
+          no-cache-filters: runtime
 
       - name: Trivy image scan (fails closed on CRITICAL/HIGH)
         uses: docker://aquasec/trivy:latest
@@ -98,7 +98,7 @@ jobs:
             --format table ghcr.io/stump-wtf/cairn:scan-${{ github.run_id }}
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
@@ -106,4 +106,4 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          no-cache-filter: runtime
+          no-cache-filters: runtime

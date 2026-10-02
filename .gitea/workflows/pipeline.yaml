@@ -494,7 +494,7 @@ jobs:
 
       - if: ${{ env.REG != '' }}
         name: Build amd64 image for Trivy scan
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
@@ -506,7 +506,18 @@ jobs:
           # when it was first built, so the Trivy gate below scans (and the
           # push publishes) stale packages. Keep the Go build cached; keep the
           # apk layer live.
-          no-cache-filter: runtime
+          #
+          # @joestump 10/02/2026 - v5 -> v6 on this step and the push step,
+          #   and the input renamed to the action's actual spelling,
+          #   `no-cache-filters` (plural). Run 16187's step dump shows
+          #   `no-cache-filter: runtime` in `with:` — a misspelled, unknown
+          #   input — and the rendered buildx CLI omits the flag entirely,
+          #   so the scan rebuilt from the stale cache and failed on pcre2
+          #   10.48-r0 again. The ref bump alone would not have helped:
+          #   every build-push-action tree (v5.0.0 through v6) declares
+          #   `no-cache-filters`, never the singular, and act_runner drops
+          #   unknown inputs silently.
+          no-cache-filters: runtime
           cache-from: type=registry,ref=gitea.stump.rocks/stump.wtf/cairn:buildcache
 
       - if: ${{ env.REG != '' }}
@@ -517,7 +528,7 @@ jobs:
 
       - if: ${{ env.REG != '' }}
         name: Build and push (amd64)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
@@ -525,7 +536,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          no-cache-filter: runtime
+          no-cache-filters: runtime
           cache-from: type=registry,ref=gitea.stump.rocks/stump.wtf/cairn:buildcache
           cache-to: type=registry,ref=gitea.stump.rocks/stump.wtf/cairn:buildcache,mode=max
 
