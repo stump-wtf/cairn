@@ -76,7 +76,7 @@ jobs:
       # locally so Trivy has something to inspect; the multi-arch push below
       # only happens if this gate passes.
       - name: Build amd64 image for the Trivy scan
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
@@ -98,7 +98,7 @@ jobs:
             --format table ghcr.io/stump-wtf/cairn:scan-${{ github.run_id }}
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
