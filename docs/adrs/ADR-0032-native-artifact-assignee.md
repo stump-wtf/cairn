@@ -150,7 +150,8 @@ today's.
   so the model would need either a user-artifact shim or a second target type
   on every relation surface.
 * Bad, because relations are immutable at create (ADR-0024's create-time
-  declaration), which re-inherits the reassignment problem option (B) dies of.
+  declaration), which re-inherits the reassignment problem that option (B)
+  dies of.
 
 ## More Information
 
