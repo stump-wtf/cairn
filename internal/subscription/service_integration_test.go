@@ -252,8 +252,8 @@ func TestTargetsFilters(t *testing.T) {
 	ids := func(m Match) []string {
 		t.Helper()
 		targets, skipped, err := s.Targets(ctx, u, m)
-		if err != nil || skipped != 0 {
-			t.Fatalf("Targets = %v, %d, %v", targets, skipped, err)
+		if err != nil || len(skipped) != 0 {
+			t.Fatalf("Targets = %v, %v, %v", targets, skipped, err)
 		}
 		var out []string
 		for _, tg := range targets {
@@ -314,16 +314,46 @@ func TestTargetsSkipSecretsThatDoNotOpen(t *testing.T) {
 	s := testService(t, pool, Options{})
 	ctx := context.Background()
 	u := Owner{UserID: newUser(t, pool, "u@example.com")}
-	mustCreate(t, s, CreateInput{Owner: u, URL: "https://a.example.com/h"})
+	_, sub := mustCreate(t, s, CreateInput{Owner: u, URL: "https://a.example.com/h"})
 	otherKey, _ := ParseKey(testKey(3))
 	rekeyed := NewService(pool, Options{Sealer: otherKey, Policy: s.policy})
 	targets, skipped, err := rekeyed.Targets(ctx, u, Match{Kind: "artifact.created"})
-	if err != nil || len(targets) != 0 || skipped != 1 {
-		t.Fatalf("Targets under another key = %v, %d, %v; want none, 1 skipped", targets, skipped, err)
+	if err != nil || len(targets) != 0 || len(skipped) != 1 || skipped[0] != sub.ID {
+		t.Fatalf("Targets under another key = %v, %v; want none, %s skipped", targets, skipped, sub.ID)
 	}
 	noKey := NewService(pool, Options{Policy: s.policy})
-	if targets, skipped, _ := noKey.Targets(ctx, u, Match{Kind: "artifact.created"}); len(targets) != 0 || skipped != 1 {
-		t.Fatalf("Targets with no key = %v, %d", targets, skipped)
+	if targets, skipped, _ := noKey.Targets(ctx, u, Match{Kind: "artifact.created"}); len(targets) != 0 || len(skipped) != 1 || skipped[0] != sub.ID {
+		t.Fatalf("Targets with no key = %v, %v; want none, %s skipped", targets, skipped, sub.ID)
+	}
+}
+
+// TestRecordDisablesSecretsThatDoNotOpen: skipped deliveries whose sealed
+// signing secret does not open count toward the threshold, and the
+// subscription they disable says what disabled it.
+func TestRecordDisablesSecretsThatDoNotOpen(t *testing.T) {
+	pool := newTestPool(t)
+	s := testService(t, pool, Options{})
+	ctx := context.Background()
+	u := Owner{UserID: newUser(t, pool, "u@example.com")}
+	_, sub := mustCreate(t, s, CreateInput{Owner: u, URL: "https://a.example.com/h"})
+
+	fail := Result{Reason: ReasonSecretDoesNotOpen, DisableReason: DisabledReasonSecretDoesNotOpen}
+	for i := 1; i < DisableAfter; i++ {
+		if d, err := s.Record(ctx, sub.ID, fail); err != nil || d {
+			t.Fatalf("failure %d: disabled=%v err=%v", i, d, err)
+		}
+	}
+	d, err := s.Record(ctx, sub.ID, fail)
+	if err != nil || !d {
+		t.Fatalf("failure %d: disabled=%v err=%v", DisableAfter, d, err)
+	}
+	got, _ := s.Get(ctx, u, sub.ID)
+	if got.Active() || got.DisabledReason != DisabledReasonSecretDoesNotOpen ||
+		got.LastError != ReasonSecretDoesNotOpen || got.LastStatus != nil {
+		t.Fatalf("after %d failures: %+v", DisableAfter, got)
+	}
+	if targets, _, _ := s.Targets(ctx, u, Match{Kind: "artifact.created"}); len(targets) != 0 {
+		t.Fatal("a disabled subscription is still a target")
 	}
 }
 

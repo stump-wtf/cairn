@@ -40,6 +40,7 @@ type fakeSub struct {
 	target subscription.Target
 	kinds  []string
 	tags   []string
+	skip   bool
 }
 
 // fakeSubs is an in-memory Subscriptions: it applies the owner and filter
@@ -57,13 +58,26 @@ func (f *fakeSubs) add(owner subscription.Owner, id, url, secret string) {
 	f.subs = append(f.subs, fakeSub{owner: owner, target: subscription.Target{ID: id, URL: url, Secret: []byte(secret)}})
 }
 
-func (f *fakeSubs) Targets(_ context.Context, owner subscription.Owner, m subscription.Match) ([]subscription.Target, int, error) {
+// addSkipped adds a subscription whose sealed secret does not open: Targets
+// skips it and reports its id.
+func (f *fakeSubs) addSkipped(owner subscription.Owner, id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.subs = append(f.subs, fakeSub{owner: owner, target: subscription.Target{ID: id}, skip: true})
+}
+
+func (f *fakeSubs) Targets(_ context.Context, owner subscription.Owner, m subscription.Match) ([]subscription.Target, []string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lookups = append(f.lookups, owner)
 	var out []subscription.Target
+	var skipped []string
 	for _, s := range f.subs {
 		if s.owner != owner {
+			continue
+		}
+		if s.skip {
+			skipped = append(skipped, s.target.ID)
 			continue
 		}
 		if len(s.kinds) > 0 && !slices.Contains(s.kinds, m.Kind) {
@@ -74,7 +88,7 @@ func (f *fakeSubs) Targets(_ context.Context, owner subscription.Owner, m subscr
 		}
 		out = append(out, s.target)
 	}
-	return out, 0, nil
+	return out, skipped, nil
 }
 
 func (f *fakeSubs) Record(_ context.Context, id string, r subscription.Result) (bool, error) {
@@ -241,6 +255,32 @@ func TestDeliveryPayloadHeadersAndPerSubscriptionSignature(t *testing.T) {
 	waitFor(t, "a recorded success", func() bool { return len(subs.recorded("sub-1")) == 1 })
 	if r := subs.recorded("sub-1")[0]; !r.OK || r.Status != http.StatusAccepted {
 		t.Fatalf("recorded %+v, want OK 202", r)
+	}
+}
+
+// TestDeliverRecordsSkippedSecretsAsFailures: a subscription whose sealed
+// signing secret does not open is recorded as a failed delivery, so failure
+// counting and auto-disable see it, while a healthy target in the same
+// fan-out is unaffected. Governing: ADR-0017 (Outbound Webhooks), SPEC-0012
+// REQ "Signed Delivery"; SPEC-0023 REQ "Owned Outbound Subscriptions".
+func TestDeliverRecordsSkippedSecretsAsFailures(t *testing.T) {
+	recv := newCapture(t, http.StatusAccepted)
+	subs := &fakeSubs{}
+	subs.addSkipped(subscription.Owner{UserID: userU}, "sub-sealed")
+	subs.add(subscription.Owner{UserID: userU}, "sub-ok", recv.srv.URL, "a-secret-the-subscription-alone-holds")
+	e := newEmitter(t, subs)
+	run(t, e)
+	e.EmitArtifactCreated(testEvent())
+	waitFor(t, "a delivery to the healthy target", func() bool { return recv.count() == 1 })
+	waitFor(t, "a failed record for the skipped target", func() bool { return len(subs.recorded("sub-sealed")) == 1 })
+
+	if r := subs.recorded("sub-sealed")[0]; r.OK || r.Status != 0 ||
+		r.Reason != subscription.ReasonSecretDoesNotOpen ||
+		r.DisableReason != subscription.DisabledReasonSecretDoesNotOpen {
+		t.Fatalf("skipped subscription recorded %+v", r)
+	}
+	if r := subs.recorded("sub-ok")[0]; !r.OK {
+		t.Fatalf("healthy subscription recorded %+v", r)
 	}
 }
 
