@@ -103,7 +103,7 @@ var (
 
 // Subscriptions is the target source: internal/subscription.Service.
 type Subscriptions interface {
-	Targets(ctx context.Context, owner subscription.Owner, m subscription.Match) ([]subscription.Target, int, error)
+	Targets(ctx context.Context, owner subscription.Owner, m subscription.Match) ([]subscription.Target, []string, error)
 	Record(ctx context.Context, id string, r subscription.Result) (bool, error)
 }
 
@@ -470,9 +470,23 @@ func (e *Emitter) deliver(ctx context.Context, env envelope) {
 		}
 		return
 	}
-	if skipped > 0 {
+	if len(skipped) > 0 {
 		e.log.Error("outboundhook: subscription secrets do not open under CAIRN_ENCRYPTION_KEY; not delivering to them",
-			"kind", string(env.kind), "event_id", env.id, "skipped", skipped)
+			"kind", string(env.kind), "event_id", env.id, "subscriptions", skipped)
+		for _, id := range skipped {
+			res := subscription.Result{
+				Reason:        subscription.ReasonSecretDoesNotOpen,
+				DisableReason: subscription.DisabledReasonSecretDoesNotOpen,
+			}
+			disabled, err := e.subs.Record(ctx, id, res)
+			if err != nil {
+				e.log.Error("outboundhook: record delivery", "subscription_id", id, "kind", string(env.kind), "event_id", env.id, "error", err)
+			}
+			if disabled {
+				e.log.Warn("outboundhook: subscription disabled after consecutive failures",
+					"subscription_id", id, "failures", subscription.DisableAfter)
+			}
+		}
 	}
 	for _, t := range targets {
 		res := e.deliverOne(ctx, env, t)

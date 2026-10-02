@@ -59,6 +59,11 @@ const (
 // DisabledReason is what a subscription says once the worker disables it.
 var DisabledReason = "disabled after " + strconv.Itoa(DisableAfter) + " consecutive failed deliveries"
 
+// DisabledReasonSecretDoesNotOpen is what a subscription says when the
+// failure that disabled it was a sealed signing secret that does not open
+// under the running CAIRN_ENCRYPTION_KEY.
+const DisabledReasonSecretDoesNotOpen = "signing secret does not open under CAIRN_ENCRYPTION_KEY"
+
 // EventTypes is the closed vocabulary an event-type filter may name: the
 // SPEC-0016 EV-1 registry, read from internal/event so a filter can never
 // name a kind the emitter does not know, nor miss one it adds (EV-7

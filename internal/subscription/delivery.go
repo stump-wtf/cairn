@@ -35,6 +35,10 @@ const (
 	ReasonHTTPStatus     = "http_status"
 	ReasonTimeout        = "timeout"
 	ReasonConnection     = "connection_failed"
+	// ReasonSecretDoesNotOpen marks a subscription skipped because its
+	// sealed signing secret does not open under the running
+	// CAIRN_ENCRYPTION_KEY. No HTTP attempt was made, so there is no status.
+	ReasonSecretDoesNotOpen = "secret_does_not_open"
 )
 
 // Result is the outcome of one delivery to one subscription, after retries.
@@ -44,6 +48,9 @@ type Result struct {
 	Status int
 	// Reason is one of the Reason constants on failure, "" on success.
 	Reason string
+	// DisableReason names the cause in disabled_reason when this failure is
+	// the DisableAfter-th consecutive one; "" uses the default reason.
+	DisableReason string
 }
 
 // Targets returns the active subscriptions of the workspace that owns the
@@ -55,10 +62,12 @@ type Result struct {
 // event carrying any one of its tags. A suspended owner receives nothing.
 //
 // A subscription whose secret does not open (the key was changed or
-// removed) is skipped and reported in skipped, never delivered unsigned.
-func (s *Service) Targets(ctx context.Context, owner Owner, m Match) (targets []Target, skipped int, err error) {
+// removed) is skipped and reported in skipped by id, never delivered
+// unsigned. The caller records a failed delivery for each skipped id, so
+// failure counting and auto-disable see it.
+func (s *Service) Targets(ctx context.Context, owner Owner, m Match) (targets []Target, skipped []string, err error) {
 	if s == nil || !owner.Valid() {
-		return nil, 0, nil
+		return nil, nil, nil
 	}
 	tags := m.Tags
 	if tags == nil {
@@ -78,7 +87,7 @@ func (s *Service) Targets(ctx context.Context, owner Owner, m Match) (targets []
 		 ORDER BY o.created_at, o.id`,
 		user.IDParam(owner.UserID), user.IDParam(owner.TeamID), m.Kind, m.ShareType, tags)
 	if err != nil {
-		return nil, 0, fmt.Errorf("subscription: targets: %w", err)
+		return nil, nil, fmt.Errorf("subscription: targets: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -87,22 +96,22 @@ func (s *Service) Targets(ctx context.Context, owner Owner, m Match) (targets []
 			sealed []byte
 		)
 		if err := rows.Scan(&t.ID, &t.URL, &sealed); err != nil {
-			return nil, 0, fmt.Errorf("subscription: targets: %w", err)
+			return nil, nil, fmt.Errorf("subscription: targets: %w", err)
 		}
 		if s.sealer == nil {
-			skipped++
+			skipped = append(skipped, t.ID)
 			continue
 		}
 		secret, err := s.sealer.open(sealed, t.ID)
 		if err != nil {
-			skipped++
+			skipped = append(skipped, t.ID)
 			continue
 		}
 		t.Secret = secret
 		targets = append(targets, t)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("subscription: targets: %w", err)
+		return nil, nil, fmt.Errorf("subscription: targets: %w", err)
 	}
 	return targets, skipped, nil
 }
@@ -122,6 +131,10 @@ func (s *Service) Record(ctx context.Context, id string, r Result) (disabled boo
 	if !r.OK && r.Reason != "" {
 		reason = r.Reason
 	}
+	disableReason := DisabledReason
+	if r.DisableReason != "" {
+		disableReason = r.DisableReason
+	}
 	var nowDisabled bool
 	err = s.pool.QueryRow(ctx, `
 		WITH prev AS (
@@ -138,7 +151,7 @@ func (s *Service) Record(ctx context.Context, id string, r Result) (disabled boo
 		  FROM prev
 		 WHERE o.id = prev.id
 		RETURNING prev.disabled_reason IS NULL AND o.disabled_reason IS NOT NULL`,
-		id, status, reason, r.OK, DisableAfter, DisabledReason).Scan(&nowDisabled)
+		id, status, reason, r.OK, DisableAfter, disableReason).Scan(&nowDisabled)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Deleted while the delivery was in flight.
