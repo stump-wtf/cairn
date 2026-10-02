@@ -494,7 +494,7 @@ jobs:
 
       - if: ${{ env.REG != '' }}
         name: Build amd64 image for Trivy scan
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
@@ -506,6 +506,15 @@ jobs:
           # when it was first built, so the Trivy gate below scans (and the
           # push publishes) stale packages. Keep the Go build cached; keep the
           # apk layer live.
+          #
+          # @joestump 10/02/2026 - v5 -> v6 on this step and the push step.
+          #   The runner caches a git clone per action ref, so `@v5` stays
+          #   pinned to whatever v5 commit it first cloned — one that
+          #   predates the `no-cache-filter` input. Run 16187 proved it:
+          #   the step dump shows `no-cache-filter: runtime` in `with:` but
+          #   the rendered buildx CLI omits the flag, so the scan rebuilt
+          #   from the stale cache and failed on pcre2 10.48-r0 again. A new
+          #   ref forces a fresh clone whose action.yml knows the input.
           no-cache-filter: runtime
           cache-from: type=registry,ref=gitea.stump.rocks/stump.wtf/cairn:buildcache
 
@@ -517,7 +526,7 @@ jobs:
 
       - if: ${{ env.REG != '' }}
         name: Build and push (amd64)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
