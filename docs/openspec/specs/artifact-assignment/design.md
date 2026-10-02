@@ -43,7 +43,8 @@ so no PR ever codes against a placeholder.
   is the history), assignment of bundles' members individually.
 * A distinct "agent identity" object (ADR-0032: an agent is a user).
 * Switchboard-side routing changes — filed separately as
-  https://gitea.stump.rocks/stump.wtf/switchboard/issues/558.
+  `stump.wtf/switchboard#558` (not linked; the rendered site must not link
+  the private forge).
 
 ## Data Model
 

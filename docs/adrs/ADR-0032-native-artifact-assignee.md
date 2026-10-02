@@ -154,9 +154,10 @@ today's.
 
 ## More Information
 
-* Issue: https://gitea.stump.rocks/stump.wtf/cairn/issues/441
+* Issue: `stump.wtf/cairn#441` — not linked, per ADR-0014 (the private forge
+  has no public page to point at; ADR-0020 carries the same note).
 * Spec: SPEC-0025, `docs/openspec/specs/artifact-assignment/`
-* Switchboard follow-up: https://gitea.stump.rocks/stump.wtf/switchboard/issues/558
+* Switchboard follow-up: `stump.wtf/switchboard#558` (not linked, same rule).
 * Incident context (why handoff routing matters): the 2026-10-01 OMG — a
   dropped `CAIRN_ENCRYPTION_KEY` silenced every outbound handoff for ~30h
   (Outline: 2026-10-01-cairn-handoffs-went-dark).
