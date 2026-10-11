@@ -35,12 +35,16 @@ its error-handling and concurrency guarantees.
 
 The CLI exposes **no HTTP endpoints of its own**; it consumes the core API. Every
 request it makes is authenticated except the OAuth bootstrap, which is public by
-necessity because it is the flow that *establishes* authentication.
+necessity because it is the flow that *establishes* authentication, and `cairn read`,
+which rides the artifact's **link capability** (ADR-0007): a valid id grants the read,
+so an unauthenticated CLI is not a failure there and no credential is invented.
 
 | Command | Core operation | REST endpoint(s) (ADR-0012) | Auth |
 |---------|----------------|-----------------------------|------|
 | `cairn` (stdin pipe or path args) | create artifact | `POST /v1/artifacts` | Required |
 | `cairn add f1 f2 …` | create bundle | `POST /v1/artifacts` (bundle) | Required |
+| `cairn read <id\|handle>` | read an artifact or bundle member | `GET /v1/artifacts/{id}`, `/body`, `/members/*` | **Link capability** — optional; a stored token is sent anyway and also reveals owner-only fields |
+| `cairn comment <id> [body]` | write an annotation | `GET /v1/artifacts/{id}` (link + existence check), `POST /v1/artifacts/{id}/comments` | Required (`annotations:write`) |
 | `cairn ls` | list the Bin | `GET /v1/bin` (keyset) | Required |
 | `cairn ls` → `enter` (open) | fetch artifact | `GET /v1/artifacts/{id}` | Required |
 | `cairn ls` → `s` (share) | set/adjust link access | `POST /v1/artifacts/{id}/share` | Required |
@@ -53,12 +57,12 @@ necessity because it is the flow that *establishes* authentication.
 ### Requirement: Command Surface and REST-Client Boundary
 
 The CLI MUST expose exactly the commands `cairn` (bare pipe/path ingest), `cairn add`,
-`cairn ls`, `cairn login`, `cairn logout`, and `cairn whoami`, and each MUST map onto a
-core operation reachable through the `/v1` REST API. The CLI MUST NOT implement or
-enforce domain rules (expiry, access-policy decisions, provenance capture, anchor
-legality); it SHALL treat the server's response as authoritative. The CLI MUST send the
-`/v1` versioned path prefix and MUST NOT depend on any endpoint outside the documented
-contract.
+`cairn read`, `cairn comment`, `cairn ls`, `cairn login`, `cairn logout`, and
+`cairn whoami`, and each MUST map onto a core operation reachable through the `/v1`
+REST API. The CLI MUST NOT implement or enforce domain rules (expiry, access-policy
+decisions, provenance capture, anchor legality); it SHALL treat the server's response
+as authoritative. The CLI MUST send the `/v1` versioned path prefix and MUST NOT
+depend on any endpoint outside the documented contract.
 
 #### Scenario: CLI defers a rule to the core
 
@@ -69,9 +73,10 @@ contract.
 
 #### Scenario: Every mutating command carries auth
 
-- **WHEN** any command other than `cairn login` issues a request
+- **WHEN** a mutating command (`cairn`, `cairn add`, `cairn comment`) issues a request
 - **THEN** the CLI MUST attach the stored OAuth bearer token and MUST NOT fall back to
-  an unauthenticated request
+  an unauthenticated request. A read is not mutating: it rides the artifact's link
+  capability and needs no credential
 
 ### Requirement: Pipe and Path Ingest (`cairn`)
 
@@ -164,6 +169,89 @@ file argument.
 - **WHEN** the server rejects one file mid-bundle (e.g. oversize)
 - **THEN** the CLI MUST abort the bundle, MUST NOT print a success link, and MUST exit
   non-zero with the mapped error
+
+### Requirement: Artifact Read (`cairn read`)
+
+`cairn read <id>` MUST print one artifact's body to stdout, addressing it by bare
+public id **or** by its `mcp://cairn/<id>` agent handle — the same single mapping the
+server and MCP use (ADR-0005 "one id, every surface"), never a second parser the CLI
+could drift from. The body comes from `GET /v1/artifacts/{id}/body` and MUST be
+streamed rather than buffered, so a body of any size is readable. A read is a link
+capability (ADR-0007): it MUST NOT require a credential, and MUST NOT fail merely
+because this machine has none.
+
+A bundle artifact carries no body of its own, so `cairn read <bundle-id>` with no
+`--path` MUST list its members (name, size, media type) and the bundle's link, and
+MUST NOT fetch or dump every member; `--path <name>` MUST stream that member through
+`GET /v1/artifacts/{id}/members/<name>`, whose path is the server's own member listing.
+
+`--json` MUST emit exactly one metadata object (share type, media type, size, tags,
+provenance, expiry, and a bundle's members) with the body inlined up to 1 MiB — the
+ceiling the MCP read tool applies, since a JSON body is read by something that holds
+it in memory — and MUST set `body_truncated` when it inlined only a prefix, leaving
+the complete bytes fetchable at `url`. Without `--json`, piped stdout MUST be the bare
+body with no decoration.
+
+#### Scenario: Read a handoff's work order by handle
+
+- **WHEN** the user runs `cairn read mcp://cairn/9qz1a`
+- **THEN** the CLI MUST resolve the handle to its bare id, print the body to stdout,
+  and exit 0
+
+#### Scenario: A bundle with no path lists its files
+
+- **WHEN** the user runs `cairn read` on a bundle id without `--path`
+- **THEN** the CLI MUST print the member listing and the bundle link, and MUST NOT
+  request a body
+
+#### Scenario: `--json` flags a body it did not inline
+
+- **WHEN** `cairn read --json` reads a body larger than the inline ceiling
+- **THEN** stdout MUST be one JSON object whose `body` is the prefix, whose
+  `body_truncated` is `true`, and whose `url` still addresses the whole body
+
+#### Scenario: Unknown or expired id
+
+- **WHEN** the id resolves to nothing (never created, or expired)
+- **THEN** the CLI MUST surface the server's uniform not-found and exit 5, printing
+  nothing to stdout
+
+### Requirement: Annotation Write (`cairn comment`)
+
+`cairn comment <id> [body]` MUST post one comment on an artifact through
+`POST /v1/artifacts/{id}/comments`, anchored to the whole artifact; anchor legality
+remains the server's decision (SPEC-0006 "Registry-Gated Anchor Capabilities"), which
+the CLI surfaces unaltered. The body is the one argument, `--file <path>`, or stdin —
+choosing among them is ergonomics, and an empty or whitespace-only body is a usage
+error (exit 2), never a posted comment. `--parent <comment-id>` MUST post a reply,
+which inherits its root's anchor. As a mutating command it MUST carry a credential
+and MUST fail locally with exit 3 rather than send a request the server would reject.
+
+On success it MUST print the created comment's id and the artifact's link, the link
+taken from the server's metadata read and never reconstructed by the CLI.
+
+#### Scenario: Comment with a body argument
+
+- **WHEN** the user runs `cairn comment 9qz1a "one nit below"` with a stored token
+- **THEN** the CLI MUST post the comment, print its id and the artifact link, and exit
+  0
+
+#### Scenario: No session
+
+- **WHEN** `cairn comment` runs with no stored or flagged token
+- **THEN** the CLI MUST exit 3 without making any request
+
+#### Scenario: A share type that accepts no comments
+
+- **WHEN** the artifact's share type refuses comment anchors (the webhook asymmetry)
+- **THEN** the CLI MUST print the server's violation naming the anchors it does take,
+  and exit 2
+
+#### Scenario: Piped body
+
+- **WHEN** the body arrives on a piped stdin with no body argument
+- **THEN** the CLI MUST use stdin as the comment body, so an agent can post a report
+  without quoting it into an argument
 
 ### Requirement: The Bin TUI (`cairn ls`)
 

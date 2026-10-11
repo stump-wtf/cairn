@@ -347,6 +347,24 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 	s.writeJSON(w, http.StatusCreated, s.toOwnerArtifactResponse(art))
 }
 
+// memberView is one bundle member in a read response. A bundle artifact has no
+// body of its own, so a reader that cannot list members has no way to find the
+// name that GET /v1/artifacts/{id}/members/<name> needs — the MCP read tool
+// already returns this shape (mcpMemberView); the REST read returns it too so
+// the two surfaces do not diverge (ADR-0003).
+type memberView struct {
+	Name      string `json:"name"`
+	Size      int64  `json:"size"`
+	MediaType string `json:"media_type"`
+}
+
+// artifactReadResponse is GET /v1/artifacts/{id}'s payload: the artifact
+// response, plus a bundle's members in bundle order.
+type artifactReadResponse struct {
+	artifactResponse
+	Members []memberView `json:"members,omitempty"`
+}
+
 // handleGet resolves an artifact's metadata + preview info. Unknown/expired ids
 // return a uniform 404 (SPEC-0002 REQ "Artifact Lifecycle — Read").
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
@@ -367,8 +385,19 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	if viewer != nil {
 		viewerID = viewer.UserID
 	}
-	resp := s.toViewerArtifactResponse(art, viewerID)
+	resp := artifactReadResponse{artifactResponse: s.toViewerArtifactResponse(art, viewerID)}
 	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
+	if art.ShareType == artifact.TypeBundle {
+		members, err := s.store.ListMembers(r.Context(), id)
+		if err != nil {
+			s.writeError(w, r, err, map[string]string{"id": id})
+			return
+		}
+		resp.Members = make([]memberView, 0, len(members))
+		for _, m := range members {
+			resp.Members = append(resp.Members, memberView{Name: m.Name, Size: m.Size, MediaType: m.MediaType})
+		}
+	}
 	s.writeJSON(w, http.StatusOK, resp)
 }
 

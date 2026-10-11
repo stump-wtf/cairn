@@ -361,6 +361,69 @@ func TestIntegrationBundleCreateAndMemberRead(t *testing.T) {
 	resp.Body.Close()
 }
 
+// TestIntegrationBundleGETListsMembers is the REST half of ADR-0003 parity for
+// a bundle read: the artifact response names the members, because a bundle has
+// no body of its own and the member name is the only thing a reader can address
+// `/members/<name>` with. A non-bundle read carries no members field at all.
+func TestIntegrationBundleGETListsMembers(t *testing.T) {
+	srv := testServer(t, noRateLimit(), store.Options{MaxUploadBytes: 1 << 20})
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for _, f := range []struct{ name, body string }{{"notes.md", "# hi"}, {"run.log", "boom"}} {
+		fw, err := mw.CreateFormFile("file", f.name)
+		if err != nil {
+			t.Fatalf("form file: %v", err)
+		}
+		fw.Write([]byte(f.body))
+	}
+	mw.Close()
+
+	resp := do(t, http.MethodPost, srv.URL+"/v1/artifacts", "alice", &buf, mw.FormDataContentType())
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("bundle create = %d, want 201", resp.StatusCode)
+	}
+	art := decodeArtifact(t, resp)
+
+	resp = do(t, http.MethodGet, srv.URL+"/v1/artifacts/"+art.ID, "", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("bundle read = %d, want 200", resp.StatusCode)
+	}
+	var got struct {
+		Members []memberView `json:"members"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode bundle read: %v", err)
+	}
+	resp.Body.Close()
+	if len(got.Members) != 2 {
+		t.Fatalf("members = %+v, want two", got.Members)
+	}
+	if got.Members[0].Name != "notes.md" || got.Members[1].Name != "run.log" {
+		t.Fatalf("member names = %q, %q, want bundle order notes.md, run.log", got.Members[0].Name, got.Members[1].Name)
+	}
+	if got.Members[0].Size != 4 || got.Members[1].Size != 4 {
+		t.Fatalf("member sizes = %d, %d, want 4 and 4", got.Members[0].Size, got.Members[1].Size)
+	}
+
+	// A single-body artifact carries no members key: nothing was omitted, the
+	// field simply does not apply.
+	resp = do(t, http.MethodPost, srv.URL+"/v1/artifacts", "alice", strings.NewReader("plain body"), "text/plain")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create = %d, want 201", resp.StatusCode)
+	}
+	single := decodeArtifact(t, resp)
+	resp = do(t, http.MethodGet, srv.URL+"/v1/artifacts/"+single.ID, "", nil, "")
+	raw, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if strings.Contains(string(raw), `"members"`) {
+		t.Fatalf("single-body read carries a members key: %s", raw)
+	}
+}
+
 // TestIntegrationBundleMemberNameRoundTrip locks in the member-name URL round
 // trip for names carrying spaces and URL-reserved characters: memberPath
 // (bundle_view.go) escapes a member's stored name into a URL path segment for
