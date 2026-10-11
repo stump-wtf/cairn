@@ -13,6 +13,8 @@ and this page is stale.
 |---------|--------------|
 | `cairn [file]` | Create one artifact from stdin or from a single file path |
 | `cairn add <file>...` | Push several files as one bundle artifact |
+| `cairn read <id\|handle>` | Print an artifact's body, or a bundle's file list |
+| `cairn comment <id\|handle> [body]` | Comment on an artifact |
 | `cairn login` | Verify a bearer token against the server and store it |
 | `cairn whoami` | Show the current authentication state |
 | `cairn logout` | Remove this machine's stored credential |
@@ -51,6 +53,58 @@ pool that prepares the files locally (default `4`).
 cairn add screenshot.png error.log database.sql
 cairn add --title "incident dump" --ttl 7d screenshot.png error.log
 ```
+
+### `cairn read <id|handle>`
+
+Prints one artifact's body to stdout. The one argument is a bare id or the
+`mcp://cairn/<id>` handle — the same handle a handoff carries — so an agent can
+open its work order without stripping a prefix first.
+
+```bash
+cairn read 9qz1a
+cat report.md | grep -c TODO   # …or pipe the body somewhere: cairn read 9qz1a | pbcopy
+cairn read mcp://cairn/9qz1a --path notes.md
+cairn read 9qz1a --json
+```
+
+A bundle has no body of its own, so reading one without `--path` prints its file
+list (name, size, media type) and its link instead of dumping every member; the
+listing is what tells you what `--path` can take.
+
+```bash
+cairn read bnd1
+4 files · 1.2 MB · ⧗ expires 6d · 🔒 you + anyone with link
+  notes.md    8.1 kB  text/markdown
+  run.log     1.2 MB  text/plain
+  https://cairn.stump.rocks/bnd1
+```
+
+`--json` prints one metadata object — share type, media type, size, tags,
+provenance, expiry, members — with the body inlined up to 1 MiB and
+`body_truncated: true` when only a prefix fit. The whole body is always at
+`url`; the ceiling exists because a JSON body is read by something that holds it
+in memory. Without `--json` the body is streamed in full, undecorated, so piping
+composes. Reading needs no credential: an artifact's link is the capability
+(`cairn whoami` may say you are not logged in and `cairn read` will still work).
+
+### `cairn comment <id|handle> [body]`
+
+Posts one comment on an artifact and prints its id and the artifact's link. The
+body is the argument, a file, or stdin — whichever avoids quoting it:
+
+```bash
+cairn comment 9qz1a "looks good, one nit below"
+cairn comment mcp://cairn/9qz1a --file reply.md
+cat reply.md | cairn comment 9qz1a
+cairn comment 9qz1a --parent 41 "replying to that"
+cairn comment 9qz1a "hi" --json
+```
+
+It requires a session (exit `3` without one, with no request sent) and refuses an
+empty body (exit `2`). The comment is anchored to the whole artifact; the server
+decides whether the share type accepts comments at all, and says so in the
+violation the CLI prints. A bare `cairn comment <id>` at a terminal is a usage
+error rather than a read that never ends.
 
 ### `cairn login`
 
@@ -120,6 +174,9 @@ create artifacts.
 | `--redact mask` | Store detected credentials as `[REDACTED]` instead of refusing the upload. `mask` is the only value |
 | `--no-copy` | Never copy the resulting link to the clipboard |
 | `--concurrency <n>` | Worker pool size for `cairn add`'s local file preparation (default `4`) |
+| `--path <name>` | `cairn read`: stream one bundle member instead of listing the bundle's files |
+| `--file <path>` | `cairn comment`: read the comment body from a file instead of the argument or stdin |
+| `--parent <comment-id>` | `cairn comment`: post a reply to that comment, inheriting its anchor |
 | `--version` | Print the version |
 | `-h`, `--help` | Help for the command |
 

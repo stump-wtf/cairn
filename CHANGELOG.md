@@ -7,6 +7,19 @@ reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **`cairn read` and `cairn comment`** (SPEC-0008). The CLI can now open an
+  artifact and annotate one, which is what made the MCP server the only way to do
+  either. `cairn read <id|mcp://cairn/<id>>` prints a body, or a bundle's file
+  list when no member is named, and `--json` emits the metadata envelope with the
+  body inlined up to 1 MiB plus a truncation flag. `cairn comment` posts a
+  comment, taking the body from an argument, `--file`, or stdin, with `--parent`
+  to reply. Reading needs no credential — an artifact's link is the capability —
+  and both commands resolve ids through the one shared handle parser, so no
+  surface has its own idea of what an id is. `GET /v1/artifacts/{id}` now lists a
+  bundle's members, which is how a reader learns the name `/members/<name>` needs.
+
 ### Security
 
 - **Users and identities** (SPEC-0023, #326). Sign-ins now resolve to user rows

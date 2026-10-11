@@ -52,6 +52,12 @@ cat checkout-web-audit.md | cairn
 # push many files at once as a bundle
 cairn add audit.md parse_ledger.py Movies.png dump.sql.gz
 
+# read one back, by id or by the mcp:// handle an agent was given
+cairn read mcp://cairn/9qz1a
+
+# and say something about it
+cat reply.md | cairn comment 9qz1a
+
 # optional flags: expiry hint and a display title
 cairn --ttl 24h --title "incident notes" incident.md
 
