@@ -121,11 +121,12 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 	// The TTL, share type, title and every tag are checked together, so one
 	// rejection names all of them (SPEC-0019 VE-4).
 	var tags tagSet
+	var rels relationSet
 	ttl, ttlErr := requestedTTL(r, s.cfg)
 	shareType, typeErr := s.requestedShareType(r)
 	title, titleErr := requestedTitle(r)
 	downgrade, redErr := redactionDowngrade(redactionHeader, errs.LocHeader, r.Header.Get(redactionHeader))
-	if err := errs.JoinErrors(ttlErr, typeErr, titleErr, redErr, tags.addFromRequest(r)); err != nil {
+	if err := errs.JoinErrors(ttlErr, typeErr, titleErr, redErr, tags.addFromRequest(r), rels.addFromRequest(r)); err != nil {
 		s.writeError(w, r, err, nil)
 		return
 	}
@@ -143,6 +144,8 @@ func (s *Server) createSingle(w http.ResponseWriter, r *http.Request, p *Princip
 		Access:             artifact.AccessPolicy{OwnerUserID: p.UserID, Visibility: artifact.VisibilityLink},
 		ExpiresAt:          now.Add(ttl),
 		Tags:               tags.tags,
+		Relations:          rels.relations,
+		Trace:              requestTrace(r),
 		ActorKind:          creator.Kind,
 		Auth:               creator.Auth,
 		RedactionDowngrade: downgrade,
@@ -173,9 +176,11 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 	// (SPEC-0019 VE-4). They are reported at the first file part, before any
 	// body is spooled.
 	var tags tagSet
+	var rels relationSet
 	ttl, ttlErr := requestedTTL(r, s.cfg)
 	downgrade, redErr := redactionDowngrade(redactionHeader, errs.LocHeader, r.Header.Get(redactionHeader))
 	_ = tags.addFromRequest(r)
+	_ = rels.addFromRequest(r)
 	mr := multipart.NewReader(r.Body, boundary)
 
 	var (
@@ -207,11 +212,13 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 				title, titleErr = readTitleField(part)
 			case "tag":
 				tags.addFormField(part)
+			case "relation":
+				rels.addFormField(part)
 			}
 			_ = part.Close()
 			continue
 		}
-		if err := errs.JoinErrors(ttlErr, titleErr, redErr, tags.err()); err != nil {
+		if err := errs.JoinErrors(ttlErr, titleErr, redErr, tags.err(), rels.err()); err != nil {
 			_ = part.Close()
 			s.writeError(w, r, err, nil)
 			return
@@ -272,7 +279,7 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		files = append(files, spooledFile{name: part.FileName(), media: part.Header.Get("Content-Type"), file: tmp, size: n})
 	}
 
-	if err := errs.JoinErrors(ttlErr, titleErr, redErr, tags.err()); err != nil {
+	if err := errs.JoinErrors(ttlErr, titleErr, redErr, tags.err(), rels.err()); err != nil {
 		s.writeError(w, r, err, nil)
 		return
 	}
@@ -313,6 +320,8 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 			Access:             access,
 			ExpiresAt:          expires,
 			Tags:               tags.tags,
+			Relations:          rels.relations,
+			Trace:              requestTrace(r),
 			ActorKind:          actor.Kind,
 			Auth:               actor.Auth,
 			RedactionDowngrade: downgrade,
@@ -336,6 +345,8 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		Access:             access,
 		ExpiresAt:          expires,
 		Tags:               tags.tags,
+		Relations:          rels.relations,
+		Trace:              requestTrace(r),
 		ActorKind:          actor.Kind,
 		Auth:               actor.Auth,
 		RedactionDowngrade: downgrade,
@@ -345,6 +356,32 @@ func (s *Server) createMultipart(w http.ResponseWriter, r *http.Request, p *Prin
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, s.toOwnerArtifactResponse(art))
+}
+
+// relationView is one relation in a read response. A target the reader cannot
+// open carries only its kind: no id and no title, so a read never confirms that
+// an id exists or tells a reader anything about it.
+//
+// Governing: SPEC-0024 REQ "Relations on Read".
+type relationView struct {
+	Kind      artifact.RelationKind `json:"kind"`
+	ID        string                `json:"id,omitempty"`
+	Title     string                `json:"title,omitempty"`
+	Available bool                  `json:"available"`
+}
+
+// relationViews shapes the store's relation views for the wire. The store owns
+// which targets are visible to this reader; this only renames its field to the
+// one the API uses for an id.
+func relationViews(in []store.RelationView) []relationView {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]relationView, 0, len(in))
+	for _, r := range in {
+		out = append(out, relationView{Kind: r.Kind, ID: r.PublicID, Title: r.Title, Available: r.Available})
+	}
+	return out
 }
 
 // memberView is one bundle member in a read response. A bundle artifact has no
@@ -359,10 +396,20 @@ type memberView struct {
 }
 
 // artifactReadResponse is GET /v1/artifacts/{id}'s payload: the artifact
-// response, plus a bundle's members in bundle order.
+// response, plus a bundle's members in bundle order, the artifact's relations as
+// this reader can see them, what names it, and the trace that produced it.
+//
+// Relations and trace_id are omitted when empty, so a read of an artifact that
+// declares nothing is byte-for-byte what it was before relations existed.
 type artifactReadResponse struct {
 	artifactResponse
-	Members []memberView `json:"members,omitempty"`
+	Members    []memberView   `json:"members,omitempty"`
+	Relations  []relationView `json:"relations,omitempty"`
+	Referenced []relationView `json:"referenced_by,omitempty"`
+	// ReferencedByTruncated says there are more referrers than the 50 a read
+	// returns (SPEC-0024 REQ "Relations on Read").
+	ReferencedByTruncated bool   `json:"referenced_by_truncated,omitempty"`
+	TraceID               string `json:"trace_id,omitempty"`
 }
 
 // handleGet resolves an artifact's metadata + preview info. Unknown/expired ids
@@ -387,6 +434,20 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := artifactReadResponse{artifactResponse: s.toViewerArtifactResponse(art, viewerID)}
 	resp.Provenance.Actor = s.displayActor(r.Context(), viewer, resp.Provenance.Actor)
+	// Relations are resolved as the reader, not as the owner: the set of targets
+	// one reader may see is not the set another may see (SPEC-0024 REQ "Relations
+	// on Read").
+	rels, err := s.store.Relations(r.Context(), store.Reader{UserID: viewerID}, id)
+	if err != nil {
+		s.writeError(w, r, err, map[string]string{"id": id})
+		return
+	}
+	resp.Relations = relationViews(rels.Relations)
+	resp.Referenced = relationViews(rels.ReferencedBy)
+	resp.ReferencedByTruncated = rels.ReferencedByTruncated
+	if art.Trace != nil {
+		resp.TraceID = art.Trace.TraceHex()
+	}
 	if art.ShareType == artifact.TypeBundle {
 		members, err := s.store.ListMembers(r.Context(), id)
 		if err != nil {

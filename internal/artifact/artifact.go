@@ -18,6 +18,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/redact"
+	"github.com/stump-wtf/cairn/internal/tracectx"
 )
 
 // ShareType classifies an artifact and (via the registry in SPEC-0002 story #9)
@@ -112,6 +113,16 @@ type Artifact struct {
 	// part of it: nothing here is server-derived, so nothing here is
 	// trustworthy (ADR-0018).
 	Tags []string
+	// Relations are the other artifacts this one names, declared at create and
+	// immutable afterwards. They are the creator's claim about where the artifact
+	// came from; whether a given reader may see each target is decided on read,
+	// never here (SPEC-0024 REQ "Relations on Read").
+	Relations []Relation
+	// Trace is the W3C trace context of the run that produced this artifact,
+	// parsed from the create's traceparent. Nil means the create carried no valid
+	// one, which is the normal state for a human pasting from a shell: it is
+	// absent, never guessed (ADR-0030).
+	Trace *tracectx.Context
 	// Denormalized annotation rollups, maintained by the annotation core
 	// service in the same transaction as every annotation write so the Bin
 	// (`💬 2 · 👀 3`) and artifact headers render with no per-row subquery.
@@ -168,5 +179,8 @@ func (a *Artifact) Validate() error {
 	case a.ExpiresAt.IsZero():
 		return errs.Validationf("artifact: expiry is required")
 	}
-	return validateNormalizedTags(a.Tags)
+	if err := validateNormalizedTags(a.Tags); err != nil {
+		return err
+	}
+	return validateNormalizedRelations(a.Relations)
 }

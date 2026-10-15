@@ -166,6 +166,24 @@ type Subject struct {
 	// EV-7).
 	OwnerUserID string
 	OwnerTeamID string
+	// Relations are the relations of the artifact this event is about, already
+	// filtered by the producer to its own workspace: a relation to something
+	// outside the workspace is no consumer's business (SPEC-0024 REQ "Relations
+	// in artifact.created").
+	Relations []Relation
+	// TraceID is the trace that produced the artifact, as 32 lowercase hex
+	// characters, empty when the create carried no valid traceparent.
+	TraceID string
+}
+
+// Relation is one artifact-to-artifact relation on an event: the kind
+// (`reply_to`, `derived_from` or `follows`) and the target's public id. A
+// producer hands over only targets in the artifact's own workspace.
+//
+// Governing: ADR-0030, SPEC-0024 REQ "Relations in artifact.created".
+type Relation struct {
+	Kind string
+	ID   string
 }
 
 // Comment is the comment.* payload.
