@@ -98,6 +98,13 @@ type CreationEvent struct {
 	// Only to the Artifact's Workspace", SPEC-0016 EV-7).
 	OwnerUserID string
 	OwnerTeamID string
+	// Relations are the created artifact's relations within its own workspace,
+	// resolved during the create; nothing here names a target the subscribers
+	// could not already open (SPEC-0024 REQ "Relations in artifact.created").
+	Relations []event.Relation
+	// TraceID is the 32-hex-character trace id of the run that produced the
+	// artifact, empty when its create carried no valid traceparent.
+	TraceID string
 }
 
 // Event is the artifact.created lifecycle event this creation announces. It is
@@ -119,6 +126,8 @@ func (c CreationEvent) Event() event.Event {
 			ExpiresAt:   c.ExpiresAt,
 			OwnerUserID: c.OwnerUserID,
 			OwnerTeamID: c.OwnerTeamID,
+			Relations:   c.Relations,
+			TraceID:     c.TraceID,
 		},
 		Actor: event.Actor{
 			ID:         c.ActorID,
@@ -220,9 +229,13 @@ func New(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *Store {
 //
 // Governing: ADR-0017 (Outbound Webhooks), SPEC-0012 REQ "Event Emission on
 // Artifact Creation"
-func (s *Store) emitCreated(a *artifact.Artifact, kind event.ActorKind, auth event.AuthMethod) {
+func (s *Store) emitCreated(a *artifact.Artifact, kind event.ActorKind, auth event.AuthMethod, relations []event.Relation) {
 	if s.emitter == nil {
 		return
+	}
+	var traceID string
+	if a.Trace != nil {
+		traceID = a.Trace.TraceHex()
 	}
 	s.emitter.EmitArtifactCreated(CreationEvent{
 		PublicID:   a.PublicID,
@@ -242,6 +255,8 @@ func (s *Store) emitCreated(a *artifact.Artifact, kind event.ActorKind, auth eve
 		Auth:        auth,
 		OwnerUserID: a.Access.OwnerUserID,
 		OwnerTeamID: a.Access.OwnerTeamID,
+		Relations:   slices.Clone(relations),
+		TraceID:     traceID,
 	})
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/redact"
+	"github.com/stump-wtf/cairn/internal/tracectx"
 )
 
 // MemberInput is one file to place in a bundle. Body is streamed and dedup'd
@@ -34,6 +35,14 @@ type CreateBundleInput struct {
 	// Tags are client-asserted routing strings on the bundle as a whole
 	// (ADR-0018); members carry none of their own.
 	Tags []string
+	// Relations declares which other artifacts this bundle replies to, derives
+	// from or follows; as in CreateArtifact, they are normalized here and their
+	// targets are checked against the creating principal's read inside the
+	// creating transaction (SPEC-0024).
+	Relations []artifact.Relation
+	// Trace is the trace context parsed from the create's traceparent, nil when
+	// the create carried no valid one.
+	Trace *tracectx.Context
 	// RedactionDowngrade masks where the bundle type would reject; see
 	// CreateArtifactInput.RedactionDowngrade. SPEC-0017 RD-5.
 	RedactionDowngrade bool
@@ -162,6 +171,13 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	if err != nil {
 		return nil, err
 	}
+	// Relations are normalized before any member streams, as tags are.
+	//
+	// Governing: SPEC-0024 REQ "Relation Kinds and Limits"
+	relations, err := artifact.NormalizeRelations(in.Relations)
+	if err != nil {
+		return nil, err
+	}
 	// The title is scanned before any member streams.
 	//
 	// Governing: ADR-0023, SPEC-0017 RD-4, RD-5
@@ -241,6 +257,8 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 		Provenance:  in.Provenance,
 		Access:      in.Access,
 		Tags:        tags,
+		Relations:   relations,
+		Trace:       in.Trace,
 		ExpiresAt:   in.ExpiresAt,
 	}
 
@@ -267,10 +285,21 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 		}
 	}
 
+	// Relations commit with the bundle exactly as they do with a single body.
+	//
+	// Governing: SPEC-0024 REQ "Database Operation Standards"
+	relRows, relEvents, err := relationEdges(ctx, tx, art)
+	if err != nil {
+		return nil, err
+	}
+	if err := insertRelations(ctx, tx, art.ID, relRows); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("bundle: commit: %w", err)
 	}
-	s.emitCreated(art, in.ActorKind, in.Auth)
+	s.emitCreated(art, in.ActorKind, in.Auth, relEvents)
 	s.warnUnscanned(art.PublicID, &scans)
 	return art, nil
 }

@@ -173,6 +173,21 @@ type eventData struct {
 	Comment   *commentData  `json:"comment,omitempty"`
 	Reaction  *reactionData `json:"reaction,omitempty"`
 	Run       *runData      `json:"run,omitempty"`
+	// SPEC-0024 additions for artifact.created, appended last so every payload
+	// that predates them keeps signing byte for byte: relations are the artifact's
+	// own-workspace relations (a cross-workspace target is absent, and an event
+	// with none has no key at all), and trace_id is the trace the create carried.
+	// A consumer that has seen the earlier bytes must keep seeing them (SPEC-0016
+	// EV-3, and the golden files under testdata/).
+	Relations []eventRelation `json:"relations,omitempty"`
+	TraceID   string          `json:"trace_id,omitempty"`
+}
+
+// eventRelation is one relation in an event payload: the kind and the target's
+// public id, never its title or body.
+type eventRelation struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
 }
 
 type commentData struct {
@@ -372,6 +387,12 @@ func (e *Emitter) encode(ev event.Event, eventID string, createdAt time.Time) ([
 	case event.ArtifactCreated:
 		// The model describes how the artifact was made; no other kind has one.
 		body.Data.Model = ev.Model
+		// Relations arrive already filtered to the artifact's workspace; an
+		// artifact that declares none gets no relations key at all.
+		for _, rel := range s.Relations {
+			body.Data.Relations = append(body.Data.Relations, eventRelation{Kind: rel.Kind, ID: rel.ID})
+		}
+		body.Data.TraceID = s.TraceID
 	case event.CommentCreated:
 		c := ev.Comment
 		text, cut := truncateBody(c.Body)

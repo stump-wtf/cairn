@@ -16,6 +16,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/tracectx"
 	"github.com/stump-wtf/cairn/internal/user"
 )
 
@@ -38,6 +39,15 @@ type CreateArtifactInput struct {
 	// the adapter passes them through from the request as-is; CreateArtifact
 	// normalizes them.
 	Tags []string
+	// Relations declares which other artifacts this one replies to, derives from
+	// or follows. The adapter passes them as the request carried them; as with
+	// Tags, CreateArtifact normalizes them and then checks every target against
+	// what the creating principal can read (SPEC-0024).
+	Relations []artifact.Relation
+	// Trace is the trace context parsed from the create's traceparent, nil when
+	// the create carried no valid one. Parsing is the adapter's job (the header
+	// lives there); the store only stores what it is handed.
+	Trace *tracectx.Context
 	// RedactionDowngrade is the writer's per-request downgrade of a
 	// reject-mode share type to mask (X-Cairn-Redaction: mask, or MCP
 	// redaction: "mask"). It never disables the scan. SPEC-0017 RD-5.
@@ -117,6 +127,17 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	if err != nil {
 		return nil, err
 	}
+	// Relations are normalized the same way tags are, before the body streams, so
+	// a malformed kind or a ninth relation costs nothing. Their targets are not
+	// checked here: that check is a read by the creating principal, and it runs in
+	// the transaction that writes the edges, so a target that expired in between
+	// cannot be linked.
+	//
+	// Governing: SPEC-0024 REQ "Relation Kinds and Limits"
+	relations, err := artifact.NormalizeRelations(in.Relations)
+	if err != nil {
+		return nil, err
+	}
 	// 1. Stream the body to a staging object: compute SHA-256 incrementally
 	//    and enforce the size limit as bytes arrive. The object is NOT promoted
 	//    to its content-addressed key yet — that happens in CommitBlob under the
@@ -182,6 +203,8 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 		Provenance:  in.Provenance,
 		Access:      in.Access,
 		Tags:        tags,
+		Relations:   relations,
+		Trace:       in.Trace,
 		ExpiresAt:   in.ExpiresAt,
 		// Written with the row, in the same transaction (SPEC-0017 RD-9).
 		Redaction: bodyScan.Merge(titleScan),
@@ -206,10 +229,23 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 		return nil, err
 	}
 
+	// Resolve and write the declared relations in the transaction that writes the
+	// artifact: an edge and the artifact that declares it commit together, and a
+	// target the creator cannot open fails the create with nothing persisted.
+	//
+	// Governing: SPEC-0024 REQ "Database Operation Standards"
+	relRows, relEvents, err := relationEdges(ctx, tx, art)
+	if err != nil {
+		return nil, err
+	}
+	if err := insertRelations(ctx, tx, art.ID, relRows); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("create: commit: %w", err)
 	}
-	s.emitCreated(art, in.ActorKind, in.Auth)
+	s.emitCreated(art, in.ActorKind, in.Auth, relEvents)
 	s.warnUnscanned(art.PublicID, &scans)
 	return art, nil
 }
@@ -252,8 +288,8 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 			(public_id, share_type, title, body_sha256, size_bytes, media_type,
 			 previewable, created_by_user_id, on_behalf_of, model, channel, captured_at,
 			 owner_user_id, owner_team_id, visibility, expires_at, tags,
-			 redaction_status, redaction_count, redaction_rules)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+			 redaction_status, redaction_count, redaction_rules, trace_id, parent_span_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 		RETURNING id, created_at`
 
 	tags := tagsParam(art.Tags)
@@ -268,6 +304,10 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 	if err != nil {
 		return fmt.Errorf("create: %w", err)
 	}
+	// A create that carried no valid traceparent writes two NULLs, which is how a
+	// later read tells "no trace" from a trace (SPEC-0024 REQ "Trace Context on
+	// Create").
+	traceID, parentSpanID := traceParams(art.Trace)
 
 	for attempt := 0; attempt < idMaxAttempts; attempt++ {
 		// Savepoint so a unique conflict aborts only this attempt, not the tx.
@@ -292,7 +332,7 @@ func (s *Store) insertArtifact(ctx context.Context, tx pgx.Tx, art *artifact.Art
 			art.Provenance.OnBehalfOf, art.Provenance.Model, art.Provenance.Channel,
 			art.Provenance.CapturedAt, user.IDParam(art.Access.OwnerUserID),
 			user.IDParam(art.Access.OwnerTeamID), art.Access.Visibility,
-			art.ExpiresAt, tags, rStatus, rCount, rRules,
+			art.ExpiresAt, tags, rStatus, rCount, rRules, traceID, parentSpanID,
 		).Scan(&art.ID, &art.CreatedAt)
 		if err != nil {
 			_ = sp.Rollback(ctx)
@@ -330,6 +370,15 @@ func tagsParam(tags []string) []string {
 		return []string{}
 	}
 	return tags
+}
+
+// traceParams passes a parsed trace context for its two bytea columns; nil is
+// two nils, which pgx sends as NULL.
+func traceParams(trace *tracectx.Context) (traceID, parentSpanID []byte) {
+	if trace == nil {
+		return nil, nil
+	}
+	return trace.TraceID[:], trace.SpanID[:]
 }
 
 // isPublicIDConflict reports whether err is a unique-violation on public_id.

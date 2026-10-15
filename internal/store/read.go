@@ -10,6 +10,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/tracectx"
 )
 
 // GetByPublicID resolves an artifact by its public id, returning a uniform
@@ -20,18 +21,25 @@ import (
 // SPEC-0002 REQ "Artifact Lifecycle — Read"
 func (s *Store) GetByPublicID(ctx context.Context, publicID string) (*artifact.Artifact, error) {
 	// A single read also carries the scan outcome, which only its owner is
-	// shown (SPEC-0017 RD-9).
-	q := "SELECT" + binColumns + `, a.redaction_status, a.redaction_count, a.redaction_rules` +
+	// shown (SPEC-0017 RD-9), and the trace context of the run that produced the
+	// artifact, which every read surface returns when it is set (SPEC-0024 REQ
+	// "Trace Id on Read and in Events").
+	q := "SELECT" + binColumns + `, a.redaction_status, a.redaction_count, a.redaction_rules,
+		a.trace_id, a.parent_span_id` +
 		artifactFrom + ` WHERE a.public_id = $1 AND a.expires_at > now()`
 
+	var traceID, parentSpanID []byte
 	a, err := scanArtifactWith(s.pool.QueryRow(ctx, q, publicID), func(a *artifact.Artifact) []any {
-		return []any{&a.Redaction.Status, &a.Redaction.Count, &a.Redaction.Rules}
+		return []any{&a.Redaction.Status, &a.Redaction.Count, &a.Redaction.Rules, &traceID, &parentSpanID}
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("resolve artifact %s: %w", publicID, errs.ErrNotFound)
 		}
 		return nil, fmt.Errorf("resolve artifact %s: %w", publicID, err)
+	}
+	if trace, ok := tracectx.From(traceID, parentSpanID); ok {
+		a.Trace = &trace
 	}
 	return a, nil
 }
