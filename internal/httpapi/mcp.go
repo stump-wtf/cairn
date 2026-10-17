@@ -59,6 +59,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/pat"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/store"
+	"github.com/stump-wtf/cairn/internal/tracectx"
 	"github.com/stump-wtf/cairn/internal/trajectory"
 	"github.com/stump-wtf/cairn/internal/webhook"
 )
@@ -676,10 +677,10 @@ func (s *Server) mcpActivityMiddleware() mcp.Middleware {
 // this table is the belt to that pair of braces, for clients already in the
 // wild with the old flattened schema cached.
 var mcpArrayParams = map[string][]string{
-	"artifact_create":  {"tags"},
+	"artifact_create":  {"tags", "relations"},
 	"run_create":       {"spans"},
 	"run_append_spans": {"spans"},
-	"bundle_create":    {"members", "tags"},
+	"bundle_create":    {"members", "tags", "relations"},
 }
 
 // mcpArrayUnwrapMiddleware is receiving middleware that detects and fixes
@@ -1080,8 +1081,52 @@ type mcpCreateInput struct {
 	// Tags are client-asserted routing strings (ADR-0018); the handoff
 	// convention lives in handoffTagsDoc, published in the tool description.
 	Tags []string `json:"tags,omitempty" jsonschema:"Optional routing tags, e.g. [\"handoff\", \"lane:auto\", \"size:m\"]. Lowercase strings you assert, not provenance. See the tool description for the handoff convention and the bounds."`
+	// Relations declares typed links to artifacts that already exist
+	// (SPEC-0024). Every target must be one this caller can read; a target it
+	// cannot open fails the whole create with relation-target-not-found.
+	Relations []mcpRelationInput `json:"relations,omitempty" jsonschema:"Optional typed links to existing artifacts, e.g. [{\"kind\":\"reply_to\",\"id\":\"a1b2c3\"}]. kind is one of reply_to, derived_from or follows; id is the target's public id. Each target must be an artifact you can read; at most 8 per create; duplicate pairs are dropped."`
+	// Traceparent is a W3C trace context value recorded with the create. An
+	// invalid value is ignored, never rejected: broken telemetry must not
+	// fail an upload (SPEC-0024 REQ "Trace Context on Create").
+	Traceparent string `json:"traceparent,omitempty" jsonschema:"Optional W3C traceparent, e.g. 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01. A valid value stores the trace id on the artifact, visible to every reader; a malformed value is ignored."`
 	// Redaction is the writer's downgrade (SPEC-0017 RD-5).
 	Redaction string `json:"redaction,omitempty" jsonschema:"Optional; the only value is \"mask\". The body and title are scanned for credentials. A markdown or file artifact stores a detected value as [REDACTED]; a code artifact, or a file whose media type names a language, refuses the create by default. \"mask\" stores it as [REDACTED] instead. Any other value is refused with validation_failed: scanning cannot be turned off. The output's redacted and redactions {count, rules} report what was masked."`
+}
+
+// mcpRelationInput is one declared relation on an MCP create: the kind, and
+// the target's public id. Kind and id bounds are the core store's
+// (artifact.NormalizeRelations), so a bad entry arrives as a structured
+// violation naming relations[n], never as a parse error invented here.
+//
+// Governing: SPEC-0024 REQ "Declaring Relations on Create", ADR-0025.
+type mcpRelationInput struct {
+	Kind string `json:"kind" jsonschema:"One of reply_to, derived_from or follows."`
+	ID   string `json:"id" jsonschema:"Public id of the artifact this one relates to; you must be able to read it."`
+}
+
+// mcpRelations maps the structured relations argument to the store's type.
+// Nil or empty in, nil out, so a create that declares nothing stays
+// byte-for-byte the create it was before relations existed.
+func mcpRelations(in []mcpRelationInput) []artifact.Relation {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]artifact.Relation, len(in))
+	for i, r := range in {
+		out[i] = artifact.Relation{Kind: artifact.RelationKind(r.Kind), ID: r.ID}
+	}
+	return out
+}
+
+// mcpTrace maps the optional traceparent argument. Absent and malformed mean
+// the same thing: no trace. This matches the REST header's discipline, that a
+// broken telemetry header must not fail an upload.
+func mcpTrace(s string) *tracectx.Context {
+	ctx, ok := tracectx.Parse(s)
+	if !ok {
+		return nil
+	}
+	return &ctx
 }
 
 type mcpCreateOutput struct {
@@ -1152,6 +1197,8 @@ func (s *Server) mcpCreateArtifact(ctx context.Context, req *mcp.CallToolRequest
 		Access:             artifact.AccessPolicy{OwnerUserID: userID, Visibility: artifact.VisibilityLink},
 		ExpiresAt:          now.Add(s.cfg.DefaultTTL),
 		Tags:               in.Tags,
+		Relations:          mcpRelations(in.Relations),
+		Trace:              mcpTrace(in.Traceparent),
 		ActorKind:          creator.Kind,
 		Auth:               creator.Auth,
 		RedactionDowngrade: downgrade,
@@ -1193,6 +1240,10 @@ type mcpBundleCreateInput struct {
 	// Tags are client-asserted routing strings on the bundle as a whole
 	// (ADR-0018); see mcpCreateInput.Tags.
 	Tags []string `json:"tags,omitempty" jsonschema:"Optional routing tags, e.g. [\"handoff\", \"lane:auto\", \"size:m\"]. Lowercase strings you assert, not provenance. See the tool description for the handoff convention and the bounds."`
+	// Relations and Traceparent mean exactly what they mean on
+	// artifact_create (SPEC-0024), on the bundle as a whole.
+	Relations   []mcpRelationInput `json:"relations,omitempty" jsonschema:"Optional typed links to existing artifacts on the bundle as a whole, e.g. [{\"kind\":\"reply_to\",\"id\":\"a1b2c3\"}]. kind is one of reply_to, derived_from or follows; id is the target's public id. Each target must be an artifact you can read; at most 8 per create; duplicate pairs are dropped."`
+	Traceparent string             `json:"traceparent,omitempty" jsonschema:"Optional W3C traceparent, e.g. 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01. A valid value stores the trace id on the bundle, visible to every reader; a malformed value is ignored."`
 	// Redaction is the writer's downgrade (SPEC-0017 RD-5).
 	Redaction string `json:"redaction,omitempty" jsonschema:"Optional; the only value is \"mask\". Every member and the title are scanned for credentials, and by default a detected value refuses the whole bundle, naming the member (members[n].content) and line. \"mask\" stores each detected value as [REDACTED] instead. Any other value is refused with validation_failed: scanning cannot be turned off. The output's redacted and redactions {count, rules} report what was masked."`
 }
@@ -1251,6 +1302,8 @@ func (s *Server) mcpCreateBundle(ctx context.Context, req *mcp.CallToolRequest, 
 		Access:             artifact.AccessPolicy{OwnerUserID: userID, Visibility: artifact.VisibilityLink},
 		ExpiresAt:          now.Add(s.cfg.DefaultTTL),
 		Tags:               in.Tags,
+		Relations:          mcpRelations(in.Relations),
+		Trace:              mcpTrace(in.Traceparent),
 		ActorKind:          creator.Kind,
 		Auth:               creator.Auth,
 		RedactionDowngrade: downgrade,
