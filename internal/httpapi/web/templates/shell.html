@@ -60,6 +60,25 @@ settles so a screen reader announces it. */}}
 
 <main class="shell-grid" x-bind:class="panelClass">
   <article id="body" class="body-slot{{if .Bundle}} body-slot-bundle{{end}}{{if .Hook}} body-slot-hook{{end}}" tabindex="-1">
+    {{/* Relations header, above the body (SPEC-0024 REQ "Viewer Rendering").
+    A target the reader cannot open is fixed copy with no title and no link:
+    the page never names an id the reader may not open. */}}
+    {{if .RelationRows}}
+    <div class="artifact-relations" data-relations>
+      {{range .RelationRows}}
+      <p class="relation-row">
+        <span class="relation-label">{{.Label}}</span>
+        <ul class="relation-targets">
+          {{range .Targets}}{{if .Available}}
+          <li><a href="{{.URL}}">{{.Title}}</a></li>
+          {{else}}
+          <li class="relation-hidden">an artifact you can't open</li>
+          {{end}}{{end}}
+        </ul>
+      </p>
+      {{end}}
+    </div>
+    {{end}}
     {{if .Bundle}}
     {{template "bundle-viewer" .Bundle}}
     {{else if .Hook}}
@@ -68,6 +87,16 @@ settles so a screen reader announces it. */}}
     {{.Body}}
     {{else if .FileCard}}
     {{template "file-card" .FileCard}}
+    {{end}}
+    {{if .Referenced}}
+    <section class="referenced-by" data-referenced-by aria-labelledby="referenced-h">
+      <h2 class="panel-h" id="referenced-h">Replies and derivatives{{if .ReferencedByTruncated}} <span class="count">50+</span>{{else}} <span class="count">{{len .Referenced}}</span>{{end}}</h2>
+      <ul class="referenced-list">
+        {{range .Referenced}}
+        <li><a href="{{.URL}}">{{.Title}}</a> <span class="referenced-kind">{{.Kind}}</span></li>
+        {{end}}
+      </ul>
+    </section>
     {{end}}
   </article>
 
