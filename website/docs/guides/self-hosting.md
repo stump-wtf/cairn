@@ -73,6 +73,7 @@ optional redaction allowlist that `CAIRN_REDACTION_ALLOWLIST_FILE` names (see
 | `CAIRN_OPERATORS` | *(empty)* | Who runs this instance: comma-separated `<issuer>\|<subject>` sign-in identities, for example `https://id.example.com\|abc-123`. Listed users get the [operator console](#the-operator). **Empty (with `CAIRN_OPERATOR_GROUP` empty too) means there is no operator** and every operator route answers `404`. A malformed entry fails boot. |
 | `CAIRN_OPERATOR_GROUP` | *(empty)* | An OIDC group whose members are operators, read from the `groups` claim at sign-in. Setting it makes cairn request the `groups` scope. Removal from the group at the IdP takes effect only when that user's session ends ([details](#the-operator)). |
 | `CAIRN_OIDC_TRUST_EMAIL` | `false` | Declares your OIDC provider **authoritative for emails**: its `email` claim counts as verified even when the ID token's `email_verified` is absent or `false`. A verified email links a sign-in to the user who owns it, including the Bin an existing user had before users existed. Set it only for a provider you run whose users **cannot set their own email** (Pocket ID with LDAP-synced users, say). Never set it for a provider that lets people type any email: that would let them sign in as someone else. GitHub sign-ins always use GitHub's primary verified email and ignore this setting. |
+| `CAIRN_GITHUB_CLIENT_ID` / `CAIRN_GITHUB_CLIENT_SECRET` | *(empty)* | GitHub as a sign-in provider: the OAuth app's client id and secret. **Set both to turn GitHub login on.** With either one empty the provider stays out of the registry and `/auth/login?provider=github` answers `404`, indistinguishable from an unknown provider. The callback URL is not configurable — it is always `<base>/auth/callback`, derived from `CAIRN_BASE_URL`, so register that exact origin with the OAuth app. Wired through the compose file above. |
 | `CAIRN_DEV_LOGIN_PASSWORD` | *(empty)* | Shared-secret web login accepted for any actor id. Honored **only while `CAIRN_OIDC_ISSUER` is unset** — a deployment that configures OIDC can never fall back to it. Empty disables interactive login entirely. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_DEV_INSECURE_BEARER_AUTH` | `false` | Makes the API trust any bearer token as its own actor id with no verification. A local-development shortcut that must never be enabled in production. Development seam: deliberately **not** wired through the compose file above. |
 | `CAIRN_ENCRYPTION_KEY` | *(empty)* | 32 random bytes, base64 (`openssl rand -base64 32`), that encrypt [outbound subscription](#outbound-subscriptions) secrets at rest. **Unset, nobody can create a subscription**; everything else runs. A malformed value fails boot. Never logged. Wired through the compose file above. |
@@ -189,6 +190,8 @@ services:
       CAIRN_OIDC_CLIENT_ID: ${CAIRN_OIDC_CLIENT_ID:-cairn}
       CAIRN_OIDC_CLIENT_SECRET: ${CAIRN_OIDC_CLIENT_SECRET:-}
       CAIRN_OIDC_TRUST_EMAIL: ${CAIRN_OIDC_TRUST_EMAIL:-false}
+      CAIRN_GITHUB_CLIENT_ID: ${CAIRN_GITHUB_CLIENT_ID:-}
+      CAIRN_GITHUB_CLIENT_SECRET: ${CAIRN_GITHUB_CLIENT_SECRET:-}
       CAIRN_API_TOKENS: ${CAIRN_API_TOKENS:-}
       CAIRN_OPERATORS: ${CAIRN_OPERATORS:-}
       CAIRN_OPERATOR_GROUP: ${CAIRN_OPERATOR_GROUP:-}

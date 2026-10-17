@@ -81,7 +81,10 @@ compose stack once `cairnd` with embedded docs is deployed; the edge config
 proxies `/docs/*` to `cairnd:8080` like every other route. Because the bundle
 was already built with the `/docs/` base path for the live site, no URL
 contract changes. The self-hosting guide and `docker-compose.prod.yml` are
-updated in the same PR that lands the serving code.
+updated in the same PR that lands the serving code. [2026-10-17: the repo-root
+`docker-compose.prod.yml` and `DEPLOY.md` were retired in #362; the
+self-hosting guide's own `compose.yaml` is the deploy surface, and its
+variables are what the sign-in docs now have to keep in step.]
 
 ### Consequences
 
