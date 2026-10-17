@@ -34,6 +34,11 @@ type CreateBundleOptions struct {
 	// Tags are client-asserted routing strings on the bundle (ADR-0018), sent
 	// as the same comma-separated X-Cairn-Tags header a single create uses.
 	Tags []string
+	// Relations and Traceparent mean what they mean on CreateArtifactOptions
+	// (SPEC-0024), on the bundle as a whole: the server merges relation header
+	// values with any relation form fields on the same request.
+	Relations   []string
+	Traceparent string
 	// Redaction is the writer's downgrade; see CreateArtifactOptions.Redaction.
 	Redaction string
 }
@@ -83,6 +88,12 @@ func (c *Client) CreateBundle(ctx context.Context, files []BundleFile, opts Crea
 	}
 	if len(opts.Tags) > 0 {
 		req.Header.Set("X-Cairn-Tags", strings.Join(opts.Tags, ","))
+	}
+	for _, rel := range opts.Relations {
+		req.Header.Add(RelationHeader, rel)
+	}
+	if opts.Traceparent != "" {
+		req.Header.Set(TraceparentHeader, opts.Traceparent)
 	}
 	if opts.Redaction != "" {
 		req.Header.Set(RedactionHeader, opts.Redaction)

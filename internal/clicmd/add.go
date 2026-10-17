@@ -39,6 +39,10 @@ func runAdd(cmd *cobra.Command, streams IOStreams, flags *globalFlags, configPat
 	if err != nil {
 		return err
 	}
+	relations, err := parseRelationFlags(flags.replyTo, flags.derivedFrom, flags.follows)
+	if err != nil {
+		return err
+	}
 	redaction, err := parseRedactFlag(flags.redact, cmd.Flags().Changed("redact"))
 	if err != nil {
 		return err
@@ -69,7 +73,7 @@ func runAdd(cmd *cobra.Command, streams IOStreams, flags *globalFlags, configPat
 	defer cancel()
 
 	client := cliclient.New(cfg.APIBaseURL, cfg.Token)
-	opts := cliclient.CreateBundleOptions{Title: flags.title, TTLSeconds: ttlSeconds, Tags: tags, Redaction: redaction}
+	opts := cliclient.CreateBundleOptions{Title: flags.title, TTLSeconds: ttlSeconds, Tags: tags, Relations: relations, Traceparent: traceparentFlag(flags.traceparent), Redaction: redaction}
 
 	var (
 		art         *cliclient.Artifact

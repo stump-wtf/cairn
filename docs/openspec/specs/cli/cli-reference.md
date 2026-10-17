@@ -170,6 +170,10 @@ create artifacts.
 | `--title <title>` | Display title for the artifact or bundle |
 | `--ttl <duration>` | Request an expiry, e.g. `24h` or `7d`; the server decides whether to honor it |
 | `--tag <tag>` | Attach a routing tag; repeatable or comma-separated (`--tag handoff --tag lane:auto`) |
+| `--reply-to <id>` | Declare the new artifact a reply to that artifact id; repeatable or comma-separated. Each target must be an artifact you can read; at most 8 relations per create |
+| `--derived-from <id>` | Declare the new artifact derived from that artifact id; repeatable or comma-separated |
+| `--follows <id>` | Declare the new artifact follows that artifact id; repeatable or comma-separated |
+| `--traceparent <value>` | W3C trace context to record with the create (env `TRACEPARENT`); a valid value's trace id is visible on reads, a malformed one is ignored |
 | `--type <media-type>` | Override the detected Content-Type |
 | `--redact mask` | Store detected credentials as `[REDACTED]` instead of refusing the upload. `mask` is the only value |
 | `--no-copy` | Never copy the resulting link to the clipboard |
