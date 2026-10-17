@@ -329,8 +329,8 @@ github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXl
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
-github.com/stump-wtf/md2a2ui v0.2.0 h1:xurXYcqRDSeBLhksFtQWf5oVNmny5bWYpnKkUHvMWis=
-github.com/stump-wtf/md2a2ui v0.2.0/go.mod h1:AvPxUgfzDoSHOqijqMf5Qta2zcmSb9gnqbMP925EE5A=
+github.com/stump-wtf/md2a2ui v0.2.1 h1:IFOLmLQRx9+i1bzJE2fE/Bv9s31m19yXPBzWMsb6NXw=
+github.com/stump-wtf/md2a2ui v0.2.1/go.mod h1:ifLjBy1ieOuteoQXuuK3cR7S+vpsx8l3o3hjKbuQxlM=
 github.com/subosito/gotenv v1.6.0 h1:9NlTDc1FTs4qu0DDq7AEtTPNw6SVm7uBMsUCUjABIf8=
 github.com/subosito/gotenv v1.6.0/go.mod h1:Dk4QP5c2W3ibzajGcXpNraDfq2IrhjMIvMSWPKKo0FU=
 github.com/tetratelabs/wazero v1.9.0 h1:IcZ56OuxrtaEz8UYNRHBrUa9bYeX9oVY93KspZZBf/I=
