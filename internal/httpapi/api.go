@@ -692,7 +692,15 @@ func (s *Server) toArtifactResponse(a *artifact.Artifact) artifactResponse {
 // /run/) is registry data via the URLPrefixer capability — never a switch on
 // the type key here (ADR-0002; ADR-0005 URL scheme).
 func (s *Server) webURL(a *artifact.Artifact) string {
-	return s.cfg.BaseURL + prefixedPath(s.reg.URLPrefixFor(a.ShareType).Web, a.PublicID)
+	return s.webURLFor(a.ShareType, a.PublicID)
+}
+
+// webURLFor is webURL keyed by type and id instead of a whole artifact: the
+// shell view resolves relation targets to a type, id and title
+// (store.RelationView), not to full artifact rows, and still has to link them
+// at their canonical path (a trajectory lives at /run/, not at the bare id).
+func (s *Server) webURLFor(shareType artifact.ShareType, publicID string) string {
+	return s.cfg.BaseURL + prefixedPath(s.reg.URLPrefixFor(shareType).Web, publicID)
 }
 
 // mcpHandle builds the agent handle. Webhook's hook/ and trajectory's run/

@@ -41,6 +41,11 @@ type RelationView struct {
 	PublicID  string
 	Title     string
 	Available bool
+	// ShareType names the target's type so the web viewer can link it at its
+	// canonical path (a trajectory lives at /run/, not at the bare path). It
+	// is viewer plumbing only: the wire relation view stays {kind, id, title}
+	// (SPEC-0024 REQ "Relations on Read").
+	ShareType artifact.ShareType
 }
 
 // RelationsResult is one artifact's relations from both ends: what it declares,
@@ -56,6 +61,7 @@ type RelationsResult struct {
 type target struct {
 	id          int64
 	title       string
+	shareType   artifact.ShareType
 	ownerUserID string
 	ownerTeamID string
 }
@@ -84,7 +90,7 @@ func readableTargets(ctx context.Context, q querier, _ Reader, publicIDs []strin
 		return map[string]target{}, nil
 	}
 	rows, err := q.Query(ctx, `
-		SELECT a.public_id, a.id, a.title,
+		SELECT a.public_id, a.id, a.title, a.share_type,
 		       COALESCE(a.owner_user_id::text, ''), COALESCE(a.owner_team_id::text, '')
 		FROM artifacts a
 		WHERE a.public_id = ANY($1) AND a.expires_at > now()`, publicIDs)
@@ -99,7 +105,7 @@ func readableTargets(ctx context.Context, q querier, _ Reader, publicIDs []strin
 			publicID string
 			t        target
 		)
-		if err := rows.Scan(&publicID, &t.id, &t.title, &t.ownerUserID, &t.ownerTeamID); err != nil {
+		if err := rows.Scan(&publicID, &t.id, &t.title, &t.shareType, &t.ownerUserID, &t.ownerTeamID); err != nil {
 			return nil, fmt.Errorf("scan relation target: %w", err)
 		}
 		out[publicID] = t
@@ -262,7 +268,7 @@ func (s *Store) declaredRelations(ctx context.Context, r Reader, artifactID int6
 			continue
 		}
 		out.Relations = append(out.Relations, RelationView{
-			Kind: k, PublicID: targets[i], Title: t.title, Available: true,
+			Kind: k, PublicID: targets[i], Title: t.title, ShareType: t.shareType, Available: true,
 		})
 	}
 	if len(out.Relations) == 0 {
@@ -331,7 +337,7 @@ func (s *Store) addReferencedBy(ctx context.Context, r Reader, artifactID int64,
 		}
 		seen[t.id] = struct{}{}
 		in.ReferencedBy = append(in.ReferencedBy, RelationView{
-			Kind: e.kind, PublicID: e.publicID, Title: t.title, Available: true,
+			Kind: e.kind, PublicID: e.publicID, Title: t.title, ShareType: t.shareType, Available: true,
 		})
 	}
 	if len(in.ReferencedBy) == 0 {

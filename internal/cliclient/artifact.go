@@ -57,6 +57,16 @@ const (
 	RedactionMask   = "mask"
 )
 
+// RelationHeader carries one typed relation per header value on a create
+// (SPEC-0024 REQ "Declaring Relations on Create"), and TraceparentHeader is
+// the W3C trace context header a create may carry. The CLI sends one relation
+// per header line, the shape the server documents for clients that can add
+// headers one at a time.
+const (
+	RelationHeader    = "X-Cairn-Relation"
+	TraceparentHeader = "traceparent"
+)
+
 // CreateArtifactOptions carries the raw-body single-artifact create request
 // (SPEC-0008 "Pipe and Path Ingest"). The server assigns share type,
 // provenance, access, and expiry; the CLI supplies only the body and the
@@ -81,6 +91,15 @@ type CreateArtifactOptions struct {
 	// as one comma-separated X-Cairn-Tags header. No tag may contain a comma, so
 	// the list survives an intermediary folding repeated headers intact.
 	Tags []string
+	// Relations are declared typed links (`--reply-to` and friends,
+	// SPEC-0024), each a `<kind>=<id>` entry sent as its own
+	// X-Cairn-Relation header. The server parses and validates them; the
+	// CLI only builds the wire shape.
+	Relations []string
+	// Traceparent is a W3C trace context value forwarded verbatim
+	// (`--traceparent`, or the TRACEPARENT env default, SPEC-0024). The
+	// server ignores a malformed value, so the CLI never judges it.
+	Traceparent string
 	// Redaction is the writer's downgrade (`--redact=mask`), sent as
 	// X-Cairn-Redaction when set. The CLI checks it before sending; the
 	// server is still the judge (SPEC-0017 RD-5).
@@ -124,6 +143,12 @@ func (c *Client) doCreate(ctx context.Context, path string, body io.Reader, cont
 	}
 	if len(opts.Tags) > 0 {
 		req.Header.Set("X-Cairn-Tags", strings.Join(opts.Tags, ","))
+	}
+	for _, rel := range opts.Relations {
+		req.Header.Add(RelationHeader, rel)
+	}
+	if opts.Traceparent != "" {
+		req.Header.Set(TraceparentHeader, opts.Traceparent)
 	}
 	if opts.Redaction != "" {
 		req.Header.Set(RedactionHeader, opts.Redaction)

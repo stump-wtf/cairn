@@ -109,3 +109,35 @@ func TestCreateArtifactOmitsTTLHeaderWhenUnset(t *testing.T) {
 		t.Error("X-Cairn-Ttl-Seconds header sent when TTLSeconds was zero (unset)")
 	}
 }
+
+// TestCreateArtifactSendsRelationsAndTraceparent: each declared relation
+// travels as its own X-Cairn-Relation header line, and the traceparent rides
+// the W3C header verbatim; both stay absent when unset.
+//
+// Governing: SPEC-0024 REQ "Declaring Relations on Create", REQ "Trace
+// Context on Create"
+func TestCreateArtifactSendsRelationsAndTraceparent(t *testing.T) {
+	var rels []string
+	var traces []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rels = r.Header.Values("X-Cairn-Relation")
+		traces = r.Header.Values("traceparent")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(Artifact{ID: "abc12", URL: "https://cairn.sh/abc12"})
+	}))
+	defer srv.Close()
+
+	if _, err := New(srv.URL, "tok").CreateArtifact(context.Background(), strings.NewReader("hi"), CreateArtifactOptions{
+		Relations:   []string{"reply_to=a1b2c3", "follows=d4e5f6"},
+		Traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+	}); err != nil {
+		t.Fatalf("CreateArtifact: %v", err)
+	}
+	if len(rels) != 2 || rels[0] != "reply_to=a1b2c3" || rels[1] != "follows=d4e5f6" {
+		t.Errorf("X-Cairn-Relation = %q, want one header per relation", rels)
+	}
+	if len(traces) != 1 || traces[0] != "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" {
+		t.Errorf("traceparent = %q, want the value verbatim", traces)
+	}
+}

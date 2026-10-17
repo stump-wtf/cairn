@@ -92,6 +92,8 @@ artifact, never its content:
     "expires_at": "2026-09-18T17:04:05Z",
     "on_behalf_of": "claude-code/2.1.0",
     "tags": ["handoff", "lane:m", "reply:cairn-comment"],
+    "relations": [{ "kind": "reply_to", "id": "<target-id>" }],
+    "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
     "actor_kind": "agent",
     "auth": "oauth"
   }
@@ -112,6 +114,8 @@ artifact, never its content:
 | `data.expires_at` | When the artifact expires |
 | `data.on_behalf_of` | For artifacts created over MCP, the client's self-reported name and version |
 | `data.tags` | The creator's [tags](../product/tags.md), if any; routing hints, never authorization |
+| `data.relations` | The typed relations the create declared, as `{kind, id}` pairs: `kind` is `reply_to`, `derived_from` or `follows`. Only relations whose target lives in the creator's own workspace are included |
+| `data.trace_id` | The trace id parsed from the create's W3C `traceparent`, 32 lowercase hex characters, when the create carried one |
 | `data.actor_kind` | `human` if the creator signed in with a browser session, `agent` for every token (MCP OAuth, personal access tokens, API tokens). Cairn works this out from the credential; no request field can set it |
 | `data.auth` | How the creator signed in: `session`, `oauth`, `pat`, or `api_token` |
 

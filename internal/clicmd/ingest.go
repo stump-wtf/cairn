@@ -35,6 +35,10 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 	if err != nil {
 		return err
 	}
+	relations, err := parseRelationFlags(flags.replyTo, flags.derivedFrom, flags.follows)
+	if err != nil {
+		return err
+	}
 	redaction, err := parseRedactFlag(flags.redact, cmd.Flags().Changed("redact"))
 	if err != nil {
 		return err
@@ -116,11 +120,13 @@ func runIngest(cmd *cobra.Command, streams IOStreams, flags *globalFlags, config
 
 	client := cliclient.New(cfg.APIBaseURL, cfg.Token)
 	art, err := client.CreateArtifact(cmd.Context(), counting, cliclient.CreateArtifactOptions{
-		Title:      title,
-		MediaType:  mediaType,
-		TTLSeconds: ttlSeconds,
-		Tags:       tags,
-		Redaction:  redaction,
+		Title:       title,
+		MediaType:   mediaType,
+		TTLSeconds:  ttlSeconds,
+		Tags:        tags,
+		Relations:   relations,
+		Traceparent: traceparentFlag(flags.traceparent),
+		Redaction:   redaction,
 	})
 	if sp != nil {
 		sp.Stop()

@@ -9,6 +9,19 @@ reaches 1.0.
 
 ### Added
 
+- **Artifact relations, the surfaces** (SPEC-0024 slice 2, #456). The relations
+  core landed without anything a user could touch; this makes it usable. MCP
+  `artifact_create` and `bundle_create` gain `relations`
+  (`[{"kind":"reply_to","id":"…"}]`) and `traceparent` arguments; the CLI gains
+  `--reply-to`, `--derived-from` and `--follows` (repeatable, like `--tag`)
+  and `--traceparent`, defaulting to the `TRACEPARENT` environment so an
+  instrumented run threads its trace into every artifact it publishes. The
+  web viewer now renders an "In reply to / Derived from / Follows" header
+  above the body and a "Replies and derivatives" list below it; a target the
+  reader cannot open shows neither its id nor its title anywhere, and every
+  title renders escaped. A traced create shows its trace id in the viewer's
+  Details.
+
 - **`cairn read` and `cairn comment`** (SPEC-0008). The CLI can now open an
   artifact and annotate one, which is what made the MCP server the only way to do
   either. `cairn read <id|mcp://cairn/<id>>` prints a body, or a bundle's file

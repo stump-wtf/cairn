@@ -24,6 +24,7 @@ package clicmd
 
 import (
 	"io"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -53,6 +54,10 @@ type globalFlags struct {
 	title       string
 	ttl         string
 	tags        []string
+	replyTo     []string
+	derivedFrom []string
+	follows     []string
+	traceparent string
 	redact      string
 	mediaType   string
 	noCopy      bool
@@ -104,6 +109,10 @@ decided by the server and only ever displayed here (SPEC-0008).`,
 	root.PersistentFlags().StringVar(&flags.title, "title", "", "optional display title for the artifact/bundle")
 	root.PersistentFlags().StringVar(&flags.ttl, "ttl", "", "request an expiry (e.g. \"24h\", \"7d\"); the server decides whether to honor it")
 	root.PersistentFlags().StringArrayVar(&flags.tags, "tag", nil, "attach a routing tag; repeatable or comma-separated (e.g. --tag handoff --tag lane:auto)")
+	root.PersistentFlags().StringArrayVar(&flags.replyTo, "reply-to", nil, "declare this artifact a reply to an artifact id; repeatable or comma-separated (SPEC-0024)")
+	root.PersistentFlags().StringArrayVar(&flags.derivedFrom, "derived-from", nil, "declare this artifact derived from an artifact id; repeatable or comma-separated (SPEC-0024)")
+	root.PersistentFlags().StringArrayVar(&flags.follows, "follows", nil, "declare this artifact follows an artifact id; repeatable or comma-separated (SPEC-0024)")
+	root.PersistentFlags().StringVar(&flags.traceparent, "traceparent", os.Getenv("TRACEPARENT"), "W3C traceparent to record with the create (env TRACEPARENT); a malformed value is ignored")
 	root.PersistentFlags().StringVar(&flags.redact, "redact", "", "store detected credentials as [REDACTED] instead of refusing the upload; the only value is mask")
 	root.PersistentFlags().StringVar(&flags.mediaType, "type", "", "override the detected Content-Type")
 	root.PersistentFlags().BoolVar(&flags.noCopy, "no-copy", false, "never copy the resulting link to the clipboard")

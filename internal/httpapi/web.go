@@ -19,6 +19,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/markdown"
 	"github.com/stump-wtf/cairn/internal/sharetype"
+	"github.com/stump-wtf/cairn/internal/store"
 )
 
 // The web app shell (ADR-0011, SPEC-0001): a single server-rendered
@@ -339,7 +340,9 @@ func (s *Server) renderShellFor(w http.ResponseWriter, r *http.Request, wantPref
 	// the read-only thread (posting requires a session + CSRF). Resolution is
 	// optional — an absent/invalid credential simply yields the read-only view.
 	viewer, ok := s.optionalPrincipal(r)
+	var viewerID string
 	if ok {
+		viewerID = viewer.UserID
 		vm.Authenticated = true
 		vm.Actor = viewer.ActorID
 		vm.ShareDialog.IsOwner = a.Access.OwnedByUser(viewer.UserID)
@@ -347,6 +350,12 @@ func (s *Server) renderShellFor(w http.ResponseWriter, r *http.Request, wantPref
 		if vm.ShareDialog.IsOwner {
 			vm.Redaction = redactionBadgeOf(a.Redaction)
 		}
+	}
+	// Relations resolve as this reader, not as the owner (SPEC-0024 REQ
+	// "Relations on Read"): what one reader may see is not the set another sees.
+	if err := s.setShellRelations(r.Context(), viewerID, &vm, a.PublicID); err != nil {
+		s.renderWebError(w, r, err)
+		return
 	}
 	s.maskActors(r.Context(), viewer, &vm.Provenance, vm.Comments)
 	vm.ShareDialog.Provenance.Actor = vm.Provenance.Actor
@@ -411,6 +420,33 @@ type shellView struct {
 	// artifact; nil for everyone else, so the template renders nothing
 	// (SPEC-0017 RD-9).
 	Redaction *redactionBadgeView
+	// RelationRows renders the "In reply to / Derived from / Follows" header
+	// above the body, and Referenced the "Replies and derivatives" list below
+	// it (SPEC-0024 REQ "Viewer Rendering"). Both are resolved as the reading
+	// principal, exactly like the REST read, and set by the caller once that
+	// principal is known; a target the reader cannot open carries no title and
+	// no link.
+	RelationRows []relationRowView
+	Referenced   []relationEntryView
+	// ReferencedByTruncated says more referrers exist than the 50 listed.
+	ReferencedByTruncated bool
+}
+
+// relationRowView is one kind's row in the relations header: the label and
+// the targets declared under that kind, in declaration order.
+type relationRowView struct {
+	Label   string
+	Targets []relationEntryView
+}
+
+// relationEntryView is one relation target in the shell. An unavailable
+// target renders as fixed copy with no title and no link, so the page never
+// names an id the reader cannot open (SPEC-0024 REQ "Relations on Read").
+type relationEntryView struct {
+	Kind      string
+	Title     string
+	URL       string
+	Available bool
 }
 
 // shareDialogView is the Share dialog's view model (#46, SPEC-0001 REQ "Share
@@ -622,6 +658,70 @@ func (s *Server) buildShellView(ctx context.Context, a *artifact.Artifact, activ
 	return vm
 }
 
+// setShellRelations resolves an artifact's relations as the reading principal
+// and fills the relations header rows and the referrers list: the same store
+// call, run as the same reader, that the REST read makes (SPEC-0024 REQ
+// "Viewer Rendering", "Relations on Read"). Callers resolve the principal
+// first; an anonymous link read passes the empty reader id and sees exactly
+// what an anonymous REST read sees.
+func (s *Server) setShellRelations(ctx context.Context, viewerID string, vm *shellView, publicID string) error {
+	rels, err := s.store.Relations(ctx, store.Reader{UserID: viewerID}, publicID)
+	if err != nil {
+		return err
+	}
+	vm.RelationRows = s.relationRows(rels.Relations)
+	vm.Referenced = s.relationEntries(rels.ReferencedBy)
+	vm.ReferencedByTruncated = rels.ReferencedByTruncated
+	return nil
+}
+
+// relationRows groups declared relations into one labelled row per kind, in
+// the order the viewer names them, skipping kinds nothing was declared under.
+func (s *Server) relationRows(rels []store.RelationView) []relationRowView {
+	var rows []relationRowView
+	for _, g := range []struct {
+		kind  artifact.RelationKind
+		label string
+	}{
+		{artifact.RelationReplyTo, "In reply to"},
+		{artifact.RelationDerivedFrom, "Derived from"},
+		{artifact.RelationFollows, "Follows"},
+	} {
+		row := relationRowView{Label: g.label}
+		for _, r := range rels {
+			if r.Kind == g.kind {
+				row.Targets = append(row.Targets, s.relationEntry(r))
+			}
+		}
+		if len(row.Targets) > 0 {
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+// relationEntries projects a referrer list; the store has already dropped
+// referrers this reader cannot open, so every entry here is a live link.
+func (s *Server) relationEntries(refs []store.RelationView) []relationEntryView {
+	var out []relationEntryView
+	for _, r := range refs {
+		out = append(out, s.relationEntry(r))
+	}
+	return out
+}
+
+func (s *Server) relationEntry(r store.RelationView) relationEntryView {
+	if !r.Available {
+		return relationEntryView{Kind: string(r.Kind)}
+	}
+	return relationEntryView{
+		Kind:      string(r.Kind),
+		Title:     firstNonEmpty(r.Title, r.PublicID),
+		URL:       s.webURLFor(r.ShareType, r.PublicID),
+		Available: true,
+	}
+}
+
 // toCommentLines flattens the thread into display rows, marking replies (which
 // the template indents) and preserving soft-delete tombstones as structure.
 func toCommentLines(cs []annotation.Comment) []commentLine {
@@ -753,14 +853,17 @@ func fileCard(a *artifact.Artifact, badge string) *fileCardView {
 // bodied artifact (size, media type, checksum). Type-specific facts are the
 // registry's MetadataPanel; these are the core aggregate's own attributes.
 func detailFields(a *artifact.Artifact) []sharetype.PanelField {
-	if a.BodySHA256 == "" {
-		return nil
+	var fields []sharetype.PanelField
+	if a.BodySHA256 != "" {
+		fields = append(fields, sharetype.PanelField{Label: "size", Value: humanizeBytes(a.Size)})
+		if a.MediaType != "" {
+			fields = append(fields, sharetype.PanelField{Label: "type", Value: a.MediaType})
+		}
+		fields = append(fields, sharetype.PanelField{Label: "sha256", Value: shortSHA(a.BodySHA256)})
 	}
-	fields := []sharetype.PanelField{{Label: "size", Value: humanizeBytes(a.Size)}}
-	if a.MediaType != "" {
-		fields = append(fields, sharetype.PanelField{Label: "type", Value: a.MediaType})
+	if a.Trace != nil {
+		fields = append(fields, sharetype.PanelField{Label: "trace", Value: a.Trace.TraceHex()})
 	}
-	fields = append(fields, sharetype.PanelField{Label: "sha256", Value: shortSHA(a.BodySHA256)})
 	return fields
 }
 

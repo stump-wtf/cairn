@@ -213,6 +213,22 @@ code { font-family: var(--mono); }
   color: var(--t3); background: var(--well); border: 1px solid var(--border-2);
   border-radius: 4px; padding: 1px 6px; font: 400 11px var(--mono); word-break: break-all;
 }
+/* Typed relations (SPEC-0024): the header sits above the body, the referrers
+list below it. An unavailable target renders as muted fixed copy: no title,
+no link, no id. */
+.artifact-relations {
+  display: flex; flex-wrap: wrap; gap: 4px 16px;
+  margin: 0 0 14px; padding: 8px 12px;
+  background: var(--well); border: 1px solid var(--border-2); border-radius: 8px;
+}
+.relation-row { display: flex; align-items: baseline; gap: 6px; margin: 0; }
+.relation-label { color: var(--t6); font: 400 11.5px var(--mono); white-space: nowrap; }
+.relation-targets { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.relation-targets li + li::before { content: "·"; color: var(--t7); margin-right: 8px; }
+.relation-hidden { color: var(--t7); font: italic 400 12px var(--sans); }
+.referenced-by { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--border-2); }
+.referenced-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.referenced-kind { color: var(--t7); font: 400 11px var(--mono); }
 
 .comments { display: flex; flex-direction: column; gap: 12px; }
 .comment { background: var(--well-2); border: 1px solid var(--border-3); border-radius: 8px; padding: 10px 12px; }
