@@ -20,6 +20,17 @@ reaches 1.0.
   surface has its own idea of what an id is. `GET /v1/artifacts/{id}` now lists a
   bundle's members, which is how a reader learns the name `/members/<name>` needs.
 
+### Fixed
+
+- **GitHub login reaches the container** (cairn#452). The `compose.yaml` in the
+  self-hosting guide forwarded the OIDC settings and static tokens but not
+  `CAIRN_GITHUB_CLIENT_ID` / `CAIRN_GITHUB_CLIENT_SECRET`, so a self-hoster who
+  set them in `.env`, exactly as `.env.example` invites, got a server that never
+  offered GitHub. Both are now passed through with empty defaults, and a test
+  keeps the guide's compose file and `.env.example` in step for every variable
+  that decides whether a caller can sign in at all — including the development
+  seams that must stay *out* of the production path.
+
 ### Security
 
 - **Users and identities** (SPEC-0023, #326). Sign-ins now resolve to user rows
