@@ -6,3 +6,10 @@
 # 0022473: the receiver-issued signing secret fixture in the #185 integration
 # tests, a made-up string. The next commit replaced it with a built value.
 00224730fcbbc90221d07f3d010745a98fe5fda5:internal/httpapi/subscriptions_integration_test.go:generic-api-key:30
+#
+# 462: the deliberately empty half of a key pair in s3-bootstrap.test.sh's
+# "half a pair" fixture — the script must refuse a one-sided pair, so the
+# value is empty by construction and gitleaks' generic-api-key rule matches
+# the bare `CAIRN_S3_ACCESS_KEY=` assignment itself.
+# @joestump-agent 10/19/2026 - Allowlisted during review of #462.
+7917999a6882b575b2ff74d5a6d5bdb92531d789:scripts/s3-bootstrap.test.sh:generic-api-key:92

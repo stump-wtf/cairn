@@ -20,7 +20,7 @@ and how to tell it worked.
 | | Requirement | Notes |
 |---|---|---|
 | **Database** | Postgres | The schema is plain SQL — 15 migrations as of this writing, no extensions, no version-specific syntax — so any supported Postgres works. Verified on **16**; that is what the compose path below brings. Cairn creates and migrates its own schema at startup; there is no separate migrate step. |
-| **Object storage** | Any S3-compatible store | Artifact bodies are content-addressed (SHA-256) and stored in a bucket, not in Postgres (ADR-0008). Verified with MinIO; Garage and S3 itself work the same way — it is plain the S3 API. Cairn creates its bucket on connect. |
+| **Object storage** | Any S3-compatible store | Artifact bodies are content-addressed (SHA-256) and stored in a bucket, not in Postgres (ADR-0008). Verified with Garage, which is the image CI's integration job runs the S3 tests against; S3 itself works the same way, it is plain the S3 API. Cairn creates its bucket on connect. |
 | **Identity provider** | Any OIDC provider | Needed for humans to sign in to the web UI. Without it, the deployment is bearer-token-only — no interactive login exists at all. See [Sign-in (OIDC)](#sign-in-oidc). |
 | **TLS** | A reverse proxy | Cairn speaks plain HTTP and expects something in front terminating TLS. The compose path below brings Caddy, which obtains certificates automatically. |
 
@@ -62,7 +62,7 @@ optional redaction allowlist that `CAIRN_REDACTION_ALLOWLIST_FILE` names (see
 | `CAIRN_DATABASE_URL` | `$DATABASE_URL` | **Required.** Postgres DSN. |
 | `CAIRN_BASE_URL` | `https://cairn.stump.wtf` | **Set this.** The public origin used to build short URLs — and the OAuth redirect URI is *always* derived as `<base>/auth/callback`, so it must match the origin your users actually reach. |
 | `CAIRN_S3_ENDPOINT` | `localhost:9000` | S3-compatible endpoint (host:port, no scheme). |
-| `CAIRN_S3_ACCESS_KEY` / `CAIRN_S3_SECRET_KEY` | `minioadmin` / `minioadmin` | **Do not ship the defaults on a public host.** |
+| `CAIRN_S3_ACCESS_KEY` / `CAIRN_S3_SECRET_KEY` | `minioadmin` / `minioadmin` | **Do not ship the defaults on a public host.** They are a MinIO pair: a Garage access key id is `GK` plus 12 hex bytes and its secret is 32 hex bytes, so neither default can authenticate against the store above. Set both. |
 | `CAIRN_S3_BUCKET` | `cairn` | Bucket name; created on connect if missing. |
 | `CAIRN_S3_REGION` | `us-east-1` | Region string most S3 implementations accept. |
 | `CAIRN_S3_USE_SSL` | `false` | Set `true` when the endpoint speaks HTTPS. |
@@ -161,13 +161,11 @@ services:
       retries: 20
     restart: unless-stopped
 
-  minio:
-    image: quay.io/minio/minio:latest
-    command: server /data
-    environment:
-      MINIO_ROOT_USER: ${CAIRN_S3_ACCESS_KEY:?set CAIRN_S3_ACCESS_KEY in .env}
-      MINIO_ROOT_PASSWORD: ${CAIRN_S3_SECRET_KEY:?set CAIRN_S3_SECRET_KEY in .env}
-    volumes: [miniodata:/data]
+  garage:
+    image: dxflrs/garage:v1.0.1
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - garagedata:/var/lib/garage
     restart: unless-stopped
 
   # The image's entrypoint runs the server (`cairn serve`); no command
@@ -176,10 +174,11 @@ services:
     image: ghcr.io/stump-wtf/cairn:latest
     depends_on:
       postgres: {condition: service_healthy}
+      garage: {condition: service_started}
     environment:
       CAIRN_HTTP_ADDR: ":8080"
       CAIRN_DATABASE_URL: "host=postgres port=5432 user=cairn password=${POSTGRES_PASSWORD} dbname=cairn sslmode=disable"
-      CAIRN_S3_ENDPOINT: minio:9000
+      CAIRN_S3_ENDPOINT: garage:3900
       CAIRN_S3_ACCESS_KEY: ${CAIRN_S3_ACCESS_KEY}
       CAIRN_S3_SECRET_KEY: ${CAIRN_S3_SECRET_KEY}
       CAIRN_S3_BUCKET: ${CAIRN_S3_BUCKET:-cairn}
@@ -212,7 +211,7 @@ services:
       - caddyconfig:/config
     restart: unless-stopped
 
-volumes: {pgdata: {}, miniodata: {}, caddydata: {}, caddyconfig: {}}
+volumes: {pgdata: {}, garagedata: {}, caddydata: {}, caddyconfig: {}}
 ```
 
 and next to it a three-line `Caddyfile`:
@@ -233,32 +232,84 @@ and next to it a three-line `Caddyfile`:
 Then:
 
 ```bash
+mkdir -p garage
 cat > .env <<EOF
 CAIRN_DOMAIN=cairn.example.com
 CAIRN_ACME_EMAIL=you@example.com
 POSTGRES_PASSWORD=$(openssl rand -hex 24)
-CAIRN_S3_ACCESS_KEY=$(openssl rand -hex 16)
-CAIRN_S3_SECRET_KEY=$(openssl rand -hex 24)
+CAIRN_S3_ACCESS_KEY=GK$(openssl rand -hex 12)
+CAIRN_S3_SECRET_KEY=$(openssl rand -hex 32)
+CAIRN_S3_BUCKET=cairn
 CAIRN_ENCRYPTION_KEY=$(openssl rand -base64 32)
 EOF
-docker compose up -d
+cat > garage/garage.toml <<EOF
+metadata_dir = "/var/lib/garage/meta"
+data_dir     = "/var/lib/garage/data"
+db_engine    = "sqlite"
+replication_factor = 1
+rpc_bind_addr   = "[::]:3901"
+rpc_public_addr = "garage:3901"
+rpc_secret      = "$(openssl rand -hex 32)"
+
+[s3_api]
+s3_region = "us-east-1"
+api_bind_addr = "[::]:3900"
+
+[admin]
+api_bind_addr = "[::]:3903"
+EOF
+docker compose up -d postgres garage
 ```
 
 Note the unquoted heredoc delimiter (`<<EOF`, not `<<'EOF'`): it is what makes the
 `$(openssl …)` substitutions run. With quotes, the file would contain the literal command
 string as the password — it *looks* random in the file and the stack still starts, which is
-the worst kind of wrong.
+the worst kind of wrong. The same applies to `garage.toml`, whose `rpc_secret` is what
+Garage derives its node id from: generated per instance, and yours to keep off any
+shared machine.
+
+Garage then needs one thing MinIO did not: it refuses to serve S3 until a node has
+a role in the cluster layout, and credentials exist only once a key has been
+imported and allowed on the bucket. Its image has no shell, so these admin
+commands run inside the container. They are safe to re-run on a store that is
+already configured, which is why the layout step is guarded rather than blind:
+
+```bash
+set -a; . ./.env; set +a
+until docker compose exec -T garage /garage status >/dev/null 2>&1; do sleep 1; done
+if docker compose exec -T garage /garage status | grep -q 'NO ROLE ASSIGNED'; then
+  node="$(docker compose exec -T garage /garage node id | cut -d@ -f1)"
+  docker compose exec -T garage /garage layout assign -z dc1 -c 10G "$node"
+  docker compose exec -T garage /garage layout apply --version 1
+fi
+docker compose exec -T garage /garage bucket create "$CAIRN_S3_BUCKET" || true
+docker compose exec -T garage /garage key import --yes -n cairn \
+  "$CAIRN_S3_ACCESS_KEY" "$CAIRN_S3_SECRET_KEY" || true
+docker compose exec -T garage /garage bucket allow --read --write --owner "$CAIRN_S3_BUCKET" \
+  --key "$CAIRN_S3_ACCESS_KEY"
+docker compose up -d
+```
+
+The `|| true` on the two create steps is for the restart case: a bucket and a key
+that already exist make Garage exit non-zero, and the next `bucket allow` sets the
+same permissions again. A key id Garage rejects is different, and shows up there as
+"not a valid Garage key ID": the `GK` plus 12 hex bytes shape the `.env` above
+generates is what it accepts, so a hand-edited hex string will not do.
 
 Point an A/AAAA record for `CAIRN_DOMAIN` at the host with 80 and 443 open, and
 Caddy obtains the certificate on first request.
 
 <details>
-<summary>MinIO came from quay.io above — why?</summary>
+<summary>Why is the object store above Garage?</summary>
 
-MinIO's canonical Docker Hub repository was unreachable to anonymous pulls
-while writing this guide, so the compose file pins the same images from
-quay.io. Any S3-compatible store works; substitute Garage or MinIO from your
-preferred registry freely.
+MinIO's images stopped pulling while this guide was being written (the quay.io
+repository returns 401 to anonymous pulls and the Docker Hub repository is gone),
+which left nobody able to follow this page to a running instance. Garage is what
+CI's integration job has been testing against all along, so pinning it makes the
+documented deploy path and the tested one the same image rather than two claims
+about "S3-compatible". Any S3-compatible store still works; substitute MinIO from
+a registry you trust, or S3 itself, and drop the bootstrap step, which is
+Garage's own cluster layout rather than anything cairn needs.
 </details>
 
 `docker compose logs cairn` on a healthy start looks like this:

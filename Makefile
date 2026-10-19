@@ -81,12 +81,28 @@ tidy-check:
 	cp $$d/go.mod $$d/go.sum .; rm -rf $$d; \
 	if [ $$s -ne 0 ]; then echo "go mod tidy would change go.mod/go.sum: run 'make tidy' and commit the result"; exit 1; fi
 
-# Local dependencies: Postgres + MinIO (S3-compatible object storage).
-up:
+# Local dependencies: Postgres + Garage (S3-compatible object storage).
+#
+# Garage has to be bootstrapped before it serves anything (a node needs a role,
+# the layout needs applying, and the key needs importing and allowing), and its
+# image ships no shell to script inside, so `up` drives the admin CLI through the
+# container the way CI's integration job does. The bootstrap is idempotent: a
+# stack coming back from a retained volume is left as it is.
+up: garage/garage.toml
 	docker compose up -d
+	./scripts/s3-bootstrap.sh
 
 down:
 	docker compose down -v
+
+# One rpc_secret per machine, generated on first `make up` and never committed:
+# Garage derives the node id from it, so a committed literal would put a real
+# (local-only, but real) credential into every clone's history.
+garage/garage.toml: garage/garage.toml.example
+	@mkdir -p garage
+	@secret="$$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"; \
+		sed "s/__RPC_SECRET__/$$secret/" $< > $@; \
+		echo "generated garage/garage.toml with this machine's rpc_secret"
 
 ci: fmt-check vet build test-race test-js test-scripts
 

@@ -1,0 +1,24 @@
+# Garage configuration template for Cairn's local development stack
+# (docker-compose.yml).
+#
+# `make up` copies this to garage/garage.toml with __RPC_SECRET__ replaced by a
+# value generated on this machine; the generated file is gitignored. The secret is
+# generated rather than committed because Garage derives each node's id from it,
+# so a literal here would be a real (local-only, but real) credential in every
+# clone's history. CI's integration job generates its own for the same reason.
+metadata_dir = "/var/lib/garage/meta"
+data_dir     = "/var/lib/garage/data"
+db_engine    = "sqlite"
+
+replication_factor = 1
+
+rpc_bind_addr   = "[::]:3901"
+rpc_public_addr = "garage:3901"
+rpc_secret      = "__RPC_SECRET__"
+
+[s3_api]
+s3_region = "us-east-1"
+api_bind_addr = "[::]:3900"
+
+[admin]
+api_bind_addr = "[::]:3903"
