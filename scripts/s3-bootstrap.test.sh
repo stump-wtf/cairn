@@ -86,10 +86,14 @@ run_stub() {
 }
 
 # No credentials set: the local development case, which generates a pair.
+# Unset rather than set-empty: the bootstrap treats the two the same
+# ("${VAR:-}"), and gitleaks fingerprints a bare `CAIRN_S3_ACCESS_KEY=`
+# assignment to whichever commit carries it, which a squashed merge train
+# rewrites every attempt and no .gitleaksignore entry can follow.
 run_generated() {
   PATH="$work/stub/bin:$PATH" COMPOSE_CMD="$work/stub/bin/docker compose" \
     GARAGE_WAIT_ATTEMPTS=1 S3_CREDS_FILE="$creds" \
-    CAIRN_S3_ACCESS_KEY= CAIRN_S3_SECRET_KEY= "$@" "$bootstrap"
+    env -u CAIRN_S3_ACCESS_KEY -u CAIRN_S3_SECRET_KEY "$@" "$bootstrap"
 }
 
 expect_fail() {
