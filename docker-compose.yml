@@ -1,5 +1,13 @@
-# Local development dependencies for Cairn: Postgres (metadata) + MinIO
-# (S3-compatible object storage for content-addressed bodies). See ADR-0008.
+# Local development dependencies for Cairn: Postgres (metadata) + Garage
+# (S3-compatible object storage for content-addressed bodies). See ADR-0008
+# and ADR-0033.
+#
+# Garage is the store CI's integration job tests against
+# (`.gitea/workflows/pipeline.yaml`), so the bucket developers point at is the one
+# cairn's S3 code is actually exercised against rather than merely assumed
+# compatible. Unlike MinIO it refuses to serve S3 until a node has a role and an
+# access key exists: `make up` runs `scripts/s3-bootstrap.sh` for that, and
+# re-running it is safe.
 services:
   postgres:
     image: postgres:18-alpine
@@ -17,36 +25,24 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql
 
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 2s
-      timeout: 3s
-      retries: 15
+  garage:
+    image: dxflrs/garage:v1.0.1
     volumes:
-      - miniodata:/data
-
-  # One-shot job that creates the bucket Cairn expects.
-  createbucket:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin &&
-      mc mb --ignore-existing local/cairn &&
-      echo 'bucket ready';
-      "
+      # Materialized once by `make up` from garage/garage.toml.example, with a
+      # per-machine rpc_secret. Never committed.
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - garagedata:/var/lib/garage
+    ports:
+      # Published on the host's 9000 so cairn's documented default endpoint
+      # (CAIRN_S3_ENDPOINT=localhost:9000) still works with no override; Garage's
+      # own S3 API listens on 3900.
+      - "9000:3900"
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
 
 volumes:
   pgdata:
-  miniodata:
+  garagedata:
