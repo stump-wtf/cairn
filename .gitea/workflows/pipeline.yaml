@@ -269,7 +269,7 @@ jobs:
 
           docker create --name "$GARAGE" --network "$NET" --network-alias garage \
             --label ci.owner=cairn --label "ci.run=${{ gitea.run_id }}" \
-            dxflrs/garage:v1.0.1
+            dxflrs/garage:v2.4.1
           docker cp garage-ci.toml "$GARAGE":/etc/garage.toml
           rm -f garage-ci.toml
           docker start "$GARAGE"

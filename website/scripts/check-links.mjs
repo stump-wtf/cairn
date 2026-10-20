@@ -58,12 +58,19 @@ import {join, relative, sep} from 'node:path';
  *   guides explain Cairn alongside (handoffs, outbound webhooks, "how the pieces
  *   fit"). Both are docs sites, not source repositories; the guides link their
  *   docs pages only, never a forge.
+ *
+ * - `garagehq.deuxfleurs.fr` — Garage's official documentation site. The
+ *   self-hosting guide links the v1 → v2 migration walkthrough, because the
+ *   guide documents the upgrade boundary (config key rename, admin API move,
+ *   all-nodes-at-once restart) instead of restating it. A docs site, not a
+ *   source repository; the link targets the migration page only.
  */
 export const ALLOWED_HOSTS = new Set([
   'docusaurus.io',
   'cairn.stump.wtf',
   'switchboard.stump.wtf',
   'stump-wtf.github.io',
+  'garagehq.deuxfleurs.fr',
 ]);
 
 /**

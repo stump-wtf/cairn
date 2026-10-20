@@ -162,7 +162,7 @@ services:
     restart: unless-stopped
 
   garage:
-    image: dxflrs/garage:v1.0.1
+    image: dxflrs/garage:v2.4.1
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garagedata:/var/lib/garage
@@ -311,6 +311,16 @@ about "S3-compatible". Any S3-compatible store still works; substitute MinIO fro
 a registry you trust, or S3 itself, and drop the bootstrap step, which is
 Garage's own cluster layout rather than anything cairn needs.
 </details>
+
+#### Upgrading Garage from v1.x
+
+The v2 image reads the same metadata and data directories, so no object data
+moves: back up the `garagedata` volume first (for rollback only), and check one
+config key — v2 rejects `replication_mode` in `garage.toml`. Replace it with
+`replication_factor` (the config block above already uses the v2 form), then
+`docker compose up -d garage` restarts the node on the new image. Multi-node
+clusters restart all nodes at once; the full procedure is
+[Garage's migration guide](https://garagehq.deuxfleurs.fr/documentation/working-documents/migration-2/).
 
 `docker compose logs cairn` on a healthy start looks like this:
 
