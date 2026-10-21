@@ -281,9 +281,10 @@ type queuedItem struct {
 // Deleting on claim, rather than marking a row locked, is what lets the queue
 // stay one row per artifact without a lock column: a worker holds the work, and
 // a second event for the same artifact re-inserts a fresh row only after the
-// first worker finishes (or dies, in which case the row reappears and the next
-// pass does the work). Another worker never sees a claimed row, and never waits
-// on one.
+// first worker finishes. A worker that dies before its claim commits leaves the
+// row for the next pass; one that dies after the claim has committed drops the
+// work, which the artifact's next write event or `cairn search reindex`
+// repairs. Another worker never sees a claimed row, and never waits on one.
 const claimSQL = `
 	WITH claim AS (
 		SELECT artifact_id, reason, attempts
