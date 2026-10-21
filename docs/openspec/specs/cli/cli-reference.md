@@ -19,6 +19,7 @@ and this page is stale.
 | `cairn whoami` | Show the current authentication state |
 | `cairn logout` | Remove this machine's stored credential |
 | `cairn serve` | Run the Cairn server (web app, `/v1` API, SSE, MCP) in this process |
+| `cairn search reindex` | Rebuild the lexical search index for live artifacts (operator) |
 | `cairn completion <shell>` | Print a completion script for `bash`, `zsh`, `fish` or `powershell` |
 | `cairn help [command]` | Help for any command |
 
@@ -155,6 +156,23 @@ down gracefully.
 Upgrading from `cairnd` changes only the command name. The container image
 `ghcr.io/stump-wtf/cairn` still starts through a `cairnd` shim that runs
 `cairn serve`, so container deployments need no change.
+
+### `cairn search reindex`
+
+Rebuilds the lexical search index: every live artifact is queued and indexed
+before the command exits, so it is the fix for a document that gave up retrying,
+for a database restored from a snapshot, or for a changed `CAIRN_SEARCH_LANGUAGE`.
+It runs its own migrations first, so an older database is current before anything
+is queued. `--owner <id>` narrows the rebuild to one user or team by id; without
+it, every live artifact is reindexed.
+
+Like `serve`, it is configured entirely by the `CAIRN_*` environment
+(`CAIRN_DATABASE_URL`, `CAIRN_S3_*`, and the `CAIRN_SEARCH_*` tuning settings).
+Indexing lives alongside `serve`: the server keeps its own queue drained, so this
+command is for the first build and for repairs, not for routine operation.
+
+`cairn search <query>` is not in this story: the query surface arrives with the
+search API that reads these documents, and asking for it prints a usage error.
 
 ## Flags
 
