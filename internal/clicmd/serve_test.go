@@ -14,7 +14,8 @@ import (
 // A command that disappears here would disappear for every user on the next
 // release, so the tree is pinned by name. `read` and `comment` joined later:
 // the two commands that make the CLI a complete cairn surface without an MCP
-// server wired into anything.
+// server wired into anything. `search` is the operator's index rebuild
+// (SPEC-0022 REQ-11); its query half is the follow-up story.
 func TestRootCommandTreeAfterOneBinary(t *testing.T) {
 	var buf bytes.Buffer
 	root := NewRootCmd(IOStreams{In: &buf, Out: &buf, ErrOut: &buf}, "")
@@ -24,13 +25,13 @@ func TestRootCommandTreeAfterOneBinary(t *testing.T) {
 		got[c.Name()] = true
 	}
 
-	for _, name := range []string{"add", "comment", "login", "logout", "read", "whoami", "serve"} {
+	for _, name := range []string{"add", "comment", "login", "logout", "read", "search", "whoami", "serve"} {
 		if !got[name] {
 			t.Errorf("root command tree lost %q after the one-binary fold (ADR-0031)", name)
 		}
 	}
-	if len(got) != 7 {
-		t.Errorf("root command tree has %d subcommands (%v), want exactly add, comment, login, logout, read, whoami, serve", len(got), got)
+	if len(got) != 8 {
+		t.Errorf("root command tree has %d subcommands (%v), want exactly add, comment, login, logout, read, search, whoami, serve", len(got), got)
 	}
 }
 
