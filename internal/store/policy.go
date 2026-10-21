@@ -10,6 +10,7 @@ import (
 
 	"github.com/stump-wtf/cairn/internal/artifact"
 	"github.com/stump-wtf/cairn/internal/errs"
+	"github.com/stump-wtf/cairn/internal/search"
 )
 
 // resolveOwned resolves publicID to its internal id inside tx, locking the row
@@ -120,6 +121,12 @@ func (s *Store) UpdateTTL(ctx context.Context, publicID, ownerID string, expires
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("ttl: commit: %w", err)
 	}
+	// The document keeps a copy of expires_at so a query can filter on it without
+	// joining artifacts; refreshing that copy is what the metadata reason is for
+	// (SPEC-0022 REQ-10). artifacts remains the authoritative expiry: the
+	// indexer's upsert only writes rows whose artifact is still live, so a
+	// shortened TTL can never make an expired artifact searchable again.
+	s.enqueueIndex(ctx, internalID, search.ReasonMetadata)
 	return s.GetByPublicID(ctx, publicID)
 }
 

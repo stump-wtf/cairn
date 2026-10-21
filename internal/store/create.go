@@ -15,6 +15,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/errs"
 	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/metrics"
+	"github.com/stump-wtf/cairn/internal/search"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/tracectx"
 	"github.com/stump-wtf/cairn/internal/user"
@@ -247,6 +248,7 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	}
 	s.emitCreated(art, in.ActorKind, in.Auth, relEvents)
 	s.warnUnscanned(art.PublicID, &scans)
+	s.enqueueIndex(ctx, art.ID, search.ReasonCreated)
 	return art, nil
 }
 

@@ -60,6 +60,16 @@ type Config struct {
 	// no relationship to its longest live reference — issue #93 §1, SPEC-0009).
 	StagingLifecycleTTL time.Duration
 
+	// Lexical search index (ADR-0028, SPEC-0022 REQ-2, REQ-11). SearchLanguage
+	// is the Postgres text-search configuration to_tsvector tokenizes with;
+	// SearchMaxBodyBytes caps one body (and one bundle member) in the index, so
+	// the index copy stays bounded; SearchIndexWorkers is the indexer pool size.
+	// The indexer always runs: the queue is filled by the write paths, so there
+	// is no "indexing off" switch — only a pool the backlog drains through.
+	SearchLanguage     string
+	SearchMaxBodyBytes int
+	SearchIndexWorkers int
+
 	// BaseURL is the public origin used to build short URLs (ADR-0005),
 	// e.g. https://cairn.stump.wtf.
 	BaseURL string
@@ -282,6 +292,26 @@ func Load() (*Config, error) {
 	if c.StagingLifecycleTTL, err = envDuration("CAIRN_STAGING_LIFECYCLE_TTL", 7*24*time.Hour); err != nil {
 		return nil, err
 	}
+	c.SearchLanguage = env("CAIRN_SEARCH_LANGUAGE", "english")
+	if err := validTextSearchConfig(c.SearchLanguage); err != nil {
+		return nil, err
+	}
+	var searchMaxBody int64
+	if searchMaxBody, err = envInt64("CAIRN_SEARCH_MAX_BODY_BYTES", 256<<10); err != nil {
+		return nil, err
+	}
+	if searchMaxBody <= 0 {
+		return nil, fmt.Errorf("config CAIRN_SEARCH_MAX_BODY_BYTES: must be greater than 0")
+	}
+	c.SearchMaxBodyBytes = int(searchMaxBody)
+	var searchWorkers int64
+	if searchWorkers, err = envInt64("CAIRN_SEARCH_INDEX_WORKERS", 2); err != nil {
+		return nil, err
+	}
+	if searchWorkers <= 0 {
+		return nil, fmt.Errorf("config CAIRN_SEARCH_INDEX_WORKERS: must be at least 1")
+	}
+	c.SearchIndexWorkers = int(searchWorkers)
 	if c.RatePerSecond, err = envFloat("CAIRN_RATE_PER_SECOND", 20); err != nil {
 		return nil, err
 	}
@@ -424,4 +454,24 @@ func envDuration(key string, def time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("config %s: %w", key, err)
 	}
 	return d, nil
+}
+
+// validTextSearchConfig rejects a CAIRN_SEARCH_LANGUAGE that cannot name a
+// Postgres text-search configuration before the server boots, rather than
+// letting every artifact fail to index and back off forever. The value reaches
+// to_tsvector as a bound regconfig parameter, never as concatenated SQL, so
+// this is a usability bound and not the injection guard.
+func validTextSearchConfig(name string) error {
+	if name == "" || len(name) > 63 {
+		return fmt.Errorf("config CAIRN_SEARCH_LANGUAGE: must be a non-empty Postgres text-search configuration name")
+	}
+	for i, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case (r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-') && i > 0:
+		default:
+			return fmt.Errorf("config CAIRN_SEARCH_LANGUAGE: %q is not a valid configuration name", name)
+		}
+	}
+	return nil
 }
