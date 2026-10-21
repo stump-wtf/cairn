@@ -132,6 +132,7 @@ decided by the server and only ever displayed here (SPEC-0008).`,
 		newLoginCmd(streams, flags, configPathOverride),
 		newLogoutCmd(streams, flags, configPathOverride),
 		newReadCmd(streams, flags, configPathOverride),
+		newSearchCmd(streams),
 		newWhoamiCmd(streams, flags, configPathOverride),
 		newServeCmd(streams),
 	)

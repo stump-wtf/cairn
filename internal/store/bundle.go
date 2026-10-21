@@ -14,6 +14,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/redact"
+	"github.com/stump-wtf/cairn/internal/search"
 	"github.com/stump-wtf/cairn/internal/tracectx"
 )
 
@@ -301,6 +302,7 @@ func (s *Store) CreateBundle(ctx context.Context, in CreateBundleInput) (*artifa
 	}
 	s.emitCreated(art, in.ActorKind, in.Auth, relEvents)
 	s.warnUnscanned(art.PublicID, &scans)
+	s.enqueueIndex(ctx, art.ID, search.ReasonCreated)
 	return art, nil
 }
 

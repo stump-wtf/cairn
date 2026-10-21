@@ -91,6 +91,9 @@ optional redaction allowlist that `CAIRN_REDACTION_ALLOWLIST_FILE` names (see
 | `CAIRN_HOOK_INGRESS_RATE_PER_SECOND` / `CAIRN_HOOK_INGRESS_RATE_BURST` | `5` / `20` | Per-source-IP limit on the anonymous-write `ANY /h/{id}` webhook route — deliberately separate from, and tighter than, the general budget. |
 | `CAIRN_HOOK_ENDPOINT_RATE_PER_SECOND` / `CAIRN_HOOK_ENDPOINT_RATE_BURST` | `10` / `50` | Per-endpoint limit on the same route. |
 | `CAIRN_REAP_INTERVAL` / `CAIRN_REAP_BATCH` / `CAIRN_REAP_OBJECT_GRACE` | `1h` / `500` / `1h` | Background expiry-reaper tuning. |
+| `CAIRN_SEARCH_INDEX_WORKERS` | `2` | How many goroutines drain the lexical search index queue. Indexing never runs inside a create, so raising this only clears a backlog faster. Must be at least 1. |
+| `CAIRN_SEARCH_LANGUAGE` | `english` | The Postgres text-search configuration the index is built with: any `pg_ts_config` name your database has (`simple`, `german`, …). Keep it constant for one database — changing it changes how existing rows tokenize, so run `cairn search reindex` afterwards. A name Postgres rejects fails boot. |
+| `CAIRN_SEARCH_MAX_BODY_BYTES` | `262144` | How much of each body (and each bundle member, per member) is tokenized into the index, in bytes. The artifact itself is stored and served whole; only the index sees the cap. Comments are separately capped at 64 KiB per artifact. Must be at least 1. |
 | `CAIRN_STAGING_LIFECYCLE_TTL` | `168h` | S3 lifecycle expiration applied to the `staging/` prefix only, so crashed-upload debris is reaped. Never applied to committed blobs. |
 | `CAIRN_REDACTION_REJECT_TYPES` | `code,bundle` | Share types whose creates are refused, not masked, when a credential is found. See [Secret redaction](#secret-redaction). |
 | `CAIRN_REDACTION_MAX_SCAN_BYTES` | `16777216` | Per-field credential-scan cap in bytes (16 MiB). |

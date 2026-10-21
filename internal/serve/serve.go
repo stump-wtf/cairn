@@ -34,6 +34,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/operator"
 	"github.com/stump-wtf/cairn/internal/outboundhook"
 	"github.com/stump-wtf/cairn/internal/redact"
+	"github.com/stump-wtf/cairn/internal/search"
 	"github.com/stump-wtf/cairn/internal/store"
 	"github.com/stump-wtf/cairn/internal/subscription"
 )
@@ -214,6 +215,23 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 
+	// The lexical search index (ADR-0028, SPEC-0022 REQ-2). The write paths
+	// enqueue into search_queue after their commits; this bounded pool drains it
+	// into search_documents. It is not optional and it is not on a create's
+	// path: with the workers stopped (or still catching up) creates keep
+	// succeeding, and the backlog is indexed when they run again.
+	indexer := search.New(pool, obj, search.Config{
+		Workers:      cfg.SearchIndexWorkers,
+		Language:     cfg.SearchLanguage,
+		MaxBodyBytes: cfg.SearchMaxBodyBytes,
+		Logger:       logger,
+	})
+	indexDone := make(chan struct{})
+	go func() {
+		defer close(indexDone)
+		indexer.Run(ctx)
+	}()
+
 	// Outbound delivery (ADR-0017, SPEC-0012, ADR-0029 section 6): events go
 	// to the owned subscriptions of the workspace that owns the artifact. One
 	// hook at the store choke point covers every creation surface
@@ -233,7 +251,11 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 	// process-wide sharetype.Default().
 	// Artifact and bundle creates are scanned for credentials before anything
 	// is stored (SPEC-0017 RD-1).
-	svc := store.New(pool, obj, withRedaction(newStoreOptions(cfg, emitter), cfg, scanner, metricsReg, logger))
+	storeOpts := withRedaction(newStoreOptions(cfg, emitter), cfg, scanner, metricsReg, logger)
+	// Every creation surface shares one index seam, the same choke point the
+	// lifecycle events use (SPEC-0022 REQ-2).
+	storeOpts.Index = indexer
+	svc := store.New(pool, obj, storeOpts)
 
 	// Install the staging/ debris lifecycle rule (best-effort defense-in-depth;
 	// scoped to staging/ ONLY — never the committed blobs/ prefix, issue #93 §1).
@@ -332,6 +354,9 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 		// stored (SPEC-0017).
 		Redaction: scanner,
 		Metrics:   metricsReg,
+
+		// Comment writes re-index the artifact they annotate (SPEC-0022 REQ-2).
+		Index: indexer,
 	}, logger)
 
 	// Bind each CAIRN_API_TOKENS entry to the operator's user it names
@@ -398,6 +423,7 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 		// Safety (Expiry Reaper)": graceful shutdown, no orphaned goroutine).
 		<-reaperDone
 		<-hookDone
+		<-indexDone
 		return err
 	case err := <-errCh:
 		return err

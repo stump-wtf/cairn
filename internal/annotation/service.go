@@ -38,6 +38,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 	"unicode"
@@ -51,6 +52,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/event"
 	"github.com/stump-wtf/cairn/internal/metrics"
 	"github.com/stump-wtf/cairn/internal/redact"
+	"github.com/stump-wtf/cairn/internal/search"
 	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/store"
 	"github.com/stump-wtf/cairn/internal/user"
@@ -103,6 +105,10 @@ type Service struct {
 	// events receives comment.created, reaction.added and reaction.removed
 	// after each write commits. Nil is inert (SPEC-0016 EV-2).
 	events event.Emitter
+	// index queues the annotated artifact for re-indexing after a comment
+	// write commits, because the comment text is part of its search document
+	// (SPEC-0022 REQ-2). Nil is inert.
+	index IndexEnqueuer
 	// approval classifies reaction emoji for the EV-5 approval bit.
 	approval ApprovalClass
 }
@@ -132,6 +138,37 @@ func WithApprovalClass(c ApprovalClass) Option {
 		if c.set != nil {
 			s.approval = c
 		}
+	}
+}
+
+// IndexEnqueuer is the seam the lexical index hangs on: a comment write that
+// has committed tells it which artifact's comment text changed. Nil means no
+// index is installed. Implementations never fail a comment: the enqueue follows
+// the commit (SPEC-0022 REQ-2).
+type IndexEnqueuer interface {
+	EnqueueArtifact(ctx context.Context, artifactID int64, reason string) error
+}
+
+// WithIndexEnqueuer wires the search-index queue the comment write paths use
+// (SPEC-0022 REQ-2: "A comment create, edit or soft-delete MUST re-index that
+// artifact's comment text"). Nil is inert.
+func WithIndexEnqueuer(e IndexEnqueuer) Option {
+	return func(s *Service) { s.index = e }
+}
+
+// enqueueIndex queues an artifact's document for rebuild after a committed
+// comment write. Best-effort, post-commit, on a context that survives a client
+// disconnect: the comment is stored, so its artifact's index must be repaired
+// whether or not the caller is still listening.
+func (s *Service) enqueueIndex(ctx context.Context, artifactID int64, reason string) {
+	if s.index == nil {
+		return
+	}
+	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := s.index.EnqueueArtifact(enqueueCtx, artifactID, reason); err != nil {
+		slog.Warn("search index enqueue failed; artifact stays unsearchable until `cairn search reindex`",
+			"artifact_id", artifactID, "reason", reason, "error", err)
 	}
 }
 
@@ -667,6 +704,7 @@ func (s *Service) AddComment(ctx context.Context, publicID string, in CommentInp
 			Body:       out.Body,
 		},
 	})
+	s.enqueueIndex(ctx, art.id, search.ReasonComment)
 	return out, nil
 }
 
@@ -687,11 +725,13 @@ func (s *Service) EditComment(ctx context.Context, publicID string, commentID in
 	if err != nil {
 		return err
 	}
-	return s.inTx(ctx, func(tx pgx.Tx) error {
+	var artifactID int64
+	if err := s.inTx(ctx, func(tx pgx.Tx) error {
 		art, err := resolveArtifact(ctx, tx, publicID)
 		if err != nil {
 			return err
 		}
+		artifactID = art.id
 		tag, err := tx.Exec(ctx, `
 			UPDATE comments SET body = $1, edited_at = now()
 			WHERE id = $2 AND artifact_id = $3 AND user_id = $4 AND actor_kind IN ($5, '')
@@ -707,7 +747,13 @@ func (s *Service) EditComment(ctx context.Context, publicID string, commentID in
 			return fmt.Errorf("annotation: edit comment %d: %w", commentID, err)
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	// An edit changes the artifact's indexed comment text, so the document is
+	// rebuilt (SPEC-0022 REQ-2).
+	s.enqueueIndex(ctx, artifactID, search.ReasonComment)
+	return nil
 }
 
 // DeleteComment soft-deletes the actor's own comment — the tombstone keeps the
@@ -718,11 +764,13 @@ func (s *Service) DeleteComment(ctx context.Context, publicID string, commentID 
 	if err := validateActor("delete comment", actor); err != nil {
 		return err
 	}
-	return s.inTx(ctx, func(tx pgx.Tx) error {
+	var artifactID int64
+	if err := s.inTx(ctx, func(tx pgx.Tx) error {
 		art, err := resolveArtifact(ctx, tx, publicID)
 		if err != nil {
 			return err
 		}
+		artifactID = art.id
 		var anchorType string
 		err = tx.QueryRow(ctx, `
 			UPDATE comments SET deleted_at = now()
@@ -737,7 +785,13 @@ func (s *Service) DeleteComment(ctx context.Context, publicID string, commentID 
 			return fmt.Errorf("annotation: delete comment %d: %w", commentID, err)
 		}
 		return bumpCounts(ctx, tx, art.id, sharetype.KindComment, sharetype.Anchor(anchorType), -1)
-	})
+	}); err != nil {
+		return err
+	}
+	// The tombstone must leave the index too: a soft-deleted comment is not
+	// "live, non-deleted" text (SPEC-0022 REQ-2).
+	s.enqueueIndex(ctx, artifactID, search.ReasonComment)
+	return nil
 }
 
 // ListComments returns one artifact's comments in thread order: threads by

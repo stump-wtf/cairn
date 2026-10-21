@@ -9,6 +9,19 @@ reaches 1.0.
 
 ### Added
 
+- **The lexical search index foundation** (SPEC-0022 / ADR-0028, #306). Searching
+  a Bin meant listing titles. This lands the half of full-text search that has to
+  exist before any query can: a `search_documents` table holding each live
+  artifact's weighted tsvector (title, tags, body, comments) plus a `search_queue`
+  the write paths add to *after* their commit, so an artifact is saved whether or
+  not the indexer is reachable, and a bounded worker pool turns the queue into
+  documents with `FOR UPDATE SKIP LOCKED`, so several cairnd processes can share
+  one queue without doing the same work twice. Expired and deleted artifacts stop
+  matching the instant they expire, and their documents go with them. Operators
+  rebuild the index with `cairn search reindex [--owner <id>]`. Querying is
+  deliberately not in this story: `cairn search <query>`, the REST endpoint and
+  the MCP tool come next, on top of this.
+
 - **Artifact relations, the surfaces** (SPEC-0024 slice 2, #456). The relations
   core landed without anything a user could touch; this makes it usable. MCP
   `artifact_create` and `bundle_create` gain `relations`

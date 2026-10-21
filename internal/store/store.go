@@ -13,6 +13,7 @@
 package store
 
 import (
+	"context"
 	"log/slog"
 	"slices"
 	"time"
@@ -63,6 +64,10 @@ type Store struct {
 	rejectTypes []artifact.ShareType
 	metrics     *metrics.Registry
 	log         *slog.Logger
+
+	// index is the search-index seam (SPEC-0022 REQ-2). Nil = no index
+	// installed, and creates behave exactly as they did before the index existed.
+	index IndexEnqueuer
 }
 
 // CreationEvent is the transport-agnostic fact that an artifact came into
@@ -149,6 +154,16 @@ type CreationEmitter interface {
 	EmitArtifactCreated(CreationEvent)
 }
 
+// IndexEnqueuer is the seam the lexical index hangs on: a create that has
+// committed tells it which artifact now needs a document. Implementations MUST
+// be safe for concurrent use and MUST NOT be able to fail a create — the
+// enqueue happens after the commit, and a failure is logged, because an
+// artifact that exists and is not yet searchable is a repairable state while a
+// rejected upload is not (SPEC-0022 REQ-2).
+type IndexEnqueuer interface {
+	EnqueueArtifact(ctx context.Context, artifactID int64, reason string) error
+}
+
 // Options configures a Store. Zero values fall back to safe defaults.
 type Options struct {
 	// MaxUploadBytes caps a single streamed body (default 64 MiB).
@@ -169,6 +184,11 @@ type Options struct {
 	// targets are the artifact owner's subscriptions (SPEC-0023 REQ "Owned
 	// Outbound Subscriptions").
 	Emitter CreationEmitter
+	// Index, when non-nil, is told about every durable creation after its
+	// transaction commits, so the lexical index is built asynchronously and a
+	// create never fails or slows because the indexer is behind (SPEC-0022
+	// REQ-2). Nil = no index installed.
+	Index IndexEnqueuer
 	// Scanner is the ingest secret scanner (ADR-0023, SPEC-0017). Every
 	// artifact and bundle create scans its title and bodies with it before
 	// anything is stored. There is no unscanned mode: with a nil Scanner,
@@ -215,6 +235,7 @@ func New(pool *pgxpool.Pool, obj objectstore.ObjectStore, opts Options) *Store {
 		registry:   registry,
 		newID:      newID,
 		emitter:    opts.Emitter,
+		index:      opts.Index,
 
 		scanner:     opts.Scanner,
 		rejectTypes: rejectTypesOf(opts.RedactionRejectTypes),
@@ -258,6 +279,30 @@ func (s *Store) emitCreated(a *artifact.Artifact, kind event.ActorKind, auth eve
 		Relations:   slices.Clone(relations),
 		TraceID:     traceID,
 	})
+}
+
+// enqueueIndex queues a committed artifact for the lexical index.
+//
+// It runs after the commit, never inside the transaction: SPEC-0022 REQ-2 wants
+// indexing to follow the create rather than join it, which is exactly what lets
+// a create succeed while the indexer is stopped. The enqueue is therefore
+// best-effort and its failure is a WARN — an artifact that exists but is not yet
+// searchable is repaired by `cairn search reindex`, while refusing an upload
+// whose storage write already succeeded would be the worse bug.
+//
+// The context survives a client disconnect on purpose (WithoutCancel): the
+// artifact is committed and exists whether or not the caller is still there, so
+// its index work should be queued regardless.
+func (s *Store) enqueueIndex(ctx context.Context, artifactID int64, reason string) {
+	if s.index == nil {
+		return
+	}
+	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := s.index.EnqueueArtifact(enqueueCtx, artifactID, reason); err != nil {
+		s.log.Warn("search index enqueue failed; artifact stays unsearchable until `cairn search reindex`",
+			"artifact_id", artifactID, "reason", reason, "error", err)
+	}
 }
 
 // WebPath is an artifact's registry-derived, origin-agnostic web path: the

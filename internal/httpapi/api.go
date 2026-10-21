@@ -159,6 +159,11 @@ type Config struct {
 	// are given and record the outcome "unscanned".
 	Redaction *redact.Scanner
 	Metrics   *metrics.Registry
+
+	// Index is the search-index seam the comment write paths use: a comment
+	// create, edit or soft-delete re-indexes the artifact it annotates
+	// (SPEC-0022 REQ-2). Nil is inert.
+	Index annotation.IndexEnqueuer
 }
 
 // Server is the /v1 REST adapter over the core store and the ADR-0011 web app
@@ -323,6 +328,7 @@ func New(st *store.Store, reg *sharetype.Registry, auth Authenticator, cfg Confi
 		annot = annotation.NewService(st.Pool(), reg,
 			annotation.WithRedaction(cfg.Redaction, cfg.Metrics),
 			annotation.WithEvents(cfg.Events),
+			annotation.WithIndexEnqueuer(cfg.Index),
 			annotation.WithApprovalClass(cfg.ApprovalClass))
 		traj = trajectory.NewService(st.Pool(), st.ObjectStore(), trajectory.Options{
 			Registry:  reg,
