@@ -596,7 +596,7 @@ jobs:
         # the first release where ssh_private_key is a real, delivered input.
         # v2.1.1 reads playbook/inventory/ssh_hosts from INPUT_* rather than
         # argv; stump.wtf/switchboard deploys to the same cloud01 host on it.
-        uses: https://gitea.stump.rocks/stumpcloud/ansible-runner@v2.1.1
+        uses: https://gitea.stump.rocks/stumpcloud/ansible-runner@v2.2.0
         with:
           playbook: playbooks/services/cairn.yaml
           inventory: gva.yaml
