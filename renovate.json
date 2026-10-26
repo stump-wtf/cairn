@@ -1,4 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"]
+  "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"],
+  "packageRules": [
+    {
+      "matchPackageNames": ["@docusaurus/**"],
+      "groupName": "docusaurus"
+    }
+  ]
 }
