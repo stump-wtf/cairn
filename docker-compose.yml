@@ -26,7 +26,7 @@ services:
       - pgdata:/var/lib/postgresql
 
   garage:
-    image: dxflrs/garage:v2.4.1
+    image: dxflrs/garage:v2.5.0
     volumes:
       # Materialized once by `make up` from garage/garage.toml.example, with a
       # per-machine rpc_secret. Never committed.

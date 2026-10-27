@@ -165,7 +165,7 @@ services:
     restart: unless-stopped
 
   garage:
-    image: dxflrs/garage:v2.4.1
+    image: dxflrs/garage:v2.5.0
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garagedata:/var/lib/garage
