@@ -51,8 +51,8 @@ func (s *Store) StorageUsageByType(ctx context.Context) (map[artifact.ShareType]
 // CountArtifactsPastTTL counts the artifacts that still exist past their
 // expiry: the load-bearing gauge, because it says the sweeper ran AND worked,
 // where cairn_artifacts_expired_total only says it ran. The reaper deletes on
-// the same `expires_at < now()` predicate, so a row counted here is one the
-// next clean sweep should remove (SPEC-0014 REQ-2).
+// the slightly wider `expires_at <= now()` predicate, so a row counted here
+// is one the next clean sweep removes (SPEC-0014 REQ-2).
 func (s *Store) CountArtifactsPastTTL(ctx context.Context) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx,
