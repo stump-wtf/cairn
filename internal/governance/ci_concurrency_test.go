@@ -79,6 +79,12 @@ func concurrencyGroup(doc map[string]any) (string, bool) {
 // The ref still belongs in the key: main, the train/* branches and tags each
 // need their own group, or a push to main would cancel the run already
 // shipping it.
+//
+// pull_request_target fires with the same payload shape and the same null-ref
+// runner behavior as pull_request, so it is held to the same per-PR term. A
+// scratch workflow triggered only by pull_request_target with a ref-only group
+// passed this test before that event was checked - the hole is real, and no
+// workflow in this repo uses the trigger yet.
 func TestWorkflowConcurrencySeparatesPRs(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join(repoRoot(t), ".gitea", "workflows", "*.y*ml"))
 	if err != nil {
@@ -108,7 +114,7 @@ func TestWorkflowConcurrencySeparatesPRs(t *testing.T) {
 		if !strings.Contains(group, ".ref") && (triggers["push"] || triggers["pull_request"]) {
 			t.Errorf("%s: concurrency group %q separates nothing: push runs of main and the train share one group", name, group)
 		}
-		if triggers["pull_request"] && !strings.Contains(group, "pull_request.number") {
+		if (triggers["pull_request"] || triggers["pull_request_target"]) && !strings.Contains(group, "pull_request.number") {
 			t.Errorf("%s: concurrency group %q has no per-PR term; append ${{ gitea.event.pull_request.number }} so each pull request keeps its own group regardless of how the runner fills ref (#482)", name, group)
 		}
 	}
