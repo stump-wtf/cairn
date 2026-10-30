@@ -68,7 +68,7 @@ require (
 	github.com/fatih/semgroup v1.2.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/gitleaks/go-gitdiff v0.9.1 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
