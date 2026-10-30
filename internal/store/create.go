@@ -246,6 +246,9 @@ func (s *Store) CreateArtifact(ctx context.Context, in CreateArtifactInput) (*ar
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("create: commit: %w", err)
 	}
+	// Counted after the commit, beside the event, so the counter and the
+	// emitted fact describe the same set of artifacts (SPEC-0014 REQ-4).
+	s.observeCreated(art)
 	s.emitCreated(art, in.ActorKind, in.Auth, relEvents)
 	s.warnUnscanned(art.PublicID, &scans)
 	s.enqueueIndex(ctx, art.ID, search.ReasonCreated)

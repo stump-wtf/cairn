@@ -23,6 +23,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 
 	"github.com/stump-wtf/cairn/internal/annotation"
 	"github.com/stump-wtf/cairn/internal/config"
@@ -35,6 +36,7 @@ import (
 	"github.com/stump-wtf/cairn/internal/outboundhook"
 	"github.com/stump-wtf/cairn/internal/redact"
 	"github.com/stump-wtf/cairn/internal/search"
+	"github.com/stump-wtf/cairn/internal/sharetype"
 	"github.com/stump-wtf/cairn/internal/store"
 	"github.com/stump-wtf/cairn/internal/subscription"
 )
@@ -256,6 +258,13 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 	// lifecycle events use (SPEC-0022 REQ-2).
 	storeOpts.Index = indexer
 	svc := store.New(pool, obj, storeOpts)
+
+	// The rest of what GET /metrics serves (SPEC-0014 REQ-1, REQ-2): the Go and
+	// process collectors, and the storage/expiry collector that reads the two
+	// aggregate queries at scrape time. Registered here, once, because
+	// registering a collector twice panics — never in the request path.
+	metricsReg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	metricsReg.RegisterStorage(svc, sharetype.Default().KeyedTypes())
 
 	// Install the staging/ debris lifecycle rule (best-effort defense-in-depth;
 	// scoped to staging/ ONLY — never the committed blobs/ prefix, issue #93 §1).

@@ -28,6 +28,14 @@ const (
 	MaxTagBytes = 64
 )
 
+// HandoffTag is the tag the handoff convention uses to mark an artifact as a
+// work order for another agent. It is client-asserted like every other tag and
+// says what the creator wants, never who they are; it is a constant so the one
+// place it is measured — the tagged_handoff boolean of
+// cairn_artifacts_created_total (SPEC-0014 REQ-4) — cannot drift from the
+// convention. The tag SET is never a label: it is unbounded (ADR-0018).
+const HandoffTag = "handoff"
+
 // tagPunct is the punctuation a tag may use beside [a-z0-9]. ":" and "/" carry
 // the handoff convention's "key:value" and "owner/name" shapes; "#" is admitted
 // because its issue tag ("issue:stump.wtf/cairn#42") cannot be written without

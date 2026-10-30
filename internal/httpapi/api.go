@@ -450,6 +450,7 @@ func (s *Server) Handler() http.Handler {
 	// routes GET /{id} and GET /run/{id}, the landing, and the embedded assets.
 	r.Group(func(r chi.Router) {
 		r.Use(s.webSecurityHeaders)
+		r.Use(s.instrumentRoutes)
 		s.mountWeb(r)
 	})
 
@@ -459,6 +460,7 @@ func (s *Server) Handler() http.Handler {
 	// HTML, and it lives in the web group above (see mountOAuthWeb).
 	r.Group(func(r chi.Router) {
 		r.Use(s.securityHeaders)
+		r.Use(s.instrumentRoutes)
 		s.mountAPI(r)
 		s.mountOAuthJSON(r)
 		// The MCP transport (SPEC-0007): tools + resource reads, OAuth-bearer
@@ -478,9 +480,19 @@ func (s *Server) Handler() http.Handler {
 	if s.hook != nil {
 		r.Group(func(r chi.Router) {
 			r.Use(s.securityHeaders)
+			r.Use(s.instrumentRoutes)
 			s.mountHookIngress(r)
 		})
 	}
+
+	// GET /metrics (ADR-0021, SPEC-0014 REQ-1): Prometheus text format, the
+	// operator credential only. Deliberately outside both routed groups and
+	// outside the rate limiter: it is a machine scrape on the same footing as
+	// the sibling services' endpoints, its own guard is the credential check
+	// inside the handler, and counting the scrape would put the metrics
+	// endpoint in its own other bucket every fifteen seconds, blunting the
+	// one control the route classifier has.
+	r.Get("/metrics", s.handleMetrics)
 	return r
 }
 

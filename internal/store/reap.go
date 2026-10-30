@@ -385,6 +385,32 @@ func shaFromKey(key string) string {
 	return sha
 }
 
+// sweepOnce runs one sweep and records what it means for the metrics: a sweep
+// that completed without error advances cairn_artifacts_expired_total and
+// cairn_expiry_run_timestamp; one that did not is recorded NOWHERE. That second
+// half is the point: a frozen timestamp while cairn_artifacts_past_ttl climbs
+// is what separates a broken sweeper from a quiet period (SPEC-0014 REQ-2).
+func (s *Store) sweepOnce(ctx context.Context, cfg ReaperConfig, logger *slog.Logger) {
+	started := time.Now()
+	stats, err := s.ReapOnce(ctx, cfg)
+	if err != nil {
+		if ctx.Err() != nil {
+			return // shutting down; not a real failure
+		}
+		logger.Error("retention reaper sweep failed", "error", err)
+		return
+	}
+	s.metrics.ObserveExpirySweep(stats.ArtifactsDeleted, started)
+	if stats.ArtifactsDeleted > 0 || stats.BlobsGCd > 0 || stats.OrphanObjects > 0 {
+		logger.Info("retention reaper sweep",
+			"artifacts_deleted", stats.ArtifactsDeleted,
+			"blobs_gcd", stats.BlobsGCd,
+			"freed_bytes", stats.FreedBytes,
+			"orphan_objects", stats.OrphanObjects,
+		)
+	}
+}
+
 // RunReaper runs ReapOnce on a ticker until ctx is cancelled, then returns — the
 // explicit worker lifecycle SPEC-0009 requires. It runs one sweep immediately on
 // start, logs each cycle's reclaimed counts (never secrets), and logs but does
@@ -404,24 +430,7 @@ func (s *Store) RunReaper(ctx context.Context, interval time.Duration, cfg Reape
 	}
 	logger.Info("retention reaper started", "interval", interval.String(), "batch", cfg.withDefaults().Batch)
 
-	sweep := func() {
-		stats, err := s.ReapOnce(ctx, cfg)
-		if err != nil {
-			if ctx.Err() != nil {
-				return // shutting down; not a real failure
-			}
-			logger.Error("retention reaper sweep failed", "error", err)
-			return
-		}
-		if stats.ArtifactsDeleted > 0 || stats.BlobsGCd > 0 || stats.OrphanObjects > 0 {
-			logger.Info("retention reaper sweep",
-				"artifacts_deleted", stats.ArtifactsDeleted,
-				"blobs_gcd", stats.BlobsGCd,
-				"freed_bytes", stats.FreedBytes,
-				"orphan_objects", stats.OrphanObjects,
-			)
-		}
-	}
+	sweep := func() { s.sweepOnce(ctx, cfg, logger) }
 
 	sweep()
 	ticker := time.NewTicker(interval)
