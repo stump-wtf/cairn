@@ -281,6 +281,13 @@ func (s *Store) emitCreated(a *artifact.Artifact, kind event.ActorKind, auth eve
 	})
 }
 
+// observeCreated counts a committed artifact. It runs on every create, with or
+// without an emitter: cairn_artifacts_created_total counts what exists, not
+// what reached a subscriber (SPEC-0014 REQ-4).
+func (s *Store) observeCreated(a *artifact.Artifact) {
+	s.metrics.ObserveArtifactCreated(a.ShareType, a.Tags)
+}
+
 // enqueueIndex queues a committed artifact for the lexical index.
 //
 // It runs after the commit, never inside the transaction: SPEC-0022 REQ-2 wants

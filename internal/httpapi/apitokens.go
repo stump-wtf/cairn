@@ -299,6 +299,27 @@ func (a *TokenAuthenticator) forUser(userID string) []APIToken {
 	return out
 }
 
+// presents reports whether the request's bearer token IS one of the installed
+// static credentials — the credential itself, rather than a principal that
+// merely names a user who happens to hold one. The distinction matters at the
+// scrape endpoint: the dev bearer shortcut shares this authenticator's Auth
+// stamp and resolves a user too, and a user id is not a secret.
+func (a *TokenAuthenticator) presents(r *http.Request) bool {
+	if a == nil {
+		return false
+	}
+	token := bearerToken(r)
+	if token == "" {
+		return false
+	}
+	if g := a.grants.Load(); g != nil {
+		if grant, ok := (*g)[sha256.Sum256([]byte(token))]; ok {
+			return grant.UserID != ""
+		}
+	}
+	return false
+}
+
 // Authenticate implements Authenticator. An absent bearer, an unregistered
 // secret, or a registered one whose user is gone or suspended is
 // errs.ErrUnauthorized. A registered secret acts as its resolved user with

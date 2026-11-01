@@ -296,3 +296,15 @@ func (r *Registry) Types() []ShareType {
 	sort.Slice(out, func(i, j int) bool { return out[i].Key() < out[j].Key() })
 	return out
 }
+
+// KeyedTypes returns the keys of every registered share type, sorted, as the
+// closed label set the storage gauges report in full: SPEC-0014 REQ-2 requires
+// a value for every type, including the ones with no live rows.
+func (r *Registry) KeyedTypes() []artifact.ShareType {
+	types := r.Types()
+	keys := make([]artifact.ShareType, 0, len(types))
+	for _, t := range types {
+		keys = append(keys, t.Key())
+	}
+	return keys
+}
