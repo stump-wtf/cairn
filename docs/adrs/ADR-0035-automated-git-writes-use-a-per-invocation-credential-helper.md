@@ -12,11 +12,12 @@ Cairn's release pipeline writes to a repository other than the one the run
 belongs to: the `tap-bump` job pushes the rendered formula to
 `stump.wtf/homebrew-tap`. That job died on v0.7.0 with
 
-    fatal: could not read Username for 'https://gitea.stump.rocks': No such
+    fatal: could not read Username for 'https://forge.internal': No such
     device or address
     exitcode '128': failure
 
-(#489), which named no secret and no fix, and left the formula to be bumped by
+(#489; the hostname is elided here because the published docs may not carry
+it), which named no secret and no fix, and left the formula to be bumped by
 hand. Nothing else in the message says "credential", and an Actions container
 has no terminal to answer the question git was asking.
 
@@ -56,7 +57,8 @@ will otherwise re-derive it.
    `remote: Failed to authenticate user`. It also sits outside git's credential
    state machine, which is how a job with a token in hand still ended up asking
    a terminal for a username.
-2. **Token in the remote URL (`https://x-access-token:$TOKEN@host/…`).** Works,
+2. **Token in the remote URL (the userinfo form: credentials between the
+   scheme and the host, before the at-sign).** Works,
    and `stumpcloud/ansible` uses it for its own checkouts. But the token is then
    committed to `.git/config` as the remote URL, shows in `git remote -v`, and
    git quotes that URL back in its own failure output, so the log that reports
