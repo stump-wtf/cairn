@@ -820,14 +820,29 @@ jobs:
   # the tap before the first release, and no placeholder could pass the tap's
   # CI: `brew audit --online` 404s on urls that don't exist yet, and `--strict`
   # rejects the `version` line the edit keyed on (cairn#183, tap#26).
+  #
+  # Every git call this job makes against the tap goes through
+  # scripts/git-with-token.sh, which authenticates through git's credential
+  # path and names the secret it used (ADR-0035). v0.7.0's bump died in the
+  # step below with git's "could not read Username for
+  # 'https://gitea.stump.rocks': No such device or address": the push carried
+  # TAP_PUSH_TOKEN in http.extraheader, the server refused that header, and an
+  # extra header is not a credential as far as git is concerned, so git fell
+  # back to asking a terminal no Actions container has (#489). Reading the tap
+  # needs no credential at all, so the clone was never the failing call. This
+  # job now fails on a line that says which secret to go and fix.
   tap-bump:
     needs: [release]
     runs-on: ubuntu-latest
     env:
       TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
+      TAP_URL: https://gitea.stump.rocks/stump.wtf/homebrew-tap.git
       GH_REPO_URL: https://github.com/stump-wtf/cairn
     steps:
       - name: Require the tap push token
+        # Only proves the secret exists. Whether the server accepts it is
+        # scripts/git-with-token.sh's problem, and it says which secret to
+        # replace when the answer is no.
         run: |
           set -euo pipefail
           if [ -z "${TAP_PUSH_TOKEN:-}" ]; then
@@ -866,7 +881,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone -q "https://gitea.stump.rocks/stump.wtf/homebrew-tap.git" tap
+          # Anonymous today, authenticated if the tap ever turns private: the
+          # helper only answers if the server asks, so a dead token cannot turn
+          # this read into a failure the way an always-sent header would.
+          scripts/git-with-token.sh TAP_PUSH_TOKEN clone -q "$TAP_URL" tap
           mkdir -p tap/Formula
 
           # One checksum per architecture, in the renderer's argument order.
@@ -884,15 +902,15 @@ jobs:
           # formula with a placeholder left in it.
           scripts/render-brew-formula.sh "$VER" "${shas[@]}" > tap/Formula/cairn.rb
 
-          cd tap
-          git config user.name "joestump-agent"
-          git config user.email "joestump-agent@noreply.stump.rocks"
-          git add Formula/cairn.rb
-          if git diff --cached --quiet; then
+          # No `cd tap`: the push below calls back into scripts/, and staying
+          # in the checkout keeps both paths relative to the same directory.
+          git -C tap config user.name "joestump-agent"
+          git -C tap config user.email "joestump-agent@noreply.stump.rocks"
+          git -C tap add Formula/cairn.rb
+          if git -C tap diff --cached --quiet; then
             echo "tap already at v${VER} — nothing to push"
           else
-            git commit -qm "toil(cairn): bump formula to v${VER} (automated tap bump)"
-            git -c http.extraheader="Authorization: token ${TAP_PUSH_TOKEN}" \
-              push -q origin HEAD:main
+            git -C tap commit -qm "toil(cairn): bump formula to v${VER} (automated tap bump)"
+            scripts/git-with-token.sh TAP_PUSH_TOKEN -C tap push -q origin HEAD:main
             echo "tap bumped to v${VER}" >> "$GITHUB_STEP_SUMMARY"
           fi
