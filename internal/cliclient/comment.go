@@ -44,6 +44,13 @@ type commentPayload struct {
 	Body       string `json:"body"`
 }
 
+// commentsEnvelope is GET /v1/artifacts/{id}/comments' body: every comment on
+// one artifact, in thread order, tombstones included (SPEC-0006 "Threaded
+// Comments").
+type commentsEnvelope struct {
+	Comments []Comment `json:"comments"`
+}
+
 // Comment posts one comment on an artifact through
 // POST /v1/artifacts/{id}/comments and returns the stored row. It is a
 // mutating command's request, so the caller must have resolved a token before
@@ -64,4 +71,26 @@ func (c *Client) Comment(ctx context.Context, id string, opts CommentOptions) (*
 		return nil, err
 	}
 	return &out, nil
+}
+
+// ListComments reads an artifact's comments through
+// GET /v1/artifacts/{id}/comments in the server's thread order, tombstones
+// included. Like a read it rides the artifact's link capability (ADR-0007): no
+// credential is needed, so an agent checking a handoff back needs no login; a
+// token sent anyway only changes how the server renders other readers' actors.
+// The result is never nil-for-nothing: an artifact with no comments yields an
+// empty slice, so a caller can tell "nothing said" from "request failed".
+func (c *Client) ListComments(ctx context.Context, id string) ([]Comment, error) {
+	resp, err := c.Do(ctx, http.MethodGet, "/v1/artifacts/"+url.PathEscape(id)+"/comments", nil, "")
+	if err != nil {
+		return nil, err
+	}
+	var out commentsEnvelope
+	if err := DecodeInto(resp, &out); err != nil {
+		return nil, err
+	}
+	if out.Comments == nil {
+		out.Comments = []Comment{}
+	}
+	return out.Comments, nil
 }

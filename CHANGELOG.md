@@ -9,6 +9,17 @@ reaches 1.0.
 
 ### Added
 
+- **`cairn comments`, the read half of a thread** (SPEC-0008 / SPEC-0006, #494).
+  The CLI could post a comment but never read one back: `cairn read --json` reports
+  `comment_count` and no `comments`, so a script that asked the read for a thread got
+  an empty answer instead of an error and could not tell "nobody replied" from
+  "nothing here is readable". `cairn comments <id|handle>` lists the thread in the
+  server's order, tombstones included, through the `GET /v1/artifacts/{id}/comments`
+  endpoint the API already documents. `--json` repeats that endpoint's own `comments`
+  key and emits it even when the thread is empty, so an empty array now means
+  nothing was said. Like a read it needs no login: the artifact's link is the
+  capability.
+
 - **The lexical search index foundation** (SPEC-0022 / ADR-0028, #306). Searching
   a Bin meant listing titles. This lands the half of full-text search that has to
   exist before any query can: a `search_documents` table holding each live

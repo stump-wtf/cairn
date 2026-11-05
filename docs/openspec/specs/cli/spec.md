@@ -45,6 +45,7 @@ so an unauthenticated CLI is not a failure there and no credential is invented.
 | `cairn add f1 f2 …` | create bundle | `POST /v1/artifacts` (bundle) | Required |
 | `cairn read <id\|handle>` | read an artifact or bundle member | `GET /v1/artifacts/{id}`, `/body`, `/members/*` | **Link capability** — optional; a stored token is sent anyway and also reveals owner-only fields |
 | `cairn comment <id> [body]` | write an annotation | `GET /v1/artifacts/{id}` (link + existence check), `POST /v1/artifacts/{id}/comments` | Required (`annotations:write`) |
+| `cairn comments <id\|handle>` | read an annotation thread | `GET /v1/artifacts/{id}/comments` | **Link capability** — optional; a stored token is sent anyway and changes only how other readers' actors are rendered |
 | `cairn ls` | list the Bin | `GET /v1/bin` (keyset) | Required |
 | `cairn ls` → `enter` (open) | fetch artifact | `GET /v1/artifacts/{id}` | Required |
 | `cairn ls` → `s` (share) | set/adjust link access | `POST /v1/artifacts/{id}/share` | Required |
@@ -57,12 +58,12 @@ so an unauthenticated CLI is not a failure there and no credential is invented.
 ### Requirement: Command Surface and REST-Client Boundary
 
 The CLI MUST expose exactly the commands `cairn` (bare pipe/path ingest), `cairn add`,
-`cairn read`, `cairn comment`, `cairn ls`, `cairn login`, `cairn logout`, and
-`cairn whoami`, and each MUST map onto a core operation reachable through the `/v1`
-REST API. The CLI MUST NOT implement or enforce domain rules (expiry, access-policy
-decisions, provenance capture, anchor legality); it SHALL treat the server's response
-as authoritative. The CLI MUST send the `/v1` versioned path prefix and MUST NOT
-depend on any endpoint outside the documented contract.
+`cairn read`, `cairn comment`, `cairn comments`, `cairn ls`, `cairn login`,
+`cairn logout`, and `cairn whoami`, and each MUST map onto a core operation reachable
+through the `/v1` REST API. The CLI MUST NOT implement or enforce domain rules
+(expiry, access-policy decisions, provenance capture, anchor legality); it SHALL treat
+the server's response as authoritative. The CLI MUST send the `/v1` versioned path
+prefix and MUST NOT depend on any endpoint outside the documented contract.
 
 #### Scenario: CLI defers a rule to the core
 
@@ -270,6 +271,48 @@ taken from the server's metadata read and never reconstructed by the CLI.
 - **WHEN** the body argument looks like a path but no readable file is there
 - **THEN** the CLI MUST post the argument as text and warn on stderr, rather than
   post nothing
+
+### Requirement: Annotation Read (`cairn comments`)
+
+`cairn comments <id|handle>` MUST list an artifact's comments through
+`GET /v1/artifacts/{id}/comments` in the server's thread order (SPEC-0006 "Threaded
+Comments"), and MUST NOT reorder, group, deduplicate, or filter them. Soft-deleted
+comments MUST stay in the output as tombstones, so the thread keeps its shape without
+the CLI showing removed content. Like `cairn read` this rides the artifact's link
+capability (ADR-0007): it MUST work with no credential resolved and MUST NOT fail
+locally for lack of a session. It MUST NOT fetch the artifact's body or metadata; the
+listing is its one request.
+
+With `--json`, stdout MUST be one object whose comments live under a `comments` key,
+and that key MUST be present even when the thread is empty, so a script can tell an
+artifact nobody answered from a surface that does not exist. Actor identity is the
+server's to render and MUST be printed as it arrived (SPEC-0016 EV-4). An unknown or
+expired id MUST surface the server's uniform not-found with exit 5.
+
+#### Scenario: Read a thread an agent left behind
+
+- **WHEN** an agent runs `cairn comments mcp://cairn/9qz1a --json` on an artifact
+  whose thread holds a hand-back note
+- **THEN** the CLI MUST print one JSON object whose `comments` array carries every
+  comment with its body, author, and parent id, and exit 0
+
+#### Scenario: An artifact nobody answered
+
+- **WHEN** `cairn comments <id> --json` runs against an artifact with no comments
+- **THEN** the CLI MUST emit `"comments": []` (never a missing key or a null) and exit
+  0, so "nothing said" is an answer rather than silence
+
+#### Scenario: No session
+
+- **WHEN** `cairn comments` runs with no stored or flagged token
+- **THEN** the CLI MUST still make the request and exit 0 on a valid link, because a
+  comment listing is a read, not a write
+
+#### Scenario: Unknown or expired artifact
+
+- **WHEN** the id is unknown or the artifact has expired
+- **THEN** the CLI MUST surface the server's uniform not-found and exit 5, printing
+  nothing to stdout
 
 ### Requirement: The Bin TUI (`cairn ls`)
 
