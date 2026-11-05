@@ -270,6 +270,7 @@ taken from the server's metadata read and never reconstructed by the CLI.
 - **WHEN** the body argument looks like a path but no readable file is there
 - **THEN** the CLI MUST post the argument as text and warn on stderr, rather than
   post nothing
+
 ### Requirement: The Bin TUI (`cairn ls`)
 
 `cairn ls` MUST render the Bin as a keyboard-driven Bubble Tea TUI backed by
