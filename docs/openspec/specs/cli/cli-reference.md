@@ -97,15 +97,20 @@ body is the argument, a file, or stdin — whichever avoids quoting it:
 cairn comment 9qz1a "looks good, one nit below"
 cairn comment mcp://cairn/9qz1a --file reply.md
 cat reply.md | cairn comment 9qz1a
+cairn comment 9qz1a /tmp/report.md
 cairn comment 9qz1a --parent 41 "replying to that"
 cairn comment 9qz1a "hi" --json
 ```
 
 It requires a session (exit `3` without one, with no request sent) and refuses an
-empty body (exit `2`). The comment is anchored to the whole artifact; the server
-decides whether the share type accepts comments at all, and says so in the
-violation the CLI prints. A bare `cairn comment <id>` at a terminal is a usage
-error rather than a read that never ends.
+empty body (exit `2`). An argument that is a single line naming an existing file —
+absolute, or starting with `./`, `../` or `~/` — is read as that file, the way path
+arguments work elsewhere in the CLI, and stderr names what was read; a path that
+opens on nothing is posted as text with a warning, so a report written to a scratch
+file is never lost as a bare path (ADR-0035). The comment is anchored to the whole
+artifact; the server decides whether the share type accepts comments at all, and says
+so in the violation the CLI prints. A bare `cairn comment <id>` at a terminal is a
+usage error rather than a read that never ends.
 
 ### `cairn login`
 

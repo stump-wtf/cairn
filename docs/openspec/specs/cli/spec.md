@@ -223,9 +223,14 @@ body with no decoration.
 remains the server's decision (SPEC-0006 "Registry-Gated Anchor Capabilities"), which
 the CLI surfaces unaltered. The body is the one argument, `--file <path>`, or stdin —
 choosing among them is ergonomics, and an empty or whitespace-only body is a usage
-error (exit 2), never a posted comment. `--parent <comment-id>` MUST post a reply,
-which inherits its root's anchor. As a mutating command it MUST carry a credential
-and MUST fail locally with exit 3 rather than send a request the server would reject.
+error (exit 2), never a posted comment. An argument that is a single line naming an
+existing regular file (`/`, `./`, `../` or `~/`) is read as that file, the way path
+arguments are read everywhere else in this CLI (ADR-0035), and stderr names the file
+read. An argument that looked like a path but opens on nothing readable is posted as
+text with a warning, so a report is never dropped. `--parent <comment-id>` MUST post
+a reply, which inherits its root's anchor. As a mutating command it MUST carry a
+credential and MUST fail locally with exit 3 rather than send a request the server
+would reject.
 
 On success it MUST print the created comment's id and the artifact's link, the link
 taken from the server's metadata read and never reconstructed by the CLI.
@@ -253,6 +258,18 @@ taken from the server's metadata read and never reconstructed by the CLI.
 - **THEN** the CLI MUST use stdin as the comment body, so an agent can post a report
   without quoting it into an argument
 
+#### Scenario: A report written to a file
+
+- **WHEN** the body argument is a single line naming an existing regular file, such
+  as `/tmp/cairncomment.md`
+- **THEN** the CLI MUST post that file's contents, name the file on stderr, and exit
+  0
+
+#### Scenario: A path that leads nowhere
+
+- **WHEN** the body argument looks like a path but no readable file is there
+- **THEN** the CLI MUST post the argument as text and warn on stderr, rather than
+  post nothing
 ### Requirement: The Bin TUI (`cairn ls`)
 
 `cairn ls` MUST render the Bin as a keyboard-driven Bubble Tea TUI backed by
