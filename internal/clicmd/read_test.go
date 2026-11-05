@@ -10,25 +10,28 @@ import (
 	"github.com/stump-wtf/cairn/internal/cliexit"
 )
 
-// fakeCairn is the two routes `cairn read` and `cairn comment` touch, keyed by
-// the bare public id: the metadata read and the body read. It records the paths
-// it served so a test can prove which read a command chose.
+// fakeCairn is the routes `cairn read`, `cairn comment` and `cairn comments`
+// touch, keyed by the bare public id: the metadata read, the body read, and the
+// comment listing. It records the paths it served so a test can prove which read
+// a command chose.
 type fakeCairn struct {
 	*httptest.Server
-	metadata  map[string]map[string]any
-	bodies    map[string]string
-	members   map[string]map[string]string
-	comments  []string
-	parentIDs []*int64
-	paths     []string
+	metadata     map[string]map[string]any
+	bodies       map[string]string
+	members      map[string]map[string]string
+	commentLists map[string][]map[string]any
+	comments     []string
+	parentIDs    []*int64
+	paths        []string
 }
 
 func newFakeCairn(t *testing.T) *fakeCairn {
 	t.Helper()
 	f := &fakeCairn{
-		metadata: map[string]map[string]any{},
-		bodies:   map[string]string{},
-		members:  map[string]map[string]string{},
+		metadata:     map[string]map[string]any{},
+		bodies:       map[string]string{},
+		members:      map[string]map[string]string{},
+		commentLists: map[string][]map[string]any{},
 	}
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.paths = append(f.paths, r.Method+" "+r.URL.Path)
@@ -50,6 +53,19 @@ func newFakeCairn(t *testing.T) *fakeCairn {
 				return
 			}
 			_, _ = w.Write([]byte(body))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/artifacts/"), "/comments")
+			list, ok := f.commentLists[id]
+			if !ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error": map[string]any{"code": "not_found", "message": "artifact not found"},
+				})
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"comments": list})
 		case r.Method == http.MethodGet:
 			id := strings.TrimPrefix(r.URL.Path, "/v1/artifacts/")
 			meta, ok := f.metadata[id]
@@ -92,6 +108,13 @@ func newFakeCairn(t *testing.T) *fakeCairn {
 
 func (f *fakeCairn) artifact(id string, meta map[string]any) {
 	f.metadata[id] = meta
+}
+
+// commentThread stubs GET /v1/artifacts/<id>/comments in the server's thread
+// order, tombstones included. An id never listed answers 404, exactly as an
+// unknown or expired artifact does.
+func (f *fakeCairn) commentThread(id string, comments ...map[string]any) {
+	f.commentLists[id] = comments
 }
 
 func TestReadPrintsBodyToStdout(t *testing.T) {

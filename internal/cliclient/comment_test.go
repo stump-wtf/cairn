@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -85,5 +86,70 @@ func TestCommentMissingScopeMapsToSentinel(t *testing.T) {
 	_, err := New(srv.URL, "tok").Comment(context.Background(), "art42", CommentOptions{Body: "hi"})
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("Comment error = %v, want ErrForbidden", err)
+	}
+}
+
+func TestListCommentsGetsThreadAndToleratesEmptyBody(t *testing.T) {
+	var gotPath, gotAuth string
+	responses := map[string]string{
+		"art42": `{"comments":[{"id":2,"anchor_type":"artifact","parent_id":1,"actor_id":"sam@stump.rocks",
+			"actor_kind":"human","body":"agreed","created_at":"2026-11-05T11:00:00Z"},
+			{"id":3,"anchor_type":"artifact","actor_id":"bot@stump.rocks","actor_kind":"agent",
+			"body":"","deleted":true,"created_at":"2026-11-05T12:00:00Z"}]}`,
+		"quiet": `{}`,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET: listing comments is a read", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/artifacts/"), "/comments")
+		_, _ = io.WriteString(w, responses[id])
+	}))
+	defer srv.Close()
+
+	comments, err := New(srv.URL, "pat_token").ListComments(context.Background(), "art42")
+	if err != nil {
+		t.Fatalf("ListComments: %v", err)
+	}
+	if gotPath != "/v1/artifacts/art42/comments" {
+		t.Errorf("path = %q, want the comments route", gotPath)
+	}
+	if gotAuth != "Bearer pat_token" {
+		t.Errorf("Authorization = %q, want the bearer token attached when one is resolved", gotAuth)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("comments = %d, want the 2 the server listed", len(comments))
+	}
+	if comments[0].ParentID == nil || *comments[0].ParentID != 1 {
+		t.Errorf("reply parent_id = %v, want 1", comments[0].ParentID)
+	}
+	if !comments[1].Deleted {
+		t.Error("tombstone lost its deleted flag")
+	}
+
+	quiet, err := New(srv.URL, "").ListComments(context.Background(), "quiet")
+	if err != nil {
+		t.Fatalf("ListComments with no token: %v", err)
+	}
+	if quiet == nil || len(quiet) != 0 {
+		t.Fatalf("comments = %#v, want an empty slice a caller can range over", quiet)
+	}
+}
+
+func TestListCommentsUnknownArtifactMapsToSentinel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"code": "not_found", "message": "artifact not found"},
+		})
+	}))
+	defer srv.Close()
+
+	_, err := New(srv.URL, "").ListComments(context.Background(), "nope")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ListComments error = %v, want ErrNotFound", err)
 	}
 }

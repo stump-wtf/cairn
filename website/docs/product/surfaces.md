@@ -58,6 +58,10 @@ cairn read mcp://cairn/9qz1a
 # and say something about it
 cat reply.md | cairn comment 9qz1a
 
+# read back what was said, as a thread or as JSON
+cairn comments 9qz1a
+cairn comments 9qz1a --json | jq -r '.comments[].body'
+
 # optional flags: expiry hint and a display title
 cairn --ttl 24h --title "incident notes" incident.md
 

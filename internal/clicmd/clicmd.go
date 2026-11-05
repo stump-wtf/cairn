@@ -1,7 +1,7 @@
 // Package clicmd builds the `cairn` command tree (SPEC-0008 "Command
 // Surface and REST-Client Boundary"): the bare pipe/path ingest command,
-// `add`, `read`, `comment`, `login`, `logout`, and `whoami`. Every command
-// funnels through internal/cliconfig for configuration resolution and
+// `add`, `read`, `comment`, `comments`, `login`, `logout`, and `whoami`. Every
+// command funnels through internal/cliconfig for configuration resolution and
 // internal/cliclient for the REST round trip and error decoding;
 // cmd/cairn/main.go maps the returned error to a process exit code via
 // internal/cliexit.
@@ -83,6 +83,7 @@ interactive terminal, copied to the clipboard.
   cairn add a.png b.log c.sql push several files as one bundle
   cairn read mcp://cairn/9qz1a print an artifact's body (or a bundle's files)
   cairn comment 9qz1a "note"  comment on an artifact
+  cairn comments 9qz1a      list an artifact's comments
   cairn login                 authenticate with a Cairn server
   cairn whoami                show the current authentication state
   cairn logout                revoke this machine's session
@@ -129,6 +130,7 @@ decided by the server and only ever displayed here (SPEC-0008).`,
 	root.AddCommand(
 		newAddCmd(streams, flags, configPathOverride),
 		newCommentCmd(streams, flags, configPathOverride),
+		newCommentsCmd(streams, flags, configPathOverride),
 		newLoginCmd(streams, flags, configPathOverride),
 		newLogoutCmd(streams, flags, configPathOverride),
 		newReadCmd(streams, flags, configPathOverride),

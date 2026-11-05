@@ -15,6 +15,7 @@ and this page is stale.
 | `cairn add <file>...` | Push several files as one bundle artifact |
 | `cairn read <id\|handle>` | Print an artifact's body, or a bundle's file list |
 | `cairn comment <id\|handle> [body]` | Comment on an artifact |
+| `cairn comments <id\|handle>` | List an artifact's comments |
 | `cairn login` | Verify a bearer token against the server and store it |
 | `cairn whoami` | Show the current authentication state |
 | `cairn logout` | Remove this machine's stored credential |
@@ -111,6 +112,34 @@ file is never lost as a bare path (ADR-0035). The comment is anchored to the who
 artifact; the server decides whether the share type accepts comments at all, and says
 so in the violation the CLI prints. A bare `cairn comment <id>` at a terminal is a
 usage error rather than a read that never ends.
+
+### `cairn comments <id|handle>`
+
+Lists what people and agents said on an artifact, in thread order: each root
+comment followed by its replies, oldest first. Deleted comments stay in the list
+as tombstones (header row, no body) so the thread keeps its shape.
+
+```bash
+cairn comments 9qz1a
+cairn comments mcp://cairn/9qz1a
+cairn comments 9qz1a --json | jq -r '.comments[].body'
+```
+
+Without `--json` each comment prints a header row (id, author, age, and a reply
+marker) with its body indented beneath it. With `--json` stdout is one object
+whose single key is the endpoint's own, `comments`, and that key is emitted even
+when the thread is empty, so an empty array means nothing was said and never that
+the surface is missing. Author names are the server's rendering: an anonymous
+reader sees display handles, exactly as on the web thread.
+
+Like `cairn read` this needs no credential; the artifact's link is the
+capability. An unknown or expired id is exit `5`, and a wrong number of arguments
+is exit `2`.
+
+This is the supported way to read a thread. `cairn read --json` reports
+`comment_count` but never the comments themselves, so a check that pipes it into
+`jq '.comments[]'` sees nothing on every artifact and cannot tell a silent miss
+from an empty thread; ask `cairn comments` instead.
 
 ### `cairn login`
 
