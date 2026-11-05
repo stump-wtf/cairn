@@ -83,5 +83,15 @@ unchanged and stays mutually exclusive with a body argument.
   anyone who meant it.
 * One more stderr note appears in agent transcripts, where today there is silence
   and a broken handoff.
+* An argument naming a file that exists but cannot be read stays a usage error
+  (exit 2) rather than the warn-and-post path. Posting the argument there would
+  reproduce the observed bug verbatim: the manager would read a path as the whole
+  report. A file that exists is unambiguously intended as the body, so failing
+  loudly names the file and the errno where the lane's own report step surfaces
+  it; the warn-and-post path is for the ambiguous case, prose that merely looks
+  like a path or a file already gone.
+* The read adds no file-access capability: `cairn <path>` and `cairn comment
+  --file` already read any file the caller can read. This change only drops the
+  need to type `--file`.
 * Server behaviour, the API, and the storage of a comment body are untouched: this
   is argument handling, not annotation semantics.
