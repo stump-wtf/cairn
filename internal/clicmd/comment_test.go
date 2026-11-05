@@ -220,6 +220,23 @@ func TestCommentUnreadablePathWarnsAndIsStillPosted(t *testing.T) {
 	}
 }
 
+func TestCommentHomeRelativePathWithNoHomeWarnsAndIsStillPosted(t *testing.T) {
+	srv := commentFixture(t)
+	t.Setenv("HOME", "")
+
+	_, errOut, code := runCLI(t, emptyConfigPath(t), "", "comment", "abc123",
+		"~/reports/week.md", "--url", srv.URL, "--token", "pat")
+	if code != int(cliexit.Success) {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, errOut)
+	}
+	if len(srv.comments) != 1 || srv.comments[0] != "~/reports/week.md" {
+		t.Fatalf("comments = %v, want the argument posted rather than no report at all", srv.comments)
+	}
+	if !strings.Contains(errOut, "warning") {
+		t.Errorf("stderr = %q, want a warning that no home directory could be resolved", errOut)
+	}
+}
+
 func TestCommentPathToADirectoryWarnsAndIsStillPosted(t *testing.T) {
 	srv := commentFixture(t)
 	dir := t.TempDir()

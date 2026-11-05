@@ -188,6 +188,7 @@ func bodyFileArg(streams IOStreams, arg string) string {
 	if strings.HasPrefix(path, "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
+			fmt.Fprintf(streams.ErrOut, "cairn: warning: the body looks like a home-relative path and no home directory could be resolved: %s\n", path)
 			return ""
 		}
 		path = filepath.Join(home, strings.TrimPrefix(path, "~/"))
