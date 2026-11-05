@@ -18,7 +18,16 @@ import (
 // Individual tests that need the "keyring IS available" branch call
 // keyring.MockInit() themselves and restore the error mock via
 // t.Cleanup so later tests see the default again.
+//
+// It also clears CAIRN_URL and CAIRN_TOKEN for the whole package: the
+// resolver prefers the environment over the config file, so on any box that
+// exports a real token (a developer shell, an agent run) every test that
+// expects the default or the file value went red, and each failure printed
+// the resolved token into the test log — a live PAT in output (#496). This
+// is the package-wide equivalent of internal/clicmd's runCLI isolation.
 func TestMain(m *testing.M) {
+	os.Unsetenv("CAIRN_URL")
+	os.Unsetenv("CAIRN_TOKEN")
 	keyring.MockInitWithError(errors.New("keyring: no secret service in test"))
 	os.Exit(m.Run())
 }
