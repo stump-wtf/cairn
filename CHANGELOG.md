@@ -46,6 +46,19 @@ reaches 1.0.
   surface has its own idea of what an id is. `GET /v1/artifacts/{id}` now lists a
   bundle's members, which is how a reader learns the name `/members/<name>` needs.
 
+### Changed
+
+- **A comment body that names a file is read** (ADR-0035, harness#1048). Every other
+  positional argument in this CLI that can name a file opens it; `cairn comment`
+  alone stored its argument verbatim. An unattended run that wrote its report to a
+  scratch file and passed the path therefore posted the path, and whoever judged the
+  handoff could not tell a finished build from a refusal — once, that funded a
+  duplicate dispatch. A single-line argument spelling an absolute path, or one
+  starting `./`, `../` or `~/`, that names an existing regular file is now read, and
+  stderr says which file. Anything else is still posted as text, and an argument that
+  looked like a path but opens on nothing is posted with a warning, so a report is
+  never lost. `--file` is unchanged.
+
 ### Fixed
 
 - **GitHub login reaches the container** (cairn#452). The `compose.yaml` in the

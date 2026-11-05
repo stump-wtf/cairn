@@ -162,3 +162,111 @@ func TestCommentUnknownArtifactExitsNotFound(t *testing.T) {
 		t.Fatalf("comments = %v, want the write refused before posting", srv.comments)
 	}
 }
+
+// TestCommentReadsAFilePassedAsTheBody covers the two shapes a lane was
+// observed posting verbatim: a report inside a scratch directory, and one
+// written straight into the system temp dir.
+func TestCommentReadsAFilePassedAsTheBody(t *testing.T) {
+	const report = "PR: https://gitea.stump.rocks/stump.wtf/cairn/pulls/7\n\nVerified with make test lint.\n"
+
+	nested := filepath.Join(t.TempDir(), "comment.md")
+	if err := os.WriteFile(nested, []byte(report), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	flat, err := os.CreateTemp("", "cairncomment-*.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flat.WriteString(report); err != nil {
+		t.Fatal(err)
+	}
+	if err := flat.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(flat.Name()) })
+
+	for _, path := range []string{nested, flat.Name()} {
+		srv := commentFixture(t)
+
+		_, errOut, code := runCLI(t, emptyConfigPath(t), "", "comment", "abc123", path,
+			"--url", srv.URL, "--token", "pat")
+		if code != int(cliexit.Success) {
+			t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, errOut)
+		}
+		if len(srv.comments) != 1 || srv.comments[0] != report {
+			t.Fatalf("comments = %v, want the report text behind %s", srv.comments, path)
+		}
+		if !strings.Contains(errOut, path) {
+			t.Errorf("stderr = %q, want a note naming the file read", errOut)
+		}
+	}
+}
+
+func TestCommentUnreadablePathWarnsAndIsStillPosted(t *testing.T) {
+	srv := commentFixture(t)
+	missing := filepath.Join(t.TempDir(), "gone.md")
+
+	_, errOut, code := runCLI(t, emptyConfigPath(t), "", "comment", "abc123", missing,
+		"--url", srv.URL, "--token", "pat")
+	if code != int(cliexit.Success) {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, errOut)
+	}
+	if len(srv.comments) != 1 || srv.comments[0] != missing {
+		t.Fatalf("comments = %v, want the path posted rather than no report at all", srv.comments)
+	}
+	if !strings.Contains(errOut, "warning") {
+		t.Errorf("stderr = %q, want a warning that the path names no file", errOut)
+	}
+}
+
+func TestCommentHomeRelativePathWithNoHomeWarnsAndIsStillPosted(t *testing.T) {
+	srv := commentFixture(t)
+	t.Setenv("HOME", "")
+
+	_, errOut, code := runCLI(t, emptyConfigPath(t), "", "comment", "abc123",
+		"~/reports/week.md", "--url", srv.URL, "--token", "pat")
+	if code != int(cliexit.Success) {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, errOut)
+	}
+	if len(srv.comments) != 1 || srv.comments[0] != "~/reports/week.md" {
+		t.Fatalf("comments = %v, want the argument posted rather than no report at all", srv.comments)
+	}
+	if !strings.Contains(errOut, "warning") {
+		t.Errorf("stderr = %q, want a warning that no home directory could be resolved", errOut)
+	}
+}
+
+func TestCommentPathToADirectoryWarnsAndIsStillPosted(t *testing.T) {
+	srv := commentFixture(t)
+	dir := t.TempDir()
+
+	_, errOut, code := runCLI(t, emptyConfigPath(t), "", "comment", "abc123", dir,
+		"--url", srv.URL, "--token", "pat")
+	if code != int(cliexit.Success) {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, errOut)
+	}
+	if len(srv.comments) != 1 || srv.comments[0] != dir {
+		t.Fatalf("comments = %v, want the path posted", srv.comments)
+	}
+	if !strings.Contains(errOut, "not a file") {
+		t.Errorf("stderr = %q, want a warning that the path is not a file", errOut)
+	}
+}
+
+func TestCommentProseNamingAPathIsNotReadAsAFile(t *testing.T) {
+	srv := commentFixture(t)
+	body := "root cause is in stump.wtf/cairn/internal/clicmd/comment.go\n"
+
+	_, errOut, code := runCLI(t, emptyConfigPath(t), "", "comment", "abc123", body,
+		"--url", srv.URL, "--token", "pat")
+	if code != int(cliexit.Success) {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, errOut)
+	}
+	if len(srv.comments) != 1 || srv.comments[0] != body {
+		t.Fatalf("comments = %v, want the prose body posted untouched", srv.comments)
+	}
+	if strings.Contains(errOut, "warning") || strings.Contains(errOut, "body read from") {
+		t.Errorf("stderr = %q, want no note for a prose body", errOut)
+	}
+}
