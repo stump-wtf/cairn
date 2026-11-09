@@ -32,7 +32,7 @@ require (
 	github.com/zalando/go-keyring v0.2.8
 	github.com/zricethezav/gitleaks/v8 v8.30.1
 	go.yaml.in/yaml/v4 v4.0.0
-	golang.org/x/oauth2 v0.37.0
+	golang.org/x/oauth2 v0.38.0
 	golang.org/x/term v0.47.0
 )
 
